@@ -1,6 +1,7 @@
 import { getAppProvider } from "@/app/_lib/data-provider";
 import type { AuditQueryRow, CannedAuditQueryId } from "@/lib/data/dto";
 import { AuditConsole } from "@/components/jeeves/audit-console";
+import { AuditorChat } from "@/components/jeeves/auditor-chat";
 
 export default async function AuditPage() {
   const provider = getAppProvider();
@@ -28,6 +29,7 @@ export default async function AuditPage() {
         </p>
       </div>
       <AuditConsole results={results} />
+      <AuditorChat />
     </div>
   );
 }

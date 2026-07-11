@@ -6,11 +6,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ApiError,
   apiErrorToMessage,
+  askAuditor,
   createInitiative,
   decide,
   getDraftRunProgress,
+  intakeChat,
   isApiError,
+  listPromotions,
   postSession,
+  promoteCheckpoint,
   returnReview,
   runTriage,
   signReview,
@@ -121,6 +125,88 @@ describe("authenticated helpers send the Bearer token", () => {
     expect(url).toBe("/api/initiatives/init-1/draft-run?cycleId=c1");
     expect(init?.method ?? "GET").toBe("GET");
   });
+
+  it("askAuditor posts the question with the Bearer token", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(200, {
+        answerMd: "Answer text",
+        citedEvents: ["evt-1"],
+        queryUsed: "member-facing-phi",
+        rows: [],
+      }),
+    );
+    const result = await askAuditor("tok-9", { question: "who touches PHI?" });
+    expect(result.answerMd).toBe("Answer text");
+    expect(result.citedEvents).toEqual(["evt-1"]);
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/api/chat/auditor");
+    expect(init.method).toBe("POST");
+    expect((init.headers as Record<string, string>).Authorization).toBe("Bearer tok-9");
+    expect(JSON.parse(init.body as string)).toEqual({ question: "who touches PHI?" });
+  });
+
+  it("intakeChat posts the conversation + partialPayload with the Bearer token", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(200, {
+        reply: "What is the initiative title?",
+        updatedPayload: { basics: { title: "" } },
+        gaps: [],
+        done: false,
+      }),
+    );
+    const conversation = [{ role: "user" as const, content: "I want to build a chatbot" }];
+    const result = await intakeChat("tok-9", { conversation, partialPayload: {} });
+    expect(result.reply).toBe("What is the initiative title?");
+    expect(result.done).toBe(false);
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/api/chat/intake");
+    expect(init.method).toBe("POST");
+    expect((init.headers as Record<string, string>).Authorization).toBe("Bearer tok-9");
+    expect(JSON.parse(init.body as string)).toEqual({ conversation, partialPayload: {} });
+  });
+
+  it("listPromotions is a public GET with no Authorization header", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, []));
+    const result = await listPromotions();
+    expect(result).toEqual([]);
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit | undefined];
+    expect(url).toBe("/api/deployments/promotions");
+    expect(init?.method ?? "GET").toBe("GET");
+    expect((init?.headers as Record<string, string> | undefined)?.Authorization).toBeUndefined();
+  });
+
+  it("promoteCheckpoint posts the attestation + reason with the Bearer token", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(200, {
+        initiativeId: "init-1",
+        promotedDeploymentVersionId: "dv-2",
+        promotedVersion: "v2",
+        supersededDeploymentVersionId: "dv-1",
+        supersededVersion: "v1",
+        status: "deployed",
+      }),
+    );
+    const input = {
+      attestation: {
+        feedbackDataSource: "member feedback survey",
+        consentBasis: "opt-in consent form",
+        reviewedBy: "Angela Torres",
+      },
+      reason: "quarterly RL checkpoint promotion",
+    };
+    const result = await promoteCheckpoint("tok-9", "dv-2", input);
+    expect(result.status).toBe("deployed");
+    expect(result.promotedVersion).toBe("v2");
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/api/deployments/promotions/dv-2/promote");
+    expect(init.method).toBe("POST");
+    expect((init.headers as Record<string, string>).Authorization).toBe("Bearer tok-9");
+    expect(JSON.parse(init.body as string)).toEqual(input);
+  });
 });
 
 describe("error mapping", () => {
@@ -175,6 +261,52 @@ describe("error mapping", () => {
     expect(isApiError(err)).toBe(true);
     expect(err.status).toBe(500);
     expect(apiErrorToMessage(err)).toBe("Something went wrong — please try again.");
+  });
+
+  it("askAuditor maps 401 (no/invalid session) to a typed ApiError", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(401, { error: "invalid or missing session" }));
+    const err = await askAuditor("stale", { question: "who touches PHI?" }).catch((e) => e);
+    expect(isApiError(err)).toBe(true);
+    expect(err.status).toBe(401);
+    expect(apiErrorToMessage(err)).toBe(
+      "Session expired or invalid — enter the demo passcode again.",
+    );
+  });
+
+  it("intakeChat maps 403 (non-requester persona) to a typed ApiError", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(403, { error: "only the requester persona may use the intake chat" }),
+    );
+    const err = await intakeChat("tok", { conversation: [], partialPayload: {} }).catch((e) => e);
+    expect(isApiError(err)).toBe(true);
+    expect(err.status).toBe(403);
+    expect(apiErrorToMessage(err)).toBe("Not permitted for your current role.");
+  });
+
+  it("promoteCheckpoint maps 400 (missing/empty attestation field) to a typed ApiError", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(400, { error: "reviewedBy is required", issues: ["reviewedBy"] }),
+    );
+    const err = await promoteCheckpoint("tok", "dv-2", {
+      attestation: { feedbackDataSource: "x", consentBasis: "y", reviewedBy: "" },
+      reason: "z",
+    }).catch((e) => e);
+    expect(isApiError(err)).toBe(true);
+    expect(err.status).toBe(400);
+    expect(apiErrorToMessage(err)).toBe("reviewedBy is required");
+  });
+
+  it("promoteCheckpoint maps 403 (non-approver actor) to a typed ApiError", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(403, { error: "only approvers may promote a checkpoint" }),
+    );
+    const err = await promoteCheckpoint("tok", "dv-2", {
+      attestation: { feedbackDataSource: "x", consentBasis: "y", reviewedBy: "z" },
+      reason: "z",
+    }).catch((e) => e);
+    expect(isApiError(err)).toBe(true);
+    expect(err.status).toBe(403);
+    expect(apiErrorToMessage(err)).toBe("Not permitted for your current role.");
   });
 
   it("isApiError rejects non-ApiError values", () => {

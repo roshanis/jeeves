@@ -1,7 +1,8 @@
-// /initiatives/new — structured intake flow (ui-spec §4, intake-spec §1).
-// The form itself is a client component (live tier preview + completeness
-// meter recompute on every change); this page provides the static shell.
-import { IntakeForm } from "@/components/jeeves/intake-form";
+// /initiatives/new — structured + conversational intake flows (ui-spec §4,
+// intake-spec §1). The mode toggle and both modes are client components
+// (live tier preview + completeness meter recompute on every change / chat
+// state); this page provides the static shell.
+import { IntakeModeToggle } from "@/components/jeeves/intake-mode-toggle";
 
 export const metadata = {
   title: "New Initiative — Jeeves",
@@ -17,7 +18,7 @@ export default function NewInitiativePage() {
           triage (tier + required review domains) the moment you answer them.
         </p>
       </div>
-      <IntakeForm />
+      <IntakeModeToggle />
     </div>
   );
 }
