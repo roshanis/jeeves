@@ -64,3 +64,9 @@
 ### Files changed: plan.md, AGENTS.md, .claude/CLAUDE.md, agents-build-log.md
 ### Diff summary: Codex's verdict accepted without disagreement — the WorkflowPort mismatch (deterministic fan-out, app-owned approval checkpoints, durable cancel) is exactly the boundary plan hard rule 4 requires. agents/ directory-per-agent layout retained as our own convention. eve reconsidered post-GA as optional AgentPort adapter (backlogged).
 ### Recommendations / Next steps: Scaffold worker finishing in codex-worktree; then merge both worktrees to main and close task #1. Overnight execution governed by GOAL.md.
+
+## [AGENT: Claude] [2026-07-11T05:55Z]
+### Action: M1-P0 CLOSED — scaffold verified (53d94fd), both worktrees merged to main (0562785, 8c03d32), 119/119 tests green
+### Files changed: full scaffold (34 files) + lib domain logic merged; vitest.config include extended to lib/**/*.test.ts (silent-skip bug caught in merge review); npm standardized (pnpm absent on host)
+### Diff summary: Acceptance re-verified by orchestrator on merged main: typecheck, lint, 119 tests, next build, boot :3111. Scaffold worker's entry (worktree copy, moved here): Next.js 16.2.10 + Tailwind 4 + shadcn(5) + Vitest 4 + Playwright + Drizzle/Neon config; AgentPort/WorkflowPort per plan §4 (typed results, PortFailure union, AbortSignal, fan-out, pause/resume, progress callback+async-iterable) with compile-tripwire test.
+### Recommendations / Next steps: P1 delegated as two parallel Sonnet workers — (A) schema+seed+PGlite harness in codex-worktree, (B) read-only UI vs mock data provider in claude-worktree. Task #1 → completed, #2 → in_progress.
