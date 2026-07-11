@@ -21,12 +21,13 @@ export default defineConfig({
       "tests/**/*.test.tsx",
       "lib/**/*.test.ts",
       "scripts/**/*.test.ts",
+      "app/**/*.test.ts",
     ],
     exclude: ["tests/e2e/**", "node_modules/**"],
     coverage: {
       provider: "v8",
       reporter: ["text", "html"],
-      include: ["lib/**/*.ts", "lib/**/*.tsx", "scripts/**/*.ts"],
+      include: ["lib/**/*.ts", "lib/**/*.tsx", "scripts/**/*.ts", "app/api/**/*.ts"],
       exclude: ["lib/db/schema.ts"],
       // Thresholds are not enforced yet (plan.md §8 target of >80% on lib/
       // logic applies once real domain logic lands) — coverage is configured
