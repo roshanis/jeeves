@@ -8,8 +8,12 @@ import { AccountableApproverChip } from "./accountable-approver-chip";
 
 // Column order per ui-spec §2 item 3: Intake -> Triaged -> In Review ->
 // Conditionally Approved / Approved -> Deployed -> Paused -> Rejected.
+// Every LifecycleState must have a column — an unlisted state would silently
+// drop its initiatives from the board (review finding #2: re_review is where
+// the P3 breach storyline lands member-chat-copilot).
 const COLUMNS: LifecycleState[] = [
   "intake_draft",
+  "submitted",
   "triaged",
   "in_review",
   "conditionally_approved",
@@ -17,7 +21,9 @@ const COLUMNS: LifecycleState[] = [
   "fast_lane_approved",
   "deployed",
   "paused",
+  "re_review",
   "rejected",
+  "retired",
 ];
 
 export function PipelineBoard({ initiatives }: { initiatives: InitiativeSummary[] }) {
