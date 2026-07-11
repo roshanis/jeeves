@@ -70,8 +70,10 @@ export async function POST(
   try {
     const result = await startDraftRun(db, id, [...parsed.data.domains] as Domain[]);
     return Response.json(result, { status: 200 });
-  } catch (err) {
-    return Response.json({ error: err instanceof Error ? err.message : String(err) }, { status: 404 });
+  } catch {
+    // Security review finding #6: never echo raw error internals (this
+    // catch-all previously leaked any thrown message, incl. DB errors).
+    return Response.json({ error: "initiative or review cycle not found" }, { status: 404 });
   }
 }
 

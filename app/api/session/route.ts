@@ -13,14 +13,32 @@
  * reachable pre-session, gated by the passcode itself instead.
  */
 import { z } from "zod";
-import { issueDemoSession } from "@/lib/services/route-guard";
+import { clientKeyFor, issueDemoSession } from "@/lib/services/route-guard";
+import { TokenBucketRateLimiter } from "@/lib/security/rate-limit";
 
 const bodySchema = z.object({
   passcode: z.string().min(1).max(200),
   personaKey: z.string().min(1).max(100),
 });
 
+// Security review finding #1: without this, the single shared passcode (the
+// sole gate to LLM spend and admin actions) is brute-forceable at wire speed
+// because this route sits pre-session, outside runMutationGuard. 5 attempts
+// per client, refilling one every 30s.
+const passcodeAttemptLimiter = new TokenBucketRateLimiter(
+  { capacity: 5, refillPerSecond: 1 / 30 },
+  () => Date.now(),
+);
+
 export async function POST(req: Request): Promise<Response> {
+  const attempt = passcodeAttemptLimiter.checkAndConsume(clientKeyFor(req));
+  if (!attempt.allowed) {
+    return Response.json(
+      { error: "too many attempts — try again later" },
+      { status: 429, headers: { "Retry-After": String(attempt.retryAfterSeconds) } },
+    );
+  }
+
   let json: unknown;
   try {
     json = await req.json();
