@@ -10,7 +10,7 @@ in the standard entry format. Default collaboration: Codex implements, Claude re
 
 ## Stack
 - Next.js (App Router) + TypeScript, Tailwind + shadcn/ui, Recharts
-- Vercel eve agent framework (or Vercel AI SDK + Workflow SDK fallback — decided at P0 spike; check the build log for the spike verdict)
+- **Vercel AI SDK + Workflow SDK** (P0 gate DECIDED 2026-07-11: FALLBACK adopted — see build log 04:40Z/04:45Z entries; do not introduce eve). `agents/` directory-per-agent layout is our own convention.
 - Neon Postgres + Drizzle ORM (one dev branch + isolated test schema; no Docker)
 - OpenAI GPT-5.x runtime LLM via env `OPENAI_MODEL`; ALL LLM calls mocked in tests
 

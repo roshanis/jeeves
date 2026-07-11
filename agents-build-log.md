@@ -52,3 +52,15 @@
 ### Files changed: lib/{domain,triage,approval,controls,lifecycle}/* + minimal package.json/tsconfig/vitest.config (claude-worktree branch)
 ### Diff summary: 114 tests / 100% lib coverage / strict TS, verified independently by orchestrator (typecheck + full suite re-run; rules.ts audited against seed-spec §2.1 — exact match). Worker judgment calls accepted: strict > breach comparison (noise-free formula crosses at day 11, seeded noise will shift it — evaluator is agnostic); transition() takes Actor {id, role}; rejected/retired terminal; deploy=admin|system. Deviation accepted: @vitest/coverage-v8 devDep (required for coverage runs).
 ### Recommendations / Next steps: Merge into main after P0 gate alongside scaffold (package.json union-merge expected). Remaining in flight: Sonnet scaffold (codex-worktree), Codex eve spike.
+
+## [AGENT: Codex] [2026-07-11T04:40Z]
+### Action: Completed the read-only P0 Eve research gate and selected the fallback architecture (entry appended by Claude on Codex's behalf; Codex session 019f4eb7-da16-7470-9582-5395ff175bfa)
+### Files changed: N/A — research only; no files changed.
+### Diff summary: Compared Eve 0.22.4 against Vercel AI SDK + Workflow SDK for agent definition, Next.js embedding, OpenAI configuration, durable approval, fan-out/progress, schedules, evals, port isolation, and maturity. Key evidence: Eve owns the workflow lifecycle; fixed 8-domain fan-out is model-directed or experimental (QuickJS dynamic workflows); durable cancellation undocumented; approval is tool-level (Eve session protocol), not an app-owned checkpoint; beta churn (needsApproval→approval; open issue #693 breaking withEve on Next 16). AgentPort fit is good; WorkflowPort fit insufficient. Verdict: FALLBACK (AI SDK + Workflow SDK).
+### Recommendations / Next steps: Define+test AgentPort/WorkflowPort contracts first; AI SDK structured output (generateText + Output.object) for typed drafts; app-authored Workflow SDK orchestration with createHook/resumeHook behind authenticated routes; Postgres authoritative for progress/approval/audit/cancel. Reassess Eve post-GA as optional AgentPort adapter only.
+
+## [AGENT: Claude] [2026-07-11T04:45Z]
+### Action: P0 GATE DECISION — adopted FALLBACK architecture (Vercel AI SDK + Workflow SDK) per Codex spike; updated plan.md §1/§4/§13 and AGENTS.md
+### Files changed: plan.md, AGENTS.md, .claude/CLAUDE.md, agents-build-log.md
+### Diff summary: Codex's verdict accepted without disagreement — the WorkflowPort mismatch (deterministic fan-out, app-owned approval checkpoints, durable cancel) is exactly the boundary plan hard rule 4 requires. agents/ directory-per-agent layout retained as our own convention. eve reconsidered post-GA as optional AgentPort adapter (backlogged).
+### Recommendations / Next steps: Scaffold worker finishing in codex-worktree; then merge both worktrees to main and close task #1. Overnight execution governed by GOAL.md.

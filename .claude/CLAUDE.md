@@ -168,7 +168,7 @@ full v1 breadth, 1–2 week budget, fast-lane autonomy reframe confirmed.
 
 ### Stack
 - Next.js (App Router) + TypeScript, Tailwind + shadcn/ui, Recharts
-- Vercel eve agent framework (or Vercel AI SDK + Workflow SDK fallback — decided at P0 spike)
+- Vercel AI SDK + Workflow SDK (P0 gate DECIDED 2026-07-11: fallback adopted; do not introduce eve)
 - Neon Postgres + Drizzle ORM (one dev branch + isolated test schema; no Docker)
 - OpenAI GPT-5.x runtime LLM (env `OPENAI_MODEL`); all LLM calls mocked in tests
 

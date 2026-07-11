@@ -18,7 +18,7 @@ Codex's core finding: v1 tried to ship five persona experiences, eight live revi
 | Governance domains | All 8 visible (Legal, Procurement, Tech Arch, Responsible AI, Security, Privacy/HIPAA, Clinical Safety, Data Governance); ⚠ 3–4 implemented as live agent drafts, rest seeded (Codex cut) |
 | Risk model | Deterministic tiers Low/Med/High/Critical from healthcare overlay questions (PHI? member-facing? care/coverage influence? vendor-hosted?) |
 | Autonomy | ⚠ Agents draft, recommend, route, and flag missing evidence — they never approve. Low-risk = deterministic **fast-lane under a pre-approved policy** with a named accountable approver (was "agent auto-approve"; Codex F3 — owner to confirm, §12) |
-| Agent framework | Vercel eve; ⚠ spike moved to P0, either/or gate (Codex F7) |
+| Agent framework | ⚠ **DECIDED at P0 gate (2026-07-11): FALLBACK — Vercel AI SDK + Workflow SDK** (Codex spike verdict: eve 0.22.4 owns workflow lifecycle, model-directed fan-out, undocumented durable cancel, beta churn; AgentPort fit good, WorkflowPort fit insufficient). agents/ directory layout kept as our own convention; eve reconsidered post-GA as optional AgentPort adapter |
 | Runtime LLM | OpenAI GPT-5.x |
 | Build agents | Codex gpt-5.6-terra implements; Claude orchestrates + reviews; ⚠ disagreements are surfaced to the human, never tie-broken by Claude (Codex F10) |
 | DB | Neon Postgres + Drizzle (one dev branch + isolated test schema; no Docker) |
@@ -49,7 +49,7 @@ Outcome metrics strip (Sierra-style, outcomes not activity): review cycle time, 
 
 ## 4. Stack
 
-Next.js (App Router) + TypeScript + Tailwind/shadcn + Recharts; Neon Postgres + Drizzle; Vitest + one **required** Playwright golden-path test; Vercel eve behind **capability-oriented ports** — `AgentPort` (draft review, triage assist, completeness check) and `WorkflowPort` (fan-out, progress, pause/resume, cancel) — defined in app-owned types. Authoritative state transitions live in application code + Postgres, never inside eve or the fallback adapter (Vercel AI SDK + Workflow SDK).
+Next.js (App Router) + TypeScript + Tailwind/shadcn + Recharts; Neon Postgres + Drizzle; Vitest + one **required** Playwright golden-path test; **Vercel AI SDK + Workflow SDK (P0 gate decision)** behind **capability-oriented ports** — `AgentPort` (draft review, triage assist, completeness check; AI SDK `generateText` + `Output.object` structured drafts) and `WorkflowPort` (deterministic fan-out, progress, human pause/resume via `createHook`/`resumeHook` behind authenticated routes, cancel) — defined in app-owned types. Authoritative state transitions live in application code + Postgres, never inside adapters. eve backlogged as optional post-GA AgentPort adapter.
 
 ## 5. Domain model (Codex F5 — versioned, registry as a view)
 
@@ -107,7 +107,7 @@ Conversational intake chat · free-form ask-the-auditor NL chat · all 8 domains
 
 - **M1 — Champion vertical (days 1–3):** §9 phases P0–P5 exactly as written. Ends with the champion storyline deployed and demo-able. *The three-day cut is now milestone 1, not the whole project.*
 - **M2 — Breadth (days 4–6):** all 8 domains live (extend the parameterized reviewer + per-track policy corpora); conversational intake chat; free-form ask-the-auditor NL chat grounded on the structured query layer from M1.
-- **M3 — Telemetry depth (days 7–9):** self-hosted Arize Phoenix fed synthetic OTel traces (replaces "not connected" chip with a real connector); interactive RL promotion view (runs, reward curves, feedback-provenance sign-off); GPU quota controls on the self-hosted-workload initiative; scheduled monitoring via eve schedules (replacing on-demand-only).
+- **M3 — Telemetry depth (days 7–9):** self-hosted Arize Phoenix fed synthetic OTel traces (replaces "not connected" chip with a real connector); interactive RL promotion view (runs, reward curves, feedback-provenance sign-off); GPU quota controls on the self-hosted-workload initiative; scheduled monitoring via Vercel Cron + Workflow SDK (replacing on-demand-only).
 - **M4 — Hardening & polish (days 10+):** full control-catalog UI across 8 domains, exception workflows, demo script + README + walkthrough recording, security-reviewer pass, session-ritual before final merge.
 - Gate between milestones: tests green, code-reviewer verdict, build-log entry, human checkpoint.
 
