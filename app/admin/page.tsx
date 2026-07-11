@@ -1,4 +1,4 @@
-import { getProvider } from "@/lib/data";
+import { getAppProvider } from "@/app/_lib/data-provider";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -18,7 +18,7 @@ import { LifecycleBadge } from "@/components/jeeves/lifecycle-badge";
 // NO approve/sign/return-style button exists on this page for any role;
 // separation of duties is architectural, not a permission flag.
 export default async function AdminPage() {
-  const provider = getProvider();
+  const provider = getAppProvider();
   const [catalog, initiatives, q01Changes] = await Promise.all([
     provider.controlCatalog(),
     provider.listInitiatives(),

@@ -10,7 +10,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { DOMAIN_LABEL } from "./reviews-tab";
+import { DOMAIN_LABEL } from "./domain-labels";
 import { cn } from "@/lib/utils";
 
 const STATUS_META: Record<ControlRow["status"], { label: string; className: string }> = {

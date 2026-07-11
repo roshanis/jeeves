@@ -7,7 +7,7 @@ import type { Domain } from "@/lib/domain/types";
 import type { ControlRow } from "@/lib/data/dto";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { DOMAIN_LABEL } from "./reviews-tab";
+import { DOMAIN_LABEL } from "./domain-labels";
 import { ControlStatusChip } from "./controls-tab";
 
 // Domain order per seed-spec §3 (Legal ... Data Governance), Runtime last —

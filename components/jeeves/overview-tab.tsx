@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { TierBadge } from "./tier-badge";
 import { EvidenceLink } from "./evidence-link";
-import { DOMAIN_LABEL, ReviewStatusBadge } from "./reviews-tab";
+import { DOMAIN_LABEL, ReviewStatusBadge } from "./domain-labels";
 
 /**
  * Human-readable explanation of which triage rule matched — mirrors
