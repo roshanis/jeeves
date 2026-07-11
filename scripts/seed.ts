@@ -2534,9 +2534,23 @@ async function main() {
 
 // Only run when executed directly (not when imported by tests).
 if (import.meta.url === `file://${process.argv[1]}`) {
-  main().catch((err) => {
-     
-    console.error(err);
-    process.exit(1);
-  });
+  // Production guard: this CLI wipes and repopulates every seeded table
+  // (see the DISABLE/ENABLE TRIGGER dance in seedDatabase above), so it
+  // must never fire against a real deployment by accident. Refuse to run
+  // when NODE_ENV=production unless the operator explicitly opts in via
+  // ALLOW_SEED=1 (e.g. a one-off, deliberate reseed of a hosted demo env).
+  if (process.env.NODE_ENV === "production" && process.env.ALLOW_SEED !== "1") {
+    console.error(
+      "Refusing to run scripts/seed.ts: NODE_ENV=production and ALLOW_SEED is not set to \"1\". " +
+        "This script destructively wipes and repopulates the database. " +
+        "Set ALLOW_SEED=1 to explicitly confirm a production reseed.",
+    );
+    process.exitCode = 1;
+  } else {
+    main().catch((err) => {
+
+      console.error(err);
+      process.exit(1);
+    });
+  }
 }
