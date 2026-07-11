@@ -7,7 +7,7 @@ import { test, expect } from "@playwright/test";
 // submits, signs, approves, or mutates anything (AGENTS.md hard rule 2: the
 // public/demo surfaces this test drives are read-only for every role).
 test.describe("champion storyline: read-only golden path", () => {
-  test("home shows the 12 seeded initiatives and the exact demo banner", async ({
+  test("landing page renders the hero and the exact demo banner", async ({
     page,
   }) => {
     await page.goto("/");
@@ -19,6 +19,18 @@ test.describe("champion storyline: read-only golden path", () => {
         { exact: true },
       ),
     ).toBeVisible();
+
+    // Landing hero + primary CTA into the console.
+    await expect(
+      page.getByRole("heading", { name: /every AI project/i }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("link", { name: /Enter the console/i }),
+    ).toBeVisible();
+  });
+
+  test("dashboard shows the 12 seeded initiatives", async ({ page }) => {
+    await page.goto("/dashboard");
 
     // Pipeline board renders all 12 seeded initiatives as cards.
     const board = page.locator('[data-slot="pipeline-board"]');
