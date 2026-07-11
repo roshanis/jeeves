@@ -39,7 +39,11 @@ interface RoleContextValue {
 const RoleContext = React.createContext<RoleContextValue | null>(null);
 
 export function RoleProvider({ children }: { children: React.ReactNode }) {
-  const [roleKey, setRoleKey] = React.useState<RoleKey>("requester");
+  // Default role is Program Office: it's the neutral ops-overview persona,
+  // so the public/no-login landing page (app/page.tsx's "What needs
+  // attention" inbox) renders the same content it always has (ui-spec §2
+  // role-aware saved views; keeps the e2e golden-path assertion intact).
+  const [roleKey, setRoleKey] = React.useState<RoleKey>("program");
   const persona = ROLE_PERSONAS[roleKey];
 
   const value = React.useMemo(
