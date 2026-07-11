@@ -24,7 +24,6 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { TierBadge } from "./tier-badge";
 import { DOMAIN_LABEL, ReviewStatusBadge } from "./domain-labels";
 import { GatedActionButton } from "./role-gate";
@@ -102,48 +101,74 @@ export function ReviewWorkbench({ rows }: { rows: ReviewQueueRow[] }) {
       </Card>
 
       {selected ? (
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-sm">
-                Agent draft — {DOMAIN_LABEL[selected.review.domain]} ·{" "}
-                <Link
-                  href={`/initiatives/${selected.slug}?tab=reviews`}
-                  className="text-primary underline-offset-4 hover:underline"
-                >
-                  {selected.title}
-                </Link>
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <p className="whitespace-pre-wrap text-sm text-muted-foreground">
-                {selected.review.draftMd ?? "No draft yet for this domain."}
-              </p>
-              {selected.review.citations.length > 0 ? (
-                <div className="space-y-1.5">
-                  <p className="text-xs font-medium uppercase text-muted-foreground">
-                    Policy citations
-                  </p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {selected.review.citations.map((c) => (
-                      <Badge key={c} variant="outline">
-                        {c}
-                      </Badge>
-                    ))}
-                  </div>
-                </div>
-              ) : null}
-            </CardContent>
-          </Card>
+        <div>
+          <div className="mb-3 flex items-center gap-2 text-sm">
+            <span className="font-semibold">{DOMAIN_LABEL[selected.review.domain]} review</span>
+            <span className="text-muted-foreground">·</span>
+            <Link
+              href={`/initiatives/${selected.slug}?tab=reviews`}
+              className="text-primary underline-offset-4 hover:underline"
+            >
+              {selected.title}
+            </Link>
+            <TierBadge tier={selected.tier} />
+            <ReviewStatusBadge status={selected.review.status} />
+          </div>
 
-          <AssessmentPane
-            key={`${selected.slug}-${selected.review.domain}`}
-            row={selected}
-          />
+          {/* Signature screen: evidence & policy · agent draft · reviewer sign-off */}
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-3" data-slot="review-columns">
+            <Card className="overflow-hidden">
+              <CardHeader className="border-b bg-muted/40 py-2.5">
+                <CardTitle className="text-xs uppercase tracking-wide text-muted-foreground">
+                  1 · Evidence &amp; policy sources
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3 pt-4">
+                {selected.review.citations.length > 0 ? (
+                  <ul className="space-y-1.5">
+                    {selected.review.citations.map((c) => (
+                      <li key={c} className="flex items-start gap-2 text-sm">
+                        <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
+                        <span className="font-mono text-xs">{c}</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-sm text-muted-foreground">
+                    No policy sources cited yet.
+                  </p>
+                )}
+                <p className="border-t pt-3 text-xs text-muted-foreground">
+                  The drafting agent may cite only sources supplied to it. Required
+                  evidence surfaces as conditions on approval — see the initiative&rsquo;s
+                  Controls tab.
+                </p>
+              </CardContent>
+            </Card>
+
+            <Card className="overflow-hidden">
+              <CardHeader className="border-b bg-muted/40 py-2.5">
+                <CardTitle className="text-xs uppercase tracking-wide text-muted-foreground">
+                  2 · Agent-drafted assessment
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="pt-4">
+                <p className="whitespace-pre-wrap text-sm text-muted-foreground">
+                  {selected.review.draftMd ?? "No draft yet for this domain."}
+                </p>
+              </CardContent>
+            </Card>
+
+            <AssessmentPane
+              key={`${selected.slug}-${selected.review.domain}`}
+              row={selected}
+            />
+          </div>
         </div>
       ) : (
-        <p className="text-sm text-muted-foreground">
-          Select a review from the queue to open the drafting surface.
+        <p className="rounded-lg border border-dashed bg-muted/30 px-4 py-8 text-center text-sm text-muted-foreground">
+          Select a review from the queue to open the three-column workbench —
+          evidence &amp; policy, the agent draft, and your findings.
         </p>
       )}
     </div>
@@ -205,13 +230,15 @@ function AssessmentPane({ row }: { row: ReviewQueueRow }) {
   }
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-sm">Assessment (reviewer edits, then decides)</CardTitle>
+    <Card className="overflow-hidden">
+      <CardHeader className="border-b bg-muted/40 py-2.5">
+        <CardTitle className="text-xs uppercase tracking-wide text-muted-foreground">
+          3 · Reviewer findings &amp; sign-off
+        </CardTitle>
       </CardHeader>
-      <CardContent className="space-y-3">
+      <CardContent className="space-y-3 pt-4">
         <textarea
-          className="min-h-32 w-full rounded-lg border border-input bg-transparent p-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
+          className="min-h-40 w-full rounded-md border border-input bg-transparent p-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
           value={editedText}
           onChange={(e) => setEditedText(e.target.value)}
           disabled={!canAct}
