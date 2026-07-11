@@ -7,6 +7,7 @@ import {
   ClipboardCheck,
   ShieldCheck,
   ScrollText,
+  GitPullRequestArrow,
   Settings2,
   ShieldAlert,
 } from "lucide-react";
@@ -18,6 +19,7 @@ const NAV_ITEMS = [
   { href: "/reviews", label: "Reviews", icon: ClipboardCheck },
   { href: "/controls", label: "Controls", icon: ShieldCheck },
   { href: "/audit", label: "Audit", icon: ScrollText },
+  { href: "/promotions", label: "Promotions", icon: GitPullRequestArrow },
   { href: "/admin", label: "Admin", icon: Settings2 },
 ];
 

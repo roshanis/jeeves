@@ -225,6 +225,32 @@ export interface PauseResumeResult {
   after: LifecycleState;
 }
 
+/* --- M2 chat + M3 promotions (app/api/chat/**, app/api/deployments/**) --- */
+
+/** Row shape of GET /api/deployments/promotions (mirrors promotion-service.ts#PromotionListItem). */
+export interface PromotionListItem {
+  deploymentVersionId: string;
+  initiativeId: string;
+  initiativeSlug: string;
+  initiativeTitle: string;
+  tier: string | null;
+  version: string;
+  modelVersion: string | null;
+  feedbackProvenanceSignedOff: boolean;
+  deployedAt: string;
+  supersedesVersion: string | null;
+}
+
+/** Result shape of POST /api/deployments/promotions/[id]/promote (mirrors promotion-service.ts#PromoteCheckpointResult). */
+export interface PromoteCheckpointResult {
+  initiativeId: string;
+  promotedDeploymentVersionId: string;
+  promotedVersion: string;
+  supersededDeploymentVersionId: string | null;
+  supersededVersion: string | null;
+  status: "deployed";
+}
+
 /* -------------------------------------------------------------------------
  * Core request helper
  * ---------------------------------------------------------------------- */
@@ -440,5 +466,57 @@ export function resumeDeployment(
   return request<PauseResumeResult>(
     `/api/admin/deployments/${encodeURIComponent(initiativeId)}/resume`,
     { method: "POST", token, body: { reason } },
+  );
+}
+
+/**
+ * POST /api/chat/auditor — natural-language audit Q&A. Session-gated for ANY
+ * authenticated persona (not role-restricted, unlike the intake chat below).
+ */
+export function askAuditor(
+  token: string,
+  input: { question: string },
+): Promise<{ answerMd: string; citedEvents: string[]; queryUsed: string; rows: unknown[] }> {
+  return request<{ answerMd: string; citedEvents: string[]; queryUsed: string; rows: unknown[] }>(
+    "/api/chat/auditor",
+    { method: "POST", token, body: input },
+  );
+}
+
+/**
+ * POST /api/chat/intake — conversational intake interviewer turn. Session-
+ * gated for the requester persona specifically (403 for any other role).
+ * `updatedPayload` is always a full coerced `IntakePayload` per the route's
+ * `coerceToIntakePayload`.
+ */
+export function intakeChat(
+  token: string,
+  input: { conversation: { role: "user" | "assistant"; content: string }[]; partialPayload: unknown },
+): Promise<{ reply: string; updatedPayload: IntakePayload; gaps: CompletenessGap[]; done: boolean }> {
+  return request<{
+    reply: string;
+    updatedPayload: IntakePayload;
+    gaps: CompletenessGap[];
+    done: boolean;
+  }>("/api/chat/intake", { method: "POST", token, body: input });
+}
+
+/** GET /api/deployments/promotions — public read-only list of RL checkpoints awaiting sign-off. */
+export function listPromotions(): Promise<PromotionListItem[]> {
+  return request<PromotionListItem[]>("/api/deployments/promotions", { method: "GET" });
+}
+
+/** POST /api/deployments/promotions/[id]/promote — approver-only; [id] is the deploymentVersionId. */
+export function promoteCheckpoint(
+  token: string,
+  id: string,
+  input: {
+    attestation: { feedbackDataSource: string; consentBasis: string; reviewedBy: string };
+    reason: string;
+  },
+): Promise<PromoteCheckpointResult> {
+  return request<PromoteCheckpointResult>(
+    `/api/deployments/promotions/${encodeURIComponent(id)}/promote`,
+    { method: "POST", token, body: input },
   );
 }
