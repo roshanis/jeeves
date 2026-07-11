@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Inter, Sora, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/sonner";
@@ -7,14 +7,27 @@ import { RoleProvider } from "@/components/jeeves/role-context";
 import { LiveSessionProvider } from "@/lib/client/session-context";
 import { Chrome } from "@/components/jeeves/chrome";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+// Body: Inter (highly legible UI workhorse). Headings: Sora (geometric
+// display with more character). Mono: JetBrains Mono (ids, versions, code).
+// Variable names align with the @theme mapping in globals.css — the previous
+// Geist wiring set --font-geist-sans while the theme read --font-sans, so
+// body text was silently falling back to the system font.
+const fontSans = Inter({
+  variable: "--font-sans",
   subsets: ["latin"],
+  display: "swap",
 });
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
+const fontHeading = Sora({
+  variable: "--font-heading",
   subsets: ["latin"],
+  display: "swap",
+});
+
+const fontMono = JetBrains_Mono({
+  variable: "--font-mono",
+  subsets: ["latin"],
+  display: "swap",
 });
 
 export const metadata: Metadata = {
@@ -31,7 +44,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      className={`${fontSans.variable} ${fontHeading.variable} ${fontMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col">
         <RoleProvider>
