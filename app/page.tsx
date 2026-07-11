@@ -1,19 +1,59 @@
-export default function Home() {
+import { getProvider } from "@/lib/data";
+import { OutcomeMetricsStrip } from "@/components/jeeves/outcome-metrics-strip";
+import { PipelineBoard } from "@/components/jeeves/pipeline-board";
+import { RiskHeatmap } from "@/components/jeeves/risk-heatmap";
+import { SlaCallouts } from "@/components/jeeves/sla-callouts";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+
+export default async function Home() {
+  const provider = getProvider();
+  const [initiatives, metrics] = await Promise.all([
+    provider.listInitiatives(),
+    provider.outcomeMetrics(),
+  ]);
+
   return (
-    <div className="flex min-h-screen flex-col bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 flex-col items-center justify-center gap-4 px-8 text-center">
-        <h1 className="max-w-2xl text-3xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
-          Jeeves — AI Governance Gateway (Meridian Health demo)
+    <div className="flex flex-col gap-8">
+      <div>
+        <h1 className="text-2xl font-semibold tracking-tight">
+          Portfolio command center
         </h1>
-        <p className="max-w-xl text-base leading-7 text-zinc-600 dark:text-zinc-400">
-          Governance workflow demo for AI initiatives at a fictional healthcare
-          payer. Under construction.
+        <p className="text-sm text-muted-foreground">
+          All 12 seeded initiatives, their governance state, and portfolio
+          outcome metrics at a glance.
         </p>
-      </main>
-      <footer className="border-t border-zinc-200 px-8 py-6 text-center text-sm text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">
-        Fictional demo. Synthetic data only. Not affiliated with any real
-        organization.
-      </footer>
+      </div>
+
+      <OutcomeMetricsStrip metrics={metrics} />
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Pipeline board</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <PipelineBoard initiatives={initiatives} />
+        </CardContent>
+      </Card>
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle>Risk heatmap — tier x domain status</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <RiskHeatmap initiatives={initiatives} />
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>SLA / bottleneck callouts</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <SlaCallouts initiatives={initiatives} />
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }

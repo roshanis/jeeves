@@ -2,12 +2,16 @@ import { defineConfig, devices } from "@playwright/test";
 
 // webServer runs `npm run dev` rather than `npm run build && npm run start`.
 // Tradeoff: dev mode is slower per-request (on-demand compilation) but far
-// faster to boot for a still-placeholder golden-path suite, and matches how
-// engineers will run this locally while iterating on plan.md §2 storyline
-// steps 1->6. Once the golden path is implemented and this suite runs in CI,
-// switch to a production build (`next build && next start`) for a
-// representative, faster-per-request run — tracked as a follow-up, not done
-// here since the test itself is still `test.skip`.
+// faster to boot, and matches how engineers will run this locally while
+// iterating. Once this suite runs in CI, consider switching to a production
+// build (`next build && next start`) for a representative, faster-per-request
+// run — tracked as a follow-up, not required for this self-contained suite.
+//
+// Fixed port 3117 (not the Next.js default 3000): this machine routinely runs
+// other, unrelated dev servers on ports ~3000-3010, and this suite must not
+// collide with them or need to kill/reuse a process it didn't start.
+const PORT = 3117;
+
 export default defineConfig({
   testDir: "./tests/e2e",
   fullyParallel: true,
@@ -16,7 +20,7 @@ export default defineConfig({
   workers: process.env.CI ? 1 : undefined,
   reporter: "html",
   use: {
-    baseURL: "http://localhost:3000",
+    baseURL: `http://localhost:${PORT}`,
     trace: "on-first-retry",
   },
   projects: [
@@ -27,8 +31,9 @@ export default defineConfig({
   ],
   webServer: {
     command: "npm run dev",
-    url: "http://localhost:3000",
-    reuseExistingServer: !process.env.CI,
+    url: `http://localhost:${PORT}`,
+    reuseExistingServer: false,
     timeout: 120_000,
+    env: { PORT: String(PORT) },
   },
 });
