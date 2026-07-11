@@ -33,11 +33,28 @@ const rateLimiter = new TokenBucketRateLimiter({ capacity: 20, refillPerSecond: 
 const budgetStore: BudgetStore = new InMemoryBudgetStore();
 const DAILY_TOKEN_CAP = 500_000;
 
+// Security review finding #1: /api/session sits pre-session outside
+// runMutationGuard, so the shared passcode was brute-forceable at wire
+// speed. Dedicated slow bucket: 5 attempts per client, one refill per 30s.
+let sessionAttemptLimiter = new TokenBucketRateLimiter(
+  { capacity: 5, refillPerSecond: 1 / 30 },
+  () => Date.now(),
+);
+
+/** Pre-session brute-force gate for POST /api/session. */
+export function checkSessionAttempt(clientKey: string): { allowed: boolean; retryAfterSeconds: number } {
+  return sessionAttemptLimiter.checkAndConsume(clientKey);
+}
+
 /** Test-only: reset all module-scoped guard state between test files/cases. */
 export function resetGuardStateForTests(): void {
   sessions.clear();
   personaBySessionToken.clear();
-  // TokenBucketRateLimiter has no public clear(); tests construct their own
+  sessionAttemptLimiter = new TokenBucketRateLimiter(
+    { capacity: 5, refillPerSecond: 1 / 30 },
+    () => Date.now(),
+  );
+  // The mutation rateLimiter has no public clear(); tests construct their own
   // limiter via runMutationGuard's injected `deps` instead of relying on
   // this module singleton when they need a clean bucket.
 }
