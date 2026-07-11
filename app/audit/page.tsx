@@ -1,9 +1,9 @@
-import { getProvider } from "@/lib/data";
+import { getAppProvider } from "@/app/_lib/data-provider";
 import type { AuditQueryRow, CannedAuditQueryId } from "@/lib/data/dto";
 import { AuditConsole } from "@/components/jeeves/audit-console";
 
 export default async function AuditPage() {
-  const provider = getProvider();
+  const provider = getAppProvider();
   const ids: CannedAuditQueryId[] = [
     "member-facing-phi",
     "approved-by-torres",

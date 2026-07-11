@@ -1,4 +1,4 @@
-import { getProvider } from "@/lib/data";
+import { getAppProvider } from "@/app/_lib/data-provider";
 import { OutcomeMetricsStrip } from "@/components/jeeves/outcome-metrics-strip";
 import { PipelineBoard } from "@/components/jeeves/pipeline-board";
 import { RiskHeatmap } from "@/components/jeeves/risk-heatmap";
@@ -6,7 +6,7 @@ import { SlaCallouts } from "@/components/jeeves/sla-callouts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 export default async function Home() {
-  const provider = getProvider();
+  const provider = getAppProvider();
   const [initiatives, metrics] = await Promise.all([
     provider.listInitiatives(),
     provider.outcomeMetrics(),

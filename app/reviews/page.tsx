@@ -1,11 +1,11 @@
-import { getProvider } from "@/lib/data";
+import { getAppProvider } from "@/app/_lib/data-provider";
 import {
   ReviewWorkbench,
   type ReviewQueueRow,
 } from "@/components/jeeves/review-workbench";
 
 export default async function ReviewsPage() {
-  const provider = getProvider();
+  const provider = getAppProvider();
   const initiatives = await provider.listInitiatives();
   const details = await Promise.all(
     initiatives.map((i) => provider.getInitiativeDetail(i.slug)),

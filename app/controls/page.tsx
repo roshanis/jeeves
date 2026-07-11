@@ -1,4 +1,4 @@
-import { getProvider } from "@/lib/data";
+import { getAppProvider } from "@/app/_lib/data-provider";
 import { ControlCatalog } from "@/components/jeeves/control-catalog";
 
 // Control catalog (plan §6): the full ControlDefinition catalog across all 8
@@ -6,7 +6,7 @@ import { ControlCatalog } from "@/components/jeeves/control-catalog";
 // rendered as a read-only, evidence-linked reference — no mutation actions
 // anywhere, consistent with every other catalog/audit page in the app.
 export default async function ControlsPage() {
-  const provider = getProvider();
+  const provider = getAppProvider();
   const controls = await provider.controlCatalog();
   const domainCount = new Set(
     controls.filter((c) => c.domain !== "runtime").map((c) => c.domain),

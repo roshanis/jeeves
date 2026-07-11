@@ -1,10 +1,11 @@
 import { notFound } from "next/navigation";
-import { getProvider } from "@/lib/data";
+import { getInitiativeDetailCoherent } from "@/app/_lib/data-provider";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { TierBadge } from "@/components/jeeves/tier-badge";
 import { LifecycleBadge } from "@/components/jeeves/lifecycle-badge";
 import { AccountableApproverChip } from "@/components/jeeves/accountable-approver-chip";
 import { OverlayFlagChips } from "@/components/jeeves/overlay-flag-chips";
+import { LiveActionsBar } from "@/components/jeeves/live-actions-bar";
 import { OverviewTab } from "@/components/jeeves/overview-tab";
 import { IntakeTab } from "@/components/jeeves/intake-tab";
 import { ReviewsTab } from "@/components/jeeves/reviews-tab";
@@ -38,7 +39,7 @@ export default async function InitiativeDetailPage({
   searchParams: Promise<{ tab?: string }>;
 }) {
   const [{ slug }, { tab }] = await Promise.all([params, searchParams]);
-  const detail = await getProvider().getInitiativeDetail(slug);
+  const detail = await getInitiativeDetailCoherent(slug);
   if (!detail) {
     notFound();
   }
@@ -59,6 +60,8 @@ export default async function InitiativeDetailPage({
         </div>
       </header>
 
+      <LiveActionsBar slug={summary.slug} state={summary.state} />
+
       <Tabs defaultValue={normalizeTab(tab)}>
         <TabsList className="flex-wrap">
           <TabsTrigger value="overview">Overview</TabsTrigger>
@@ -76,7 +79,7 @@ export default async function InitiativeDetailPage({
           <IntakeTab intake={detail.intake} />
         </TabsContent>
         <TabsContent value="reviews">
-          <ReviewsTab reviews={detail.reviews} />
+          <ReviewsTab reviews={detail.reviews} slug={summary.slug} />
         </TabsContent>
         <TabsContent value="decisions">
           <DecisionsTab slug={summary.slug} decisions={detail.decisions} />

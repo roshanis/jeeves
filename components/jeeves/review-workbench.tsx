@@ -2,11 +2,17 @@
 
 // Review workbench (ui-spec §5): queue across all initiatives + two-pane
 // drafting surface (agent draft + citations left, editable assessment +
-// verdict right). Read-only build: the assessment field renders but is
-// disabled; Sign/Return are approve-style actions (hidden for Admin,
-// disabled-with-tooltip otherwise — see role-gate.tsx).
+// verdict right). Sign/Return are approve-style actions (hidden for Admin,
+// disabled-with-tooltip without a live session — see role-gate.tsx).
+//
+// Live mode: for an initiative created during this live demo session (the
+// live registry knows its cycleId), a reviewer-role session gets an
+// EDITABLE assessment textarea and working Sign (submits the edited draft)
+// and Return (mandatory-reason dialog) actions against the real API.
 import * as React from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { toast } from "sonner";
 import type { ReviewRow } from "@/lib/data/dto";
 import type { Tier } from "@/lib/domain/types";
 import {
@@ -20,8 +26,17 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { TierBadge } from "./tier-badge";
-import { DOMAIN_LABEL, ReviewStatusBadge } from "./reviews-tab";
+import { DOMAIN_LABEL, ReviewStatusBadge } from "./domain-labels";
 import { GatedActionButton } from "./role-gate";
+import { ReturnReviewDialog } from "./return-review-dialog";
+import {
+  apiErrorToMessage,
+  isApiError,
+  returnReview,
+  signReview,
+} from "@/lib/client/api";
+import { useLiveInfo } from "@/lib/client/use-live-info";
+import { useLiveSessionOptional } from "@/lib/client/session-context";
 
 export interface ReviewQueueRow {
   slug: string;
@@ -121,27 +136,10 @@ export function ReviewWorkbench({ rows }: { rows: ReviewQueueRow[] }) {
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-sm">Assessment (reviewer edits, then decides)</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <textarea
-                className="min-h-32 w-full rounded-lg border border-input bg-transparent p-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
-                defaultValue={selected.review.draftMd ?? ""}
-                disabled
-                aria-label="Assessment text"
-              />
-              <div className="flex gap-2">
-                <GatedActionButton label="Sign" />
-                <GatedActionButton label="Return" variant="outline" />
-              </div>
-              <p className="text-xs text-muted-foreground">
-                Returning requires a mandatory reason; both actions write an
-                audit event. Agents draft — humans decide.
-              </p>
-            </CardContent>
-          </Card>
+          <AssessmentPane
+            key={`${selected.slug}-${selected.review.domain}`}
+            row={selected}
+          />
         </div>
       ) : (
         <p className="text-sm text-muted-foreground">
@@ -149,5 +147,107 @@ export function ReviewWorkbench({ rows }: { rows: ReviewQueueRow[] }) {
         </p>
       )}
     </div>
+  );
+}
+
+/**
+ * Right pane — editable assessment + Sign/Return. Keyed by slug+domain from
+ * the parent so its draft-edit state re-initializes per selection.
+ */
+function AssessmentPane({ row }: { row: ReviewQueueRow }) {
+  const router = useRouter();
+  const live = useLiveSessionOptional();
+  const session = live?.session ?? null;
+  const liveInfo = useLiveInfo(row.slug);
+  const cycleId = liveInfo?.cycleId ?? null;
+
+  const [editedText, setEditedText] = React.useState(row.review.draftMd ?? "");
+  const [pending, setPending] = React.useState(false);
+  const [returnOpen, setReturnOpen] = React.useState(false);
+
+  const canAct = Boolean(session?.role === "reviewer" && cycleId);
+  const actionable = row.review.status === "drafted" || row.review.status === "returned";
+
+  async function handleSign() {
+    if (!session || !cycleId) return;
+    setPending(true);
+    try {
+      await signReview(
+        session.token,
+        cycleId,
+        row.review.domain,
+        editedText !== (row.review.draftMd ?? "") ? editedText : undefined,
+      );
+      toast.success(`${DOMAIN_LABEL[row.review.domain]} review signed.`);
+      router.refresh();
+    } catch (err) {
+      toast.error(isApiError(err) ? apiErrorToMessage(err) : "Sign failed.");
+      if (isApiError(err) && err.status === 401) live?.logout();
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function handleReturn(reason: string) {
+    if (!session || !cycleId) return;
+    setPending(true);
+    try {
+      await returnReview(session.token, cycleId, row.review.domain, reason);
+      setReturnOpen(false);
+      toast.success(`${DOMAIN_LABEL[row.review.domain]} review returned.`);
+      router.refresh();
+    } catch (err) {
+      toast.error(isApiError(err) ? apiErrorToMessage(err) : "Return failed.");
+      if (isApiError(err) && err.status === 401) live?.logout();
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-sm">Assessment (reviewer edits, then decides)</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <textarea
+          className="min-h-32 w-full rounded-lg border border-input bg-transparent p-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
+          value={editedText}
+          onChange={(e) => setEditedText(e.target.value)}
+          disabled={!canAct}
+          maxLength={20_000}
+          aria-label="Assessment text"
+          data-slot="assessment-textarea"
+        />
+        <div className="flex gap-2">
+          <GatedActionButton
+            label="Sign"
+            requiresRole="reviewer"
+            pending={pending}
+            pendingLabel="Signing…"
+            onAction={canAct && actionable ? () => void handleSign() : undefined}
+          />
+          <GatedActionButton
+            label="Return"
+            variant="outline"
+            requiresRole="reviewer"
+            pending={pending}
+            onAction={canAct && actionable ? () => setReturnOpen(true) : undefined}
+          />
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Returning requires a mandatory reason; both actions write an
+          audit event. Agents draft — humans decide.
+        </p>
+      </CardContent>
+
+      <ReturnReviewDialog
+        open={returnOpen}
+        onOpenChange={setReturnOpen}
+        domainLabel={DOMAIN_LABEL[row.review.domain]}
+        pending={pending}
+        onConfirm={(reason) => void handleReturn(reason)}
+      />
+    </Card>
   );
 }

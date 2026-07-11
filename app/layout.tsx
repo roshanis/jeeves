@@ -4,6 +4,7 @@ import "./globals.css";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/sonner";
 import { RoleProvider } from "@/components/jeeves/role-context";
+import { LiveSessionProvider } from "@/lib/client/session-context";
 import { Chrome } from "@/components/jeeves/chrome";
 
 const geistSans = Geist({
@@ -34,7 +35,8 @@ export default function RootLayout({
     >
       <body className="min-h-full flex flex-col">
         <RoleProvider>
-          <TooltipProvider>
+          <LiveSessionProvider>
+            <TooltipProvider>
             <Chrome />
             <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-6">
               {children}
@@ -43,8 +45,9 @@ export default function RootLayout({
               Fictional demo. Synthetic data only. Not affiliated with any
               real organization.
             </footer>
-            <Toaster />
-          </TooltipProvider>
+              <Toaster />
+            </TooltipProvider>
+          </LiveSessionProvider>
         </RoleProvider>
       </body>
     </html>
