@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(git status*)",
+      "Bash(git add*)",
+      "Bash(git commit*)",
+      "Bash(npm test*)",
+      "Bash(npm run lint*)",
+      "Bash(npm audit*)",
+      "Bash(pnpm test*)",
+      "Bash(pnpm lint*)",
+      "Bash(pnpm run*)"
+    ],
+    "deny": [
+      "Bash(git push --force*)",
+      "Bash(git reset --hard*)",
+      "Bash(rm -rf*)",
+      "Bash(DROP *)",
+      "Bash(kill *)"
+    ]
+  }
+}

@@ -1,0 +1,20 @@
+# deps / build
+node_modules/
+.next/
+out/
+coverage/
+playwright-report/
+test-results/
+
+# env & secrets
+.env
+.env.local
+.env.*.local
+
+# session artifacts
+SESSION_CONTEXT.md
+*.backup
+
+# misc
+.DS_Store
+*.log
