@@ -45,6 +45,33 @@ function reviewsFraction(i: InitiativeSummary) {
   return i.domainsRequired === 0 ? 1 : i.domainsSigned / i.domainsRequired;
 }
 
+// Sortable column header. Declared at module scope (not inside the table's
+// render) so React doesn't remount it every render — the sort handler is
+// passed in as a prop instead of closed over.
+function Th({
+  k,
+  onToggle,
+  children,
+  className = "",
+}: {
+  k: SortKey;
+  onToggle: (k: SortKey) => void;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <th className={`px-3 py-2 text-left font-medium ${className}`}>
+      <button
+        onClick={() => onToggle(k)}
+        className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground"
+      >
+        {children}
+        <ArrowUpDown className="h-3 w-3 opacity-50" aria-hidden />
+      </button>
+    </th>
+  );
+}
+
 export function InitiativeTable({
   initiatives,
   caption,
@@ -76,30 +103,18 @@ export function InitiativeTable({
     else { setSort(key); setDir(1); }
   }
 
-  const Th = ({ k, children, className = "" }: { k: SortKey; children: React.ReactNode; className?: string }) => (
-    <th className={`px-3 py-2 text-left font-medium ${className}`}>
-      <button
-        onClick={() => toggle(k)}
-        className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground"
-      >
-        {children}
-        <ArrowUpDown className="h-3 w-3 opacity-50" aria-hidden />
-      </button>
-    </th>
-  );
-
   return (
     <div className="overflow-x-auto rounded-lg border bg-card" data-slot="initiative-table">
       <table className="w-full min-w-[52rem] border-collapse text-sm">
         {caption ? <caption className="sr-only">{caption}</caption> : null}
         <thead className="border-b bg-muted/50 text-xs uppercase tracking-wide">
           <tr>
-            <Th k="title">Initiative</Th>
+            <Th k="title" onToggle={toggle}>Initiative</Th>
             <th className="px-3 py-2 text-left font-medium text-muted-foreground">Owner</th>
-            <Th k="tier">Tier</Th>
-            <Th k="state">State</Th>
-            <Th k="reviews">Reviews</Th>
-            <Th k="sla">SLA</Th>
+            <Th k="tier" onToggle={toggle}>Tier</Th>
+            <Th k="state" onToggle={toggle}>State</Th>
+            <Th k="reviews" onToggle={toggle}>Reviews</Th>
+            <Th k="sla" onToggle={toggle}>SLA</Th>
             <th className="px-3 py-2 text-left font-medium text-muted-foreground">Next action</th>
           </tr>
         </thead>

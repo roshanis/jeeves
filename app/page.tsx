@@ -14,7 +14,6 @@ import { getDb } from "@/lib/db/client";
 import { listIncidents, type IncidentListRow } from "@/lib/services/monitor-service";
 import type { InitiativeSummary, InitiativeDetail, DecisionRow } from "@/lib/data/dto";
 import { InitiativeTable } from "@/components/jeeves/initiative-table";
-import { TierBadge } from "@/components/jeeves/tier-badge";
 import { LifecycleBadge } from "@/components/jeeves/lifecycle-badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 

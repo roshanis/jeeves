@@ -84,28 +84,71 @@ export default async function AdminPage() {
       </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle>Q-01 Eval quality floor — threshold</CardTitle>
+        <Card className="overflow-hidden">
+          <CardHeader className="border-b bg-muted/40 py-2.5">
+            <CardTitle className="text-xs uppercase tracking-wide text-muted-foreground">
+              Q-01 · Eval-quality floor
+            </CardTitle>
           </CardHeader>
-          <CardContent className="space-y-3">
-            <div className="flex items-center gap-3">
-              <span className="text-3xl font-semibold tabular-nums">
-                {q01?.threshold ?? "—"}
-              </span>
-              <div className="text-xs text-muted-foreground">
-                <p>High-tier default (global). Critical-tier deployments use 0.05.</p>
-                <p>Sustained window: 3 consecutive points · enforcement: block (pause deployment).</p>
-              </div>
+          <CardContent className="space-y-3 p-0">
+            {/* Restrained threshold table (Codex design review): the effective
+                value read across scopes, with the one mutable action kept
+                visually secondary in the footer rather than a prominent
+                big-number CTA. Per-initiative override values live behind the
+                edit dialog — not fabricated here. */}
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Scope</TableHead>
+                  <TableHead>Threshold</TableHead>
+                  <TableHead>Enforcement</TableHead>
+                  <TableHead>Status</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                <TableRow>
+                  <TableCell className="font-medium">High-tier default (global)</TableCell>
+                  <TableCell className="tabular-nums">{q01?.threshold ?? "—"}</TableCell>
+                  <TableCell className="text-xs text-muted-foreground">
+                    block · 3-point window
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant="default">Enforced</Badge>
+                  </TableCell>
+                </TableRow>
+                <TableRow>
+                  <TableCell className="font-medium">Critical-tier default</TableCell>
+                  <TableCell className="tabular-nums">0.05</TableCell>
+                  <TableCell className="text-xs text-muted-foreground">
+                    block · 3-point window
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant="default">Enforced</Badge>
+                  </TableCell>
+                </TableRow>
+                <TableRow>
+                  <TableCell className="font-medium">
+                    Per-initiative overrides
+                  </TableCell>
+                  <TableCell className="text-xs text-muted-foreground" colSpan={2}>
+                    Configured via the threshold editor
+                  </TableCell>
+                  <TableCell className="text-xs text-muted-foreground tabular-nums">
+                    {initiativeOptions.length} configurable
+                  </TableCell>
+                </TableRow>
+              </TableBody>
+            </Table>
+            <div className="flex items-center justify-between gap-3 border-t px-4 py-2.5">
+              <p className="text-xs text-muted-foreground">
+                Last changed 30 days ago by Ray Chen — &ldquo;Q2 quality
+                initiative&rdquo; (0.10&nbsp;→&nbsp;0.08). Every edit is audited.
+              </p>
+              <ThresholdEditAction
+                currentThreshold={q01?.threshold ?? null}
+                initiativeOptions={initiativeOptions}
+              />
             </div>
-            <p className="text-xs text-muted-foreground">
-              Last changed: 30 days ago by Ray Chen — &ldquo;Q2 quality
-              initiative&rdquo; (0.10 → 0.08).
-            </p>
-            <ThresholdEditAction
-              currentThreshold={q01?.threshold ?? null}
-              initiativeOptions={initiativeOptions}
-            />
           </CardContent>
         </Card>
 

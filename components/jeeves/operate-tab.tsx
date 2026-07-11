@@ -1,10 +1,12 @@
 "use client";
 
-// Operate tab (ui-spec §3.6): cost / eval / GPU panels from Observation
-// series. EVERY panel is wrapped in SyntheticDataLabel ("Synthetic data —
-// demo" + "Arize: not connected") — no exceptions, per plan §7 / Codex F6.
-// GPU panel renders only when a gpu_util_pct series exists (only #6
-// claims-ocr-coder); it is absent entirely, not zeroed-out, elsewhere.
+// Evals tab (ui-spec §3.6, split from the former Operate tab — deployment
+// version/status now lives on the separate Deployments tab): cost / eval /
+// GPU telemetry panels from Observation series. EVERY panel is wrapped in
+// SyntheticDataLabel ("Synthetic data — demo" + "Arize: not connected") — no
+// exceptions, per plan §7 / Codex F6. GPU panel renders only when a
+// gpu_util_pct series exists (only #6 claims-ocr-coder); it is absent
+// entirely, not zeroed-out, elsewhere.
 import {
   Bar,
   BarChart,
@@ -18,10 +20,9 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import type { DeploymentRow, TelemetrySeries } from "@/lib/data/dto";
+import type { TelemetrySeries } from "@/lib/data/dto";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { SyntheticDataLabel } from "./synthetic-data-label";
 import { DisableWithTooltip } from "./role-gate";
 
@@ -153,21 +154,12 @@ function PromotionComparisonPanel() {
   );
 }
 
-const DEPLOYMENT_STATUS_LABEL: Record<DeploymentRow["status"], string> = {
-  deployed: "Deployed",
-  paused: "Paused",
-  awaiting_promotion_signoff: "Awaiting promotion sign-off",
-  retired: "Retired",
-};
-
-export function OperateTab({
+export function EvalsTab({
   slug,
   telemetry,
-  deployments,
 }: {
   slug: string;
   telemetry: TelemetrySeries[];
-  deployments: DeploymentRow[];
 }) {
   const isPromotionStory = slug === "pa-correspondence-model";
   const evalSeries = telemetry.filter((s) => s.kind === "eval_hallucination" || s.kind === "eval_relevance");
@@ -175,23 +167,13 @@ export function OperateTab({
   const gpuSeries = telemetry.filter((s) => s.kind === "gpu_util_pct");
 
   return (
-    <div className="space-y-4" data-slot="operate-tab">
+    <div className="space-y-4" data-slot="evals-tab">
       <div className="flex items-center justify-between gap-2">
-        <h3 className="text-sm font-medium">Operate</h3>
+        <h3 className="text-sm font-medium">Evals &amp; telemetry</h3>
         {/* Admin-shaped action, rendered disabled for every role in this
             read-only build (auth gating; see role-gate.tsx). */}
         <DisableWithTooltip label="Run monitor" variant="outline" />
       </div>
-
-      {deployments.length > 0 ? (
-        <div className="flex flex-wrap items-center gap-2">
-          {deployments.map((d) => (
-            <Badge key={d.version} variant={d.status === "deployed" ? "default" : "secondary"}>
-              {d.version} — {DEPLOYMENT_STATUS_LABEL[d.status]}
-            </Badge>
-          ))}
-        </div>
-      ) : null}
 
       {telemetry.length === 0 ? (
         <p className="text-sm text-muted-foreground">

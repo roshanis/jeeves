@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test";
 
 // plan.md §8 test 12 — Playwright golden path (required, AGENTS.md hard rule
 // 8): a read-only champion storyline covering the home pipeline board, an
-// initiative detail page's Intake/Operate tabs, the audit query console, and
+// initiative detail page's Intake/Evals tabs, the audit query console, and
 // the control catalog. This suite is read-only end to end — it never
 // submits, signs, approves, or mutates anything (AGENTS.md hard rule 2: the
 // public/demo surfaces this test drives are read-only for every role).
@@ -64,16 +64,16 @@ test.describe("champion storyline: read-only golden path", () => {
     );
   });
 
-  test("member-chat-copilot Operate tab shows the Synthetic data — demo label", async ({
+  test("member-chat-copilot Evals tab shows the Synthetic data — demo label", async ({
     page,
   }) => {
     await page.goto("/initiatives/member-chat-copilot");
 
-    await page.getByRole("tab", { name: "Operate" }).click();
-    const operateTab = page.locator('[data-slot="operate-tab"]');
-    await expect(operateTab).toBeVisible();
+    await page.getByRole("tab", { name: "Evals" }).click();
+    const evalsTab = page.locator('[data-slot="evals-tab"]');
+    await expect(evalsTab).toBeVisible();
     await expect(
-      operateTab.getByText("Synthetic data — demo").first(),
+      evalsTab.getByText("Synthetic data — demo").first(),
     ).toBeVisible();
   });
 

@@ -95,7 +95,7 @@ export default async function MonitoringPage() {
                   return (
                     <TableRow key={d.summary.slug}>
                       <TableCell>
-                        <Link href={`/initiatives/${d.summary.slug}?tab=operate`} className="font-medium hover:text-primary hover:underline">
+                        <Link href={`/initiatives/${d.summary.slug}?tab=evals`} className="font-medium hover:text-primary hover:underline">
                           {d.summary.title}
                         </Link>
                         <div className="text-xs text-muted-foreground">{d.summary.slug}</div>
