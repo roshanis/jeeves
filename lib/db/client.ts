@@ -3,23 +3,24 @@
 // set, otherwise fall back to a local PGlite instance so the app and tests
 // run with zero external services and no sign-up.
 //
-// - Production / anywhere DATABASE_URL is set: drizzle-orm/neon-http over
-//   @neondatabase/serverless's HTTP driver (no `ws` dependency required,
-//   unlike the pool-based neon-serverless driver — keeps us to "NO other
-//   new dependencies").
+// - Production / anywhere DATABASE_URL is set: drizzle-orm/neon-serverless
+//   over a process-wide @neondatabase/serverless WebSocket Pool. This adds
+//   the `ws` dependency despite the earlier HTTP-driver preference because
+//   the application requires real interactive transaction support.
 // - Local dev without DATABASE_URL: PGlite with a persistent on-disk store
 //   at .pglite/ (gitignored) so `npm run dev` / `npm run db:seed` retain
 //   data across restarts.
 // - Tests: ALWAYS use a fresh in-memory PGlite instance (see
 //   lib/db/test-client.ts) regardless of DATABASE_URL, so test runs never
 //   depend on network access or shared local state.
-import { neon } from "@neondatabase/serverless";
-import { drizzle as drizzleNeonHttp, type NeonHttpDatabase } from "drizzle-orm/neon-http";
+import { neonConfig, Pool } from "@neondatabase/serverless";
+import { drizzle as drizzleNeon, type NeonDatabase } from "drizzle-orm/neon-serverless";
 import { drizzle as drizzlePglite, type PgliteDatabase } from "drizzle-orm/pglite";
 import { PGlite } from "@electric-sql/pglite";
+import ws from "ws";
 import * as schema from "./schema";
 
-export type Db = NeonHttpDatabase<typeof schema> | PgliteDatabase<typeof schema>;
+export type Db = NeonDatabase<typeof schema> | PgliteDatabase<typeof schema>;
 
 // Cache on globalThis, not at module scope: Next.js dev/Turbopack creates
 // MULTIPLE server module graphs in one process, and a per-module cache gave
@@ -28,10 +29,10 @@ export type Db = NeonHttpDatabase<typeof schema> | PgliteDatabase<typeof schema>
 // via API routes) and concurrent access corrupted the store once. One
 // process-wide handle fixes coherence for the single-instance demo.
 const DB_CACHE_KEY = Symbol.for("jeeves.db.cachedDb");
-type DbCacheSlot = { db: Db | null };
+type DbCacheSlot = { db: Db | null; pool: Pool | null };
 const dbSlot: DbCacheSlot = ((globalThis as Record<symbol, unknown>)[
   DB_CACHE_KEY
-] ??= { db: null }) as DbCacheSlot;
+] ??= { db: null, pool: null }) as DbCacheSlot;
 
 /**
  * Returns the process-wide DB handle, creating it on first use. Safe to
@@ -46,8 +47,9 @@ export function getDb(): Db {
   const databaseUrl = process.env.DATABASE_URL;
 
   if (databaseUrl) {
-    const sql = neon(databaseUrl);
-    dbSlot.db = drizzleNeonHttp({ client: sql, schema });
+    neonConfig.webSocketConstructor = ws;
+    dbSlot.pool ??= new Pool({ connectionString: databaseUrl });
+    dbSlot.db = drizzleNeon({ client: dbSlot.pool, schema });
     return dbSlot.db;
   }
 
@@ -66,10 +68,18 @@ export function resetDbForTests(): void {
  * Close the underlying connection and drop the memoized handle. Needed by
  * short-lived CLI processes (scripts/seed.ts): the PGlite WASM runtime
  * otherwise keeps the Node event loop alive after the work is done. The
- * Neon HTTP driver is stateless — nothing to close there.
+ * Neon WebSocket pool must likewise be ended by short-lived processes.
  */
 export async function closeDb(): Promise<void> {
-  if (!dbSlot.db) return;
+  if (!dbSlot.db && !dbSlot.pool) return;
+
+  if (dbSlot.pool) {
+    await dbSlot.pool.end();
+    dbSlot.pool = null;
+    dbSlot.db = null;
+    return;
+  }
+
   const client = (dbSlot.db as { $client?: { close?: () => Promise<void> } }).$client;
   if (client && typeof client.close === "function") {
     await client.close();

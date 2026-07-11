@@ -2512,10 +2512,12 @@ async function main() {
 
   // Ensure the schema exists before seeding. Against the local PGlite dev
   // store (no DATABASE_URL) the real migrations under drizzle/ are applied
-  // here; against Neon the same migrations run via the neon-http migrator.
-  // Both migrators are idempotent (drizzle's migrations journal table).
+  // here; against Neon the same migrations run via the neon-serverless
+  // migrator (matches the pooled/WebSocket driver getDb() now uses so
+  // transaction() is atomic). Both migrators are idempotent (drizzle's
+  // migrations journal table).
   if (process.env.DATABASE_URL) {
-    const { migrate } = await import("drizzle-orm/neon-http/migrator");
+    const { migrate } = await import("drizzle-orm/neon-serverless/migrator");
     type NeonDb = Parameters<typeof migrate>[0];
     await migrate(db as NeonDb, { migrationsFolder: "./drizzle" });
   } else {
