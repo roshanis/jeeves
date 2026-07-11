@@ -15,7 +15,7 @@
  *    what (if anything) to persist or transition.
  */
 
-/** The eight governance domains — plan.md §1 (all visible, 3–4 live). */
+/** The eight governance domains — plan.md §1 (all visible, all 8 drafted live). */
 export type GovernanceDomain =
   | "legal"
   | "procurement"

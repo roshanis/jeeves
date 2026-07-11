@@ -99,10 +99,12 @@ test.describe("champion storyline: read-only golden path", () => {
 
 // Live demo loop (task: wire live mode into the UI) — the full mutation
 // storyline through the real /api/** routes: requester creates + submits
-// the champion intake, runs triage (Critical, 8 domains), fans a 4-domain
-// draft run out to the mock agent adapter and watches rows flip to
-// Drafted; a reviewer signs Privacy/HIPAA; the approver conditionally
-// approves with one condition; the Audit tab shows the decision event.
+// the champion intake, runs triage (Critical, 8 domains), fans ALL 8
+// domains out to the mock agent adapter in one draft run and watches rows
+// flip to Drafted; a reviewer signs Privacy/HIPAA; the approver
+// conditionally approves with one condition; the Audit tab shows the
+// decision event. (8-domain honesty: every required domain is drafted
+// live, not 4-live-plus-4-seeded.)
 //
 // Requires DEMO_PASSCODE in the RUNNER environment (the webServer's own
 // env sets it for the server side — see playwright.config.ts). Without it
@@ -166,31 +168,28 @@ test.describe("live demo loop: create → triage → draft run → sign → deci
     await expect(triageResult).toContainText("8 required domains");
     await expect(triageResult).toContainText("Review");
 
-    // --- Draft run: 4 of 8 domains (incl. privacy-hipaa) -----------------
+    // --- Draft run: ALL 8 domains live -----------------------------------
     await page.getByRole("tab", { name: "Reviews" }).click();
     const draftPanel = page.locator('[data-slot="draft-run-panel"]');
     await expect(draftPanel).toBeVisible({ timeout: 30_000 });
 
-    // All pending domains start checked; uncheck 4 so exactly
-    // security, privacy-hipaa, clinical-safety, data-governance run.
-    for (const domain of ["legal", "procurement", "tech-architecture", "responsible-ai"]) {
-      await draftPanel
-        .locator(`[data-slot="draft-domain-checkbox"][data-domain="${domain}"]`)
-        .uncheck();
-    }
+    // All 8 pending domains start checked — leave them all checked so the
+    // whole Critical review set is agent-drafted live in one run (bounded
+    // concurrency handles the fan-out). No 4-live-plus-4-seeded split.
     await expect(draftPanel.locator('[data-slot="start-draft-run"]')).toContainText(
-      "4 domains",
+      "8 domains",
     );
     await draftPanel.locator('[data-slot="start-draft-run"]').click();
 
     // Rows flip to Drafted as the 1.5s poll reports progress (mock agent
-    // adapter drafts deterministically; allow several poll cycles).
+    // adapter drafts deterministically; allow several poll cycles — all 8
+    // must land).
     await expect(async () => {
       const drafted = await page
         .locator('[data-slot="review-row"] [data-slot="review-status"][data-status="drafted"]')
         .count();
-      expect(drafted).toBeGreaterThanOrEqual(4);
-    }).toPass({ timeout: 60_000 });
+      expect(drafted).toBeGreaterThanOrEqual(8);
+    }).toPass({ timeout: 90_000 });
 
     // --- Reviewer: sign privacy-hipaa ------------------------------------
     await resetToReadOnly(page);

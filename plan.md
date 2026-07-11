@@ -15,7 +15,7 @@ Codex's core finding: v1 tried to ship five persona experiences, eight live revi
 |---|---|
 | Positioning | Public demo on Vercel; fictional payer "Meridian Health"; synthetic data only; no Optum affiliation |
 | Roles | Requester, Reviewer, Program Office, Audit/Leadership, Admin — ⚠ now one initiative-centric UI where the demo role changes available actions and saved views, not five separate apps (Codex F8, Sierra-aligned) |
-| Governance domains | All 8 visible (Legal, Procurement, Tech Arch, Responsible AI, Security, Privacy/HIPAA, Clinical Safety, Data Governance); ⚠ 3–4 implemented as live agent drafts, rest seeded (Codex cut) |
+| Governance domains | All 8 visible (Legal, Procurement, Tech Arch, Responsible AI, Security, Privacy/HIPAA, Clinical Safety, Data Governance); ⚠ all 8 implemented as live agent drafts via the bounded-concurrency fan-out (M2 delivered; superseded the original Codex-cut 3–4-live/rest-seeded split) |
 | Risk model | Deterministic tiers Low/Med/High/Critical from healthcare overlay questions (PHI? member-facing? care/coverage influence? vendor-hosted?) |
 | Autonomy | ⚠ Agents draft, recommend, route, and flag missing evidence — they never approve. Low-risk = deterministic **fast-lane under a pre-approved policy** with a named accountable approver (was "agent auto-approve"; Codex F3 — owner to confirm, §12) |
 | Agent framework | ⚠ **DECIDED at P0 gate (2026-07-11): FALLBACK — Vercel AI SDK + Workflow SDK** (Codex spike verdict: eve 0.22.4 owns workflow lifecycle, model-directed fan-out, undocumented durable cancel, beta churn; AgentPort fit good, WorkflowPort fit insufficient). agents/ directory layout kept as our own convention; eve reconsidered post-GA as optional AgentPort adapter |
@@ -31,7 +31,7 @@ Seed 10–12 initiatives for organizational depth. The live demo runs ONE:
 **"Prior-auth clinical summarizer"** — member-facing, PHI-touching, influences coverage decisions.
 
 1. **Intake** (structured form, not chat) → completeness check flags a missing data-retention answer.
-2. **Deterministic triage** → Critical tier → all 8 domains required; eve drafts 4 live (Responsible AI, Privacy/HIPAA, Clinical Safety, Legal); 4 arrive pre-seeded.
+2. **Deterministic triage** → Critical tier → all 8 domains required; all 8 domains drafted live via the bounded-concurrency fan-out (Responsible AI, Privacy/HIPAA, Clinical Safety, Legal, Security, Tech Architecture, Data Governance, Procurement).
 3. **Human review**: reviewer edits a draft, signs; approver issues a **conditional approval** (named, accountable) with conditions linked to controls.
 4. **Versioned effective controls** generated for the deployment from the control catalog (§7).
 5. **Synthetic eval-quality breach** (hallucination-rate series crosses threshold) — evaluated synchronously via admin "Run monitor" action → deployment **paused**, reassessment ReviewCycle opened, incident recorded. Idempotent: re-running the monitor creates no duplicates.
@@ -84,7 +84,7 @@ Coverage: >80% on `lib/` logic (owner's global TDD rule — held; UI exempt).
 
 - **P0** (½ day): `git init` + worktrees, root `AGENTS.md` (mirror of build rules), scaffold, **eve spike (2h hard gate: choose eve or fallback — never both)**. *Stop condition: app boots, ports defined, decision logged.*
 - **P1** (¾ day): domain model + migrations + seed (10–12 initiatives, storylines) + read-only initiative-centric UI + outcome metrics. *Stop: seeded demo browsable end-to-end read-only.*
-- **P2** (1 day): live loop — intake form → triage → 4 live eve draft reviews (fan-out with mocked output first, durable polish second) → sign-off → conditional approval → effective controls. *Stop: champion steps 1–4 work live.*
+- **P2** (1 day): live loop — intake form → triage → 8 live draft reviews (fan-out with mocked output first, durable polish second) → sign-off → conditional approval → effective controls. *Stop: champion steps 1–4 work live.*
 - **P3** (½ day): breach → pause → reassessment; two admin actions with reasons + audit events. *Stop: steps 5 + 8 work.*
 - **P4** (¼ day): structured audit query with evidence links (step 6).
 - **P5** (¼ day): public read-only mode + passcode workspace + budget/rate limits verified, deploy, demo script, README.
@@ -96,7 +96,7 @@ Codex: P1 domain model/seed, P2 loop, P3 controls engine. Sonnet: UI pages/chart
 
 ## 11. Deferred backlog (v1 scope, post-demo)
 
-Conversational intake chat · free-form ask-the-auditor NL chat · all 8 domains live · real Arize Phoenix/AX integration via OTel · interactive RL training panels · GPU quota controls · cron-scheduled monitoring · ServiceNow/Ariba integration stubs · real auth/RBAC.
+Conversational intake chat · free-form ask-the-auditor NL chat · real Arize Phoenix/AX integration via OTel · interactive RL training panels · GPU quota controls · cron-scheduled monitoring · ServiceNow/Ariba integration stubs · real auth/RBAC. (All 8 domains live — delivered, M2; no longer deferred.)
 
 ## 12. Owner decisions needed at GO
 

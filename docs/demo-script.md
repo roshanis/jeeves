@@ -57,17 +57,16 @@
 
 ---
 
-### Step 3: Agent-Drafted Reviews, Four Domains Live (1.5 min)
-**On screen:** Review panel showing four drafts appearing live (or pre-cached, labeled as live-drafted):
+### Step 3: Agent-Drafted Reviews — All Eight Domains Live (1.5 min)
+**On screen:** Review panel showing all eight drafts appearing live, fanned out in parallel:
 - **Responsible AI** (Sofia Grant's domain): "Model card required; fairness testing protocol attached to control R-01."
 - **Privacy/HIPAA** (Marcus Webb): "BAA + PHI minimization checklist; DPIA required before deployment."
 - **Clinical Safety** (Dr. Elena Vasquez): "Clinician-in-the-loop protocol; adverse-event monitoring linked to control C-02."
 - **Legal** (James Liu): "Vendor contract must include AI addendum; model liability and IP terms to be negotiated."
-
-Plus four seeded reviews (pre-filled, not live-drafted) for Security, Tech Architecture, Data Governance, Procurement — to show real-world breadth without time overhead.
+- **Security**, **Tech Architecture**, **Data Governance**, **Procurement** — drafted the same way: each pulls its relevant controls from the catalog and proposes evidence requirements, rendered identically to the four above as they land.
 
 **Presenter talk track:**
-"Here's where Jeeves adds velocity. The system triggers agent-drafted reviews for four domains in parallel — responsible AI, privacy, clinical safety, legal. Each draft pulls in relevant controls from our catalog and suggests evidence requirements. The drafts aren't approvals; they're structured starting points for human reviewers. Humans edit, sign, or return them. We've pre-seeded the other four domains (Security, Tech Arch, Data Governance, Procurement) to show a complete picture — all eight domains required, four live-drafted, four templated."
+"Here's where Jeeves adds velocity. The system triggers agent-drafted reviews for all eight domains in parallel — a bounded-concurrency fan-out, not a sequential queue. Each draft pulls in relevant controls from our catalog and suggests evidence requirements. The drafts aren't approvals; they're structured starting points for human reviewers. Humans edit, sign, or return them. All eight domains required, all eight drafted live — no templated stand-ins."
 
 **Anticipated question:** *"What if an agent drafts a bad review — say, it misses a legal risk?"*
 
@@ -179,7 +178,7 @@ Each row links to approver decision, control status, and audit events.
 "Jeeves turns AI governance from a once-per-year gate review into a continuous closed-loop: intake → triage (deterministic) → multi-domain review (agent-drafted, human-signed) → conditional approval (named accountable approver) → deployment (versioned, pinned controls) → live monitoring (continuous breach detection) → incident → reassessment. Speed: a Low-tier model approves in hours. Rigor: a Critical model requires eight domain sign-offs and continues under monitoring. Accountability: every decision, every approver, every control status is logged and auditable. We're not replacing your governance; we're making it fast, visible, and defensible."
 
 **Next milestone callout:**
-"The roadmap is ambitious. M2 (next 3 days) adds all eight domains live and conversational intake. M3 (following 3 days) brings real Arize/Phoenix feeds and interactive RL promotion. M4 (final hardening) adds the full control catalog UI, exception workflows, and a security-reviewer pass. All synthetic data in this demo — if you move to production, you'd wire your real member data and model systems. But the governance design you see here is the production template."
+"The roadmap is ambitious. All eight domains are already drafted live, as you just saw — M2 adds conversational intake on top of that breadth. M3 (following 3 days) brings real Arize/Phoenix feeds and interactive RL promotion. M4 (final hardening) adds the full control catalog UI, exception workflows, and a security-reviewer pass. All synthetic data in this demo — if you move to production, you'd wire your real member data and model systems. But the governance design you see here is the production template."
 
 **Anticipated final question:** *"Is this real member data?"*
 
@@ -204,7 +203,7 @@ Each row links to approver decision, control status, and audit events.
 | **Who's accountable?** | Named accountable approver on every approval (Angela Torres in this demo). Audit trail logs every action and actor. |
 | **Can users exploit the fast-lane?** | Only if the policy is wrong. Triage rules are hardcoded and non-negotiable; policies are business-owned and tunable. |
 | **How do you handle continuous redeployment?** | Every model version pins to a governance decision and control manifest. New version = new review cycle. Versioned, locked. |
-| **What's the post-demo roadmap?** | M2: all 8 domains live + conversational intake. M3: real LLM observability feeds. M4: full control catalog + hardening. |
+| **What's the post-demo roadmap?** | All 8 domains already drafted live today. M2: conversational intake. M3: real LLM observability feeds. M4: full control catalog + hardening. |
 | **Is the audit query really that simple?** | Yes. Structured query, no SQL, deterministic results, evidence links. Auditors see what they need in seconds. |
 | **Who prevents an admin from loosening controls?** | Audit trail + separation of duties. Admin actions are logged and attributable. Loosening without justification is a compliance finding. |
 
