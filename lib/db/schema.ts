@@ -4,7 +4,8 @@
 // (initial | reassessment), ReviewDecision (per domain), DeploymentVersion,
 // ControlDefinition, EffectiveControl (versioned, per deployment),
 // Observation (synthetic telemetry), Incident, AuditEvent (append-only at
-// the DB level — see drizzle/0002_audit_events_append_only.sql), RunBudget.
+// the DB level — see drizzle/0002_audit_events_append_only.sql), RunBudget,
+// Session.
 //
 // Uniqueness/linkage constraints (plan §5):
 //   - one ReviewDecision per (cycle, domain)
@@ -17,6 +18,7 @@
 // initiatives + latest risk assessment + latest deployment, not a table.
 import { sql } from "drizzle-orm";
 import {
+  bigint,
   boolean,
   doublePrecision,
   integer,
@@ -298,6 +300,22 @@ export const runBudget = pgTable(
   },
   (t) => [uniqueIndex("run_budget_day_uq").on(t.day)],
 );
+
+/* -------------------------------------------------------------------------
+ * Demo sessions — DB-backed (M2.5 inc.1) so a passcode-issued session and
+ * its bound persona survive a process restart / span multiple serverless
+ * instances, instead of living in a module-scoped Map. One row per issued
+ * session token; expiry enforced in app code (`expiresAt` is an epoch-ms
+ * cutoff, checked against `Date.now()` by the route guard).
+ * ---------------------------------------------------------------------- */
+
+export const sessions = pgTable("sessions", {
+  token: text("token").primaryKey(),
+  personaKey: text("persona_key").notNull(),
+  workspaceId: text("workspace_id").notNull(),
+  expiresAt: bigint("expires_at", { mode: "number" }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
 
 /* -------------------------------------------------------------------------
  * Composite PK helper re-export (not used above but kept available for

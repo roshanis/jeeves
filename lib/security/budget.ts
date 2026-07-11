@@ -1,21 +1,32 @@
 /**
  * Daily token budget enforcement (plan §3 / AGENTS.md hard rule 2: "atomic
- * `run_budget` check"). Pure logic, framework/DB-agnostic — a real Postgres
- * `RunBudget`-backed implementation of `BudgetStore` lands later; this
- * module defines the interface plus an in-memory implementation for tests
- * and for any short-lived demo-workspace usage that doesn't need
- * persistence across process restarts.
+ * `run_budget` check"). The shared interface supports both an in-memory
+ * implementation for pure unit tests and a Postgres-backed implementation
+ * for persistent, cross-instance enforcement.
  */
+import { eq, sql } from "drizzle-orm";
+import type { Db } from "../db/client";
+import { runBudget } from "../db/schema";
 
 /**
- * Persistence boundary for daily usage totals. A DB-backed implementation
- * (Neon/Drizzle `RunBudget` table, per plan §5) will implement this same
- * interface later — callers of `reserve`/`checkBudget` don't need to
- * change.
+ * Persistence boundary for daily usage totals. Both the in-memory unit-test
+ * store and the Neon/Drizzle `RunBudget` store implement this interface, so
+ * callers of `reserve`/`checkBudget` stay storage-agnostic.
  */
 export interface BudgetStore {
   getUsed(day: string): Promise<number>;
   addUsage(day: string, tokens: number): Promise<void>;
+  /**
+   * Optional store-native atomic reserve: when present, `reserve()` below
+   * delegates the whole read-check-write to the store instead of doing its
+   * own read-then-write across `getUsed`/`addUsage`. Required for stores
+   * that are shared across multiple processes/instances (e.g.
+   * `DbBudgetStore`), where the in-process `dayChains` serialization in this
+   * module can't prevent a race between two separate Node processes both
+   * reading "under cap" before either writes. In-memory stores don't need
+   * this — a single process's `dayChains` queue is already sufficient.
+   */
+  reserveAtomic?(day: string, requested: number, dailyCap: number): Promise<ReserveResult>;
 }
 
 export class InMemoryBudgetStore implements BudgetStore {
@@ -28,6 +39,73 @@ export class InMemoryBudgetStore implements BudgetStore {
   async addUsage(day: string, tokens: number): Promise<void> {
     const current = this.usage.get(day) ?? 0;
     this.usage.set(day, current + tokens);
+  }
+}
+
+/**
+ * DB-backed `BudgetStore` over the `run_budget` table (M2.5 inc.1), so the
+ * daily token budget survives a process restart / is shared across multiple
+ * serverless instances rather than resetting per-instance.
+ *
+ * `getDb` is injected (rather than imported directly) so callers — and
+ * tests — can point this at whatever `Db` handle is active, matching how
+ * `lib/services/route-guard.ts` already calls `getDb()` per-request instead
+ * of caching a handle at module load.
+ *
+ * `getUsed`/`addUsage` alone are NOT atomic under concurrency (that's what
+ * `reserve` in this module is for), but `reserveAtomic` below performs the
+ * cap check and increment in one conditional upsert. PostgreSQL locks a
+ * conflicting day row before evaluating the update predicate, so separate
+ * processes cannot race past the cap.
+ */
+export class DbBudgetStore implements BudgetStore {
+  constructor(private readonly getDb: () => Db) {}
+
+  async getUsed(day: string): Promise<number> {
+    const db = this.getDb();
+    const rows = await db.select().from(runBudget).where(eq(runBudget.day, day));
+    return rows[0]?.tokensUsed ?? 0;
+  }
+
+  async addUsage(day: string, tokens: number): Promise<void> {
+    const db = this.getDb();
+    await db
+      .insert(runBudget)
+      .values({ id: day, day, tokensUsed: tokens, tokensCap: 0 })
+      .onConflictDoUpdate({
+        target: runBudget.day,
+        set: { tokensUsed: sql`${runBudget.tokensUsed} + ${tokens}` },
+      });
+  }
+
+  /** Atomic reserve implemented as one INSERT ... ON CONFLICT DO UPDATE. */
+  async reserveAtomic(day: string, requested: number, dailyCap: number): Promise<ReserveResult> {
+    if (requested > dailyCap) {
+      const used = await this.getUsed(day);
+      return { granted: false, remaining: Math.max(0, dailyCap - used) };
+    }
+
+    const db = this.getDb();
+    const rows = await db
+      .insert(runBudget)
+      .values({ id: day, day, tokensUsed: requested, tokensCap: dailyCap })
+      .onConflictDoUpdate({
+        target: runBudget.day,
+        set: {
+          tokensUsed: sql`${runBudget.tokensUsed} + ${requested}`,
+          tokensCap: dailyCap,
+        },
+        setWhere: sql`${runBudget.tokensUsed} + ${requested} <= ${dailyCap}`,
+      })
+      .returning();
+
+    const committed = rows[0];
+    if (committed) {
+      return { granted: true, remaining: dailyCap - committed.tokensUsed };
+    }
+
+    const used = await this.getUsed(day);
+    return { granted: false, remaining: Math.max(0, dailyCap - used) };
   }
 }
 
@@ -112,8 +190,14 @@ function runExclusive<T>(day: string, fn: () => Promise<T>): Promise<T> {
 /**
  * Atomically reserve `requested` tokens against `day`'s budget: grants and
  * commits the usage in one serialized step if `used + requested <=
- * dailyCap`, otherwise denies and commits nothing. Safe under concurrent
- * calls for the same day (see `runExclusive`).
+ * dailyCap`, otherwise denies and commits nothing.
+ *
+ * When `store` implements `reserveAtomic` (e.g. `DbBudgetStore`), that's
+ * used directly — the conditional upsert is the source of atomicity across
+ * multiple processes/instances. Otherwise falls back to this
+ * module's in-process `runExclusive` serialization over plain
+ * `getUsed`/`addUsage`, which is sufficient for a single-process store like
+ * `InMemoryBudgetStore`.
  */
 export async function reserve(
   store: BudgetStore,
@@ -121,6 +205,9 @@ export async function reserve(
   requested: number,
   dailyCap: number,
 ): Promise<ReserveResult> {
+  if (store.reserveAtomic) {
+    return store.reserveAtomic(day, requested, dailyCap);
+  }
   return runExclusive(day, async () => {
     const used = await store.getUsed(day);
     const wouldBeUsed = used + requested;

@@ -1,10 +1,9 @@
 /**
  * Shared request-guard pipeline for `app/api/**` mutating route handlers
  * (task brief deliverable 3): session (passcode-issued) -> rate-limit ->
- * input-size validation -> optional budget reserve. Kept inside
- * `lib/services/` (this task's owned directory) rather than
- * `lib/security/`, which is out of scope to modify — this module composes
- * `lib/security/*` primitives, it does not replace them.
+ * input-size validation -> optional budget reserve. This module composes
+ * the persistence and validation primitives while keeping route handlers
+ * thin.
  *
  * Every exported check returns a discriminated `GuardFailure` (mapped by
  * the caller to the right HTTP status) or `null` (proceed). Route handlers
@@ -13,24 +12,24 @@
  */
 import { TokenBucketRateLimiter } from "../security/rate-limit";
 import { verifyPasscode } from "../security/passcode";
-import { issueSession, validateSession, type Session } from "../security/session";
-import { InMemoryBudgetStore, reserve, type BudgetStore } from "../security/budget";
+import { issueSession } from "../security/session";
+import { DbBudgetStore, reserve, type BudgetStore } from "../security/budget";
 import { validateInputSize, type FieldLimit, type InputGap } from "../security/input-limits";
-import { resolveActor, type PersonaKey } from "./actors";
+import { resolveActor } from "./actors";
 import type { Actor } from "../domain/types";
+import { eq } from "drizzle-orm";
+import { getDb } from "../db/client";
+import { sessions } from "../db/schema";
 
 /* -------------------------------------------------------------------------
- * Process-wide (module-scoped) singletons — mirrors the "in-memory, single
- * demo process" design already used by lib/security/budget.ts's dayChains
- * and is appropriate for a single-instance Vercel demo deployment (plan §3).
+ * Persistent session + budget state, with intentionally process-local rate
+ * limiting for this demo increment.
  * ---------------------------------------------------------------------- */
 
 const SESSION_TTL_MS = 60 * 60 * 1000; // 1 hour demo session
-const sessions = new Map<string, Session>();
-const personaBySessionToken = new Map<string, PersonaKey>();
-
-const rateLimiter = new TokenBucketRateLimiter({ capacity: 20, refillPerSecond: 0.5 }, () => Date.now());
-const budgetStore: BudgetStore = new InMemoryBudgetStore();
+// Per-instance rate limiting is an accepted demo posture; shared limiting is a follow-up increment.
+let rateLimiter = new TokenBucketRateLimiter({ capacity: 20, refillPerSecond: 0.5 }, () => Date.now());
+const budgetStore: BudgetStore = new DbBudgetStore(getDb);
 const DAILY_TOKEN_CAP = 500_000;
 
 // Security review finding #1: /api/session sits pre-session outside
@@ -48,15 +47,16 @@ export function checkSessionAttempt(clientKey: string): { allowed: boolean; retr
 
 /** Test-only: reset all module-scoped guard state between test files/cases. */
 export function resetGuardStateForTests(): void {
-  sessions.clear();
-  personaBySessionToken.clear();
+  rateLimiter = new TokenBucketRateLimiter(
+    { capacity: 20, refillPerSecond: 0.5 },
+    () => Date.now(),
+  );
   sessionAttemptLimiter = new TokenBucketRateLimiter(
     { capacity: 5, refillPerSecond: 1 / 30 },
     () => Date.now(),
   );
-  // The mutation rateLimiter has no public clear(); tests construct their own
-  // limiter via runMutationGuard's injected `deps` instead of relying on
-  // this module singleton when they need a clean bucket.
+  // Session and budget rows live in the DB; API tests provide a fresh PGlite
+  // database for each case, so no module-scoped persistence state remains.
 }
 
 export type GuardFailureKind = "unauthorized" | "rate_limited" | "invalid_input" | "budget_exhausted";
@@ -85,18 +85,22 @@ export interface IssueSessionResult {
  * (caller maps to 401, no side effects — plan §3 "unauthenticated requests
  * -> 401 with no side effects").
  */
-export function issueDemoSession(
+export async function issueDemoSession(
   providedPasscode: string,
   expectedPasscode: string,
   personaKey: string,
-): IssueSessionResult | null {
+): Promise<IssueSessionResult | null> {
   const check = verifyPasscode(providedPasscode, expectedPasscode);
   if (!check.ok) return null;
   if (!resolveActor(personaKey)) return null;
 
   const session = issueSession({ ttlMs: SESSION_TTL_MS }, () => Date.now());
-  sessions.set(session.token, session);
-  personaBySessionToken.set(session.token, personaKey as PersonaKey);
+  await getDb().insert(sessions).values({
+    token: session.token,
+    personaKey,
+    workspaceId: session.workspaceId,
+    expiresAt: session.expiresAt,
+  });
   return { token: session.token, workspaceId: session.workspaceId, expiresAt: session.expiresAt };
 }
 
@@ -105,19 +109,21 @@ export function issueDemoSession(
  * from the server-side persona directory keyed by the token — never from
  * anything in the request body (task brief §4).
  */
-export function resolveSessionActor(token: string | null): Actor | null {
+export async function resolveSessionActor(token: string | null): Promise<Actor | null> {
   if (!token) return null;
-  const session = sessions.get(token);
+
+  const [session] = await getDb()
+    .select({ personaKey: sessions.personaKey, expiresAt: sessions.expiresAt })
+    .from(sessions)
+    .where(eq(sessions.token, token))
+    .limit(1);
   if (!session) return null;
-  const validity = validateSession(session, () => Date.now());
-  if (!validity.valid) {
-    sessions.delete(token);
-    personaBySessionToken.delete(token);
+
+  if (session.expiresAt <= Date.now()) {
+    await getDb().delete(sessions).where(eq(sessions.token, token));
     return null;
   }
-  const personaKey = personaBySessionToken.get(token);
-  if (!personaKey) return null;
-  return resolveActor(personaKey);
+  return resolveActor(session.personaKey);
 }
 
 /* -------------------------------------------------------------------------
@@ -186,7 +192,7 @@ export async function runMutationGuard(
   options: MutationGuardOptions = {},
 ): Promise<MutationGuardResult> {
   const token = extractSessionToken(req);
-  const actor = resolveSessionActor(token);
+  const actor = await resolveSessionActor(token);
   if (!actor) {
     return { ok: false, failure: { kind: "unauthorized", status: 401, message: "invalid or missing session" } };
   }

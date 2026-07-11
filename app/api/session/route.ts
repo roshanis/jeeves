@@ -45,7 +45,7 @@ export async function POST(req: Request): Promise<Response> {
   }
 
   const expected = process.env.DEMO_PASSCODE ?? "";
-  const result = issueDemoSession(parsed.data.passcode, expected, parsed.data.personaKey);
+  const result = await issueDemoSession(parsed.data.passcode, expected, parsed.data.personaKey);
   if (!result) {
     return Response.json({ error: "unauthorized" }, { status: 401 });
   }
