@@ -63,3 +63,31 @@ describe("OperateTab — breach initiative (#4 member-chat-copilot)", () => {
     ).not.toBeNull();
   });
 });
+
+describe("OperateTab — breach marker (review P3)", () => {
+  it("marks the eval panel Threshold exceeded when #4's series crosses Q-01", async () => {
+    const detail = await getProvider().getInitiativeDetail("member-chat-copilot");
+    const { container } = renderWithProviders(
+      <OperateTab
+        slug={detail!.summary.slug}
+        telemetry={detail!.telemetry}
+        deployments={detail!.deployments}
+      />,
+    );
+    const evalPanel = container.querySelector('[data-kind="eval_hallucination"]');
+    expect(evalPanel).not.toBeNull();
+    expect(evalPanel!.querySelector('[data-slot="breach-marker"]')).not.toBeNull();
+  });
+
+  it("shows no breach marker for a healthy initiative (#12 callcenter-qa-scorer)", async () => {
+    const detail = await getProvider().getInitiativeDetail("callcenter-qa-scorer");
+    const { container } = renderWithProviders(
+      <OperateTab
+        slug={detail!.summary.slug}
+        telemetry={detail!.telemetry}
+        deployments={detail!.deployments}
+      />,
+    );
+    expect(container.querySelector('[data-slot="breach-marker"]')).toBeNull();
+  });
+});

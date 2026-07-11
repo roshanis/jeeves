@@ -48,10 +48,30 @@ function shortDate(ts: string): string {
 function SeriesPanel({ series }: { series: TelemetrySeries }) {
   const data = series.points.map((p) => ({ ts: shortDate(p.ts), value: p.value }));
 
+  // Breach marker: an eval series with points strictly above its Q-01
+  // threshold has crossed the floor. GPU quota (also a threshold) is a
+  // utilization ceiling, not an eval breach, so it is excluded.
+  const isEvalKind =
+    series.kind === "eval_hallucination" || series.kind === "eval_relevance";
+  const breached =
+    isEvalKind &&
+    series.threshold !== null &&
+    series.points.some((p) => p.value > series.threshold!);
+
   return (
     <Card data-slot="telemetry-panel" data-kind={series.kind}>
       <CardHeader>
-        <CardTitle className="text-sm">{KIND_TITLE[series.kind]}</CardTitle>
+        <CardTitle className="flex items-center gap-2 text-sm">
+          {KIND_TITLE[series.kind]}
+          {breached ? (
+            <span
+              data-slot="breach-marker"
+              className="rounded-full bg-destructive/15 px-2 py-0.5 text-xs font-medium text-destructive"
+            >
+              Threshold exceeded
+            </span>
+          ) : null}
+        </CardTitle>
       </CardHeader>
       <CardContent>
         <SyntheticDataLabel>

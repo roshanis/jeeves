@@ -5,6 +5,10 @@ import type { Domain, LifecycleState, OverlayFlags, Tier } from "@/lib/domain/ty
 
 export interface InitiativeSummary {
   slug: string;
+  // DB initiative id (e.g. "init-004"). Present from real providers so admin
+  // live actions (pause/resume, threshold override) can target seeded
+  // initiatives by id; may be absent in a slug-only context.
+  initiativeId?: string;
   title: string;
   tier: Tier;
   state: LifecycleState;

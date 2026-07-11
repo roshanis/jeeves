@@ -275,6 +275,7 @@ export class DbDataProvider implements DataProvider {
 
     return {
       slug: init.slug,
+      initiativeId: init.id,
       title: init.title,
       tier: (init.tier ?? "low") as Tier,
       state: init.state as LifecycleState,

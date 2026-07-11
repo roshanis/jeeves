@@ -60,6 +60,19 @@ export default async function InitiativeDetailPage({
         </div>
       </header>
 
+      {summary.state === "paused" || summary.state === "re_review" ? (
+        <div
+          role="alert"
+          data-slot="incident-banner"
+          className="rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive"
+        >
+          <strong className="font-semibold">Eval-quality breach.</strong>{" "}
+          The Q-01 hallucination-rate floor was exceeded on a sustained window;
+          this deployment is paused and a reassessment review cycle is open. See
+          the Operate and Audit tabs for the incident record.
+        </div>
+      ) : null}
+
       <LiveActionsBar slug={summary.slug} state={summary.state} />
 
       <Tabs defaultValue={normalizeTab(tab)}>
