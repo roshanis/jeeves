@@ -137,7 +137,7 @@ export function LiveSessionProvider({ children }: { children: React.ReactNode })
     getSessionSnapshot,
     getSessionServerSnapshot,
   );
-  const { setRoleKey } = useRole();
+  const { setRoleKey, setPersonaKey } = useRole();
 
   const login = React.useCallback(
     async (passcode: string, personaKey: string): Promise<LiveSession> => {
@@ -155,10 +155,16 @@ export function LiveSessionProvider({ children }: { children: React.ReactNode })
         role: persona.role,
       };
       setStoredSession(next);
+      // Select the exact persona (drives roleKey + reviewerDomain together)
+      // so e.g. logging in as sofia-grant scopes the Inbox to Responsible AI.
+      setPersonaKey(personaKey);
+      // Kept for defense-in-depth / documentation of intent: setPersonaKey
+      // above already derives the matching roleKey via roleKeyForActorRole,
+      // so this is redundant but harmless (same roleKey, no extra render).
       setRoleKey(roleKeyForActorRole(persona.role));
       return next;
     },
-    [setRoleKey],
+    [setRoleKey, setPersonaKey],
   );
 
   const logout = React.useCallback(() => {

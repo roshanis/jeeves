@@ -7,7 +7,7 @@
  * `lib/services/*`), so the 9 personas are mirrored here verbatim. If the
  * server directory changes, this list must be updated in the same change.
  */
-import type { ActorRole } from "@/lib/domain/types";
+import type { ActorRole, Domain } from "@/lib/domain/types";
 import type { RoleKey } from "@/components/jeeves/role-context";
 
 export interface LivePersona {
@@ -63,4 +63,22 @@ export function roleKeyForActorRole(role: LivePersona["role"]): RoleKey {
     case "admin":
       return "admin";
   }
+}
+
+/**
+ * The 4 named reviewer personas each own exactly one governance domain
+ * (seed-spec §1). This is what makes the "Reviewer" role specific: Sofia
+ * Grant (Responsible AI) owns eval-quality & fairness signals, not James Liu
+ * (Legal) or the other domain reviewers.
+ */
+export const REVIEWER_DOMAIN: Record<string, Domain> = {
+  "elena-vasquez": "clinical-safety",
+  "marcus-webb": "privacy-hipaa",
+  "sofia-grant": "responsible-ai",
+  "james-liu": "legal",
+};
+
+/** Looks up the governance domain owned by a reviewer persona, if any. */
+export function domainForPersona(personaKey: string): Domain | null {
+  return REVIEWER_DOMAIN[personaKey] ?? null;
 }

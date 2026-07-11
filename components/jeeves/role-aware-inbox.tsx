@@ -28,10 +28,15 @@ import {
   FileClock,
   ClipboardCheck,
   Gavel,
+  ShieldCheck,
 } from "lucide-react";
-import type { InitiativeSummary, DecisionRow } from "@/lib/data/dto";
+import type { ControlRow, InitiativeSummary, DecisionRow, ReviewRow } from "@/lib/data/dto";
+import type { Domain, LifecycleState, Tier } from "@/lib/domain/types";
 import { InitiativeTable } from "@/components/jeeves/initiative-table";
 import { LifecycleBadge } from "@/components/jeeves/lifecycle-badge";
+import { TierBadge } from "@/components/jeeves/tier-badge";
+import { ReviewStatusBadge, DOMAIN_LABEL } from "@/components/jeeves/domain-labels";
+import { ControlStatusChip } from "@/components/jeeves/controls-tab";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { buttonVariants } from "@/components/ui/button";
 import { useRole, type RoleKey } from "@/components/jeeves/role-context";
@@ -59,6 +64,23 @@ const DECISION_META: Record<
 };
 
 type DecisionEntry = { dec: DecisionRow; title: string; slug: string };
+
+/** One initiative's slug/title/tier/state plus its reviews' domain+status —
+ * enough for the reviewer Inbox view to scope a queue to a single domain
+ * without needing a full InitiativeSummary. */
+export interface DomainReviewRow {
+  slug: string;
+  title: string;
+  tier: Tier;
+  state: LifecycleState;
+  reviews: { domain: Domain; status: ReviewRow["status"] }[];
+}
+
+export interface EvalBreachRow {
+  slug: string;
+  title: string;
+  state: LifecycleState;
+}
 
 function StatTile({
   icon: Icon,
@@ -211,14 +233,20 @@ export function RoleAwareInbox({
   alerts,
   incidentCount,
   counts,
+  domainReviews,
+  controls,
+  evalBreaches,
 }: {
   initiatives: InitiativeSummary[];
   recentDecisions: DecisionEntry[];
   alerts: InitiativeSummary[];
   incidentCount: number;
   counts: { inReview: number; slaBreaches: number; reassessing: number; deployed: number };
+  domainReviews: DomainReviewRow[];
+  controls: ControlRow[];
+  evalBreaches: EvalBreachRow[];
 }) {
-  const { roleKey, persona } = useRole();
+  const { roleKey, persona, reviewerDomain } = useRole();
 
   return (
     <div className="flex flex-col gap-6">
@@ -226,11 +254,15 @@ export function RoleAwareInbox({
       <RoleView
         roleKey={roleKey}
         actorName={persona.actorName}
+        reviewerDomain={reviewerDomain}
         initiatives={initiatives}
         recentDecisions={recentDecisions}
         alerts={alerts}
         incidentCount={incidentCount}
         counts={counts}
+        domainReviews={domainReviews}
+        controls={controls}
+        evalBreaches={evalBreaches}
       />
     </div>
   );
@@ -239,19 +271,27 @@ export function RoleAwareInbox({
 function RoleView({
   roleKey,
   actorName,
+  reviewerDomain,
   initiatives,
   recentDecisions,
   alerts,
   incidentCount,
   counts,
+  domainReviews,
+  controls,
+  evalBreaches,
 }: {
   roleKey: RoleKey;
   actorName: string;
+  reviewerDomain: Domain | null;
   initiatives: InitiativeSummary[];
   recentDecisions: DecisionEntry[];
   alerts: InitiativeSummary[];
   incidentCount: number;
   counts: { inReview: number; slaBreaches: number; reassessing: number; deployed: number };
+  domainReviews: DomainReviewRow[];
+  controls: ControlRow[];
+  evalBreaches: EvalBreachRow[];
 }) {
   switch (roleKey) {
     case "requester":
@@ -259,7 +299,16 @@ function RoleView({
         <RequesterView actorName={actorName} initiatives={initiatives} recentDecisions={recentDecisions} />
       );
     case "reviewer":
-      return <ReviewerView initiatives={initiatives} recentDecisions={recentDecisions} />;
+      return (
+        <ReviewerView
+          reviewerDomain={reviewerDomain}
+          initiatives={initiatives}
+          recentDecisions={recentDecisions}
+          domainReviews={domainReviews}
+          controls={controls}
+          evalBreaches={evalBreaches}
+        />
+      );
     case "audit":
       return (
         <AuditView initiatives={initiatives} recentDecisions={recentDecisions} />
@@ -414,40 +463,246 @@ function RequesterView({
 }
 
 /* -------------------------------------------------------------------------
- * Reviewer — Dr. Elena Vasquez's review queue.
+ * Reviewer — domain-scoped queue for one of the 4 named domain reviewers
+ * (Dr. Elena Vasquez / Clinical Safety, Marcus Webb / Privacy-HIPAA, Sofia
+ * Grant / Responsible AI, James Liu / Legal). Each reviewer sees only their
+ * own domain's pending/drafted/returned reviews, their own domain's
+ * controls, and — for Responsible AI only — the eval-quality & fairness
+ * breach signals. Evals belong to RAI, never to Legal or the other domains.
  * ---------------------------------------------------------------------- */
+const DOMAIN_FOCUS: Record<Domain, string> = {
+  legal: "Vendor contracts, AI addenda, liability & IP.",
+  "privacy-hipaa": "BAA, PHI minimization, and DPIA evidence.",
+  "responsible-ai": "Model cards, fairness testing, and eval quality.",
+  "clinical-safety": "Clinician-in-the-loop and adverse-event monitoring.",
+  security: "Threat modeling, access control, and vendor security posture.",
+  "tech-architecture": "Integration design, scalability, and technical fit.",
+  "data-governance": "Data lineage, retention, and quality controls.",
+  procurement: "Vendor terms, sourcing, and contract lifecycle.",
+};
+
+const REVIEW_QUEUE_STATUSES = new Set<ReviewRow["status"]>(["pending", "drafted", "returned"]);
+
+function DomainReviewQueueTable({
+  rows,
+  domain,
+}: {
+  rows: DomainReviewRow[];
+  domain: Domain;
+}) {
+  if (rows.length === 0) {
+    return (
+      <div
+        data-slot="initiative-table"
+        className="rounded-lg border bg-card px-4 py-6 text-sm text-muted-foreground"
+      >
+        Nothing awaiting your review right now.
+      </div>
+    );
+  }
+
+  return (
+    <div className="overflow-x-auto rounded-lg border bg-card" data-slot="initiative-table">
+      <table className="w-full min-w-[36rem] border-collapse text-sm">
+        <caption className="sr-only">Reviews awaiting your signature</caption>
+        <thead className="border-b bg-muted/50 text-xs uppercase tracking-wide">
+          <tr>
+            <th className="px-3 py-2 text-left font-medium text-muted-foreground">Initiative</th>
+            <th className="px-3 py-2 text-left font-medium text-muted-foreground">Tier</th>
+            <th className="px-3 py-2 text-left font-medium text-muted-foreground">Your review</th>
+            <th className="px-3 py-2 text-left font-medium text-muted-foreground">State</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => {
+            const review = row.reviews.find((r) => r.domain === domain);
+            return (
+              <tr key={row.slug} data-slot="initiative-row" className="border-b last:border-0 hover:bg-muted/40">
+                <td className="px-3 py-2">
+                  <Link
+                    href={`/initiatives/${row.slug}?tab=reviews`}
+                    className="font-medium text-foreground hover:text-primary hover:underline"
+                  >
+                    {row.title}
+                  </Link>
+                  <div className="text-xs text-muted-foreground">{row.slug}</div>
+                </td>
+                <td className="px-3 py-2"><TierBadge tier={row.tier} /></td>
+                <td className="px-3 py-2">
+                  {review ? <ReviewStatusBadge status={review.status} /> : null}
+                </td>
+                <td className="px-3 py-2"><LifecycleBadge state={row.state} /></td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function EvalQualityCard({ evalBreaches }: { evalBreaches: EvalBreachRow[] }) {
+  return (
+    <Card>
+      <CardHeader className="border-b bg-muted/40 py-3">
+        <CardTitle className="text-sm">Eval-quality &amp; fairness signals</CardTitle>
+      </CardHeader>
+      <CardContent className="p-0">
+        {evalBreaches.length === 0 ? (
+          <p className="px-4 py-4 text-sm text-muted-foreground">
+            No eval-quality breaches right now.
+          </p>
+        ) : (
+          <ul className="divide-y">
+            {evalBreaches.map((b) => (
+              <li key={b.slug} className="flex items-start gap-2.5 px-4 py-3">
+                <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-destructive" aria-hidden />
+                <div className="min-w-0">
+                  <Link
+                    href={`/initiatives/${b.slug}?tab=evals`}
+                    className="text-sm font-medium hover:text-primary hover:underline"
+                  >
+                    {b.title}
+                  </Link>
+                  <div className="mt-1">
+                    <LifecycleBadge state={b.state} />
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+        <div className="border-t px-4 py-3">
+          <ViewLink href="/admin">Open Monitoring</ViewLink>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function DomainControlsCard({ domain, controls }: { domain: Domain; controls: ControlRow[] }) {
+  const mine = controls.filter((c) => c.domain === domain);
+  return (
+    <Card>
+      <CardHeader className="border-b bg-muted/40 py-3">
+        <CardTitle className="text-sm">{DOMAIN_LABEL[domain]} controls</CardTitle>
+      </CardHeader>
+      <CardContent className="p-0">
+        {mine.length === 0 ? (
+          <p className="px-4 py-4 text-sm text-muted-foreground">
+            No controls catalogued for this domain yet.
+          </p>
+        ) : (
+          <ul className="divide-y">
+            {mine.map((c) => (
+              <li key={c.id} className="flex items-center justify-between gap-2.5 px-4 py-3">
+                <div className="min-w-0">
+                  <span className="text-sm font-medium">{c.id}</span>{" "}
+                  <span className="text-sm text-muted-foreground">{c.name}</span>
+                </div>
+                <ControlStatusChip status={c.status} />
+              </li>
+            ))}
+          </ul>
+        )}
+        <div className="border-t px-4 py-3">
+          <ViewLink href="/controls">Open Controls catalog</ViewLink>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 function ReviewerView({
+  reviewerDomain,
   initiatives,
   recentDecisions,
+  domainReviews,
+  controls,
+  evalBreaches,
 }: {
+  reviewerDomain: Domain | null;
   initiatives: InitiativeSummary[];
   recentDecisions: DecisionEntry[];
+  domainReviews: DomainReviewRow[];
+  controls: ControlRow[];
+  evalBreaches: EvalBreachRow[];
 }) {
-  const queue = initiatives.filter(
-    (i) => i.state === "in_review" && i.domainsSigned < i.domainsRequired,
+  // Guard: a reviewer persona should always resolve a domain. If somehow
+  // null, fall back to the original generic reviewer view.
+  if (!reviewerDomain) {
+    const queue = initiatives.filter(
+      (i) => i.state === "in_review" && i.domainsSigned < i.domainsRequired,
+    );
+    const inReviewCount = initiatives.filter((i) => i.state === "in_review").length;
+    const returned = initiatives.filter((i) => i.overdue).length;
+    const signedThrough = initiatives.filter(
+      (i) => i.state === "in_review" && i.domainsSigned === i.domainsRequired,
+    ).length;
+
+    return (
+      <>
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wider text-primary">Reviewer</p>
+          <h1 className="mt-1 text-2xl font-semibold tracking-tight">Your review queue</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            This demo isn&apos;t filtered to one reviewer&apos;s assignments — it shows every
+            initiative awaiting a domain signature.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <StatTile icon={ClipboardCheck} value={queue.length} label="Awaiting review" />
+          <StatTile icon={FileClock} value={inReviewCount} label="In review" />
+          <StatTile icon={AlertTriangle} value={returned} label="Returned / overdue" tone="warn" />
+          <StatTile icon={CheckCircle2} value={signedThrough} label="Signed-through" />
+        </div>
+
+        <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+          <section className="flex flex-col gap-3">
+            <div className="flex items-center justify-between">
+              <h2 className="text-sm font-semibold">
+                Reviews awaiting signature <span className="text-muted-foreground">({queue.length})</span>
+              </h2>
+              <ViewLink href="/reviews">Open Reviews workbench</ViewLink>
+            </div>
+            <InitiativeTable initiatives={queue} caption="Reviews awaiting signature" />
+          </section>
+
+          <div className="flex flex-col gap-6">
+            <RecentDecisionsCard recentDecisions={recentDecisions} />
+          </div>
+        </div>
+      </>
+    );
+  }
+
+  const queue = domainReviews.filter((d) =>
+    d.reviews.some((r) => r.domain === reviewerDomain && REVIEW_QUEUE_STATUSES.has(r.status)),
   );
-  const inReviewCount = initiatives.filter((i) => i.state === "in_review").length;
-  const returned = initiatives.filter((i) => i.overdue).length;
-  const signedThrough = initiatives.filter(
-    (i) => i.state === "in_review" && i.domainsSigned === i.domainsRequired,
+  const draftedCount = queue.filter((d) =>
+    d.reviews.some((r) => r.domain === reviewerDomain && r.status === "drafted"),
   ).length;
+  const returnedCount = queue.filter((d) =>
+    d.reviews.some((r) => r.domain === reviewerDomain && r.status === "returned"),
+  ).length;
+  const myControlsCount = controls.filter((c) => c.domain === reviewerDomain).length;
 
   return (
     <>
       <div>
         <p className="text-xs font-semibold uppercase tracking-wider text-primary">Reviewer</p>
-        <h1 className="mt-1 text-2xl font-semibold tracking-tight">Your review queue</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          This demo isn&apos;t filtered to one reviewer&apos;s assignments — it shows every
-          initiative awaiting a domain signature.
-        </p>
+        <h1 className="mt-1 text-2xl font-semibold tracking-tight">
+          Your {DOMAIN_LABEL[reviewerDomain]} reviews
+        </h1>
+        <p className="mt-1 text-sm text-muted-foreground">{DOMAIN_FOCUS[reviewerDomain]}</p>
       </div>
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <StatTile icon={ClipboardCheck} value={queue.length} label="Awaiting review" />
-        <StatTile icon={FileClock} value={inReviewCount} label="In review" />
-        <StatTile icon={AlertTriangle} value={returned} label="Returned / overdue" tone="warn" />
-        <StatTile icon={CheckCircle2} value={signedThrough} label="Signed-through" />
+        <StatTile icon={ClipboardCheck} value={queue.length} label="Awaiting my review" />
+        <StatTile icon={FileClock} value={draftedCount} label="Drafted" />
+        <StatTile icon={AlertTriangle} value={returnedCount} label="Returned" tone="warn" />
+        <StatTile icon={ShieldCheck} value={myControlsCount} label="My domain controls" />
       </div>
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
@@ -458,10 +713,15 @@ function ReviewerView({
             </h2>
             <ViewLink href="/reviews">Open Reviews workbench</ViewLink>
           </div>
-          <InitiativeTable initiatives={queue} caption="Reviews awaiting signature" />
+          <DomainReviewQueueTable rows={queue} domain={reviewerDomain} />
         </section>
 
         <div className="flex flex-col gap-6">
+          {reviewerDomain === "responsible-ai" ? (
+            <EvalQualityCard evalBreaches={evalBreaches} />
+          ) : (
+            <DomainControlsCard domain={reviewerDomain} controls={controls} />
+          )}
           <RecentDecisionsCard recentDecisions={recentDecisions} />
         </div>
       </div>
