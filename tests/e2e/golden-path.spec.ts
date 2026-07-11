@@ -7,12 +7,12 @@ import { test, expect } from "@playwright/test";
 // submits, signs, approves, or mutates anything (AGENTS.md hard rule 2: the
 // public/demo surfaces this test drives are read-only for every role).
 test.describe("champion storyline: read-only golden path", () => {
-  test("landing page renders the hero and the exact demo banner", async ({
+  test("inbox renders the operations dashboard and the exact demo banner", async ({
     page,
   }) => {
     await page.goto("/");
 
-    // Exact required banner string (chrome.tsx DEMO_BANNER_TEXT / ui-spec §7-8.1).
+    // Exact required banner string (app-topbar DEMO_BANNER_TEXT / ui-spec §7-8.1).
     await expect(
       page.getByText(
         "Fictional demo — synthetic data. Meridian Health is a fictional payer; not affiliated with any real organization.",
@@ -20,24 +20,20 @@ test.describe("champion storyline: read-only golden path", () => {
       ),
     ).toBeVisible();
 
-    // Landing hero + primary CTA into the console.
+    // Operations console inbox — attention heading + a needs-attention table.
     await expect(
-      page.getByRole("heading", { name: /every AI project/i }),
+      page.getByRole("heading", { name: /what needs attention/i }),
     ).toBeVisible();
-    await expect(
-      page.getByRole("link", { name: /Enter the console/i }),
-    ).toBeVisible();
+    await expect(page.locator('[data-slot="initiative-table"]').first()).toBeVisible();
   });
 
-  test("dashboard shows the 12 seeded initiatives", async ({ page }) => {
-    await page.goto("/dashboard");
+  test("portfolio lists all 12 seeded initiatives", async ({ page }) => {
+    await page.goto("/portfolio");
 
-    // Pipeline board renders all 12 seeded initiatives as cards.
-    const board = page.locator('[data-slot="pipeline-board"]');
-    await expect(board).toBeVisible();
-    await expect(
-      board.locator('[data-slot="pipeline-card"]'),
-    ).toHaveCount(12);
+    // "All" saved view shows every seeded initiative as a table row.
+    const table = page.locator('[data-slot="initiative-table"]');
+    await expect(table).toBeVisible();
+    await expect(table.locator('[data-slot="initiative-row"]')).toHaveCount(12);
   });
 
   test("prior-auth-summarizer shows the Critical tier badge and the Intake completeness gap", async ({

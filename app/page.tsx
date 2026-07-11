@@ -1,219 +1,214 @@
 import Link from "next/link";
 import {
+  ClipboardList,
+  AlertTriangle,
+  PauseCircle,
+  ShieldAlert,
   ArrowRight,
-  FileInput,
-  ShieldQuestion,
-  GitPullRequestArrow,
-  BadgeCheck,
-  Activity,
-  RotateCcw,
-  Scale,
-  ShoppingCart,
-  Building2,
-  BrainCircuit,
-  Lock,
-  HeartPulse,
-  Database,
-  Stethoscope,
+  CheckCircle2,
+  XCircle,
+  FileCheck2,
 } from "lucide-react";
 import { getAppProvider } from "@/app/_lib/data-provider";
-import { buttonVariants } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { getDb } from "@/lib/db/client";
+import { listIncidents, type IncidentListRow } from "@/lib/services/monitor-service";
+import type { InitiativeSummary, InitiativeDetail, DecisionRow } from "@/lib/data/dto";
+import { InitiativeTable } from "@/components/jeeves/initiative-table";
+import { TierBadge } from "@/components/jeeves/tier-badge";
+import { LifecycleBadge } from "@/components/jeeves/lifecycle-badge";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
-const LIFECYCLE = [
-  { icon: FileInput, label: "Intake", note: "Structured request + completeness check" },
-  { icon: ShieldQuestion, label: "Triage", note: "Deterministic risk tiering" },
-  { icon: GitPullRequestArrow, label: "Review", note: "Agents draft, humans decide" },
-  { icon: BadgeCheck, label: "Approve", note: "Named accountable approver" },
-  { icon: Activity, label: "Operate", note: "Continuous eval monitoring" },
-  { icon: RotateCcw, label: "Reassess", note: "Breach reopens review" },
-];
+const ATTENTION_STATES = new Set([
+  "intake_draft",
+  "submitted",
+  "triaged",
+  "in_review",
+  "conditionally_approved",
+  "paused",
+  "re_review",
+]);
 
-const DOMAINS = [
-  { icon: Scale, label: "Legal" },
-  { icon: ShoppingCart, label: "Procurement" },
-  { icon: Building2, label: "Tech Architecture" },
-  { icon: BrainCircuit, label: "Responsible AI" },
-  { icon: Lock, label: "Security" },
-  { icon: HeartPulse, label: "Privacy / HIPAA" },
-  { icon: Stethoscope, label: "Clinical Safety" },
-  { icon: Database, label: "Data Governance" },
-];
+const DECISION_META: Record<
+  DecisionRow["type"],
+  { label: string; icon: typeof CheckCircle2; className: string }
+> = {
+  approved: { label: "Approved", icon: CheckCircle2, className: "text-emerald-600" },
+  conditionally_approved: { label: "Conditional approval", icon: FileCheck2, className: "text-amber-600" },
+  fast_lane_approved: { label: "Fast-lane approved", icon: CheckCircle2, className: "text-emerald-600" },
+  rejected: { label: "Rejected", icon: XCircle, className: "text-destructive" },
+};
 
-const PERSONAS = [
-  { title: "Requesters", body: "Submit an AI project through one structured front door — no more chasing five committees." },
-  { title: "Reviewers", body: "Open a pre-drafted assessment with policy citations already attached. Edit and sign." },
-  { title: "Program office", body: "See the whole pipeline, SLAs, and risk heatmap in a single command center." },
-  { title: "Audit & leadership", body: "Ask “which member-facing AI touches PHI, and who approved it?” — answered with evidence." },
-  { title: "Admin", body: "Tune eval thresholds and pause deployments. Never approves — separation of duties is enforced." },
-];
+async function loadIncidents(): Promise<IncidentListRow[]> {
+  const dbMode = process.env.DATA_PROVIDER === "db" || !!process.env.DATABASE_URL;
+  if (!dbMode) return [];
+  try {
+    return await listIncidents(getDb());
+  } catch {
+    return [];
+  }
+}
 
-export default async function LandingPage() {
+function StatTile({
+  icon: Icon,
+  value,
+  label,
+  tone = "default",
+}: {
+  icon: typeof ClipboardList;
+  value: number;
+  label: string;
+  tone?: "default" | "warn" | "alert";
+}) {
+  const toneClass =
+    tone === "alert"
+      ? "text-destructive"
+      : tone === "warn"
+        ? "text-amber-600"
+        : "text-primary";
+  return (
+    <Card>
+      <CardContent className="flex items-center gap-3 px-4 py-3.5">
+        <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-md bg-muted ${toneClass}`}>
+          <Icon className="h-5 w-5" aria-hidden />
+        </span>
+        <div>
+          <div className="text-xl font-semibold tabular-nums leading-none">{value}</div>
+          <div className="mt-1 text-xs text-muted-foreground">{label}</div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+export default async function InboxPage() {
   const provider = getAppProvider();
-  const [initiatives, metrics] = await Promise.all([
+  const [initiatives, incidents] = await Promise.all([
     provider.listInitiatives(),
-    provider.outcomeMetrics(),
+    loadIncidents(),
   ]);
+  const details = (
+    await Promise.all(initiatives.map((i) => provider.getInitiativeDetail(i.slug)))
+  ).filter((d): d is InitiativeDetail => d !== null);
 
-  const stats = [
-    { value: String(initiatives.length), label: "Initiatives governed" },
-    { value: "8", label: "Review domains" },
-    { value: `${metrics.medianReviewCycleDays}d`, label: "Median review cycle" },
-    { value: `${metrics.firstPassCompletenessPct}%`, label: "First-pass completeness" },
-  ];
+  const attention = initiatives.filter(
+    (i: InitiativeSummary) => ATTENTION_STATES.has(i.state) || i.overdue,
+  );
+  const inReview = initiatives.filter((i) => i.state === "in_review").length;
+  const slaBreaches = initiatives.filter((i) => i.overdue).length;
+  const reassessing = initiatives.filter(
+    (i) => i.state === "paused" || i.state === "re_review",
+  ).length;
+
+  const recentDecisions = details
+    .flatMap((d) =>
+      d.decisions.map((dec) => ({ dec, title: d.summary.title, slug: d.summary.slug })),
+    )
+    .sort((a, b) => (a.dec.at < b.dec.at ? 1 : -1))
+    .slice(0, 6);
+
+  const alerts = initiatives.filter(
+    (i) => i.state === "paused" || i.state === "re_review" || i.overdue,
+  );
 
   return (
-    <div className="flex flex-col gap-20 pb-8">
-      {/* Hero */}
-      <section className="-mx-4 -mt-6 bg-hero-gradient px-4 pb-16 pt-16 sm:pt-24">
-        <div className="mx-auto max-w-3xl text-center">
-          <span className="inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/5 px-3 py-1 text-xs font-medium text-primary">
-            <ShieldQuestion className="h-3.5 w-3.5" aria-hidden />
-            AI Governance Gateway · Meridian Health
-          </span>
-          <h1 className="mt-6 text-4xl font-semibold tracking-tight sm:text-5xl">
-            One front door for <span className="text-gradient">every AI project</span>
-          </h1>
-          <p className="mx-auto mt-5 max-w-2xl text-lg text-muted-foreground">
-            Submit a request, and agents triage risk, draft reviews across eight
-            governance domains, and route it to the right humans — then keep
-            watching after launch. <strong className="text-foreground">Approval
-            isn&rsquo;t the end. It&rsquo;s a checkpoint.</strong>
-          </p>
-          <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
-            <Link href="/dashboard" className={buttonVariants({ size: "lg" })}>
-              Enter the console <ArrowRight className="ml-1.5 h-4 w-4" />
-            </Link>
+    <div className="flex flex-col gap-6">
+      <div>
+        <p className="text-xs font-semibold uppercase tracking-wider text-primary">
+          Operations
+        </p>
+        <h1 className="mt-1 text-2xl font-semibold tracking-tight">
+          What needs attention
+        </h1>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Meridian Health AI governance — {attention.length} of {initiatives.length}{" "}
+          initiatives are waiting on someone right now.
+        </p>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <StatTile icon={ClipboardList} value={inReview} label="In review" />
+        <StatTile icon={AlertTriangle} value={slaBreaches} label="SLA breaches" tone="warn" />
+        <StatTile icon={PauseCircle} value={reassessing} label="Paused / reassessing" tone="alert" />
+        <StatTile icon={ShieldAlert} value={alerts.length} label="Operational alerts" tone="alert" />
+      </div>
+
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+        <section className="flex flex-col gap-3">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-semibold">
+              Needs attention <span className="text-muted-foreground">({attention.length})</span>
+            </h2>
             <Link
-              href="/initiatives/new"
-              className={buttonVariants({ size: "lg", variant: "outline" })}
+              href="/portfolio"
+              className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
             >
-              Submit an initiative
+              Full portfolio <ArrowRight className="h-3.5 w-3.5" />
             </Link>
           </div>
-        </div>
+          <InitiativeTable initiatives={attention} caption="Initiatives needing attention" />
+        </section>
 
-        {/* Stat band */}
-        <div className="mx-auto mt-14 grid max-w-3xl grid-cols-2 gap-4 sm:grid-cols-4">
-          {stats.map((s) => (
-            <div
-              key={s.label}
-              className="rounded-xl border bg-card/70 px-4 py-3 text-center shadow-sm backdrop-blur"
-            >
-              <div className="text-2xl font-semibold tabular-nums text-primary">
-                {s.value}
-              </div>
-              <div className="mt-0.5 text-xs text-muted-foreground">{s.label}</div>
-            </div>
-          ))}
-        </div>
-      </section>
+        <div className="flex flex-col gap-6">
+          <Card>
+            <CardHeader className="border-b bg-muted/40 py-3">
+              <CardTitle className="text-sm">Operational alerts</CardTitle>
+            </CardHeader>
+            <CardContent className="p-0">
+              {alerts.length === 0 && incidents.length === 0 ? (
+                <p className="px-4 py-4 text-sm text-muted-foreground">
+                  No active alerts. Run the monitor from Administration to evaluate deployments.
+                </p>
+              ) : (
+                <ul className="divide-y">
+                  {alerts.map((i) => (
+                    <li key={i.slug} className="flex items-start gap-2.5 px-4 py-3">
+                      <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-destructive" aria-hidden />
+                      <div className="min-w-0">
+                        <Link href={`/initiatives/${i.slug}`} className="text-sm font-medium hover:text-primary hover:underline">
+                          {i.title}
+                        </Link>
+                        <div className="mt-1 flex items-center gap-2">
+                          <LifecycleBadge state={i.state} />
+                          {i.overdue ? (
+                            <span className="text-xs text-destructive">SLA breached</span>
+                          ) : null}
+                        </div>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </CardContent>
+          </Card>
 
-      {/* Lifecycle loop */}
-      <section className="mx-auto w-full max-w-5xl">
-        <div className="text-center">
-          <h2 className="text-2xl font-semibold tracking-tight">
-            Governance as a closed loop
-          </h2>
-          <p className="mx-auto mt-2 max-w-xl text-sm text-muted-foreground">
-            Most tools stop at the approval stamp. Jeeves treats it as one
-            checkpoint in a loop that keeps running while the model is live.
-          </p>
+          <Card>
+            <CardHeader className="border-b bg-muted/40 py-3">
+              <CardTitle className="text-sm">Recent decisions</CardTitle>
+            </CardHeader>
+            <CardContent className="p-0">
+              <ul className="divide-y">
+                {recentDecisions.map(({ dec, title, slug }, idx) => {
+                  const meta = DECISION_META[dec.type];
+                  const Icon = meta.icon;
+                  return (
+                    <li key={`${slug}-${idx}`} className="flex items-start gap-2.5 px-4 py-3">
+                      <Icon className={`mt-0.5 h-4 w-4 shrink-0 ${meta.className}`} aria-hidden />
+                      <div className="min-w-0">
+                        <Link href={`/initiatives/${slug}`} className="text-sm font-medium hover:text-primary hover:underline">
+                          {title}
+                        </Link>
+                        <div className="mt-0.5 text-xs text-muted-foreground">
+                          {meta.label} · {dec.approver} · {dec.at.slice(0, 10)}
+                        </div>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            </CardContent>
+          </Card>
         </div>
-        <div className="mt-8 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-          {LIFECYCLE.map((step, i) => {
-            const Icon = step.icon;
-            return (
-              <Card key={step.label} className="relative">
-                <CardContent className="flex flex-col items-center gap-2 px-3 py-5 text-center">
-                  <span className="grid h-10 w-10 place-items-center rounded-lg bg-primary/10 text-primary">
-                    <Icon className="h-5 w-5" aria-hidden />
-                  </span>
-                  <div className="text-sm font-semibold">{step.label}</div>
-                  <div className="text-xs leading-snug text-muted-foreground">
-                    {step.note}
-                  </div>
-                  <span className="absolute -left-2 -top-2 grid h-5 w-5 place-items-center rounded-full bg-primary text-[10px] font-bold text-primary-foreground">
-                    {i + 1}
-                  </span>
-                </CardContent>
-              </Card>
-            );
-          })}
-        </div>
-      </section>
-
-      {/* Personas */}
-      <section className="mx-auto w-full max-w-5xl">
-        <div className="text-center">
-          <h2 className="text-2xl font-semibold tracking-tight">
-            Built for everyone in the room
-          </h2>
-          <p className="mx-auto mt-2 max-w-xl text-sm text-muted-foreground">
-            One initiative-centric app. Switch roles from the top bar — each sees
-            the actions and views that fit their job.
-          </p>
-        </div>
-        <div className="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {PERSONAS.map((p) => (
-            <Card key={p.title}>
-              <CardContent className="px-5 py-5">
-                <h3 className="font-semibold">{p.title}</h3>
-                <p className="mt-1.5 text-sm text-muted-foreground">{p.body}</p>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      </section>
-
-      {/* Domains */}
-      <section className="mx-auto w-full max-w-5xl">
-        <div className="text-center">
-          <h2 className="text-2xl font-semibold tracking-tight">
-            Eight domains, every high-risk request
-          </h2>
-          <p className="mx-auto mt-2 max-w-xl text-sm text-muted-foreground">
-            A critical-tier initiative is reviewed across all eight — each with
-            its own policy corpus, controls, and accountable reviewer.
-          </p>
-        </div>
-        <div className="mt-8 grid grid-cols-2 gap-3 sm:grid-cols-4">
-          {DOMAINS.map((d) => {
-            const Icon = d.icon;
-            return (
-              <div
-                key={d.label}
-                className="flex items-center gap-2.5 rounded-lg border bg-card px-4 py-3 shadow-sm"
-              >
-                <Icon className="h-5 w-5 shrink-0 text-primary" aria-hidden />
-                <span className="text-sm font-medium">{d.label}</span>
-              </div>
-            );
-          })}
-        </div>
-      </section>
-
-      {/* CTA */}
-      <section className="mx-auto w-full max-w-4xl">
-        <Card className="overflow-hidden border-primary/20 bg-primary text-primary-foreground">
-          <CardContent className="flex flex-col items-center gap-5 px-6 py-10 text-center">
-            <h2 className="text-2xl font-semibold tracking-tight">
-              See the whole loop in one walkthrough
-            </h2>
-            <p className="max-w-xl text-sm text-primary-foreground/80">
-              Open the command center to watch a prior-auth summarizer move from
-              intake through eight reviews, conditional approval, a live eval
-              breach, and reassessment — all on synthetic data.
-            </p>
-            <Link
-              href="/dashboard"
-              className={buttonVariants({ size: "lg", variant: "secondary" })}
-            >
-              Open the command center <ArrowRight className="ml-1.5 h-4 w-4" />
-            </Link>
-          </CardContent>
-        </Card>
-      </section>
+      </div>
     </div>
   );
 }
