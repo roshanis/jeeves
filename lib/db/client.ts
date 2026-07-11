@@ -21,35 +21,45 @@ import * as schema from "./schema";
 
 export type Db = NeonHttpDatabase<typeof schema> | PgliteDatabase<typeof schema>;
 
-let cachedDb: Db | null = null;
+// Cache on globalThis, not at module scope: Next.js dev/Turbopack creates
+// MULTIPLE server module graphs in one process, and a per-module cache gave
+// each graph its own PGlite instance over the same ./.pglite directory —
+// point-in-time snapshots diverged (page renders couldn't see rows written
+// via API routes) and concurrent access corrupted the store once. One
+// process-wide handle fixes coherence for the single-instance demo.
+const DB_CACHE_KEY = Symbol.for("jeeves.db.cachedDb");
+type DbCacheSlot = { db: Db | null };
+const dbSlot: DbCacheSlot = ((globalThis as Record<symbol, unknown>)[
+  DB_CACHE_KEY
+] ??= { db: null }) as DbCacheSlot;
 
 /**
  * Returns the process-wide DB handle, creating it on first use. Safe to
  * call repeatedly (e.g. from multiple route handlers) — the underlying
- * connection/instance is memoized.
+ * connection/instance is memoized on globalThis (see above).
  */
 export function getDb(): Db {
-  if (cachedDb) {
-    return cachedDb;
+  if (dbSlot.db) {
+    return dbSlot.db;
   }
 
   const databaseUrl = process.env.DATABASE_URL;
 
   if (databaseUrl) {
     const sql = neon(databaseUrl);
-    cachedDb = drizzleNeonHttp({ client: sql, schema });
-    return cachedDb;
+    dbSlot.db = drizzleNeonHttp({ client: sql, schema });
+    return dbSlot.db;
   }
 
   // No DATABASE_URL: local persistent PGlite store, not a network call.
   const client = new PGlite("./.pglite");
-  cachedDb = drizzlePglite({ client, schema });
-  return cachedDb;
+  dbSlot.db = drizzlePglite({ client, schema });
+  return dbSlot.db;
 }
 
 /** Test-only: reset the memoized handle (used by test-client.ts between suites). */
 export function resetDbForTests(): void {
-  cachedDb = null;
+  dbSlot.db = null;
 }
 
 /**
@@ -59,10 +69,10 @@ export function resetDbForTests(): void {
  * Neon HTTP driver is stateless — nothing to close there.
  */
 export async function closeDb(): Promise<void> {
-  if (!cachedDb) return;
-  const client = (cachedDb as { $client?: { close?: () => Promise<void> } }).$client;
+  if (!dbSlot.db) return;
+  const client = (dbSlot.db as { $client?: { close?: () => Promise<void> } }).$client;
   if (client && typeof client.close === "function") {
     await client.close();
   }
-  cachedDb = null;
+  dbSlot.db = null;
 }
