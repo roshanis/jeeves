@@ -14,7 +14,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import type { ReviewRow } from "@/lib/data/dto";
-import type { Tier } from "@/lib/domain/types";
+import type { Domain, Tier } from "@/lib/domain/types";
 import {
   Table,
   TableBody,
@@ -28,6 +28,7 @@ import { TierBadge } from "./tier-badge";
 import { DOMAIN_LABEL, ReviewStatusBadge } from "./domain-labels";
 import { GatedActionButton } from "./role-gate";
 import { ReturnReviewDialog } from "./return-review-dialog";
+import { useRole } from "./role-context";
 import {
   apiErrorToMessage,
   isApiError,
@@ -44,8 +45,47 @@ export interface ReviewQueueRow {
   review: ReviewRow;
 }
 
+// Fixed, deterministic display order for domain filter chips — mirrors the
+// canonical domain order (lib/domain/types.ts) rather than row-appearance
+// order, so the chip row doesn't reshuffle as the queue's contents change.
+const DOMAIN_ORDER: Domain[] = [
+  "legal",
+  "procurement",
+  "tech-architecture",
+  "responsible-ai",
+  "security",
+  "privacy-hipaa",
+  "clinical-safety",
+  "data-governance",
+];
+
 export function ReviewWorkbench({ rows }: { rows: ReviewQueueRow[] }) {
+  const { reviewerDomain } = useRole();
   const [selected, setSelected] = React.useState<ReviewQueueRow | null>(null);
+  const [override, setOverride] = React.useState<Domain | "all" | null>(null);
+
+  const effectiveFilter = override ?? reviewerDomain ?? "all";
+  const isPersonaDefault = override === null && reviewerDomain !== null;
+
+  const presentDomains = DOMAIN_ORDER.filter((d) =>
+    rows.some((row) => row.review.domain === d),
+  );
+
+  const filteredRows =
+    effectiveFilter === "all"
+      ? rows
+      : rows.filter((row) => row.review.domain === effectiveFilter);
+
+  // If the current selection got filtered out, don't show a hidden row's
+  // detail panel — derive the displayed selection instead of reacting to
+  // the filter change after the fact (avoids a setState-in-effect cascade).
+  const visibleSelected =
+    selected &&
+    filteredRows.some(
+      (row) => row.slug === selected.slug && row.review.domain === selected.review.domain,
+    )
+      ? selected
+      : null;
 
   return (
     <div className="flex flex-col gap-6" data-slot="review-workbench">
@@ -54,6 +94,66 @@ export function ReviewWorkbench({ rows }: { rows: ReviewQueueRow[] }) {
           <CardTitle>Reviewer queue</CardTitle>
         </CardHeader>
         <CardContent>
+          <div
+            className="mb-4 flex flex-col gap-2"
+            data-slot="review-domain-filter"
+          >
+            <div className="flex flex-wrap items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => setOverride("all")}
+                className={`rounded-md px-3 py-1.5 text-sm transition-colors ${
+                  effectiveFilter === "all"
+                    ? "bg-primary text-primary-foreground"
+                    : "border bg-card text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                All domains
+                <span
+                  className={`ml-1.5 tabular-nums ${
+                    effectiveFilter === "all"
+                      ? "text-primary-foreground/70"
+                      : "text-muted-foreground/70"
+                  }`}
+                >
+                  {rows.length}
+                </span>
+              </button>
+              {presentDomains.map((domain) => {
+                const count = rows.filter((row) => row.review.domain === domain).length;
+                const isActive = effectiveFilter === domain;
+                return (
+                  <button
+                    key={domain}
+                    type="button"
+                    onClick={() => setOverride(domain)}
+                    className={`rounded-md px-3 py-1.5 text-sm transition-colors ${
+                      isActive
+                        ? "bg-primary text-primary-foreground"
+                        : "border bg-card text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    {DOMAIN_LABEL[domain]}
+                    <span
+                      className={`ml-1.5 tabular-nums ${
+                        isActive
+                          ? "text-primary-foreground/70"
+                          : "text-muted-foreground/70"
+                      }`}
+                    >
+                      {count}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+            {isPersonaDefault && reviewerDomain ? (
+              <p className="text-xs text-muted-foreground">
+                Showing your domain — {DOMAIN_LABEL[reviewerDomain]}. Switch
+                persona in the top bar or pick another domain above.
+              </p>
+            ) : null}
+          </div>
           <Table>
             <TableHeader>
               <TableRow>
@@ -66,14 +166,14 @@ export function ReviewWorkbench({ rows }: { rows: ReviewQueueRow[] }) {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {rows.map((row) => (
+              {filteredRows.map((row) => (
                 <TableRow
                   key={`${row.slug}-${row.review.domain}`}
                   onClick={() => setSelected(row)}
                   className="cursor-pointer"
                   data-selected={
-                    selected?.slug === row.slug &&
-                    selected?.review.domain === row.review.domain
+                    visibleSelected?.slug === row.slug &&
+                    visibleSelected?.review.domain === row.review.domain
                   }
                 >
                   <TableCell>
@@ -100,19 +200,21 @@ export function ReviewWorkbench({ rows }: { rows: ReviewQueueRow[] }) {
         </CardContent>
       </Card>
 
-      {selected ? (
+      {visibleSelected ? (
         <div>
           <div className="mb-3 flex items-center gap-2 text-sm">
-            <span className="font-semibold">{DOMAIN_LABEL[selected.review.domain]} review</span>
+            <span className="font-semibold">
+              {DOMAIN_LABEL[visibleSelected.review.domain]} review
+            </span>
             <span className="text-muted-foreground">·</span>
             <Link
-              href={`/initiatives/${selected.slug}?tab=reviews`}
+              href={`/initiatives/${visibleSelected.slug}?tab=reviews`}
               className="text-primary underline-offset-4 hover:underline"
             >
-              {selected.title}
+              {visibleSelected.title}
             </Link>
-            <TierBadge tier={selected.tier} />
-            <ReviewStatusBadge status={selected.review.status} />
+            <TierBadge tier={visibleSelected.tier} />
+            <ReviewStatusBadge status={visibleSelected.review.status} />
           </div>
 
           {/* Signature screen: evidence & policy · agent draft · reviewer sign-off */}
@@ -124,9 +226,9 @@ export function ReviewWorkbench({ rows }: { rows: ReviewQueueRow[] }) {
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-3 pt-4">
-                {selected.review.citations.length > 0 ? (
+                {visibleSelected.review.citations.length > 0 ? (
                   <ul className="space-y-1.5">
-                    {selected.review.citations.map((c) => (
+                    {visibleSelected.review.citations.map((c) => (
                       <li key={c} className="flex items-start gap-2 text-sm">
                         <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
                         <span className="font-mono text-xs">{c}</span>
@@ -154,14 +256,14 @@ export function ReviewWorkbench({ rows }: { rows: ReviewQueueRow[] }) {
               </CardHeader>
               <CardContent className="pt-4">
                 <p className="whitespace-pre-wrap text-sm text-muted-foreground">
-                  {selected.review.draftMd ?? "No draft yet for this domain."}
+                  {visibleSelected.review.draftMd ?? "No draft yet for this domain."}
                 </p>
               </CardContent>
             </Card>
 
             <AssessmentPane
-              key={`${selected.slug}-${selected.review.domain}`}
-              row={selected}
+              key={`${visibleSelected.slug}-${visibleSelected.review.domain}`}
+              row={visibleSelected}
             />
           </div>
         </div>

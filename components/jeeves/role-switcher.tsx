@@ -40,7 +40,7 @@ function personaOptionLabel(persona: LivePersona): string {
  * and (for reviewers) their governance domain.
  */
 export function RoleSwitcher() {
-  const { personaKey, setPersonaKey, persona } = useRole();
+  const { personaKey, setPersonaKey, persona, reviewerDomain } = useRole();
 
   return (
     <div className="flex items-center gap-2">
@@ -70,6 +70,15 @@ export function RoleSwitcher() {
       <Badge variant="outline" className="hidden sm:inline-flex">
         {persona.actorName}
       </Badge>
+      {reviewerDomain ? (
+        <Badge
+          variant="secondary"
+          className="hidden sm:inline-flex"
+          data-slot="active-domain-chip"
+        >
+          {DOMAIN_LABEL[reviewerDomain]}
+        </Badge>
+      ) : null}
     </div>
   );
 }
