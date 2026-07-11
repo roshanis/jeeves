@@ -116,8 +116,179 @@ export type OpsMonitorIncidentOutput = z.infer<
   typeof opsMonitorIncidentOutputSchema
 >;
 
-// TODO M2: intake agent schema (agents/intake/instructions.md) — deferred
-// TODO M2: auditor agent schema (agents/auditor/instructions.md) — deferred
+/* -------------------------------------------------------------------------
+ * Auditor agent — agents/auditor/instructions.md "Output"
+ *
+ * Unlike the reviewer agent, there is no rich-to-port mapping step for the
+ * auditor: agents/auditor/instructions.md's `AuditorAnswerOutput` IS the
+ * port shape (`lib/agents/ports.ts`'s `AuditorAnswerOutput`), verbatim.
+ * `ports.ts` re-declares this as its own self-contained interface (matching
+ * that file's existing style of not importing from `schemas.ts` — see e.g.
+ * `DraftReviewOutput`), and this Zod schema is the runtime validator both
+ * adapters check the model/mock output against before returning it through
+ * the port. Keep the two declarations in sync by hand; there is no shared
+ * source-of-truth type between them (documented judgment call, task brief
+ * Task 2).
+ * ---------------------------------------------------------------------- */
+
+export const auditorAnswerOutputSchema = z.object({
+  // instructions.md: the answer, Markdown, grounded per the citation rule.
+  // Even a refusal must populate this (with the refusal text), so a hard
+  // min(1) is appropriate — there is no valid empty-answer case.
+  answerMd: z.string().min(1),
+  // instructions.md: "every event timestamp or decision id you relied on."
+  // Empty is valid and expected on a refusal (nothing was relied upon).
+  citedEvents: z.array(z.string()),
+  // instructions.md: "the CannedAuditQueryId used... as supplied in the
+  // input" — explicitly allowed to be an empty string per that wording, so
+  // no min(1) here (unlike answerMd).
+  queryUsed: z.string(),
+});
+
+export type AuditorAnswerOutput = z.infer<typeof auditorAnswerOutputSchema>;
+
+/* -------------------------------------------------------------------------
+ * Intake agent — agents/intake/instructions.md "Output"
+ *
+ * Same no-mapping relationship as the auditor agent above: this schema's
+ * `payload` field mirrors `lib/intake/types.ts`'s `IntakePayload` exactly
+ * (same section names/field names), but every field is nullable/optional
+ * per instructions.md's "partially filled, nulls/empty arrays for anything
+ * not yet answered or not yet asked." We do not invent fields beyond what
+ * `IntakePayload` declares, and we do not import `IntakePayload` itself
+ * (lib/agents has no dependency on lib/intake — the mirrored shape here is
+ * this file's own runtime validator, kept in sync with lib/intake/types.ts
+ * by hand, the same way ports.ts's interfaces are kept in sync with this
+ * file rather than importing it).
+ * ---------------------------------------------------------------------- */
+
+const intakeBasicsSchema = z.object({
+  title: z.string(),
+  sponsorOrg: z.string(),
+  requesterName: z.string(),
+  requesterEmail: z.string(),
+  businessProblem: z.string(),
+});
+
+const intakeUseCaseSchema = z.object({
+  primaryUsers: z.string(),
+  decisionInformed: z.string(),
+  expectedVolume: z
+    .enum(["<100/mo", "100-1k/mo", "1k-10k/mo", "10k-100k/mo", ">100k/mo"])
+    .nullable(),
+});
+
+const intakeDataSchema = z.object({
+  dataSources: z.array(z.string()),
+  phiCategories: z.array(
+    z.enum([
+      "Demographics",
+      "Diagnosis/ICD codes",
+      "Medications",
+      "Clinical notes/free text",
+      "Claims/billing",
+      "Lab results",
+      "Images",
+      "Other",
+    ]),
+  ),
+  phiCategoriesOtherText: z.string().nullable(),
+  retentionIntent: z
+    .enum([
+      "Session-only (no persistence)",
+      "<=30 days",
+      "<=1 year",
+      ">1 year",
+      "Indefinite/per-record-schedule",
+    ])
+    .nullable(),
+  retentionIntentNote: z.string().nullable(),
+  trainingVsInference: z
+    .enum(["Inference-only", "Fine-tuning/training", "Both"])
+    .nullable(),
+});
+
+const intakeModelVendorSchema = z.object({
+  buildOrBuy: z.enum(["Build (internal)", "Buy (vendor)", "Hybrid"]).nullable(),
+  vendorName: z.string().nullable(),
+  hosting: z.enum(["Vendor-hosted", "Self-hosted (Meridian infra)"]).nullable(),
+  modelType: z
+    .enum([
+      "LLM (generative)",
+      "Classical ML / classifier",
+      "OCR/extraction",
+      "Rules engine",
+      "Other",
+    ])
+    .nullable(),
+});
+
+const intakePopulationImpactSchema = z.object({
+  affectedPopulations: z.array(z.string()),
+  expectedBenefits: z.string().nullable(),
+  expectedHarms: z.string().nullable(),
+});
+
+const intakeDeploymentSchema = z.object({
+  integrationPoints: z.array(z.string()),
+  rolloutPlan: z.string().nullable(),
+});
+
+/**
+ * intake-spec §1(g) overlay questions — booleans, nullable per "never invent
+ * an answer" (agents/intake/instructions.md): an unanswered overlay flag is
+ * `null`, never coerced to `false`.
+ */
+const intakeOverlaySchema = z.object({
+  touchesPHI: z.boolean().nullable(),
+  memberFacing: z.boolean().nullable(),
+  careCoverageInfluence: z.boolean().nullable(),
+  vendorHosted: z.boolean().nullable(),
+  humanInTheLoop: z.boolean().nullable(),
+  individualImpact: z.boolean().nullable(),
+});
+
+const evidenceAttachmentSchema = z.object({
+  controlId: z.string(),
+  fileName: z.string(),
+  uploadedAt: z.string(),
+});
+
+/**
+ * Mirrors `IntakePayload` (lib/intake/types.ts) field-for-field. All string
+ * fields are permitted to be empty strings (not just `z.string().min(1)`)
+ * since an unasked/unanswered text field is documented as "" or null across
+ * this codebase's own conventions (e.g. mock-adapter.ts's hasRetentionAnswer
+ * treats an empty string the same as absent).
+ */
+export const intakePayloadSchema = z.object({
+  basics: intakeBasicsSchema,
+  useCase: intakeUseCaseSchema,
+  data: intakeDataSchema,
+  modelVendor: intakeModelVendorSchema,
+  populationImpact: intakePopulationImpactSchema,
+  deployment: intakeDeploymentSchema,
+  overlay: intakeOverlaySchema,
+  evidenceAttachments: z.array(evidenceAttachmentSchema),
+});
+
+const intakeGapSchema = z.object({
+  ruleId: z.string(),
+  field: z.string(),
+  level: z.enum(["BLOCKING", "REQUIRED-FOR-TIER", "ADVISORY"]),
+});
+
+export const intakeInterviewOutputSchema = z.object({
+  payload: intakePayloadSchema,
+  gaps: z.array(intakeGapSchema),
+  // instructions.md: "Conversational text you want the requester to
+  // actually see... belongs in followUpQuestions" — an empty array is valid
+  // once every field/overlay question has been answered (see mock-adapter's
+  // closing-acknowledgment convention).
+  followUpQuestions: z.array(z.string()),
+});
+
+export type IntakeInterviewOutput = z.infer<typeof intakeInterviewOutputSchema>;
 
 /* -------------------------------------------------------------------------
  * Reviewer rich-shape -> port-shape mapping (agents/README.md)

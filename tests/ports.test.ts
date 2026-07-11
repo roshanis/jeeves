@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type {
   AgentPort,
+  AuditorAnswerOutput,
   CompletenessCheckOutput,
   DraftReviewOutput,
   FanOutInput,
   FanOutResult,
+  IntakeInterviewOutput,
   PortResult,
   TriageAssistOutput,
   WorkflowEvent,
@@ -41,6 +43,18 @@ const completenessOutput: CompletenessCheckOutput = {
   notes: { dataRetention: "Specify the retention period for member data." },
 };
 
+const auditorOutput: AuditorAnswerOutput = {
+  answerMd: "Approved by Angela Torres on 2026-07-15 (event ts 2026-07-15T14:02:00Z).",
+  citedEvents: ["2026-07-15T14:02:00Z"],
+  queryUsed: "approved-by-torres",
+};
+
+const intakeInterviewOutput: IntakeInterviewOutput = {
+  payload: {},
+  gaps: [{ ruleId: "BLK-05", field: "overlay.touchesPHI", level: "BLOCKING" }],
+  followUpQuestions: ["Does it access PHI?"],
+};
+
 const stubAgentPort: AgentPort = {
   async draftReview() {
     return { ok: true, value: draftOutput };
@@ -50,6 +64,12 @@ const stubAgentPort: AgentPort = {
   },
   async checkCompleteness() {
     return { ok: true, value: completenessOutput };
+  },
+  async auditorAnswer() {
+    return { ok: true, value: auditorOutput };
+  },
+  async intakeInterview() {
+    return { ok: true, value: intakeInterviewOutput };
   },
 };
 
@@ -120,8 +140,10 @@ describe("agent/workflow ports (plan.md §4) — contract smoke test", () => {
       expect(result.value.recommendation).toMatch(/^recommend-/);
     }
     expect(Object.keys(stubAgentPort).sort()).toEqual([
+      "auditorAnswer",
       "checkCompleteness",
       "draftReview",
+      "intakeInterview",
       "triageAssist",
     ]);
   });

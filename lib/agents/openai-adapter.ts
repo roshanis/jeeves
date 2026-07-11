@@ -26,17 +26,23 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { z } from "zod";
 import {
+  auditorAnswerOutputSchema,
+  intakeInterviewOutputSchema,
   reviewerDraftOutputSchema,
   triageRationaleOutputSchema,
   mapReviewerDraftToPortOutput,
 } from "./schemas";
 import type {
   AgentPort,
+  AuditorAnswerInput,
+  AuditorAnswerOutput,
   CompletenessCheckInput,
   CompletenessCheckOutput,
   DraftReviewInput,
   DraftReviewOutput,
   GovernanceDomain,
+  IntakeInterviewInput,
+  IntakeInterviewOutput,
   InvokeOptions,
   PortFailure,
   PortResult,
@@ -135,6 +141,10 @@ interface CachedInstructions {
    * agent schemas noted in lib/agents/schemas.ts).
    */
   readonly completeness: string;
+  /** agents/auditor/instructions.md — natural-language audit Q&A (M2). */
+  readonly auditor: string;
+  /** agents/intake/instructions.md — conversational intake interview (M2). */
+  readonly intake: string;
 }
 
 const TRACK_FILENAMES: Record<GovernanceDomain, string> = {
@@ -170,12 +180,16 @@ function loadInstructions(): CachedInstructions {
     );
   }
   const triage = readAgentFile("triage", "instructions.md");
+  const auditor = readAgentFile("auditor", "instructions.md");
+  const intake = readAgentFile("intake", "instructions.md");
 
   return {
     reviewerShared,
     reviewerTracks,
     triage,
     completeness: COMPLETENESS_FALLBACK_SYSTEM_PROMPT,
+    auditor,
+    intake,
   };
 }
 
@@ -514,6 +528,79 @@ export function createOpenAIAgentPortWithModel(model: LanguageModel): AgentPort 
       if (!result.ok) return result;
 
       const parsed = portShapeSchema.safeParse(result.value);
+      if (!parsed.success) {
+        return { ok: false, error: mapModelOutputSchemaFailure(parsed.error) };
+      }
+      return { ok: true, value: parsed.data };
+    },
+
+    async auditorAnswer(
+      input: AuditorAnswerInput,
+      options?: InvokeOptions,
+    ): Promise<PortResult<AuditorAnswerOutput>> {
+      // No rich-to-port mapping step here (unlike draftReview): per
+      // agents/auditor/instructions.md, the model's AuditorAnswerOutput IS
+      // the port shape verbatim (see lib/agents/schemas.ts's doc comment on
+      // auditorAnswerOutputSchema). The user prompt is exactly the question,
+      // the already-fetched grounding rows, and which query produced them —
+      // the model never chooses or runs a query itself (instructions.md
+      // "What you will receive").
+      const userPrompt = JSON.stringify({
+        question: input.question,
+        groundingRows: input.groundingRows,
+        queryUsed: input.queryUsed,
+      });
+
+      options?.onProgress?.({
+        invocationId: `openai-auditor-${input.queryUsed}`,
+        stage: "answering",
+        at: new Date().toISOString(),
+      });
+
+      const result = await callStructured(
+        instructions.auditor,
+        userPrompt,
+        auditorAnswerOutputSchema,
+        options,
+      );
+      if (!result.ok) return result;
+
+      const parsed = auditorAnswerOutputSchema.safeParse(result.value);
+      if (!parsed.success) {
+        return { ok: false, error: mapModelOutputSchemaFailure(parsed.error) };
+      }
+      return { ok: true, value: parsed.data };
+    },
+
+    async intakeInterview(
+      input: IntakeInterviewInput,
+      options?: InvokeOptions,
+    ): Promise<PortResult<IntakeInterviewOutput>> {
+      // Same no-mapping relationship as auditorAnswer above: the model's
+      // IntakeInterviewOutput (agents/intake/instructions.md) IS the port
+      // shape verbatim. The user prompt is the conversation so far and the
+      // current partial payload — the model continues from there, per
+      // instructions.md's "What you will receive."
+      const userPrompt = JSON.stringify({
+        conversation: input.conversation,
+        partialPayload: input.partialPayload,
+      });
+
+      options?.onProgress?.({
+        invocationId: `openai-intake-${input.conversation.length}`,
+        stage: "interviewing",
+        at: new Date().toISOString(),
+      });
+
+      const result = await callStructured(
+        instructions.intake,
+        userPrompt,
+        intakeInterviewOutputSchema,
+        options,
+      );
+      if (!result.ok) return result;
+
+      const parsed = intakeInterviewOutputSchema.safeParse(result.value);
       if (!parsed.success) {
         return { ok: false, error: mapModelOutputSchemaFailure(parsed.error) };
       }
