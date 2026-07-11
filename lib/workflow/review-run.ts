@@ -3,13 +3,12 @@
  * §9 P2; task brief deliverable 2).
  *
  * `startDraftRun` invokes `getAgentPort().draftReview` once PER requested
- * domain, CONCURRENTLY (`Promise.allSettled` — one rejected/slow domain
- * never blocks the others), and persists each result into `review_decisions`
- * as it completes. State lives entirely in Postgres (`review_decisions` +
- * a lightweight `run_progress` audit-event trail) — "durable-lite": there is
- * no in-memory run registry, so a caller can re-invoke `startDraftRun` for
- * the same cycle at any time (e.g. after a server restart) and it resumes
- * by re-attempting only domains that are not already `drafted`/`signed`.
+ * domain and persists each result into `review_decisions` as it completes.
+ * State lives entirely in Postgres (`review_decisions` + a lightweight
+ * `run_progress` audit-event trail) — "durable-lite": there is no in-memory
+ * run registry, so a caller can re-invoke `startDraftRun` for the same cycle
+ * at any time (e.g. after a server restart) and it resumes by re-attempting
+ * only domains that are not already `drafted`/`signed`.
  *
  * Idempotency: `review_decisions` has a unique (cycleId, domain) constraint
  * (lib/db/schema.ts). This module never inserts a second row for a
@@ -18,6 +17,33 @@
  * twice never duplicates rows (task brief: "idempotent per (cycle, domain)").
  * A domain already `drafted` or `signed` is left untouched by a re-run
  * (no wasted LLM calls, no clobbering a human-signed decision).
+ *
+ * Bounded concurrency (hardening pass, Codex review): rather than firing all
+ * requested domains at once via a single `Promise.allSettled` (up to 8
+ * concurrent LLM calls per HTTP request — a real risk for provider
+ * concurrency limits / request timeouts), domains are run through a small
+ * hand-rolled worker-pool limiter (`runWithConcurrencyLimit` below) that
+ * caps in-flight `draftReview` calls at `options.concurrency` (default 3).
+ * Workers pull the next domain off a shared queue as soon as they finish, so
+ * this preserves the exact same order-independent semantics as before: every
+ * requested-and-eligible domain is still attempted, and one slow/failed
+ * domain in one batch never blocks domains assigned to other workers.
+ *
+ * Per-domain retry (hardening pass): a domain whose `draftReview` attempt
+ * fails (thrown rejection or `{ ok: false }` PortResult) is retried, up to
+ * `options.maxAttempts` total attempts (default 2 — i.e. one retry), before
+ * being persisted/recorded as `failed`. `PortFailure` (lib/agents/ports.ts)
+ * has no reliable cross-variant transient/permanent discriminator — only the
+ * `provider` variant carries a `retryable` boolean, `validation` is clearly
+ * permanent (bad input will fail identically every time), and `cancelled`
+ * represents a deliberate abort that retrying would defeat. Rather than
+ * inventing a discriminator that doesn't exist on the type, this module
+ * retries every failure kind EXCEPT `validation` and `cancelled`, and additionally
+ * skips retrying a `provider` failure whose `retryable` is explicitly `false`.
+ * This is a conservative, documented choice, not a guess: worst case for an
+ * unretryable-but-not-explicitly-marked failure is one extra (cheap, bounded)
+ * attempt, never an infinite loop, and it never retries a deliberate
+ * cancellation or a request that will provably fail the same way again.
  */
 import { randomUUID } from "node:crypto";
 import { and, eq, inArray } from "drizzle-orm";
@@ -62,8 +88,109 @@ export interface DraftRunProgress {
   complete: boolean;
 }
 
+/** Options accepted by `startDraftRun`, all optional with documented defaults. */
+export interface StartDraftRunOptions {
+  /** Max concurrent `draftReview` calls in flight at once. Default 3. */
+  concurrency?: number;
+  /** Max attempts per domain (first try + retries) before recording `failed`. Default 2. */
+  maxAttempts?: number;
+}
+
+const DEFAULT_CONCURRENCY = 3;
+const DEFAULT_MAX_ATTEMPTS = 2;
+
 function nowTs(): number {
   return Date.now();
+}
+
+/**
+ * Runs `task` for every item in `items` with at most `limit` invocations
+ * in flight concurrently, returning results in the SAME order as `items`
+ * (order of the returned array is stable and input-indexed even though
+ * completion order is not — callers zip `items[i]` with `results[i]`).
+ * Implemented as a small worker pool: `limit` workers pull the next index
+ * off a shared cursor as soon as they finish their current item, so a
+ * slow/failed item never blocks items assigned to other workers, and every
+ * item is still attempted exactly once per call (retries are the caller's
+ * concern inside `task`, not this helper's).
+ */
+async function runWithConcurrencyLimit<TItem, TResult>(
+  items: readonly TItem[],
+  limit: number,
+  task: (item: TItem, index: number) => Promise<TResult>,
+): Promise<TResult[]> {
+  const results: TResult[] = new Array(items.length);
+  let cursor = 0;
+  const effectiveLimit = Math.max(1, Math.min(limit, items.length || 1));
+
+  async function worker(): Promise<void> {
+    while (cursor < items.length) {
+      const index = cursor;
+      cursor += 1;
+      results[index] = await task(items[index]!, index);
+    }
+  }
+
+  await Promise.all(Array.from({ length: effectiveLimit }, () => worker()));
+  return results;
+}
+
+/**
+ * True when a failed `draftReview` attempt is worth retrying. See the
+ * top-of-file comment for the reasoning: retry every kind except a
+ * deliberate `cancelled` abort, a permanently-invalid `validation` failure,
+ * or a `provider` failure explicitly marked non-retryable.
+ */
+function isRetryableFailure(error: PortFailure): boolean {
+  if (error.kind === "cancelled" || error.kind === "validation") return false;
+  if (error.kind === "provider" && !error.retryable) return false;
+  return true;
+}
+
+/**
+ * Attempts `port.draftReview` for one domain up to `maxAttempts` times,
+ * retrying only on a retryable failure (see `isRetryableFailure`). Returns
+ * the last attempt's outcome (success, or the final failure) — the caller
+ * persists exactly one row per domain regardless of how many attempts ran.
+ */
+async function draftWithRetry(
+  port: AgentPort,
+  cycleId: string,
+  domain: Domain,
+  intake: IntakeSnapshot,
+  maxAttempts: number,
+): Promise<{ ok: true; value: DraftReviewOutput } | { ok: false; error: PortFailure }> {
+  let lastError: PortFailure = {
+    kind: "provider",
+    message: `draftReview for ${domain} never attempted (maxAttempts < 1)`,
+    retryable: true,
+  };
+
+  for (let attempt = 1; attempt <= Math.max(1, maxAttempts); attempt++) {
+    try {
+      const result = await port.draftReview({
+        reviewCycleId: cycleId,
+        domain: domain as GovernanceDomain,
+        intake,
+      });
+      if (result.ok) return result;
+      lastError = result.error;
+      if (!isRetryableFailure(lastError) || attempt >= maxAttempts) {
+        return { ok: false, error: lastError };
+      }
+    } catch (err) {
+      lastError = {
+        kind: "provider",
+        message: err instanceof Error ? err.message : String(err),
+        retryable: true,
+      };
+      if (attempt >= maxAttempts) {
+        return { ok: false, error: lastError };
+      }
+    }
+  }
+
+  return { ok: false, error: lastError };
 }
 
 async function loadIntakeSnapshot(tx: Db, initiativeId: string): Promise<IntakeSnapshot> {
@@ -83,9 +210,10 @@ async function loadIntakeSnapshot(tx: Db, initiativeId: string): Promise<IntakeS
  * Run (or resume) a fan-out draft-review pass for `domains` against
  * `cycleId`. Skips any domain whose `review_decisions` row is already
  * `drafted`, `signed`, or `returned` (idempotent re-run / resumability).
- * Every remaining domain is drafted concurrently via
- * `Promise.allSettled` — a rejected/failed promise for one domain never
- * prevents the others from completing and being persisted.
+ * Every remaining domain is drafted with retry, at most `options.concurrency`
+ * at a time (default 3) — a failed/slow domain never prevents others from
+ * completing and being persisted; see the top-of-file comment for the
+ * bounded-concurrency and retry design.
  */
 export async function startDraftRun(
   db: Db,
@@ -93,7 +221,10 @@ export async function startDraftRun(
   domains: Domain[],
   /** Overridable for tests (inject a failing/fake AgentPort); defaults to the real `getAgentPort()`. */
   port: AgentPort = getAgentPort(),
+  options: StartDraftRunOptions = {},
 ): Promise<StartDraftRunResult> {
+  const concurrency = options.concurrency ?? DEFAULT_CONCURRENCY;
+  const maxAttempts = options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
   const cycleRows = await db.select().from(reviewCycles).where(eq(reviewCycles.initiativeId, initiativeId));
   const cycle = cycleRows.slice().sort((a, b) => b.openedAt.getTime() - a.openedAt.getTime())[0];
   if (!cycle) {
@@ -118,51 +249,21 @@ export async function startDraftRun(
 
   const intake = await loadIntakeSnapshot(db, initiativeId);
 
-  const settled = await Promise.allSettled(
-    toRun.map(async (domain) => {
-      const result = await port.draftReview({
-        reviewCycleId: cycleId,
-        domain: domain as GovernanceDomain,
-        intake,
-      });
-      return { domain, result };
-    }),
-  );
-
-  const outcomes: DraftRunDomainOutcome[] = [...alreadyDone];
-
-  for (let i = 0; i < settled.length; i++) {
-    const outcome = settled[i]!;
-    const domain = toRun[i]!;
-
-    if (outcome.status === "rejected") {
-      await persistFailure(db, cycleId, domain, {
-        kind: "provider",
-        message: outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason),
-        retryable: true,
-      });
-      outcomes.push({
-        domain,
-        status: "failed",
-        error: {
-          kind: "provider",
-          message: outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason),
-          retryable: true,
-        },
-      });
-      continue;
+  // Bounded-concurrency, retrying fan-out (see top-of-file comment). Each
+  // worker persists its own domain's result the moment its attempts settle,
+  // so persistence still happens "as it completes" exactly as before — only
+  // the number of simultaneously in-flight `draftReview` calls changed.
+  const runResults = await runWithConcurrencyLimit(toRun, concurrency, async (domain) => {
+    const result = await draftWithRetry(port, cycleId, domain, intake, maxAttempts);
+    if (result.ok) {
+      await persistDraft(db, cycleId, domain, result.value);
+      return { domain, status: "drafted" as const };
     }
+    await persistFailure(db, cycleId, domain, result.error);
+    return { domain, status: "failed" as const, error: result.error };
+  });
 
-    const { result } = outcome.value;
-    if (!result.ok) {
-      await persistFailure(db, cycleId, domain, result.error);
-      outcomes.push({ domain, status: "failed", error: result.error });
-      continue;
-    }
-
-    await persistDraft(db, cycleId, domain, result.value);
-    outcomes.push({ domain, status: "drafted" });
-  }
+  const outcomes: DraftRunDomainOutcome[] = [...alreadyDone, ...runResults];
 
   await db.insert(auditEvents).values({
     id: `evt-${randomUUID()}`,
