@@ -2,7 +2,12 @@ import { APICallError } from "ai";
 import { MockLanguageModelV4 } from "ai/test";
 import { describe, expect, it } from "vitest";
 import { createOpenAIAgentPortWithModel } from "@/lib/agents/openai-adapter";
-import type { DraftReviewInput, IntakeSnapshot } from "@/lib/agents/ports";
+import type {
+  AuditorAnswerInput,
+  DraftReviewInput,
+  IntakeInterviewInput,
+  IntakeSnapshot,
+} from "@/lib/agents/ports";
 
 /**
  * These tests use the REAL mock language model utility shipped by the `ai`
@@ -343,6 +348,258 @@ describe("openai-adapter — triageAssist and checkCompleteness are implemented"
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.value.complete).toBe(false);
+    }
+  });
+});
+
+/* -------------------------------------------------------------------------
+ * auditorAnswer (M2)
+ * ---------------------------------------------------------------------- */
+
+function auditorInput(
+  overrides: Partial<AuditorAnswerInput> = {},
+): AuditorAnswerInput {
+  return {
+    question: "Which initiatives are member-facing and touch PHI?",
+    groundingRows: [
+      { slug: "member-chat-copilot", title: "Member Chat Copilot", eventTs: "2026-07-15T14:02:00Z" },
+    ],
+    queryUsed: "member-facing-phi",
+    ...overrides,
+  };
+}
+
+const VALID_AUDITOR_OBJECT = {
+  answerMd: "Member Chat Copilot is member-facing and touches PHI (event ts 2026-07-15T14:02:00Z).",
+  citedEvents: ["2026-07-15T14:02:00Z"],
+  queryUsed: "member-facing-phi",
+};
+
+describe("openai-adapter — auditorAnswer", () => {
+  it("passes the auditor instructions.md system prompt and the question/rows as the user prompt", async () => {
+    let capturedPrompt: unknown;
+    const model = new MockLanguageModelV4({
+      doGenerate: async (options) => {
+        capturedPrompt = options.prompt;
+        return textGenerateResult(VALID_AUDITOR_OBJECT);
+      },
+    });
+    const port = createOpenAIAgentPortWithModel(model);
+    const result = await port.auditorAnswer(auditorInput());
+
+    expect(result.ok).toBe(true);
+    const prompt = capturedPrompt as Array<{ role: string; content: unknown }>;
+    const systemMessage = prompt.find((m) => m.role === "system");
+    expect(systemMessage).toBeDefined();
+    const systemText = String(systemMessage?.content ?? "");
+    // Distinctive substring from agents/auditor/instructions.md.
+    expect(systemText).toContain("Grounding rule");
+
+    const userMessage = prompt.find((m) => m.role === "user");
+    const userText = JSON.stringify(userMessage?.content ?? "");
+    expect(userText).toContain("member-facing-phi");
+    expect(userText).toContain("Member Chat Copilot");
+  });
+
+  it("returns a valid AuditorAnswerOutput when the mock model returns a conformant object", async () => {
+    const model = new MockLanguageModelV4({
+      doGenerate: async () => textGenerateResult(VALID_AUDITOR_OBJECT),
+    });
+    const port = createOpenAIAgentPortWithModel(model);
+    const result = await port.auditorAnswer(auditorInput());
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.answerMd).toBe(VALID_AUDITOR_OBJECT.answerMd);
+      expect(result.value.citedEvents).toEqual(["2026-07-15T14:02:00Z"]);
+      expect(result.value.queryUsed).toBe("member-facing-phi");
+    }
+  });
+
+  it("maps a non-conformant model object to a provider/non-retryable PortFailure", async () => {
+    const model = new MockLanguageModelV4({
+      doGenerate: async () => textGenerateResult({ answerMd: "only this field" }),
+    });
+    const port = createOpenAIAgentPortWithModel(model);
+    const result = await port.auditorAnswer(auditorInput());
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.kind).toBe("provider");
+      if (result.error.kind === "provider") {
+        expect(result.error.retryable).toBe(false);
+      }
+    }
+  });
+
+  it("resolves cancelled when the signal is already aborted", async () => {
+    const model = new MockLanguageModelV4({
+      doGenerate: async () => textGenerateResult(VALID_AUDITOR_OBJECT),
+    });
+    const port = createOpenAIAgentPortWithModel(model);
+    const controller = new AbortController();
+    controller.abort();
+    const result = await port.auditorAnswer(auditorInput(), { signal: controller.signal });
+    expect(result).toEqual({ ok: false, error: { kind: "cancelled" } });
+  });
+
+  it("maps a timeoutMs overrun to PortFailure{kind:timeout}", async () => {
+    const model = new MockLanguageModelV4({
+      doGenerate: () => new Promise(() => {}),
+    });
+    const port = createOpenAIAgentPortWithModel(model);
+    const result = await port.auditorAnswer(auditorInput(), { timeoutMs: 20 });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.kind).toBe("timeout");
+    }
+  });
+});
+
+/* -------------------------------------------------------------------------
+ * intakeInterview (M2)
+ * ---------------------------------------------------------------------- */
+
+const EMPTY_INTAKE_PAYLOAD = {
+  basics: {
+    title: "",
+    sponsorOrg: "",
+    requesterName: "",
+    requesterEmail: "",
+    businessProblem: "",
+  },
+  useCase: { primaryUsers: "", decisionInformed: "", expectedVolume: null },
+  data: {
+    dataSources: [],
+    phiCategories: [],
+    phiCategoriesOtherText: null,
+    retentionIntent: null,
+    retentionIntentNote: null,
+    trainingVsInference: null,
+  },
+  modelVendor: {
+    buildOrBuy: null,
+    vendorName: null,
+    hosting: null,
+    modelType: null,
+  },
+  populationImpact: {
+    affectedPopulations: [],
+    expectedBenefits: null,
+    expectedHarms: null,
+  },
+  deployment: { integrationPoints: [], rolloutPlan: null },
+  overlay: {
+    touchesPHI: null,
+    memberFacing: null,
+    careCoverageInfluence: null,
+    vendorHosted: null,
+    humanInTheLoop: null,
+    individualImpact: null,
+  },
+  evidenceAttachments: [],
+};
+
+function intakeInterviewInput(
+  overrides: Partial<IntakeInterviewInput> = {},
+): IntakeInterviewInput {
+  return {
+    conversation: [{ role: "user", content: "Yes, it touches PHI." }],
+    partialPayload: { ...EMPTY_INTAKE_PAYLOAD, overlay: { ...EMPTY_INTAKE_PAYLOAD.overlay, touchesPHI: null } },
+    ...overrides,
+  };
+}
+
+const VALID_INTAKE_INTERVIEW_OBJECT = {
+  payload: {
+    ...EMPTY_INTAKE_PAYLOAD,
+    overlay: { ...EMPTY_INTAKE_PAYLOAD.overlay, touchesPHI: true },
+  },
+  gaps: [
+    { ruleId: "BLK-06", field: "overlay.memberFacing", level: "BLOCKING" },
+  ],
+  followUpQuestions: ["Do members interact with or receive its output directly?"],
+};
+
+describe("openai-adapter — intakeInterview", () => {
+  it("passes the intake instructions.md system prompt and the conversation/partialPayload as the user prompt", async () => {
+    let capturedPrompt: unknown;
+    const model = new MockLanguageModelV4({
+      doGenerate: async (options) => {
+        capturedPrompt = options.prompt;
+        return textGenerateResult(VALID_INTAKE_INTERVIEW_OBJECT);
+      },
+    });
+    const port = createOpenAIAgentPortWithModel(model);
+    const result = await port.intakeInterview(intakeInterviewInput());
+
+    expect(result.ok).toBe(true);
+    const prompt = capturedPrompt as Array<{ role: string; content: unknown }>;
+    const systemMessage = prompt.find((m) => m.role === "system");
+    expect(systemMessage).toBeDefined();
+    const systemText = String(systemMessage?.content ?? "");
+    // Distinctive substring from agents/intake/instructions.md.
+    expect(systemText).toContain("verbatim");
+
+    const userMessage = prompt.find((m) => m.role === "user");
+    const userText = JSON.stringify(userMessage?.content ?? "");
+    expect(userText).toContain("touches PHI");
+  });
+
+  it("returns a valid IntakeInterviewOutput when the mock model returns a conformant object", async () => {
+    const model = new MockLanguageModelV4({
+      doGenerate: async () => textGenerateResult(VALID_INTAKE_INTERVIEW_OBJECT),
+    });
+    const port = createOpenAIAgentPortWithModel(model);
+    const result = await port.intakeInterview(intakeInterviewInput());
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.followUpQuestions).toEqual(
+        VALID_INTAKE_INTERVIEW_OBJECT.followUpQuestions,
+      );
+      expect(result.value.gaps).toEqual(VALID_INTAKE_INTERVIEW_OBJECT.gaps);
+    }
+  });
+
+  it("maps a non-conformant model object to a provider/non-retryable PortFailure", async () => {
+    const model = new MockLanguageModelV4({
+      doGenerate: async () => textGenerateResult({ payload: {} }),
+    });
+    const port = createOpenAIAgentPortWithModel(model);
+    const result = await port.intakeInterview(intakeInterviewInput());
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.kind).toBe("provider");
+      if (result.error.kind === "provider") {
+        expect(result.error.retryable).toBe(false);
+      }
+    }
+  });
+
+  it("resolves cancelled when the signal is already aborted", async () => {
+    const model = new MockLanguageModelV4({
+      doGenerate: async () => textGenerateResult(VALID_INTAKE_INTERVIEW_OBJECT),
+    });
+    const port = createOpenAIAgentPortWithModel(model);
+    const controller = new AbortController();
+    controller.abort();
+    const result = await port.intakeInterview(intakeInterviewInput(), {
+      signal: controller.signal,
+    });
+    expect(result).toEqual({ ok: false, error: { kind: "cancelled" } });
+  });
+
+  it("maps a timeoutMs overrun to PortFailure{kind:timeout}", async () => {
+    const model = new MockLanguageModelV4({
+      doGenerate: () => new Promise(() => {}),
+    });
+    const port = createOpenAIAgentPortWithModel(model);
+    const result = await port.intakeInterview(intakeInterviewInput(), { timeoutMs: 20 });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.kind).toBe("timeout");
     }
   });
 });

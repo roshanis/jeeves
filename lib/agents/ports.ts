@@ -183,6 +183,93 @@ export interface CompletenessCheckOutput {
   readonly notes: Readonly<Record<string, string>>;
 }
 
+/* -------------------------------------------------------------------------
+ * Auditor agent port shapes (agents/auditor/instructions.md, M2) — natural-
+ * language audit Q&A grounded on structured query rows fetched by the ROUTE
+ * layer, never by the port/adapter itself (plan.md §4: adapters get data
+ * handed to them, they never reach into lib/data on their own).
+ * ---------------------------------------------------------------------- */
+
+export interface AuditorAnswerInput {
+  readonly question: string;
+  /**
+   * The structured query result rows the caller already fetched — either
+   * `AuditQueryRow[]` (a canned query, `lib/data/dto.ts`) or `AuditEventRow[]`
+   * (a structured-read fallback keyed off a specific initiative). Kept as
+   * `readonly unknown[]` deliberately: `lib/agents` has no existing
+   * dependency on `lib/data` anywhere in this file (confirmed — every other
+   * port input here, e.g. `IntakeSnapshot.answers`, is `Record<string,
+   * unknown>`-shaped rather than importing a `lib/data`/`lib/domain` row
+   * type), and importing `AuditQueryRow`/`AuditEventRow` into this file
+   * would be the first such cross-layer dependency. The port only needs to
+   * know "an array of row-like objects to render context from," never the
+   * concrete row shape — the route handler (`app/api/chat/auditor/route.ts`)
+   * is where the concrete row type is known and fetched.
+   */
+  readonly groundingRows: readonly Readonly<Record<string, unknown>>[];
+  /** The `CannedAuditQueryId` used, or a short label for an ad hoc query. */
+  readonly queryUsed: string;
+}
+
+/**
+ * Mirrors `agents/auditor/instructions.md`'s `AuditorAnswerOutput` exactly —
+ * there is no richer-shape-to-port-shape mapping step for this agent (unlike
+ * `DraftReviewOutput`/`ReviewerDraftOutput`). The Zod runtime validator for
+ * this exact shape is `auditorAnswerOutputSchema` in `./schemas`; the two
+ * declarations are kept in sync by hand per this file's existing
+ * self-contained-interfaces convention (see `DraftReviewOutput` etc., which
+ * likewise do not import their shape from `./schemas`).
+ */
+export interface AuditorAnswerOutput {
+  readonly answerMd: string;
+  /** Every event timestamp (ISO 8601) or decision id relied upon; empty on a refusal. */
+  readonly citedEvents: readonly string[];
+  /** The query id/label actually used, echoed back verbatim from the input. */
+  readonly queryUsed: string;
+}
+
+/* -------------------------------------------------------------------------
+ * Intake agent port shapes (agents/intake/instructions.md, M2) — the
+ * conversational alternative to the M1 structured intake form.
+ * ---------------------------------------------------------------------- */
+
+export interface IntakeInterviewInput {
+  /** The conversation so far, oldest first. */
+  readonly conversation: readonly {
+    readonly role: "user" | "assistant";
+    readonly content: string;
+  }[];
+  /**
+   * The current partially-filled `IntakeVersion.payload` state (intake-spec
+   * §3). Kept as `Readonly<Record<string, unknown>>` rather than importing
+   * `IntakePayload` from `lib/intake/types.ts` — same no-cross-dependency
+   * rationale as `AuditorAnswerInput.groundingRows` above, and the same
+   * precedent already set by this file's own `IntakeSnapshot.answers`. The
+   * route layer (`app/api/chat/intake/route.ts`) is responsible for treating
+   * this as a genuine (partial) `IntakePayload` shape when it recomputes
+   * authoritative completeness via `lib/intake/completeness.ts`.
+   */
+  readonly partialPayload: Readonly<Record<string, unknown>>;
+}
+
+/**
+ * Mirrors `agents/intake/instructions.md`'s `IntakeInterviewOutput` exactly
+ * — no richer-shape-to-port-shape mapping step, same relationship as
+ * `AuditorAnswerOutput` above. Runtime validator: `intakeInterviewOutputSchema`
+ * in `./schemas`.
+ */
+export interface IntakeInterviewOutput {
+  /** Partially-filled `IntakePayload` shape — nulls/empty arrays for anything not yet answered. */
+  readonly payload: Readonly<Record<string, unknown>>;
+  readonly gaps: readonly {
+    readonly ruleId: string;
+    readonly field: string;
+    readonly level: "BLOCKING" | "REQUIRED-FOR-TIER" | "ADVISORY";
+  }[];
+  /** What the agent will ask next, in order; overlay questions verbatim. */
+  readonly followUpQuestions: readonly string[];
+}
+
 /**
  * Capability port for single-shot agent assists (plan.md §4).
  * Adapters (eve or fallback) implement this; app code depends only on it.
@@ -205,6 +292,29 @@ export interface AgentPort {
     input: CompletenessCheckInput,
     options?: InvokeOptions,
   ): Promise<PortResult<CompletenessCheckOutput>>;
+
+  /**
+   * Answer a natural-language audit question, grounded ONLY on the
+   * structured query rows the caller supplies (agents/auditor/instructions.md
+   * "Grounding rule"). Never approves, never uses general knowledge.
+   */
+  auditorAnswer(
+    input: AuditorAnswerInput,
+    options?: InvokeOptions,
+  ): Promise<PortResult<AuditorAnswerOutput>>;
+
+  /**
+   * Continue a conversational intake interview by one turn: merge the
+   * latest answer into the partial payload and decide what to ask next.
+   * Never invents an answer to an unanswered field (agents/intake/
+   * instructions.md "Never invent an answer") — the port's own `gaps` is
+   * advisory only; the route recomputes authoritative gaps via
+   * `lib/intake/completeness.ts`.
+   */
+  intakeInterview(
+    input: IntakeInterviewInput,
+    options?: InvokeOptions,
+  ): Promise<PortResult<IntakeInterviewOutput>>;
 }
 
 /* -------------------------------------------------------------------------

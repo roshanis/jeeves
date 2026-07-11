@@ -16,11 +16,15 @@ import {
 } from "./schemas";
 import type {
   AgentPort,
+  AuditorAnswerInput,
+  AuditorAnswerOutput,
   CompletenessCheckInput,
   CompletenessCheckOutput,
   DraftReviewInput,
   DraftReviewOutput,
   GovernanceDomain,
+  IntakeInterviewInput,
+  IntakeInterviewOutput,
   InvokeOptions,
   PortResult,
   TriageAssistInput,
@@ -370,6 +374,236 @@ export function generateMockIncidentSummary(
 }
 
 /* -------------------------------------------------------------------------
+ * Auditor agent (M2) — agents/auditor/instructions.md
+ * ---------------------------------------------------------------------- */
+
+/** Verbatim refusal text, agents/auditor/instructions.md "Refusal behavior". */
+const AUDITOR_REFUSAL_TEXT =
+  "That's not in the governance record I have access to for this query.";
+
+/**
+ * Extracts a stable citation label for a single grounding row. Tries, in
+ * order: an `eventTs`-like field, then a `ts`-like field, then falls back to
+ * a stable per-row index label — never fabricates a value that wasn't on
+ * the row itself (agents/auditor/instructions.md's absolute grounding rule).
+ */
+function citationForRow(row: Readonly<Record<string, unknown>>, index: number): string {
+  const eventTs = row["eventTs"];
+  if (typeof eventTs === "string" && eventTs.length > 0) return eventTs;
+  const ts = row["ts"];
+  if (typeof ts === "string" && ts.length > 0) return ts;
+  return `row-${index}`;
+}
+
+/**
+ * Renders one grounding row as a single Markdown bullet, interpolating ONLY
+ * literal field values already present on the row (never adding independent
+ * prose claims) — the mechanism that satisfies the "never invent a fact"
+ * grounding rule at the mock-adapter layer. Fields are rendered in a fixed,
+ * deterministic order; absent fields are simply skipped (not rendered as
+ * "unknown" or similar, which would itself be an invented claim about
+ * absence rather than a citation of presence).
+ */
+function renderRowBullet(row: Readonly<Record<string, unknown>>, citation: string): string {
+  const parts: string[] = [];
+  const title = row["title"];
+  if (typeof title === "string" && title.length > 0) parts.push(title);
+  const slug = row["slug"];
+  if (typeof slug === "string" && slug.length > 0) parts.push(`(${slug})`);
+  const approver = row["approver"];
+  if (typeof approver === "string" && approver.length > 0) parts.push(`— approver: ${approver}`);
+  const actor = row["actor"];
+  if (typeof actor === "string" && actor.length > 0) parts.push(`— actor: ${actor}`);
+  const action = row["action"];
+  if (typeof action === "string" && action.length > 0) parts.push(`(${action})`);
+  const detail = row["detail"];
+  if (typeof detail === "string" && detail.length > 0) parts.push(`— ${detail}`);
+  const state = row["state"];
+  if (typeof state === "string" && state.length > 0) parts.push(`[state: ${state}]`);
+  if (parts.length === 0) {
+    // No recognized field present on this row — cite it by its stable label
+    // alone rather than rendering nothing (still not an invented fact: the
+    // citation label itself is derived from the row, per citationForRow).
+    return `- (${citation})`;
+  }
+  return `- ${parts.join(" ")} (event ts ${citation})`;
+}
+
+function buildAuditorAnswerOutput(input: AuditorAnswerInput): AuditorAnswerOutput {
+  if (input.groundingRows.length === 0) {
+    return {
+      answerMd: AUDITOR_REFUSAL_TEXT,
+      citedEvents: [],
+      queryUsed: input.queryUsed,
+    };
+  }
+
+  const citations = input.groundingRows.map((row, i) => citationForRow(row, i));
+  const bullets = input.groundingRows.map((row, i) => renderRowBullet(row, citations[i]!));
+
+  return {
+    answerMd: bullets.join("\n"),
+    citedEvents: citations,
+    queryUsed: input.queryUsed,
+  };
+}
+
+/* -------------------------------------------------------------------------
+ * Intake interview agent (M2) — agents/intake/instructions.md
+ * ---------------------------------------------------------------------- */
+
+/**
+ * The six overlay questions, asked verbatim in this exact fixed order
+ * (agents/intake/instructions.md "The overlay questions are asked
+ * verbatim") — copied character-for-character from that file, including
+ * each question's helper line. `field` matches `IntakeOverlay`
+ * (lib/intake/types.ts) key names.
+ */
+const OVERLAY_QUESTIONS: readonly {
+  readonly field: string;
+  readonly text: string;
+}[] = [
+  {
+    field: "touchesPHI",
+    text:
+      "Does it access PHI? Determines Privacy/HIPAA control applicability (H-01, H-02) and drives the PHI-category/retention questions above.",
+  },
+  {
+    field: "memberFacing",
+    text:
+      "Do members interact with or receive its output directly? Member-facing systems carry higher individual-impact and consumer-protection exposure, and add Legal review (L-02).",
+  },
+  {
+    field: "careCoverageInfluence",
+    text:
+      "Does it influence care or coverage decisions? The single strongest driver of tier — care/coverage influence without a human check is Critical (tier rule 1).",
+  },
+  {
+    field: "vendorHosted",
+    text:
+      "Is the model vendor-hosted? Vendor hosting triggers Procurement and Legal control requirements (contract addendum, VRA, data-residency attestation).",
+  },
+  {
+    field: "humanInTheLoop",
+    text:
+      "Does a qualified human review each output before it takes effect? A human-in-the-loop check downgrades otherwise-Critical care/coverage cases to High (tier rule 2) — it is a mitigating control, not a formality.",
+  },
+  {
+    field: "individualImpact",
+    text:
+      "Does it affect individuals' opportunities, rights, or services (members, providers, or employees)? Individual-impact combined with member-facing is an independent High-tier trigger, and feeds Medium-tier default even absent other flags.",
+  },
+];
+
+const CLOSING_ACKNOWLEDGMENT =
+  "All required overlay questions are answered.";
+
+/**
+ * Deterministic, case-insensitive keyword match: does `content` unambiguously
+ * answer a yes/no overlay question? Returns `true`/`false` only for a clear
+ * match, `null` when ambiguous or absent — never guesses (agents/intake/
+ * instructions.md "Never invent an answer": an unclear answer must stay
+ * `null`, not be coerced to `false`).
+ */
+function matchYesNo(content: string): boolean | null {
+  const normalized = content.trim().toLowerCase();
+  if (normalized.length === 0) return null;
+
+  const hasYes = /\byes\b|\byeah\b|\byep\b/.test(normalized);
+  const hasNo = /\bno\b|\bnope\b|\bnot really\b|\bdoesn't\b|\bdon't\b/.test(normalized);
+
+  if (hasYes && !hasNo) return true;
+  if (hasNo && !hasYes) return false;
+  // Both or neither matched (e.g. "not sure", "maybe") — ambiguous.
+  return null;
+}
+
+function getOverlay(
+  partialPayload: Readonly<Record<string, unknown>>,
+): Record<string, unknown> {
+  const overlay = partialPayload["overlay"];
+  if (overlay && typeof overlay === "object") {
+    return { ...(overlay as Record<string, unknown>) };
+  }
+  return {};
+}
+
+/** First overlay question (in fixed order) whose field is still null/undefined. */
+function nextPendingOverlayQuestion(
+  overlay: Readonly<Record<string, unknown>>,
+): (typeof OVERLAY_QUESTIONS)[number] | null {
+  for (const q of OVERLAY_QUESTIONS) {
+    const value = overlay[q.field];
+    if (value === null || value === undefined) return q;
+  }
+  return null;
+}
+
+function lastUserMessage(
+  conversation: IntakeInterviewInput["conversation"],
+): string | null {
+  for (let i = conversation.length - 1; i >= 0; i--) {
+    if (conversation[i]!.role === "user") return conversation[i]!.content;
+  }
+  return null;
+}
+
+/**
+ * Advisory-only gaps derived from which overlay fields are still null — the
+ * ROUTE layer (app/api/chat/intake/route.ts) recomputes authoritative gaps
+ * via `lib/intake/completeness.ts`'s `evaluateCompleteness` once the port's
+ * returned payload is merged; this simplified list exists only so the port's
+ * own output shape is non-trivial without duplicating that full rules
+ * engine here (documented simplification, task brief Task 3).
+ */
+function buildMockIntakeGaps(
+  overlay: Readonly<Record<string, unknown>>,
+): IntakeInterviewOutput["gaps"] {
+  return OVERLAY_QUESTIONS.filter((q) => {
+    const value = overlay[q.field];
+    return value === null || value === undefined;
+  }).map((q) => ({
+    ruleId: `BLK-overlay-${q.field}`,
+    field: `overlay.${q.field}`,
+    level: "BLOCKING" as const,
+  }));
+}
+
+function buildIntakeInterviewOutput(
+  input: IntakeInterviewInput,
+): IntakeInterviewOutput {
+  const overlay = getOverlay(input.partialPayload);
+  const pendingBeforeAnswer = nextPendingOverlayQuestion(overlay);
+
+  // Merge: if there's a currently-pending overlay question and the last user
+  // message unambiguously answers it, set that field. Never touches any
+  // other field, and never coerces an ambiguous/absent answer to false.
+  if (pendingBeforeAnswer) {
+    const message = lastUserMessage(input.conversation);
+    const answer = message === null ? null : matchYesNo(message);
+    if (answer !== null) {
+      overlay[pendingBeforeAnswer.field] = answer;
+    }
+  }
+
+  const payload: Record<string, unknown> = {
+    ...input.partialPayload,
+    overlay,
+  };
+
+  const pendingAfterAnswer = nextPendingOverlayQuestion(overlay);
+  const followUpQuestions = pendingAfterAnswer
+    ? [pendingAfterAnswer.text]
+    : [CLOSING_ACKNOWLEDGMENT];
+
+  return {
+    payload,
+    gaps: buildMockIntakeGaps(overlay),
+    followUpQuestions,
+  };
+}
+
+/* -------------------------------------------------------------------------
  * AgentPort factory
  * ---------------------------------------------------------------------- */
 
@@ -456,6 +690,40 @@ export function createMockAgentPort(): AgentPort {
       }
 
       return { ok: true, value: buildCompletenessCheckOutput(input) };
+    },
+
+    async auditorAnswer(
+      input: AuditorAnswerInput,
+      options?: InvokeOptions,
+    ): Promise<PortResult<AuditorAnswerOutput>> {
+      options?.onProgress?.({
+        invocationId: `mock-auditor-${input.queryUsed}`,
+        stage: "answering",
+        at: new Date().toISOString(),
+      });
+
+      if (options?.signal?.aborted) {
+        return { ok: false, error: { kind: "cancelled" } };
+      }
+
+      return { ok: true, value: buildAuditorAnswerOutput(input) };
+    },
+
+    async intakeInterview(
+      input: IntakeInterviewInput,
+      options?: InvokeOptions,
+    ): Promise<PortResult<IntakeInterviewOutput>> {
+      options?.onProgress?.({
+        invocationId: `mock-intake-${input.conversation.length}`,
+        stage: "interviewing",
+        at: new Date().toISOString(),
+      });
+
+      if (options?.signal?.aborted) {
+        return { ok: false, error: { kind: "cancelled" } };
+      }
+
+      return { ok: true, value: buildIntakeInterviewOutput(input) };
     },
   };
 }

@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  auditorAnswerOutputSchema,
+  intakeInterviewOutputSchema,
   mapReviewerDraftToPortOutput,
   opsMonitorIncidentOutputSchema,
   reviewerDraftOutputSchema,
@@ -225,5 +227,224 @@ describe("mapReviewerDraftToPortOutput", () => {
     const rich = validReviewerDraft({ evidenceRequests: [] });
     const port = mapReviewerDraftToPortOutput("legal", rich);
     expect(port.draftMarkdown).not.toContain("## Evidence requests");
+  });
+});
+
+/* -------------------------------------------------------------------------
+ * Auditor agent — agents/auditor/instructions.md "Output"
+ * ---------------------------------------------------------------------- */
+
+describe("auditorAnswerOutputSchema", () => {
+  const validAnswer = {
+    answerMd:
+      "Member Chat Copilot was approved by Angela Torres on 2026-07-15 (event ts 2026-07-15T14:02:00Z).",
+    citedEvents: ["2026-07-15T14:02:00Z"],
+    queryUsed: "approved-by-torres",
+  };
+
+  it("accepts a valid fixture", () => {
+    expect(auditorAnswerOutputSchema.safeParse(validAnswer).success).toBe(true);
+  });
+
+  it("accepts an empty citedEvents array (e.g. on refusal)", () => {
+    expect(
+      auditorAnswerOutputSchema.safeParse({ ...validAnswer, citedEvents: [] })
+        .success,
+    ).toBe(true);
+  });
+
+  it('accepts an empty queryUsed string ("as supplied in the input")', () => {
+    expect(
+      auditorAnswerOutputSchema.safeParse({ ...validAnswer, queryUsed: "" })
+        .success,
+    ).toBe(true);
+  });
+
+  it("rejects a fixture missing answerMd", () => {
+    const fixture: Record<string, unknown> = { ...validAnswer };
+    delete fixture.answerMd;
+    expect(auditorAnswerOutputSchema.safeParse(fixture).success).toBe(false);
+  });
+
+  it("rejects an empty answerMd string (min length 1)", () => {
+    expect(
+      auditorAnswerOutputSchema.safeParse({ ...validAnswer, answerMd: "" })
+        .success,
+    ).toBe(false);
+  });
+
+  it("rejects a non-string citedEvents entry", () => {
+    expect(
+      auditorAnswerOutputSchema.safeParse({
+        ...validAnswer,
+        citedEvents: [42],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects a missing queryUsed field", () => {
+    const fixture: Record<string, unknown> = { ...validAnswer };
+    delete fixture.queryUsed;
+    expect(auditorAnswerOutputSchema.safeParse(fixture).success).toBe(false);
+  });
+});
+
+/* -------------------------------------------------------------------------
+ * Intake agent — agents/intake/instructions.md "Output"
+ * ---------------------------------------------------------------------- */
+
+describe("intakeInterviewOutputSchema", () => {
+  const emptyPayload = {
+    basics: {
+      title: "",
+      sponsorOrg: "",
+      requesterName: "",
+      requesterEmail: "",
+      businessProblem: "",
+    },
+    useCase: {
+      primaryUsers: "",
+      decisionInformed: "",
+      expectedVolume: null,
+    },
+    data: {
+      dataSources: [],
+      phiCategories: [],
+      phiCategoriesOtherText: null,
+      retentionIntent: null,
+      retentionIntentNote: null,
+      trainingVsInference: null,
+    },
+    modelVendor: {
+      buildOrBuy: null,
+      vendorName: null,
+      hosting: null,
+      modelType: null,
+    },
+    populationImpact: {
+      affectedPopulations: [],
+      expectedBenefits: null,
+      expectedHarms: null,
+    },
+    deployment: {
+      integrationPoints: [],
+      rolloutPlan: null,
+    },
+    overlay: {
+      touchesPHI: null,
+      memberFacing: null,
+      careCoverageInfluence: null,
+      vendorHosted: null,
+      humanInTheLoop: null,
+      individualImpact: null,
+    },
+    evidenceAttachments: [],
+  };
+
+  const validInterview = {
+    payload: emptyPayload,
+    gaps: [
+      { ruleId: "BLK-05", field: "overlay.touchesPHI", level: "BLOCKING" as const },
+    ],
+    followUpQuestions: ["Does it access PHI?"],
+  };
+
+  it("accepts a valid fixture with an entirely-null/empty payload", () => {
+    expect(intakeInterviewOutputSchema.safeParse(validInterview).success).toBe(
+      true,
+    );
+  });
+
+  it("accepts a fixture with populated payload fields", () => {
+    const result = intakeInterviewOutputSchema.safeParse({
+      ...validInterview,
+      payload: {
+        ...emptyPayload,
+        basics: {
+          title: "Prior-Auth Clinical Summarizer",
+          sponsorOrg: "Clinical Ops",
+          requesterName: "Priya Raman",
+          requesterEmail: "priya.raman@example.com",
+          businessProblem: "Nurses spend too long assembling coverage packets.",
+        },
+        overlay: {
+          ...emptyPayload.overlay,
+          touchesPHI: true,
+        },
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts an empty gaps array and empty followUpQuestions array", () => {
+    expect(
+      intakeInterviewOutputSchema.safeParse({
+        ...validInterview,
+        gaps: [],
+        followUpQuestions: [],
+      }).success,
+    ).toBe(true);
+  });
+
+  it("accepts every gaps level enum value (BLOCKING, REQUIRED-FOR-TIER, ADVISORY)", () => {
+    for (const level of ["BLOCKING", "REQUIRED-FOR-TIER", "ADVISORY"] as const) {
+      const result = intakeInterviewOutputSchema.safeParse({
+        ...validInterview,
+        gaps: [{ ruleId: "X-01", field: "basics.title", level }],
+      });
+      expect(result.success).toBe(true);
+    }
+  });
+
+  it("rejects a fixture missing payload", () => {
+    const fixture: Record<string, unknown> = { ...validInterview };
+    delete fixture.payload;
+    expect(intakeInterviewOutputSchema.safeParse(fixture).success).toBe(false);
+  });
+
+  it("rejects a gaps entry with an invalid level enum value", () => {
+    const result = intakeInterviewOutputSchema.safeParse({
+      ...validInterview,
+      gaps: [{ ruleId: "X-01", field: "basics.title", level: "URGENT" }],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a gaps entry missing ruleId", () => {
+    const result = intakeInterviewOutputSchema.safeParse({
+      ...validInterview,
+      gaps: [{ field: "basics.title", level: "BLOCKING" }],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a non-string followUpQuestions entry", () => {
+    const result = intakeInterviewOutputSchema.safeParse({
+      ...validInterview,
+      followUpQuestions: [42],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a payload.overlay field with a non-boolean, non-null value", () => {
+    const result = intakeInterviewOutputSchema.safeParse({
+      ...validInterview,
+      payload: {
+        ...emptyPayload,
+        overlay: { ...emptyPayload.overlay, touchesPHI: "yes" },
+      },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a payload.data.dataSources entry that is not a string", () => {
+    const result = intakeInterviewOutputSchema.safeParse({
+      ...validInterview,
+      payload: {
+        ...emptyPayload,
+        data: { ...emptyPayload.data, dataSources: [42] },
+      },
+    });
+    expect(result.success).toBe(false);
   });
 });
