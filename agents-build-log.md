@@ -28,3 +28,9 @@
 ### Files changed: plan.md (status + §13), AGENTS.md (new, root — operative Codex rules), .claude/CLAUDE.md, .claude/settings.json, .claude/agents/{code-reviewer,security-reviewer}.md, .codex/agents.md (pointer), .gitignore, agents-build-log.md (header)
 ### Diff summary: Owner decisions — (1) full v1 breadth restored on 1–2 week budget, structured as milestones M1 champion vertical / M2 breadth / M3 telemetry depth / M4 hardening; (2) fast-lane reframe confirmed (agents never approve). Repo git-initialized; root AGENTS.md carries the 9 hard rules from the Codex review.
 ### Recommendations / Next steps: Initial commit on main; create codex-worktree + claude-worktree; start M1-P0 (Next.js scaffold via Sonnet worker, eve spike via Codex) with the 2h either/or gate.
+
+## [AGENT: Claude] [2026-07-11T02:30Z]
+### Action: Authored docs/seed-spec.md while P0 workers run (Sonnet scaffold in codex-worktree; Codex eve spike — note: gpt-5.6-terra-mini unsupported on this account, running on Codex default model)
+### Files changed: docs/seed-spec.md (new, main branch)
+### Diff summary: Deterministic seed spec — 9 fictional actors with separation of duties; 12 initiatives covering every demo storyline (champion #1 live-only, fast-lane #2, rejected #3, breach-trending #4 crossing Q-01 at base+9d, RL promotion #5, self-hosted GPU #6, mid-pipeline #7, conditional #8, returned #9, overdue #10, exception-pending #11, healthy #12); 16-entry control catalog (2/domain) + live-enforced Q-01 eval floor; telemetry generation functions; ~120-150 pre-seeded audit events incl. foreshadowing admin threshold change; outcome-metric targets; 4 day-one audit queries. Seed must derive tiers via lib/triage/rules.ts and fail on drift.
+### Recommendations / Next steps: P1 worker consumes this spec verbatim. Gate P0 on scaffold acceptance checks + eve verdict.
