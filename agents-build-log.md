@@ -46,3 +46,9 @@
 ### Files changed: docs/demo-script.md (Haiku worker + 4 review fixes), docs/intake-spec.md (Sonnet worker, accepted as-is), docs/ui-spec.md (Sonnet worker + 1 fix)
 ### Diff summary: demo-script review caught: champion member-facing flag contradicted seed fixture; retention gap wrongly described as blocking submission (intake-spec: fires post-triage); rejection attributed to a reviewer (SoD violation — only accountable approver rejects); three-vs-four result rows; real-org audience reference scrubbed. ui-spec fix: banner disclaimer named a real org — replaced with "not affiliated with any real organization". intake-spec verified: overlay questions verbatim, champion prefill retentionIntent=null, RFT rules implementable, worker flagged seed.ts must load champion as UNSUBMITTED draft (noted for P1 prompt).
 ### Recommendations / Next steps: Commit all three. Remaining in flight: scaffold, eve spike, domain-logic bundle.
+
+## [AGENT: Claude] [2026-07-11T04:25Z]
+### Action: Verified + accepted domain-logic bundle (Sonnet worker, resumed once after API-overload crash); committed da57f46 on claude-worktree
+### Files changed: lib/{domain,triage,approval,controls,lifecycle}/* + minimal package.json/tsconfig/vitest.config (claude-worktree branch)
+### Diff summary: 114 tests / 100% lib coverage / strict TS, verified independently by orchestrator (typecheck + full suite re-run; rules.ts audited against seed-spec §2.1 — exact match). Worker judgment calls accepted: strict > breach comparison (noise-free formula crosses at day 11, seeded noise will shift it — evaluator is agnostic); transition() takes Actor {id, role}; rejected/retired terminal; deploy=admin|system. Deviation accepted: @vitest/coverage-v8 devDep (required for coverage runs).
+### Recommendations / Next steps: Merge into main after P0 gate alongside scaffold (package.json union-merge expected). Remaining in flight: Sonnet scaffold (codex-worktree), Codex eve spike.
