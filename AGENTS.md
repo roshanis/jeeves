@@ -15,7 +15,8 @@ in the standard entry format. Default collaboration: Codex implements, Claude re
 - OpenAI GPT-5.x runtime LLM via env `OPENAI_MODEL`; ALL LLM calls mocked in tests
 
 ## Commands
-- `pnpm test` (Vitest) · `pnpm test:e2e` (Playwright golden path) · `pnpm lint`
+- `npm test` (Vitest) · `npm run test:e2e` (Playwright golden path) · `npm run lint` · `npm run typecheck` · `npm run db:seed`
+- npm is the toolchain (pnpm is not installed on this host — decided at P0).
 
 ## Layout
 - `app/` Next.js routes · `agents/` eve agents-as-directories · `lib/` domain logic (>80% coverage target) · `scripts/seed.ts` · `tests/`

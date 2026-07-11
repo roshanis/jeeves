@@ -88,3 +88,10 @@
 ### Files changed: full merge of both worktrees into main + lib/data/index.ts env-based provider selection (lazy require keeps driver chain out of jsdom)
 ### Diff summary: main = 347 unit/component tests + 5 Playwright e2e, typecheck/lint/build green. Review blockers: #1 adapters committed; #2 board fixed (e01caf0 + compile-time-exhaustive test 790aa34); #3 real golden path (790aa34). Both worktrees fast-forwarded to 0bd2c36. Task #2 → completed, #3 → in_progress.
 ### Recommendations / Next steps: P2 server worker (Sonnet, codex-worktree): lib/services + lib/workflow review-run fan-out + gated app/api routes, ~40 tests incl. champion e2e path, SoD, transactionality, idempotency, auth/rate/budget gating. UI live-wiring worker follows once the API contract lands.
+
+## [AGENT: Codex] [2026-07-11T04:10Z]
+### Action: Continued review and started the merged Jeeves UI locally with deterministic mock data
+### Files changed: agents-build-log.md
+### Diff summary: No implementation changes; verified `main` responds with HTTP 200 at localhost:3111
+### Recommendations / Next steps:
+- Open http://localhost:3111 and use the role switcher to inspect the portfolio, reviews, controls, audit, and admin views.
