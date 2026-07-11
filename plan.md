@@ -105,11 +105,32 @@ Conversational intake chat · free-form ask-the-auditor NL chat · all 8 domains
 
 ## 13. Milestone map (GO amendment — full breadth over 1–2 weeks)
 
-- **M1 — Champion vertical (days 1–3):** §9 phases P0–P5 exactly as written. Ends with the champion storyline deployed and demo-able. *The three-day cut is now milestone 1, not the whole project.*
-- **M2 — Breadth (days 4–6):** all 8 domains live (extend the parameterized reviewer + per-track policy corpora); conversational intake chat; free-form ask-the-auditor NL chat grounded on the structured query layer from M1.
-- **M3 — Telemetry depth (days 7–9):** self-hosted Arize Phoenix fed synthetic OTel traces (replaces "not connected" chip with a real connector); interactive RL promotion view (runs, reward curves, feedback-provenance sign-off); GPU quota controls on the self-hosted-workload initiative; scheduled monitoring via Vercel Cron + Workflow SDK (replacing on-demand-only).
-- **M4 — Hardening & polish (days 10+):** full control-catalog UI across 8 domains, exception workflows, demo script + README + walkthrough recording, security-reviewer pass, session-ritual before final merge.
+### 13a. Original GO map (superseded by the 2026-07-11 reorder below — kept for provenance)
+
+- **M1 — Champion vertical (days 1–3):** §9 phases P0–P5 exactly as written. Ends with the champion storyline deployed and demo-able. *The three-day cut is now milestone 1, not the whole project.* **[DELIVERED]**
+- **M2 — Breadth:** all 8 domains live; conversational intake chat; free-form ask-the-auditor NL chat.
+- **M3 — Telemetry depth:** self-hosted Arize Phoenix; RL promotion view; GPU quota controls; scheduled monitoring.
+- **M4 — Hardening & polish:** full control-catalog UI, exception workflows, security pass, session ritual.
+
+### 13b. Reorder (Codex review 2026-07-11 — ACCEPTED with judgement, Claude)
+
+Codex verdict: *approve the direction, but rebase and reorder.* Two High findings drove it:
+(1) **hardening cannot remain last** — transactions, persistent session/rate/budget state, workspace isolation, authorization, and idempotency must precede scheduled monitoring and any **public** Vercel deploy; (2) **the console redesign must precede feature expansion** — don't pile Phoenix/GPU/exceptions onto an interface we were replacing.
+
+Owner nuance (Claude judgement): this is a **synthetic-data, read-only-public / passcode-gated demo** — M2.5 is a *hard gate before any public Vercel deploy*, **not** a blocker on finishing the console UX or running the demo locally/preview. So UX (M2) proceeds now; M2.5 lands before we expose a public URL.
+
+- **M1 — Champion vertical:** *[DELIVERED]* — full read-only + live governance loop, breach→pause→reassess, audit console, two admin actions.
+- **M2 — UX + workflow breadth (current):**
+  - Governance **operations console** replaces the marketing UI — left-nav shell, working Inbox/Portfolio/Monitoring, restrained enterprise palette. *[DELIVERED this session]*
+  - Initiative **record-as-case-file** + 3-column **Review Workbench** as the central experience. *[IN PROGRESS — workbench DONE; case-file reshape in flight]*
+  - Run **all 8 domains** through a durable, bounded-concurrency workflow (retry / resume / per-domain failure visibility / cancellation / atomic budget reservation) — replacing the single-request `Promise.allSettled` in `lib/workflow/review-run.ts`.
+  - Harden both chats: strict payload limits, role checks, grounded/cited responses.
+  - **Honesty fix:** golden path + `docs/demo-script.md` exercise all 8 domains, not 4.
+  - *Exit:* all-8 mocked E2E passes; one live-provider smoke; workflow resumes after interruption.
+- **M2.5 — Deployment foundation (HARD GATE before any public deploy):** transaction-capable pooled Neon driver (today `neon-http.transaction()` is a stub — atomic only on PGlite); persistent sessions, rate limits, atomic budget; real workspace-scoped records + queries; requester-ownership + reviewer-assignment authorization; required-review completeness before approval; concurrency-safe sign/return/decide/monitor; dynamic DB-backed pages; security headers; guarded seeding. *Exit:* isolated Vercel preview passes two-session isolation + mutation tests.
+- **M3 — Operate loop:** authenticated, idempotent **scheduled** monitoring first; Phoenix/Arize as a **separately managed connector** (not assumed in-process) with connector health / last-sync / trace ids; synthetic OTel traces; GPU quotas only for the one self-hosted initiative; extend the promotion view (eval comparison, provenance evidence, history, rollback); cost + token-budget telemetry. *Exit:* a scheduled breach creates exactly one incident + reassessment; connector failure never breaks the demo.
+- **M4 — Governance operations + release:** full control-catalog fields (owner, cadence, applicability, enforcement mode, remediation owner, evidence freshness, versions) + filtering; exception request/approve/expire/renew/reject/revoke workflow with SoD + full audit linkage; security-reviewer pass + accessibility/browser pass; demo reset ritual (workspace reset, connector check, budget check, build SHA, smoke test, passcode rotation); preview → walkthrough → **human-approved** production promotion.
 - Gate between milestones: tests green, code-reviewer verdict, build-log entry, human checkpoint.
 
 ---
-*GO given — building. Each phase still ends with tests green + reviewed diff before merge (Plan-First Gate satisfied 2026-07-11).*
+*GO given — building. Each phase still ends with tests green + reviewed diff before merge (Plan-First Gate satisfied 2026-07-11). Milestone reorder accepted 2026-07-11 per Codex review; recorded in `agents-build-log.md`.*
