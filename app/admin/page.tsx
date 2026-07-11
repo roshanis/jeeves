@@ -1,4 +1,6 @@
 import { getAppProvider } from "@/app/_lib/data-provider";
+import { getDb } from "@/lib/db/client";
+import { listIncidents, type IncidentListRow } from "@/lib/services/monitor-service";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -9,36 +11,67 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { DisableWithTooltip } from "@/components/jeeves/role-gate";
 import { LifecycleBadge } from "@/components/jeeves/lifecycle-badge";
+import { RunMonitorPanel } from "@/components/jeeves/run-monitor-panel";
+import { ThresholdEditAction } from "@/components/jeeves/threshold-edit-action";
+import { DeploymentActionButton } from "@/components/jeeves/deployment-action-button";
+import type { ThresholdInitiativeOption } from "@/components/jeeves/threshold-edit-dialog";
 
 // The Admin console (ui-spec §7) is the narrowest screen by design: exactly
 // two mutable action shapes (Q-01 threshold edit, pause/resume) plus "Run
-// monitor" — all rendered disabled-with-tooltip in this read-only build.
-// NO approve/sign/return-style button exists on this page for any role;
-// separation of duties is architectural, not a permission flag.
+// monitor". In a live admin session those actions call the gated API; without
+// one every button renders disabled-with-tooltip. NO approve/sign/return-style
+// button exists on this page for any role — separation of duties is
+// architectural, not a permission flag.
+
+// Incidents come from the DB (post-breach). In mock/read-only mode there is no
+// DB to query, so we skip the fetch entirely and render the empty state.
+async function loadIncidents(): Promise<IncidentListRow[]> {
+  const dbMode =
+    process.env.DATA_PROVIDER === "db" || !!process.env.DATABASE_URL;
+  if (!dbMode) return [];
+  try {
+    return await listIncidents(getDb());
+  } catch {
+    // A missing/unseeded store must not crash the console.
+    return [];
+  }
+}
+
 export default async function AdminPage() {
   const provider = getAppProvider();
-  const [catalog, initiatives, q01Changes] = await Promise.all([
+  const [catalog, initiatives, q01Changes, incidents] = await Promise.all([
     provider.controlCatalog(),
     provider.listInitiatives(),
     provider.auditQuery("q01-control-changes"),
+    loadIncidents(),
   ]);
 
   const q01 = catalog.find((c) => c.id === "Q-01");
   const details = await Promise.all(
     initiatives.map((i) => provider.getInitiativeDetail(i.slug)),
   );
+
+  // Project-override options for the threshold dialog: only initiatives whose
+  // DB id is resolvable (real-provider mode). Empty in mock mode → the dialog
+  // falls back to tier-default edits only.
+  const initiativeOptions: ThresholdInitiativeOption[] = initiatives
+    .filter((i) => !!i.initiativeId)
+    .map((i) => ({ initiativeId: i.initiativeId as string, title: i.title, slug: i.slug }));
+
   const deploymentRows = details.flatMap((detail) =>
     detail
       ? detail.deployments.map((d) => ({
           slug: detail.summary.slug,
           title: detail.summary.title,
+          initiativeId: detail.summary.initiativeId ?? null,
           state: detail.summary.state,
           deployment: d,
         }))
       : [],
   );
+
+  const openIncidents = incidents.filter((i) => !i.resolvedAt);
 
   return (
     <div className="flex flex-col gap-6">
@@ -69,7 +102,10 @@ export default async function AdminPage() {
               Last changed: 30 days ago by Ray Chen — &ldquo;Q2 quality
               initiative&rdquo; (0.10 → 0.08).
             </p>
-            <DisableWithTooltip label="Edit threshold" variant="outline" />
+            <ThresholdEditAction
+              currentThreshold={q01?.threshold ?? null}
+              initiativeOptions={initiativeOptions}
+            />
           </CardContent>
         </Card>
 
@@ -84,10 +120,61 @@ export default async function AdminPage() {
               a sustained breach. Idempotent — re-running when already paused
               reports &ldquo;No new breaches detected.&rdquo;
             </p>
-            <DisableWithTooltip label="Run monitor" />
+            <RunMonitorPanel withSelector />
           </CardContent>
         </Card>
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>
+            Open incidents{openIncidents.length ? ` (${openIncidents.length})` : ""}
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {incidents.length === 0 ? (
+            <p className="text-sm text-muted-foreground" data-slot="no-incidents">
+              No incidents recorded. Run the monitor to evaluate deployments
+              against their eval-quality floor.
+            </p>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Detected</TableHead>
+                  <TableHead>Deployment</TableHead>
+                  <TableHead>Control</TableHead>
+                  <TableHead>Window start</TableHead>
+                  <TableHead>Reassessment</TableHead>
+                  <TableHead>Status</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {incidents.map((inc) => (
+                  <TableRow key={inc.id} data-slot="incident-row">
+                    <TableCell className="text-xs text-muted-foreground">
+                      {inc.detectedAt.slice(0, 10)}
+                    </TableCell>
+                    <TableCell className="font-mono text-xs">{inc.deploymentId}</TableCell>
+                    <TableCell>{inc.controlId}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground">
+                      {inc.windowStart.slice(0, 10)}
+                    </TableCell>
+                    <TableCell className="font-mono text-xs">
+                      {inc.reviewCycleId ?? "—"}
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant={inc.resolvedAt ? "secondary" : "destructive"}>
+                        {inc.resolvedAt ? "resolved" : "open"}
+                      </Badge>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>
@@ -127,9 +214,10 @@ export default async function AdminPage() {
                     <LifecycleBadge state={row.state} />
                   </TableCell>
                   <TableCell>
-                    <DisableWithTooltip
-                      label={row.deployment.status === "paused" ? "Resume" : "Pause"}
-                      variant="outline"
+                    <DeploymentActionButton
+                      title={row.title}
+                      initiativeId={row.initiativeId}
+                      status={row.deployment.status}
                     />
                   </TableCell>
                 </TableRow>
