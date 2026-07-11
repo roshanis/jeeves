@@ -6,6 +6,9 @@ coverage/
 playwright-report/
 test-results/
 
+# local PGlite dev store (lib/db/client.ts fallback when DATABASE_URL unset)
+.pglite/
+
 # env & secrets
 .env
 .env.local
