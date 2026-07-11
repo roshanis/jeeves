@@ -551,6 +551,9 @@ function buildControls(init: InitiativeFixture): ControlRow[] {
 
   // Q-01 runtime control: only meaningful for initiatives with an
   // eval_hallucination series (LLM-based deployed/operating initiatives).
+  // GPU-only (#6 claims-ocr-coder) has no eval_hallucination series and
+  // therefore no Q-01 row — Q-01 applies only to hallucination-monitored
+  // initiatives.
   const hasEval = ["breach", "promotion-gate", "healthy"].includes(init.storyline);
   if (hasEval) {
     const threshold = init.tier === "critical" ? Q01_CRITICAL_THRESHOLD : Q01_DEFAULT_THRESHOLD;
@@ -575,7 +578,10 @@ function buildTelemetry(init: InitiativeFixture): TelemetrySeries[] {
   const out: TelemetrySeries[] = [];
 
   if (init.slug === "member-chat-copilot") {
-    // eval_hallucination = 0.045 + 0.0035*day, crosses 0.08 at day 10 exactly.
+    // eval_hallucination = 0.045 + 0.0035*day. Day 10 equals 0.08 exactly
+    // (NOT strictly above); the first point strictly above threshold is day
+    // 11 (0.0835). With the 3-point sustained-breach window, the breach
+    // fires with the day-13 observation (days 11, 12, 13 all strictly above).
     const evalValues = Array.from({ length: 30 }, (_, day) => round(0.045 + 0.0035 * day, 4));
     out.push(series("eval_hallucination", 0, evalValues, 0.08));
     // cost ramps $80 -> $140 across 30 days.

@@ -1,7 +1,60 @@
 import { describe, expect, it } from "vitest";
 import { PipelineBoard } from "@/components/jeeves/pipeline-board";
 import { getProvider } from "@/lib/data";
+import type { InitiativeSummary } from "@/lib/data/dto";
+import type { LifecycleState } from "@/lib/domain/types";
 import { renderWithProviders } from "./helpers";
+
+// All 12 LifecycleState values (lib/domain/types.ts), one fixture each. Kept
+// as an explicit literal record (not derived from the type) so this test
+// independently pins the exhaustive set the board must render a column for.
+// The `satisfies Record<LifecycleState, true>` below is a compile-time
+// exhaustiveness check: it fails to typecheck if LifecycleState gains or
+// loses a member without this map being updated to match.
+const ALL_LIFECYCLE_STATES_MAP = {
+  intake_draft: true,
+  submitted: true,
+  triaged: true,
+  in_review: true,
+  fast_lane_approved: true,
+  approved: true,
+  conditionally_approved: true,
+  rejected: true,
+  deployed: true,
+  paused: true,
+  re_review: true,
+  retired: true,
+} satisfies Record<LifecycleState, true>;
+
+const ALL_LIFECYCLE_STATES = Object.keys(
+  ALL_LIFECYCLE_STATES_MAP,
+) as LifecycleState[];
+
+function makeInitiative(
+  state: LifecycleState,
+  index: number,
+): InitiativeSummary {
+  return {
+    slug: `fixture-${state}-${index}`,
+    title: `Fixture initiative (${state})`,
+    tier: "medium",
+    state,
+    flags: {
+      phi: false,
+      memberFacing: false,
+      careCoverageInfluence: false,
+      vendorHosted: false,
+      humanInLoop: true,
+      individualImpact: false,
+    },
+    requester: "Test Requester",
+    accountableApprover: null,
+    domainsRequired: 5,
+    domainsSigned: 0,
+    overdue: false,
+    storyline: "fixture",
+  };
+}
 
 describe("PipelineBoard", () => {
   it("renders all 12 initiatives as cards", async () => {
@@ -58,5 +111,26 @@ describe("PipelineBoard", () => {
     expect(
       container.querySelector('[data-column="paused"]')?.textContent,
     ).toContain("No initiatives in Paused");
+  });
+
+  it("renders a column for every one of the 12 LifecycleState values (exhaustive-columns fix)", () => {
+    expect(ALL_LIFECYCLE_STATES).toHaveLength(12);
+
+    const initiatives = ALL_LIFECYCLE_STATES.map((state, i) =>
+      makeInitiative(state, i),
+    );
+    const { container } = renderWithProviders(
+      <PipelineBoard initiatives={initiatives} />,
+    );
+
+    for (const init of initiatives) {
+      const column = container.querySelector(
+        `[data-column="${init.state}"]`,
+      );
+      expect(column).not.toBeNull();
+      const cards = column?.querySelectorAll('[data-slot="pipeline-card"]');
+      expect(cards).toHaveLength(1);
+      expect(column?.textContent).toContain(init.slug);
+    }
   });
 });
