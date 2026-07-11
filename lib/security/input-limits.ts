@@ -62,6 +62,10 @@ function stripControlCharacters(value: string): string {
  * length checks are performed against the sanitized value — a field that
  * is only over-length because of control-character padding will pass once
  * sanitized.
+ *
+ * Note: unknown/over-limit fields are flagged in `gaps` AND still appear in
+ * `sanitized` — callers MUST check `result.ok` before passing `sanitized`
+ * to downstream handlers (review finding #9).
  */
 export function validateInputSize(
   fields: Record<string, string>,

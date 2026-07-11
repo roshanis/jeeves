@@ -84,6 +84,10 @@ export interface ReserveResult {
  * transaction/row lock inside `BudgetStore`, but the serialization
  * guarantee at this layer still protects any store implementation that
  * itself does non-atomic read-then-write internally.
+ *
+ * TODO(P4): add pruneDayChains(olderThanDay) — one entry accumulates per
+ * distinct day key and is never pruned; negligible for the demo, unbounded
+ * for a long-lived server (review finding #7).
  */
 const dayChains = new Map<string, Promise<unknown>>();
 

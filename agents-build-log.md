@@ -70,3 +70,15 @@
 ### Files changed: full scaffold (34 files) + lib domain logic merged; vitest.config include extended to lib/**/*.test.ts (silent-skip bug caught in merge review); npm standardized (pnpm absent on host)
 ### Diff summary: Acceptance re-verified by orchestrator on merged main: typecheck, lint, 119 tests, next build, boot :3111. Scaffold worker's entry (worktree copy, moved here): Next.js 16.2.10 + Tailwind 4 + shadcn(5) + Vitest 4 + Playwright + Drizzle/Neon config; AgentPort/WorkflowPort per plan §4 (typed results, PortFailure union, AbortSignal, fan-out, pause/resume, progress callback+async-iterable) with compile-tripwire test.
 ### Recommendations / Next steps: P1 delegated as two parallel Sonnet workers — (A) schema+seed+PGlite harness in codex-worktree, (B) read-only UI vs mock data provider in claude-worktree. Task #1 → completed, #2 → in_progress.
+
+## [AGENT: Claude] [2026-07-11T07:05Z]
+### Action: BACKFILL (review finding #5) — consolidated log of accepted worker deliverables since P0 close
+### Files changed: e520bf1 lib/data contract (orchestrator) · c8e6bdd agents/ corpus (Sonnet, 15 files) · 8e7f151 lib/intake completeness engine (Sonnet, 60 tests) · c0affc3 read-only UI on claude-worktree (Sonnet chain, 51 files, 135 tests) · 83ebca2 lib/security layer (Sonnet, 51 tests incl. 20-way budget concurrency) · 28a4d7d /controls page on claude-worktree (Sonnet, 3 files) · ba2c334 DB layer on codex-worktree (Sonnet, 151 tests, 122-event seed)
+### Diff summary: Every deliverable independently verified by orchestrator before commit (suites re-run; key files audited). All future rounds return to per-round logging.
+### Recommendations / Next steps: n/a — backfill entry.
+
+## [AGENT: Claude (reviewer role)] [2026-07-11T07:10Z]
+### Action: Independent code review of all accepted work (read-only reviewer subagent; findings returned to orchestrator, logged here on its behalf)
+### Files changed: none (read-only)
+### Diff summary: VERDICT: APPROVE WITH CHANGES. 11 findings. Blockers: (1) lib/agents adapter files untracked — resolves when adapters worker reports and orchestrator commits; (2) pipeline board missing re_review/submitted/retired columns — P3 demo-killer; (3) Playwright golden path still a test.skip stub vs AGENTS.md rule 8. High: (4) seed-spec "crosses at day ~9" wrong (day 10 == threshold, first strictly-above day 11, breach at day 13); (5) build log gap; (6) Q-01/GPU-only reasoning implicit in mock-provider. Med/Low: (7) budget dayChains never pruned; (8) role-switcher SoD cosmetics note; (9) input-limits sanitized includes flagged fields; (10) sparkline label boundary; (11) passcode length-branch micro-timing wording. Cross-module contracts verified clean (mock-provider vs dto vs seed-spec; hard rules 1 & 9 clean).
+### Recommendations / Next steps: Fix 2-4 before P1 merge (done: e01caf0 board fix; seed-spec + comments this commit; Playwright worker running). #1 pending adapters-worker report. #7/#8/#10/#11 deferred to P4 with TODO markers.

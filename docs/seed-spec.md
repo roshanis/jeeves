@@ -87,7 +87,7 @@ all others render as catalog + evidence status.
 Kinds: `cost_tokens_usd_day`, `eval_hallucination`, `eval_relevance`, `gpu_util_pct` (#6 only).
 30 daily points ending base+14d, generated as `f(day) + seededNoise(slug, kind)`:
 
-- #4 `member-chat-copilot` · eval_hallucination: 0.045 + 0.0035·day → crosses 0.08 at day ~9, stays above (sustained ≥3 → breach fires when monitor runs)
+- #4 `member-chat-copilot` · eval_hallucination: 0.045 + 0.0035·day → equals 0.08 exactly at day 10; first point STRICTLY above threshold is day 11 (evaluator uses >), so the 3-point sustained window (days 11–13) fires the breach when the day-13 observation is present (review finding #4: earlier "day ~9" wording was wrong)
 - #4 cost: ramp $80→$140/day (supports the cost panel + budget bar)
 - #5, #12: flat healthy eval series (0.03–0.05 band); #5 shows v2.0→v2.1 offline eval comparison instead of live drift
 - #6 gpu_util_pct: weekday sinusoid 55–85%, weekend 20–30%, quota line at 80%
