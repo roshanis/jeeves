@@ -5,6 +5,7 @@ import { DemoModeChip } from "./demo-mode-chip";
 const NAV_ITEMS = [
   { href: "/", label: "Home" },
   { href: "/reviews", label: "Reviews" },
+  { href: "/controls", label: "Controls" },
   { href: "/audit", label: "Audit" },
   { href: "/admin", label: "Admin" },
 ];
