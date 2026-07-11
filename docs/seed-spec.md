@@ -20,23 +20,48 @@ All data fictional. Generation rules: fixed PRNG seed `"meridian-2026"`, fixed b
 
 ## 2. Initiatives (12)
 
-| # | slug | Title | Overlay flags (PHI / member-facing / care-coverage / vendor) | Tier | State at seed time | Storyline purpose |
+Overlay flags, in order: **PHI / member-facing / care-coverage influence / vendor-hosted / human-in-the-loop / individual impact**
+(6 booleans — see §2.1 for the questions and the derivation rules).
+
+| # | slug | Title | Overlay flags | Tier | State at seed time | Storyline purpose |
 |---|---|---|---|---|---|---|
-| 1 | `prior-auth-summarizer` | Prior-Auth Clinical Summarizer | Y/Y/Y/Y | Critical | **Not seeded past intake-draft** — created live during the demo | Champion vertical (plan §2) |
-| 2 | `marketing-ab-tester` | Marketing Copy A/B Tester | N/N/N/Y | Low | Approved via **fast-lane policy FL-2026-01**, approver Angela Torres, deployed | Fast-lane counterpoint; accountable approver visible |
-| 3 | `social-sentiment-miner` | Member Social-Media Sentiment Miner | Y/Y/N/Y | High | **Rejected** (Privacy/HIPAA + RAI decisions cite consent + surveillance policies) | Governance that says no |
-| 4 | `member-chat-copilot` | Member Services Chat Copilot | Y/Y/N/N | High | Deployed v1.2; **eval hallucination-rate series trending up, crosses threshold 0.08 at base+9d** | The live breach → pause → reassessment demo |
-| 5 | `pa-correspondence-model` | Prior-Auth Correspondence Drafting Model | Y/N/Y/N | Critical | Deployed v2.0; **v2.1 checkpoint awaiting feedback-provenance sign-off** (promotion gate) | RL/version-promotion story |
-| 6 | `claims-ocr-coder` | Claims Document OCR + Coding Model | Y/N/Y/N | High | Deployed, **self-hosted** — the only initiative with GPU utilization series | GPU panel + quota controls (M3) |
-| 7 | `provider-dedup-agent` | Provider Directory Dedup Agent | N/N/N/N | Medium | In review: 3 of 5 required domains signed | Mid-pipeline state |
-| 8 | `nurse-triage-summarizer` | Nurse Triage Line Summarizer | Y/N/Y/N | Critical | **Conditionally approved** — 2 open conditions linked to controls (human-review sampling; escalation protocol) | Conditional-approval mechanics |
-| 9 | `formulary-qa-bot` | Member Formulary Q&A Bot | Y/Y/N/Y | High | In review: RAI review **returned** by Sofia Grant (missing bias-testing evidence) | Returned/iteration state |
-| 10 | `fwa-anomaly-detector` | Fraud, Waste & Abuse Anomaly Detector | Y/N/Y/N | High | Operating 14 months; **periodic review overdue at base date** | Evidence-freshness / overdue-controls metric |
-| 11 | `hr-resume-screener` | HR Résumé Screener | N/N/N/Y | Medium | Approved with an **exception request pending** (bias-audit cadence waiver) | Exception workflow (M4) |
-| 12 | `callcenter-qa-scorer` | Call Center QA Auto-Scorer | N/N/N/N | Medium | Operating, healthy, all controls green | The boring healthy one — baseline |
+| 1 | `prior-auth-summarizer` | Prior-Auth Clinical Summarizer | Y/Y/Y/Y/N/Y | Critical | **Not seeded past intake-draft** — created live during the demo | Champion vertical (plan §2) |
+| 2 | `marketing-ab-tester` | Marketing Copy A/B Tester | N/N/N/Y/Y/N | Low | Approved via **fast-lane policy FL-2026-01**, approver Angela Torres, deployed | Fast-lane counterpoint; accountable approver visible |
+| 3 | `social-sentiment-miner` | Member Social-Media Sentiment Miner | Y/Y/N/Y/Y/N | High | **Rejected** (Privacy/HIPAA + RAI decisions cite consent + surveillance policies) | Governance that says no |
+| 4 | `member-chat-copilot` | Member Services Chat Copilot | Y/Y/N/N/Y/N | High | Deployed v1.2; **eval hallucination-rate series trending up, crosses threshold 0.08 at base+9d** | The live breach → pause → reassessment demo |
+| 5 | `pa-correspondence-model` | Prior-Auth Correspondence Drafting Model | Y/N/Y/N/N/Y | Critical | Deployed v2.0; **v2.1 checkpoint awaiting feedback-provenance sign-off** (promotion gate) | RL/version-promotion story |
+| 6 | `claims-ocr-coder` | Claims Document OCR + Coding Model | Y/N/Y/N/Y/Y | High | Deployed, **self-hosted** — the only initiative with GPU utilization series | GPU panel + quota controls (M3) |
+| 7 | `provider-dedup-agent` | Provider Directory Dedup Agent | N/N/N/N/Y/Y | Medium | In review: 3 of 5 required domains signed | Mid-pipeline state |
+| 8 | `nurse-triage-summarizer` | Nurse Triage Line Summarizer | Y/N/Y/N/N/Y | Critical | **Conditionally approved** — 2 open conditions linked to controls (human-review sampling; escalation protocol) | Conditional-approval mechanics |
+| 9 | `formulary-qa-bot` | Member Formulary Q&A Bot | Y/Y/N/Y/N/N | High | In review: RAI review **returned** by Sofia Grant (missing bias-testing evidence) | Returned/iteration state |
+| 10 | `fwa-anomaly-detector` | Fraud, Waste & Abuse Anomaly Detector | Y/N/Y/N/Y/Y | High | Operating 14 months; **periodic review overdue at base date** | Evidence-freshness / overdue-controls metric |
+| 11 | `hr-resume-screener` | HR Résumé Screener | N/N/N/Y/Y/Y | Medium | Approved with an **exception request pending** (bias-audit cadence waiver) | Exception workflow (M4) |
+| 12 | `callcenter-qa-scorer` | Call Center QA Auto-Scorer | N/N/N/N/Y/Y | Medium | Operating, healthy, all controls green | The boring healthy one — baseline |
 
 Tier derivation must come from `lib/triage/rules.ts` applied to the overlay flags — the seed asserts the
-expected tier and FAILS if rules disagree (keeps seed and rules from drifting).
+expected tier and FAILS if rules disagree (keeps seed and rules from drifting). This table is the golden
+test fixture for plan §8 test 1.
+
+### 2.1 Triage derivation and routing (authoritative)
+
+Overlay questions (intake): (1) Does it access PHI? (2) Do members interact with or receive its output
+directly? (3) Does it influence care or coverage decisions? (4) Is the model vendor-hosted? (5) Does a
+qualified human review each output before it takes effect? (6) Does it affect individuals' opportunities,
+rights, or services (members, providers, or employees)?
+
+Tier rules (first match wins):
+1. care-coverage ∧ ¬human-in-loop → **Critical**
+2. care-coverage ∧ human-in-loop → **High**
+3. PHI → **High**
+4. member-facing ∧ individual-impact → **High**
+5. individual-impact → **Medium**
+6. member-facing → **Medium**
+7. otherwise → **Low**
+
+Required review domains = tier base ∪ flag-driven:
+- Base: Low → {Data Governance, Security} · Medium/High → {Data Governance, Security, Tech Architecture, Responsible AI, Legal} · Critical → all 8
+- Flag-driven (any tier): PHI → +Privacy/HIPAA · vendor-hosted → +Procurement, +Legal · care-coverage → +Clinical Safety
+- Sanity fixture: #7 (Medium, no flags) requires exactly 5 domains — matches its "3 of 5 signed" seed state.
 
 ## 3. Control catalog (ControlDefinition — 2 per domain, 16 total)
 
