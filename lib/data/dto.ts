@@ -19,6 +19,12 @@ export interface InitiativeSummary {
   domainsSigned: number;
   overdue: boolean;
   storyline: string; // short badge text, e.g. "fast-lane", "breach", "rejected"
+  /**
+   * Last state change (initiatives.updatedAt) as ISO — drives the portfolio /
+   * Inbox "Age" column (time in current state). Optional: real providers
+   * always supply it; slug-only or fixture contexts may omit it.
+   */
+  updatedAt?: string;
 }
 
 export interface ReviewRow {

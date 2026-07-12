@@ -770,6 +770,13 @@ const Q01_THRESHOLD_CHANGE_EVENT: AuditEventRow = {
 // Assembly
 // ---------------------------------------------------------------------------
 
+/** Deterministic per-slug "time in current state" for the demo (0..-13d from BASE). */
+function seededUpdatedAt(slug: string): string {
+  let h = 0;
+  for (let i = 0; i < slug.length; i++) h = (h + slug.charCodeAt(i)) % 14;
+  return isoAt(-h);
+}
+
 function toSummary(init: InitiativeFixture): InitiativeSummary {
   const domains = domainsRequiredFor(init);
   return {
@@ -784,6 +791,7 @@ function toSummary(init: InitiativeFixture): InitiativeSummary {
     domainsSigned: init.domainsSigned,
     overdue: init.overdue,
     storyline: init.storyline,
+    updatedAt: seededUpdatedAt(init.slug),
   };
 }
 

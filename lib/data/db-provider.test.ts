@@ -67,6 +67,12 @@ describe("lib/data/db-provider", () => {
       });
       expect(bySlug.get("hr-resume-screener")).toMatchObject({ storyline: "exception" });
       expect(bySlug.get("callcenter-qa-scorer")).toMatchObject({ storyline: "healthy" });
+
+      // Every summary carries an ISO updatedAt (time-in-state) for the Age column.
+      for (const r of rows) {
+        expect(typeof r.updatedAt).toBe("string");
+        expect(Number.isNaN(Date.parse(r.updatedAt!))).toBe(false);
+      }
     });
   });
 

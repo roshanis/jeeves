@@ -7,6 +7,7 @@ import type { InitiativeSummary } from "@/lib/data/dto";
 import type { LifecycleState, Tier } from "@/lib/domain/types";
 import { TierBadge } from "./tier-badge";
 import { LifecycleBadge } from "./lifecycle-badge";
+import { InitiativeAgeCell, useClientNow } from "./queue-age";
 
 const TIER_RANK: Record<Tier, number> = { critical: 0, high: 1, medium: 2, low: 3 };
 const STATE_RANK: Record<LifecycleState, number> = {
@@ -39,7 +40,12 @@ const NEXT_ACTION: Record<LifecycleState, string> = {
   retired: "—",
 };
 
-type SortKey = "title" | "tier" | "state" | "reviews" | "sla";
+type SortKey = "title" | "tier" | "state" | "reviews" | "sla" | "age";
+
+/** Sort value for the Age column: the state-change timestamp (older = smaller). Ascending puts oldest-in-state first; missing timestamps sort last. */
+function ageValue(i: InitiativeSummary): number {
+  return i.updatedAt ? Date.parse(i.updatedAt) : Infinity;
+}
 
 function reviewsFraction(i: InitiativeSummary) {
   return i.domainsRequired === 0 ? 1 : i.domainsSigned / i.domainsRequired;
@@ -81,6 +87,7 @@ export function InitiativeTable({
 }) {
   const [sort, setSort] = React.useState<SortKey>("tier");
   const [dir, setDir] = React.useState<1 | -1>(1);
+  const nowMs = useClientNow();
 
   const rows = React.useMemo(() => {
     const copy = [...initiatives];
@@ -92,6 +99,7 @@ export function InitiativeTable({
         case "state": d = STATE_RANK[a.state] - STATE_RANK[b.state]; break;
         case "reviews": d = reviewsFraction(a) - reviewsFraction(b); break;
         case "sla": d = Number(b.overdue) - Number(a.overdue); break;
+        case "age": d = ageValue(a) - ageValue(b); break;
       }
       return d * dir;
     });
@@ -113,6 +121,7 @@ export function InitiativeTable({
             <th className="px-3 py-2 text-left font-medium text-muted-foreground">Owner</th>
             <Th k="tier" onToggle={toggle}>Tier</Th>
             <Th k="state" onToggle={toggle}>State</Th>
+            <Th k="age" onToggle={toggle}>Age</Th>
             <Th k="reviews" onToggle={toggle}>Reviews</Th>
             <Th k="sla" onToggle={toggle}>SLA</Th>
             <th className="px-3 py-2 text-left font-medium text-muted-foreground">Next action</th>
@@ -134,6 +143,9 @@ export function InitiativeTable({
               <td className="px-3 py-2 text-muted-foreground">{i.requester}</td>
               <td className="px-3 py-2"><TierBadge tier={i.tier} /></td>
               <td className="px-3 py-2"><LifecycleBadge state={i.state} /></td>
+              <td className="px-3 py-2">
+                <InitiativeAgeCell updatedAt={i.updatedAt} state={i.state} nowMs={nowMs} />
+              </td>
               <td className="px-3 py-2 tabular-nums text-muted-foreground">
                 {i.domainsSigned}/{i.domainsRequired}
               </td>

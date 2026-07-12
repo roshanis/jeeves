@@ -316,6 +316,7 @@ export class DbDataProvider implements DataProvider {
       domainsSigned: cycleDecisions.filter((rd) => rd.status === "signed").length,
       overdue: ecs.some((ec) => ec.status === "overdue"),
       storyline: this.storylineOf(snap, init),
+      updatedAt: toIso(init.updatedAt),
     };
   }
 

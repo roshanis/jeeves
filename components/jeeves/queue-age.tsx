@@ -8,7 +8,19 @@
 // the hydration-safe clock and the small badge/cell components.
 import * as React from "react";
 import type { ReviewRow } from "@/lib/data/dto";
+import type { LifecycleState } from "@/lib/domain/types";
 import { ageBucket, ageMsSince, formatAge, type AgeBucket } from "@/lib/format/aging";
+
+// Lifecycle states where an initiative is settled/terminal — aging is
+// informational, not a bottleneck signal, so its age is shown muted (never
+// amber/red) in the portfolio/Inbox "Age" column.
+const SETTLED_STATES = new Set<LifecycleState>([
+  "approved",
+  "fast_lane_approved",
+  "rejected",
+  "deployed",
+  "retired",
+]);
 
 const AGE_BUCKET_CLASSES: Record<AgeBucket, string> = {
   fresh: "bg-muted text-muted-foreground",
@@ -58,6 +70,41 @@ export function QueueAgingBadge({ ageMs }: { ageMs: number | null }) {
     <span
       className={`ml-1.5 rounded px-1 py-0.5 text-[10px] font-medium tabular-nums ${AGE_BUCKET_CLASSES[ageBucket(ageMs)]}`}
       title="Oldest review waiting in this queue"
+    >
+      {formatAge(ageMs)}
+    </span>
+  );
+}
+
+/**
+ * Per-row "Age" cell for an INITIATIVE table — time in the current lifecycle
+ * state (from updatedAt). Color-coded by bucket for active/waiting states; a
+ * settled/terminal state shows its age muted (aging isn't a bottleneck there).
+ * "—" when no timestamp is available (fixture/slug-only contexts).
+ */
+export function InitiativeAgeCell({
+  updatedAt,
+  state,
+  nowMs,
+}: {
+  updatedAt?: string;
+  state: LifecycleState;
+  nowMs: number | null;
+}) {
+  if (!updatedAt) {
+    return <span className="text-muted-foreground">—</span>;
+  }
+  if (nowMs === null) {
+    return <span className="text-muted-foreground tabular-nums">·</span>;
+  }
+  const ageMs = ageMsSince(updatedAt, nowMs);
+  const cls = SETTLED_STATES.has(state)
+    ? "bg-muted text-muted-foreground"
+    : AGE_BUCKET_CLASSES[ageBucket(ageMs)];
+  return (
+    <span
+      className={`inline-flex items-center rounded px-1.5 py-0.5 text-xs font-medium tabular-nums ${cls}`}
+      title={`In "${state}" since ${updatedAt.slice(0, 10)}`}
     >
       {formatAge(ageMs)}
     </span>
