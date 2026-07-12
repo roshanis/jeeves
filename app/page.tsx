@@ -45,7 +45,7 @@ export default async function InboxPage() {
     title: d.summary.title,
     tier: d.summary.tier,
     state: d.summary.state,
-    reviews: d.reviews.map((r) => ({ domain: r.domain, status: r.status })),
+    reviews: d.reviews.map((r) => ({ domain: r.domain, status: r.status, createdAt: r.createdAt })),
   }));
 
   // Eval-quality breaches: initiatives whose eval telemetry series has a

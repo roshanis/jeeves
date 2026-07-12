@@ -37,6 +37,12 @@ import { LifecycleBadge } from "@/components/jeeves/lifecycle-badge";
 import { TierBadge } from "@/components/jeeves/tier-badge";
 import { ReviewStatusBadge, DOMAIN_LABEL } from "@/components/jeeves/domain-labels";
 import { ControlStatusChip } from "@/components/jeeves/controls-tab";
+import {
+  QueueAgeCell,
+  QueueAgingBadge,
+  oldestUnsignedAgeMs,
+  useClientNow,
+} from "@/components/jeeves/queue-age";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { buttonVariants } from "@/components/ui/button";
 import { useRole, type RoleKey } from "@/components/jeeves/role-context";
@@ -73,7 +79,7 @@ export interface DomainReviewRow {
   title: string;
   tier: Tier;
   state: LifecycleState;
-  reviews: { domain: Domain; status: ReviewRow["status"] }[];
+  reviews: { domain: Domain; status: ReviewRow["status"]; createdAt: string }[];
 }
 
 export interface EvalBreachRow {
@@ -486,9 +492,11 @@ const REVIEW_QUEUE_STATUSES = new Set<ReviewRow["status"]>(["pending", "drafted"
 function DomainReviewQueueTable({
   rows,
   domain,
+  nowMs,
 }: {
   rows: DomainReviewRow[];
   domain: Domain;
+  nowMs: number | null;
 }) {
   if (rows.length === 0) {
     return (
@@ -510,6 +518,7 @@ function DomainReviewQueueTable({
             <th className="px-3 py-2 text-left font-medium text-muted-foreground">Initiative</th>
             <th className="px-3 py-2 text-left font-medium text-muted-foreground">Tier</th>
             <th className="px-3 py-2 text-left font-medium text-muted-foreground">Your review</th>
+            <th className="px-3 py-2 text-left font-medium text-muted-foreground">Age</th>
             <th className="px-3 py-2 text-left font-medium text-muted-foreground">State</th>
           </tr>
         </thead>
@@ -530,6 +539,11 @@ function DomainReviewQueueTable({
                 <td className="px-3 py-2"><TierBadge tier={row.tier} /></td>
                 <td className="px-3 py-2">
                   {review ? <ReviewStatusBadge status={review.status} /> : null}
+                </td>
+                <td className="px-3 py-2">
+                  {review ? (
+                    <QueueAgeCell createdAt={review.createdAt} status={review.status} nowMs={nowMs} />
+                  ) : null}
                 </td>
                 <td className="px-3 py-2"><LifecycleBadge state={row.state} /></td>
               </tr>
@@ -628,6 +642,8 @@ function ReviewerView({
   controls: ControlRow[];
   evalBreaches: EvalBreachRow[];
 }) {
+  const nowMs = useClientNow();
+
   // Guard: a reviewer persona should always resolve a domain. If somehow
   // null, fall back to the original generic reviewer view.
   if (!reviewerDomain) {
@@ -687,6 +703,11 @@ function ReviewerView({
     d.reviews.some((r) => r.domain === reviewerDomain && r.status === "returned"),
   ).length;
   const myControlsCount = controls.filter((c) => c.domain === reviewerDomain).length;
+  // Oldest still-waiting review in this reviewer's own domain queue.
+  const queueDomainReviews = queue.flatMap((d) =>
+    d.reviews.filter((r) => r.domain === reviewerDomain),
+  );
+  const oldestQueueAgeMs = oldestUnsignedAgeMs(queueDomainReviews, nowMs);
 
   return (
     <>
@@ -708,12 +729,13 @@ function ReviewerView({
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
         <section className="flex flex-col gap-3">
           <div className="flex items-center justify-between">
-            <h2 className="text-sm font-semibold">
-              Reviews awaiting signature <span className="text-muted-foreground">({queue.length})</span>
+            <h2 className="flex items-center text-sm font-semibold">
+              Reviews awaiting signature <span className="ml-1 text-muted-foreground">({queue.length})</span>
+              <QueueAgingBadge ageMs={oldestQueueAgeMs} />
             </h2>
             <ViewLink href="/reviews">Open Reviews workbench</ViewLink>
           </div>
-          <DomainReviewQueueTable rows={queue} domain={reviewerDomain} />
+          <DomainReviewQueueTable rows={queue} domain={reviewerDomain} nowMs={nowMs} />
         </section>
 
         <div className="flex flex-col gap-6">
