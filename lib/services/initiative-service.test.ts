@@ -5,9 +5,10 @@ import type { IntakePayload } from "../intake/types";
 import { auditEvents, controlDefinitions, effectiveControls, initiatives, reviewDecisions } from "../db/schema";
 import { eq } from "drizzle-orm";
 import { CONTROL_SEEDS } from "../../scripts/seed";
-import { IllegalTransitionError, ValidationError } from "./initiative-service";
+import { IllegalTransitionError, NotFoundError, ValidationError } from "./initiative-service";
 import * as svc from "./initiative-service";
 import { SYSTEM_ACTOR } from "./actors";
+import { createMockAgentPort } from "../agents/mock-adapter";
 
 /** Seed just the control catalog (seed-spec §3) — not the full 12-initiative dataset,
  * which would collide with the initiatives this test suite creates directly. */
@@ -344,6 +345,80 @@ describe("lib/services/initiative-service", () => {
         expect(result.status).toBe("signed");
       }
     });
+  });
+
+  describe("runReviewAgent (on-demand agent run authz)", () => {
+    async function setUpInReview() {
+      const draft = await svc.createDraft(db, {
+        payload: CHAMPION_PREFILL_PAYLOAD,
+        requesterActor: REQUESTER,
+        requesterName: "Priya Raman",
+      });
+      await svc.submitIntake(db, draft.initiativeId, REQUESTER);
+      await svc.triage(db, draft.initiativeId);
+      return draft;
+    }
+
+    it("the assigned reviewer drafts their own domain and writes a review_agent_run audit event", async () => {
+      const draft = await setUpInReview();
+
+      const result = await svc.runReviewAgent(db, await cycleFor("clinical-safety"), "clinical-safety", REVIEWER, createMockAgentPort());
+      expect(result.status).toBe("drafted");
+      expect(result.draftMd).toBeTruthy();
+
+      const rd = (
+        await db.select().from(reviewDecisions).where(eq(reviewDecisions.domain, "clinical-safety"))
+      )[0]!;
+      expect(rd.status).toBe("drafted");
+
+      const events = await db
+        .select()
+        .from(auditEvents)
+        .where(eq(auditEvents.initiativeId, draft.initiativeId));
+      const ran = events.filter((e) => e.action === "review_agent_run");
+      expect(ran).toHaveLength(1);
+      expect(ran[0]!.actor).toBe("elena-vasquez");
+    });
+
+    it("a reviewer running a domain they are NOT assigned to is rejected (IllegalTransitionError)", async () => {
+      await setUpInReview();
+      // elena-vasquez owns clinical-safety, not privacy-hipaa.
+      await expect(
+        svc.runReviewAgent(db, await cycleFor("privacy-hipaa"), "privacy-hipaa", REVIEWER, createMockAgentPort()),
+      ).rejects.toThrow(IllegalTransitionError);
+    });
+
+    it("a non-reviewer (approver) cannot run the agent (IllegalTransitionError)", async () => {
+      await setUpInReview();
+      await expect(
+        svc.runReviewAgent(db, await cycleFor("clinical-safety"), "clinical-safety", APPROVER, createMockAgentPort()),
+      ).rejects.toThrow(IllegalTransitionError);
+    });
+
+    it("refuses to re-draft an already-signed review (ValidationError)", async () => {
+      await setUpInReview();
+      const cycleId = await cycleFor("clinical-safety");
+      // Draft then sign as the assigned reviewer.
+      await svc.runReviewAgent(db, cycleId, "clinical-safety", REVIEWER, createMockAgentPort());
+      await svc.signReview(db, cycleId, "clinical-safety", REVIEWER, "Signed clinical safety draft.");
+
+      await expect(
+        svc.runReviewAgent(db, cycleId, "clinical-safety", REVIEWER, createMockAgentPort()),
+      ).rejects.toThrow(ValidationError);
+    });
+
+    it("404s (NotFoundError) when the (cycle, domain) review does not exist", async () => {
+      await setUpInReview();
+      await expect(
+        svc.runReviewAgent(db, "cycle-does-not-exist", "clinical-safety", REVIEWER, createMockAgentPort()),
+      ).rejects.toThrow(NotFoundError);
+    });
+
+    /** Resolve the cycleId that owns a given domain's pending review decision. */
+    async function cycleFor(domain: string): Promise<string> {
+      const rows = await db.select().from(reviewDecisions).where(eq(reviewDecisions.domain, domain));
+      return rows[0]!.cycleId;
+    }
   });
 
   describe("requester ownership authz", () => {

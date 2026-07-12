@@ -33,8 +33,10 @@ import {
   apiErrorToMessage,
   isApiError,
   returnReview,
+  runReviewAgent,
   signReview,
 } from "@/lib/client/api";
+import { Bot } from "lucide-react";
 import { useLiveInfo } from "@/lib/client/use-live-info";
 import { useLiveSessionOptional } from "@/lib/client/session-context";
 
@@ -283,6 +285,7 @@ export function ReviewWorkbench({ rows }: { rows: ReviewQueueRow[] }) {
  */
 function AssessmentPane({ row }: { row: ReviewQueueRow }) {
   const router = useRouter();
+  const { reviewerDomain } = useRole();
   const live = useLiveSessionOptional();
   const session = live?.session ?? null;
   const liveInfo = useLiveInfo(row.slug);
@@ -290,10 +293,38 @@ function AssessmentPane({ row }: { row: ReviewQueueRow }) {
 
   const [editedText, setEditedText] = React.useState(row.review.draftMd ?? "");
   const [pending, setPending] = React.useState(false);
+  const [running, setRunning] = React.useState(false);
   const [returnOpen, setReturnOpen] = React.useState(false);
 
   const canAct = Boolean(session?.role === "reviewer" && cycleId);
   const actionable = row.review.status === "drafted" || row.review.status === "returned";
+
+  // On-demand agent run: only the reviewer assigned to THIS domain, in a live
+  // session, may (re)draft it (the server enforces the same domain scope).
+  const isOwnDomain = reviewerDomain === row.review.domain;
+  const canRunAgent = Boolean(session?.role === "reviewer" && cycleId && isOwnDomain);
+  const alreadySigned = row.review.status === "signed";
+  const hasDraft = Boolean(row.review.draftMd);
+
+  async function handleRunAgent() {
+    if (!session || !cycleId) return;
+    setRunning(true);
+    try {
+      const res = await runReviewAgent(session.token, cycleId, row.review.domain);
+      if (res.status === "drafted") {
+        if (res.draftMd) setEditedText(res.draftMd);
+        toast.success(`${DOMAIN_LABEL[row.review.domain]} agent drafted a fresh assessment.`);
+      } else {
+        toast.error(`Agent run failed: ${res.error ?? "unknown error"}`);
+      }
+      router.refresh();
+    } catch (err) {
+      toast.error(isApiError(err) ? apiErrorToMessage(err) : "Agent run failed.");
+      if (isApiError(err) && err.status === 401) live?.logout();
+    } finally {
+      setRunning(false);
+    }
+  }
 
   async function handleSign() {
     if (!session || !cycleId) return;
@@ -339,6 +370,25 @@ function AssessmentPane({ row }: { row: ReviewQueueRow }) {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3 pt-4">
+        {canRunAgent ? (
+          <div className="flex flex-col gap-1.5 border-b pb-3" data-slot="run-agent">
+            <button
+              type="button"
+              onClick={() => void handleRunAgent()}
+              disabled={running || alreadySigned}
+              data-slot="run-agent-button"
+              className="inline-flex items-center justify-center gap-2 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <Bot className="h-4 w-4" aria-hidden />
+              {running ? "Running agent…" : hasDraft ? "Re-run agent" : "Run agent to draft"}
+            </button>
+            <p className="text-xs text-muted-foreground">
+              {alreadySigned
+                ? "Signed — return this review to re-draft with the agent."
+                : `Runs the ${DOMAIN_LABEL[row.review.domain]} agent live and loads the draft below. Agents draft — you decide.`}
+            </p>
+          </div>
+        ) : null}
         <textarea
           className="min-h-40 w-full rounded-md border border-input bg-transparent p-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
           value={editedText}

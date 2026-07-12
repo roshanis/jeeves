@@ -4,9 +4,9 @@ import { CHAMPION_PREFILL_PAYLOAD } from "../intake/champion-prefill";
 import { createMockAgentPort } from "../agents/mock-adapter";
 import type { AgentPort, DraftReviewInput, PortResult, DraftReviewOutput } from "../agents/ports";
 import { reviewDecisions } from "../db/schema";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import * as svc from "../services/initiative-service";
-import { getRunProgress, startDraftRun } from "./review-run";
+import { getRunProgress, runSingleDomainDraft, startDraftRun } from "./review-run";
 
 const REQUESTER = { id: "priya-raman", role: "requester" as const };
 
@@ -345,6 +345,79 @@ describe("lib/workflow/review-run", () => {
         .from(reviewDecisions)
         .where(eq(reviewDecisions.cycleId, cycleId));
       expect(rows.find((r) => r.domain === "security")!.returnReason).toMatch(/bad intake payload/);
+    });
+  });
+
+  describe("runSingleDomainDraft (on-demand single-domain re-draft)", () => {
+    it("drafts a single pending domain and persists it drafted", async () => {
+      const { cycleId } = await setUpChampionInReview(db);
+
+      const result = await runSingleDomainDraft(db, cycleId, "clinical-safety", createMockAgentPort());
+
+      expect(result.status).toBe("drafted");
+      expect(result.draftMd).toBeTruthy();
+
+      const rows = await db
+        .select()
+        .from(reviewDecisions)
+        .where(and(eq(reviewDecisions.cycleId, cycleId), eq(reviewDecisions.domain, "clinical-safety")));
+      expect(rows).toHaveLength(1);
+      expect(rows[0]!.status).toBe("drafted");
+      expect(rows[0]!.draftMd).toBeTruthy();
+    });
+
+    it("re-runs an ALREADY-drafted domain (unlike startDraftRun, which skips it)", async () => {
+      const { cycleId } = await setUpChampionInReview(db);
+
+      await runSingleDomainDraft(db, cycleId, "clinical-safety", createMockAgentPort());
+      // Second explicit run must re-attempt (not skip) and keep exactly one row.
+      const second = await runSingleDomainDraft(db, cycleId, "clinical-safety", createMockAgentPort());
+      expect(second.status).toBe("drafted");
+      expect(second.draftMd).toBeTruthy();
+
+      const rows = await db
+        .select()
+        .from(reviewDecisions)
+        .where(and(eq(reviewDecisions.cycleId, cycleId), eq(reviewDecisions.domain, "clinical-safety")));
+      expect(rows).toHaveLength(1);
+      expect(rows[0]!.status).toBe("drafted");
+    });
+
+    it("records a failed run as pending with the reason, without a duplicate row", async () => {
+      const { cycleId } = await setUpChampionInReview(db);
+      const failingPort = portFailingFor(["clinical-safety"]);
+
+      const result = await runSingleDomainDraft(db, cycleId, "clinical-safety", failingPort);
+      expect(result.status).toBe("failed");
+      expect(result.error).toMatch(/simulated failure/);
+
+      const rows = await db
+        .select()
+        .from(reviewDecisions)
+        .where(and(eq(reviewDecisions.cycleId, cycleId), eq(reviewDecisions.domain, "clinical-safety")));
+      expect(rows).toHaveLength(1);
+      expect(rows[0]!.status).toBe("pending");
+      expect(rows[0]!.returnReason).toMatch(/simulated failure/);
+    });
+
+    it("refuses to overwrite a signed review (backstop)", async () => {
+      const { cycleId } = await setUpChampionInReview(db);
+      // Force the row to 'signed' directly (bypassing sign authz for the test).
+      await runSingleDomainDraft(db, cycleId, "clinical-safety", createMockAgentPort());
+      await db
+        .update(reviewDecisions)
+        .set({ status: "signed" })
+        .where(and(eq(reviewDecisions.cycleId, cycleId), eq(reviewDecisions.domain, "clinical-safety")));
+
+      await expect(
+        runSingleDomainDraft(db, cycleId, "clinical-safety", createMockAgentPort()),
+      ).rejects.toThrow(/signed/i);
+    });
+
+    it("throws for an unknown cycle", async () => {
+      await expect(
+        runSingleDomainDraft(db, "cycle-does-not-exist", "legal", createMockAgentPort()),
+      ).rejects.toThrow(/no review cycle/i);
     });
   });
 

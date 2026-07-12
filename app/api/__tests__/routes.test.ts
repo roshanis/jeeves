@@ -400,6 +400,118 @@ describe("budget-exhaustion 429 on draft-run", () => {
   });
 });
 
+describe("POST /api/reviews/[cycleId]/[domain]/run — on-demand agent run", () => {
+  async function setUpCycle(ip: string): Promise<{ initiativeId: string; cycleId: string }> {
+    const requesterToken = await issueSessionFor("priya-raman");
+    const { POST: createInitiative } = await import("../initiatives/route");
+    const createRes = await createInitiative(
+      new Request("http://localhost/api/initiatives", {
+        method: "POST",
+        headers: bearer(requesterToken, ip),
+        body: JSON.stringify({ payload: CHAMPION_PAYLOAD }),
+      }),
+    );
+    const { initiativeId } = await createRes.json();
+    const { POST: submitPost } = await import("../initiatives/[id]/submit/route");
+    await submitPost(
+      new Request(`http://localhost/api/initiatives/${initiativeId}/submit`, {
+        method: "POST",
+        headers: bearer(requesterToken, ip),
+      }),
+      { params: Promise.resolve({ id: initiativeId }) },
+    );
+    const { POST: triagePost } = await import("../initiatives/[id]/triage/route");
+    const triageRes = await triagePost(
+      new Request(`http://localhost/api/initiatives/${initiativeId}/triage`, {
+        method: "POST",
+        headers: bearer(requesterToken, ip),
+      }),
+      { params: Promise.resolve({ id: initiativeId }) },
+    );
+    const { cycleId } = await triageRes.json();
+    return { initiativeId, cycleId };
+  }
+
+  it("401s an unauthenticated run with no side effects", async () => {
+    const { cycleId } = await setUpCycle("20.0.0.1");
+    const { POST: runPost } = await import("../reviews/[cycleId]/[domain]/run/route");
+    const res = await runPost(
+      new Request(`http://localhost/api/reviews/${cycleId}/clinical-safety/run`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-forwarded-for": "20.0.0.9" },
+      }),
+      { params: Promise.resolve({ cycleId, domain: "clinical-safety" }) },
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it("200s and drafts when the assigned reviewer runs their own domain", async () => {
+    const { cycleId } = await setUpCycle("21.0.0.1");
+    const reviewerToken = await issueSessionFor("elena-vasquez"); // clinical-safety
+    const { POST: runPost } = await import("../reviews/[cycleId]/[domain]/run/route");
+    const res = await runPost(
+      new Request(`http://localhost/api/reviews/${cycleId}/clinical-safety/run`, {
+        method: "POST",
+        headers: bearer(reviewerToken, "21.0.0.2"),
+      }),
+      { params: Promise.resolve({ cycleId, domain: "clinical-safety" }) },
+    );
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.status).toBe("drafted");
+    expect(json.draftMd).toBeTruthy();
+  });
+
+  it("403s when a reviewer runs a domain they are not assigned to", async () => {
+    const { cycleId } = await setUpCycle("22.0.0.1");
+    const reviewerToken = await issueSessionFor("elena-vasquez"); // clinical-safety, NOT privacy-hipaa
+    const { POST: runPost } = await import("../reviews/[cycleId]/[domain]/run/route");
+    const res = await runPost(
+      new Request(`http://localhost/api/reviews/${cycleId}/privacy-hipaa/run`, {
+        method: "POST",
+        headers: bearer(reviewerToken, "22.0.0.2"),
+      }),
+      { params: Promise.resolve({ cycleId, domain: "privacy-hipaa" }) },
+    );
+    expect(res.status).toBe(403);
+  });
+});
+
+describe("POST /api/agents/health — connector probe", () => {
+  const originalKey = process.env.OPENAI_API_KEY;
+  afterEach(() => {
+    if (originalKey === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = originalKey;
+  });
+
+  it("401s an unauthenticated probe (session-gated, no key burn for the public)", async () => {
+    const { POST } = await import("../agents/health/route");
+    const res = await POST(
+      new Request("http://localhost/api/agents/health", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-forwarded-for": "30.0.0.1" },
+      }),
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it("200s with a session and reports the mock adapter when no key is configured (no network call)", async () => {
+    delete process.env.OPENAI_API_KEY;
+    const token = await issueSessionFor("sofia-grant");
+    const { POST } = await import("../agents/health/route");
+    const res = await POST(
+      new Request("http://localhost/api/agents/health", {
+        method: "POST",
+        headers: bearer(token, "30.0.0.2"),
+      }),
+    );
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.configured).toBe(false);
+    expect(json.adapter).toBe("mock");
+  });
+});
+
 describe("GET routes stay public read-only", () => {
   it("GET draft-run progress requires no session", async () => {
     const requesterToken = await issueSessionFor("priya-raman");

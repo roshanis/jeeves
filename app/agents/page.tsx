@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Bot, ShieldAlert, CircleCheck, CircleDashed } from "lucide-react";
 import {
   GOVERNANCE_AGENTS,
@@ -9,6 +10,7 @@ import {
   type GovernanceAgent,
 } from "@/lib/agents/registry";
 import { DOMAIN_LABEL } from "@/components/jeeves/domain-labels";
+import { AgentConnectionTest } from "@/components/jeeves/agent-connection-test";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 
@@ -40,7 +42,12 @@ function AgentGroup({
           <div key={a.id} data-slot="agent-row" data-agent-id={a.id} className="px-4 py-3.5">
             <div className="flex flex-wrap items-center gap-2">
               <Bot className="h-4 w-4 shrink-0 text-primary" aria-hidden />
-              <span className="font-medium">{a.name}</span>
+              <Link
+                href={`/agents/${a.id}`}
+                className="font-medium hover:underline underline-offset-4"
+              >
+                {a.name}
+              </Link>
               {a.domain ? (
                 <Badge variant="secondary">{DOMAIN_LABEL[a.domain]}</Badge>
               ) : (
@@ -125,6 +132,9 @@ export default function AgentsPage() {
             <span className="font-mono text-xs text-muted-foreground">({status.model})</span>
           </p>
           <p className="mt-0.5 text-xs text-muted-foreground">{status.detail}</p>
+          <div className="mt-3">
+            <AgentConnectionTest />
+          </div>
         </div>
       </div>
 

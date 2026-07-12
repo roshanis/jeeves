@@ -126,6 +126,16 @@ export interface DraftRunProgress {
   complete: boolean;
 }
 
+export interface RunReviewAgentResult {
+  cycleId: string;
+  domain: Domain;
+  status: "drafted" | "failed";
+  /** Fresh draft markdown — present only when status === "drafted". */
+  draftMd?: string;
+  /** Human-readable failure reason — present only when status === "failed". */
+  error?: string;
+}
+
 export interface SignReviewResult {
   cycleId: string;
   domain: Domain;
@@ -251,6 +261,16 @@ export interface PromoteCheckpointResult {
   status: "deployed";
 }
 
+/** Result of POST /api/agents/health (mirrors lib/agents/health.ts#ConnectorHealth). */
+export interface ConnectorHealth {
+  configured: boolean;
+  reachable: boolean;
+  adapter: "openai" | "mock";
+  model: string;
+  latencyMs?: number;
+  detail: string;
+}
+
 /* -------------------------------------------------------------------------
  * Core request helper
  * ---------------------------------------------------------------------- */
@@ -350,6 +370,23 @@ export function getDraftRunProgress(
   return request<DraftRunProgress>(
     `/api/initiatives/${encodeURIComponent(initiativeId)}/draft-run?cycleId=${encodeURIComponent(cycleId)}`,
     { method: "GET" },
+  );
+}
+
+/**
+ * POST /api/reviews/[cycleId]/[domain]/run — a reviewer runs their domain's
+ * drafting agent on demand (budget-gated; invokes the LLM). Reviewer-only and
+ * domain-scoped server-side. Returns the fresh draft so the caller can load
+ * it straight into the editor.
+ */
+export function runReviewAgent(
+  token: string,
+  cycleId: string,
+  domain: Domain,
+): Promise<RunReviewAgentResult> {
+  return request<RunReviewAgentResult>(
+    `/api/reviews/${encodeURIComponent(cycleId)}/${encodeURIComponent(domain)}/run`,
+    { method: "POST", token },
   );
 }
 
@@ -499,6 +536,15 @@ export function intakeChat(
     gaps: CompletenessGap[];
     done: boolean;
   }>("/api/chat/intake", { method: "POST", token, body: input });
+}
+
+/**
+ * POST /api/agents/health — live connector probe (the /agents "Test
+ * connection" action). Session- and budget-gated; makes one minimal live call
+ * only when a key is configured (mock status returned with no call otherwise).
+ */
+export function testAgentConnection(token: string): Promise<ConnectorHealth> {
+  return request<ConnectorHealth>("/api/agents/health", { method: "POST", token });
 }
 
 /** GET /api/deployments/promotions — public read-only list of RL checkpoints awaiting sign-off. */

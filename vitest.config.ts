@@ -22,6 +22,7 @@ export default defineConfig({
       "lib/**/*.test.ts",
       "scripts/**/*.test.ts",
       "app/**/*.test.ts",
+      "app/**/*.test.tsx",
     ],
     exclude: ["tests/e2e/**", "node_modules/**"],
     coverage: {

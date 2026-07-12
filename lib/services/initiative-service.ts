@@ -46,6 +46,8 @@ import {
 } from "../db/schema";
 import type { Actor, Domain, LifecycleState, OverlayFlags, Tier } from "../domain/types";
 import { transition, IllegalTransitionError, type AuditEventPayload } from "../lifecycle/transitions";
+import { runSingleDomainDraft } from "../workflow/review-run";
+import type { AgentPort } from "../agents/ports";
 import { evaluateCompleteness } from "../intake/completeness";
 import type { IntakePayload } from "../intake/types";
 import { deriveTier } from "../triage/rules";
@@ -708,6 +710,85 @@ export async function returnReview(
 
     return { cycleId, domain, status: "returned" };
   });
+}
+
+/* -------------------------------------------------------------------------
+ * 4b. runReviewAgent — reviewer runs their domain's drafting agent on demand
+ * ---------------------------------------------------------------------- */
+
+export interface RunReviewAgentResult {
+  cycleId: string;
+  domain: Domain;
+  status: "drafted" | "failed";
+  /** Fresh draft markdown — present only when status === "drafted". */
+  draftMd?: string;
+  /** Human-readable failure reason — present only when status === "failed". */
+  error?: string;
+}
+
+/**
+ * A reviewer runs the drafting agent for THEIR domain on demand (M3 operate
+ * loop — the "Run agent" button in the workbench). Same authz as
+ * sign/return: reviewer-role only, and only for the domain that reviewer is
+ * assigned to (`requireReviewerDomainMatch`) — so no reviewer can trigger
+ * another domain's agent. Refuses to re-draft a review that is already
+ * `signed` (a human decision; the reviewer must `return` it first). Delegates
+ * the actual (re)draft to `runSingleDomainDraft` and records ONE
+ * actor-attributed `review_agent_run` audit event — distinct from the
+ * `system` `draft_run_completed` event the fan-out writes.
+ *
+ * NOT wrapped in a single `db.transaction`: the draft persist happens inside
+ * `runSingleDomainDraft` immediately after the (slow, network) LLM call, and
+ * holding a DB transaction open across that call would be wrong. The audit
+ * row is appended right after; the only failure window (draft saved, audit
+ * append failed) is benign for an append-only log and never corrupts
+ * lifecycle state (a draft is not a lifecycle transition).
+ */
+export async function runReviewAgent(
+  db: Db,
+  cycleId: string,
+  domain: Domain,
+  actor: Actor,
+  /** Overridable for tests (inject a fake AgentPort); defaults to the real port inside runSingleDomainDraft. */
+  port?: AgentPort,
+): Promise<RunReviewAgentResult> {
+  requireReviewerRole(actor);
+  requireReviewerDomainMatch(actor, domain);
+
+  // The (cycle, domain) review must exist and must not already be signed.
+  const decisionRows = await db
+    .select()
+    .from(reviewDecisions)
+    .where(and(eq(reviewDecisions.cycleId, cycleId), eq(reviewDecisions.domain, domain)));
+  const decision = decisionRows[0];
+  if (!decision) throw new NotFoundError("reviewDecision", `${cycleId}/${domain}`);
+  if (decision.status === "signed") {
+    throw new ValidationError(
+      `review for ${domain} in cycle ${cycleId} is already signed; return it before re-drafting`,
+    );
+  }
+
+  const outcome = await runSingleDomainDraft(db, cycleId, domain, port);
+
+  const cycleRows = await db.select().from(reviewCycles).where(eq(reviewCycles.id, cycleId));
+  const initiativeId = cycleRows[0]?.initiativeId ?? null;
+  await db.insert(auditEvents).values({
+    id: `evt-${randomUUID()}`,
+    initiativeId,
+    ts: new Date(nowTs()),
+    actor: actor.id,
+    actorRole: actor.role,
+    action: "review_agent_run",
+    detail:
+      outcome.status === "drafted"
+        ? `Ran the ${domain} review agent on demand — fresh draft generated.`
+        : `Ran the ${domain} review agent on demand — draft failed: ${outcome.error ?? "unknown error"}.`,
+    before: decision.status,
+    after: outcome.status === "drafted" ? "drafted" : decision.status,
+    metadata: { domain, cycleId, status: outcome.status },
+  });
+
+  return outcome;
 }
 
 /* -------------------------------------------------------------------------

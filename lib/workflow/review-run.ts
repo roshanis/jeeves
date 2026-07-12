@@ -364,6 +364,74 @@ async function persistFailure(
   }
 }
 
+/* -------------------------------------------------------------------------
+ * On-demand single-domain (re)draft — the mechanism behind a reviewer's
+ * "Run agent" button (M3 operate loop). Distinct from `startDraftRun`:
+ *   - It targets exactly ONE (cycle, domain) pair given the cycleId directly.
+ *   - It ALWAYS re-attempts that domain even when it is already `drafted` or
+ *     `returned` (the reviewer explicitly asked for a fresh draft), overwriting
+ *     the existing draft in place via `persistDraft`. `startDraftRun` instead
+ *     SKIPS anything already drafted, which is the wrong behavior for an
+ *     explicit re-run.
+ *   - It refuses to overwrite a `signed` decision — a human signature is
+ *     immutable until the review is returned. This is a backstop; the service
+ *     layer (`runReviewAgent`) checks first and surfaces a clean 400.
+ *   - It writes NO audit event: the actor-attributed row (which reviewer ran
+ *     the agent) is the service layer's responsibility, since this module has
+ *     no actor.
+ * ---------------------------------------------------------------------- */
+
+export interface RunSingleDomainResult {
+  cycleId: string;
+  domain: Domain;
+  status: "drafted" | "failed";
+  /** The freshly drafted markdown — present only when status === "drafted". */
+  draftMd?: string;
+  /** Human-readable failure reason — present only when status === "failed". */
+  error?: string;
+}
+
+/** Options for `runSingleDomainDraft`. */
+export interface RunSingleDomainOptions {
+  /** Max attempts (first try + retries) before recording `failed`. Default 2. */
+  maxAttempts?: number;
+}
+
+export async function runSingleDomainDraft(
+  db: Db,
+  cycleId: string,
+  domain: Domain,
+  /** Overridable for tests (inject a failing/fake AgentPort); defaults to the real `getAgentPort()`. */
+  port: AgentPort = getAgentPort(),
+  options: RunSingleDomainOptions = {},
+): Promise<RunSingleDomainResult> {
+  const maxAttempts = options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
+
+  const cycleRows = await db.select().from(reviewCycles).where(eq(reviewCycles.id, cycleId));
+  const cycle = cycleRows[0];
+  if (!cycle) {
+    throw new Error(`runSingleDomainDraft: no review cycle ${cycleId}`);
+  }
+
+  // Backstop: never re-draft over a human signature.
+  const existingRows = await db
+    .select()
+    .from(reviewDecisions)
+    .where(and(eq(reviewDecisions.cycleId, cycleId), eq(reviewDecisions.domain, domain)));
+  if (existingRows[0]?.status === "signed") {
+    throw new Error(`runSingleDomainDraft: cannot re-draft a signed review (${cycleId}/${domain})`);
+  }
+
+  const intake = await loadIntakeSnapshot(db, cycle.initiativeId);
+  const result = await draftWithRetry(port, cycleId, domain, intake, maxAttempts);
+  if (result.ok) {
+    await persistDraft(db, cycleId, domain, result.value);
+    return { cycleId, domain, status: "drafted", draftMd: result.value.draftMarkdown };
+  }
+  await persistFailure(db, cycleId, domain, result.error);
+  return { cycleId, domain, status: "failed", error: describePortFailure(result.error) };
+}
+
 /** UI polling endpoint support (task brief: `getRunProgress(cycleId)`). */
 export async function getRunProgress(db: Db, cycleId: string): Promise<DraftRunProgress> {
   const rows = await db.select().from(reviewDecisions).where(eq(reviewDecisions.cycleId, cycleId));
