@@ -1,4 +1,4 @@
-import { getAppProvider } from "@/app/_lib/data-provider";
+import { getAppProvider, getCurrentWorkspaceId } from "@/app/_lib/data-provider";
 import { getDb } from "@/lib/db/client";
 import { listIncidents, type IncidentListRow } from "@/lib/services/monitor-service";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -40,16 +40,17 @@ async function loadIncidents(): Promise<IncidentListRow[]> {
 
 export default async function AdminPage() {
   const provider = getAppProvider();
+  const viewerWorkspaceId = await getCurrentWorkspaceId();
   const [catalog, initiatives, q01Changes, incidents] = await Promise.all([
     provider.controlCatalog(),
-    provider.listInitiatives(),
+    provider.listInitiatives({ viewerWorkspaceId }),
     provider.auditQuery("q01-control-changes"),
     loadIncidents(),
   ]);
 
   const q01 = catalog.find((c) => c.id === "Q-01");
   const details = await Promise.all(
-    initiatives.map((i) => provider.getInitiativeDetail(i.slug)),
+    initiatives.map((i) => provider.getInitiativeDetail(i.slug, { viewerWorkspaceId })),
   );
 
   // Project-override options for the threshold dialog: only initiatives whose

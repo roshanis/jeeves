@@ -1,4 +1,4 @@
-import { getAppProvider } from "@/app/_lib/data-provider";
+import { getAppProvider, getCurrentWorkspaceId } from "@/app/_lib/data-provider";
 import {
   ReviewWorkbench,
   type ReviewQueueRow,
@@ -6,9 +6,10 @@ import {
 
 export default async function ReviewsPage() {
   const provider = getAppProvider();
-  const initiatives = await provider.listInitiatives();
+  const viewerWorkspaceId = await getCurrentWorkspaceId();
+  const initiatives = await provider.listInitiatives({ viewerWorkspaceId });
   const details = await Promise.all(
-    initiatives.map((i) => provider.getInitiativeDetail(i.slug)),
+    initiatives.map((i) => provider.getInitiativeDetail(i.slug, { viewerWorkspaceId })),
   );
 
   const rows: ReviewQueueRow[] = [];

@@ -84,24 +84,34 @@ export interface IssueSessionResult {
  * bound to `personaKey`. Returns null on passcode mismatch/misconfiguration
  * (caller maps to 401, no side effects — plan §3 "unauthenticated requests
  * -> 401 with no side effects").
+ *
+ * `existingWorkspaceId` (M2.5 inc.2b — per-browser workspace reuse): when a
+ * non-empty value is passed (the caller's incoming `jeeves_workspace`
+ * cookie), the issued session and returned result use THAT workspaceId
+ * instead of a freshly generated one, so the champion demo flow (requester
+ * creates -> reviewer signs -> approver decides, all separate logins in one
+ * browser) keeps seeing the same workspace across logins. Omitted/empty ->
+ * unchanged behavior (fresh workspaceId derived from the new token).
  */
 export async function issueDemoSession(
   providedPasscode: string,
   expectedPasscode: string,
   personaKey: string,
+  existingWorkspaceId?: string | null,
 ): Promise<IssueSessionResult | null> {
   const check = verifyPasscode(providedPasscode, expectedPasscode);
   if (!check.ok) return null;
   if (!resolveActor(personaKey)) return null;
 
   const session = issueSession({ ttlMs: SESSION_TTL_MS }, () => Date.now());
+  const workspaceId = existingWorkspaceId ? existingWorkspaceId : session.workspaceId;
   await getDb().insert(sessions).values({
     token: session.token,
     personaKey,
-    workspaceId: session.workspaceId,
+    workspaceId,
     expiresAt: session.expiresAt,
   });
-  return { token: session.token, workspaceId: session.workspaceId, expiresAt: session.expiresAt };
+  return { token: session.token, workspaceId, expiresAt: session.expiresAt };
 }
 
 export interface ResolvedSession {

@@ -21,11 +21,13 @@
  * upstream require-interop bug is fixed, this module can be deleted and the
  * pages can import getProvider directly again.
  */
-import { headers } from "next/headers";
+import { cookies, headers } from "next/headers";
 import type { DataProvider } from "@/lib/data/provider";
-import type { InitiativeDetail } from "@/lib/data/dto";
+import type { InitiativeDetail, InitiativeSummary } from "@/lib/data/dto";
 import { getProvider } from "@/lib/data";
 import { DbDataProvider } from "@/lib/data/db-provider";
+
+const WORKSPACE_COOKIE = "jeeves_workspace";
 
 let dbSingleton: DataProvider | null = null;
 
@@ -39,6 +41,33 @@ export function getAppProvider(): DataProvider {
     return dbSingleton;
   }
   return getProvider();
+}
+
+/**
+ * The current browser's demo workspace id, or null for a public/no-session
+ * visitor (M2.5 inc.2b). This reads the `jeeves_workspace` cookie set by
+ * POST /api/session — it is a READ-SCOPING hint, never an auth credential.
+ * null => seeded-only; a value => seeded + that workspace's live-created rows.
+ */
+export async function getCurrentWorkspaceId(): Promise<string | null> {
+  const cookieStore = await cookies();
+  return cookieStore.get(WORKSPACE_COOKIE)?.value ?? null;
+}
+
+/** `listInitiatives` scoped to the current viewer's workspace (seeded + own). */
+export async function listInitiativesForViewer(): Promise<InitiativeSummary[]> {
+  return getAppProvider().listInitiatives({
+    viewerWorkspaceId: await getCurrentWorkspaceId(),
+  });
+}
+
+/** `getInitiativeDetail` scoped to the current viewer's workspace. */
+export async function getInitiativeDetailForViewer(
+  slug: string,
+): Promise<InitiativeDetail | null> {
+  return getAppProvider().getInitiativeDetail(slug, {
+    viewerWorkspaceId: await getCurrentWorkspaceId(),
+  });
 }
 
 /**
@@ -66,18 +95,24 @@ export async function getInitiativeDetailCoherent(
   const mode = process.env.DATA_PROVIDER;
   const pgliteDbMode = mode === "db" && !process.env.DATABASE_URL;
   if (!pgliteDbMode) {
-    return getAppProvider().getInitiativeDetail(slug);
+    return getInitiativeDetailForViewer(slug);
   }
 
   const requestHeaders = await headers();
   const host = requestHeaders.get("host");
   if (!host) {
-    return getAppProvider().getInitiativeDetail(slug);
+    return getInitiativeDetailForViewer(slug);
   }
   const proto = requestHeaders.get("x-forwarded-proto") ?? "http";
   const res = await fetch(
     `${proto}://${host}/initiatives/${encodeURIComponent(slug)}/detail-data`,
-    { cache: "no-store" },
+    {
+      cache: "no-store",
+      // Forward the workspace cookie so the detail-data route handler scopes
+      // to the same viewer (fetch does not carry the incoming cookies by
+      // default). Read-scoping only — no credential is forwarded.
+      headers: { cookie: requestHeaders.get("cookie") ?? "" },
+    },
   );
   if (res.status === 404) {
     return null;

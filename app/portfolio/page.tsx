@@ -1,4 +1,4 @@
-import { getAppProvider } from "@/app/_lib/data-provider";
+import { getAppProvider, getCurrentWorkspaceId } from "@/app/_lib/data-provider";
 import { OutcomeMetricsStrip } from "@/components/jeeves/outcome-metrics-strip";
 import { RiskHeatmap } from "@/components/jeeves/risk-heatmap";
 import { PortfolioView } from "@/components/jeeves/portfolio-view";
@@ -6,8 +6,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 export default async function PortfolioPage() {
   const provider = getAppProvider();
+  const viewerWorkspaceId = await getCurrentWorkspaceId();
   const [initiatives, metrics] = await Promise.all([
-    provider.listInitiatives(),
+    provider.listInitiatives({ viewerWorkspaceId }),
     provider.outcomeMetrics(),
   ]);
 

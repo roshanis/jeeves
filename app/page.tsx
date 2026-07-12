@@ -1,4 +1,4 @@
-import { getAppProvider } from "@/app/_lib/data-provider";
+import { getAppProvider, getCurrentWorkspaceId } from "@/app/_lib/data-provider";
 import { getDb } from "@/lib/db/client";
 import { listIncidents, type IncidentListRow } from "@/lib/services/monitor-service";
 import type { InitiativeSummary, InitiativeDetail } from "@/lib/data/dto";
@@ -25,13 +25,16 @@ async function loadIncidents(): Promise<IncidentListRow[]> {
 
 export default async function InboxPage() {
   const provider = getAppProvider();
+  const viewerWorkspaceId = await getCurrentWorkspaceId();
   const [initiatives, incidents, controls] = await Promise.all([
-    provider.listInitiatives(),
+    provider.listInitiatives({ viewerWorkspaceId }),
     loadIncidents(),
     provider.controlCatalog(),
   ]);
   const details = (
-    await Promise.all(initiatives.map((i) => provider.getInitiativeDetail(i.slug)))
+    await Promise.all(
+      initiatives.map((i) => provider.getInitiativeDetail(i.slug, { viewerWorkspaceId })),
+    )
   ).filter((d): d is InitiativeDetail => d !== null);
 
   // Domain-scoped review rows for the reviewer Inbox view (one row per

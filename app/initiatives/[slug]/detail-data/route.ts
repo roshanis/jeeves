@@ -21,14 +21,17 @@
  * mutation contract (which is read-only for the UI task) — it is a
  * UI-internal data endpoint for one page.
  */
-import { getAppProvider } from "@/app/_lib/data-provider";
+import { getInitiativeDetailForViewer } from "@/app/_lib/data-provider";
 
 export async function GET(
   _req: Request,
   context: { params: Promise<{ slug: string }> },
 ): Promise<Response> {
   const { slug } = await context.params;
-  const detail = await getAppProvider().getInitiativeDetail(slug);
+  // Scope to the caller's workspace (the page forwards its jeeves_workspace
+  // cookie on the fetch), so a live-created initiative is only visible in the
+  // workspace that created it; foreign/unknown -> 404 (M2.5 inc.2b).
+  const detail = await getInitiativeDetailForViewer(slug);
   if (!detail) {
     return Response.json({ error: "not found" }, { status: 404 });
   }

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { getAppProvider } from "@/app/_lib/data-provider";
+import { getAppProvider, getCurrentWorkspaceId } from "@/app/_lib/data-provider";
 import { getDb } from "@/lib/db/client";
 import { listIncidents, type IncidentListRow } from "@/lib/services/monitor-service";
 import type { InitiativeDetail, TelemetrySeries } from "@/lib/data/dto";
@@ -42,9 +42,10 @@ function breached(series: TelemetrySeries | undefined): boolean {
 
 export default async function MonitoringPage() {
   const provider = getAppProvider();
-  const initiatives = await provider.listInitiatives();
+  const viewerWorkspaceId = await getCurrentWorkspaceId();
+  const initiatives = await provider.listInitiatives({ viewerWorkspaceId });
   const [details, incidents] = await Promise.all([
-    Promise.all(initiatives.map((i) => provider.getInitiativeDetail(i.slug))),
+    Promise.all(initiatives.map((i) => provider.getInitiativeDetail(i.slug, { viewerWorkspaceId }))),
     loadIncidents(),
   ]);
 

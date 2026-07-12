@@ -15,6 +15,41 @@
 import { z } from "zod";
 import { checkSessionAttempt, clientKeyFor, issueDemoSession } from "@/lib/services/route-guard";
 
+// Per-browser workspace cookie (M2.5 inc.2b). Read-scoping ONLY — it is not
+// an auth credential (mutations still require the Bearer token), so it opens
+// no CSRF surface. Set on first login and REUSED on later logins so every
+// persona acting in one browser shares the same demo workspace (the champion
+// loop spans requester -> reviewer -> approver logins).
+//
+// The cookie is read from the incoming Request and written via a Set-Cookie
+// header (rather than next/headers `cookies()`) so this handler works both in
+// the Next runtime AND when unit tests invoke POST() directly with no request
+// scope.
+const WORKSPACE_COOKIE = "jeeves_workspace";
+const WORKSPACE_COOKIE_MAX_AGE = 60 * 60 * 24 * 7; // 7 days
+
+function readWorkspaceCookie(req: Request): string | null {
+  const cookieHeader = req.headers.get("cookie");
+  if (!cookieHeader) return null;
+  const match = cookieHeader
+    .split(";")
+    .map((p) => p.trim())
+    .find((p) => p.startsWith(`${WORKSPACE_COOKIE}=`));
+  return match ? decodeURIComponent(match.slice(WORKSPACE_COOKIE.length + 1)) : null;
+}
+
+function workspaceCookieHeader(workspaceId: string): string {
+  const parts = [
+    `${WORKSPACE_COOKIE}=${encodeURIComponent(workspaceId)}`,
+    "HttpOnly",
+    "SameSite=Lax",
+    "Path=/",
+    `Max-Age=${WORKSPACE_COOKIE_MAX_AGE}`,
+  ];
+  if (process.env.NODE_ENV === "production") parts.push("Secure");
+  return parts.join("; ");
+}
+
 const bodySchema = z.object({
   passcode: z.string().min(1).max(200),
   personaKey: z.string().min(1).max(100),
@@ -44,11 +79,23 @@ export async function POST(req: Request): Promise<Response> {
     return Response.json({ error: "invalid request body" }, { status: 400 });
   }
 
+  const existingWorkspaceId = readWorkspaceCookie(req);
+
   const expected = process.env.DEMO_PASSCODE ?? "";
-  const result = await issueDemoSession(parsed.data.passcode, expected, parsed.data.personaKey);
+  const result = await issueDemoSession(
+    parsed.data.passcode,
+    expected,
+    parsed.data.personaKey,
+    existingWorkspaceId,
+  );
   if (!result) {
     return Response.json({ error: "unauthorized" }, { status: 401 });
   }
 
-  return Response.json(result, { status: 200 });
+  // Set (or refresh) the per-browser workspace cookie so subsequent logins in
+  // this browser reuse the same workspace.
+  return Response.json(result, {
+    status: 200,
+    headers: { "Set-Cookie": workspaceCookieHeader(result.workspaceId) },
+  });
 }
