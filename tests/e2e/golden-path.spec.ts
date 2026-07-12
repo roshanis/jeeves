@@ -192,8 +192,11 @@ test.describe("live demo loop: create → triage → draft run → sign → deci
     }).toPass({ timeout: 90_000 });
 
     // --- Reviewer: sign privacy-hipaa ------------------------------------
+    // Sign as the Privacy/HIPAA reviewer (Marcus Webb) — reviewer-domain
+    // assignment (M2.5 inc.3) only lets a reviewer sign their own domain, so
+    // Elena Vasquez (Clinical Safety) could not sign this row.
     await resetToReadOnly(page);
-    await loginAs(page, "elena-vasquez");
+    await loginAs(page, "marcus-webb");
 
     const phiRow = page.locator('[data-slot="review-row"][data-domain="privacy-hipaa"]');
     await expect(phiRow.getByRole("button", { name: "Sign" })).toBeEnabled({

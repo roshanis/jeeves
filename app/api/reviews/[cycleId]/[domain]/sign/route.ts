@@ -1,13 +1,14 @@
 /**
  * POST /api/reviews/[cycleId]/[domain]/sign — reviewer signs off a domain
- * review (task brief deliverable 3). Reviewer-role only; `signReview`
- * itself enforces this and throws `IllegalTransitionError` otherwise
- * (mapped to 403 here).
+ * review (task brief deliverable 3). Reviewer-role only, AND the reviewer
+ * must be assigned to this exact domain (each of the 4 named reviewer
+ * personas owns exactly one domain); `signReview` itself enforces both and
+ * throws `IllegalTransitionError` otherwise (mapped to 403 here).
  *
  * Body:  { editedDraftMd?: string }
  * 200:   { cycleId, domain, status: "signed" }
  * 401/429/400: as other mutating routes.
- * 403:   { error: string }  (non-reviewer actor)
+ * 403:   { error: string }  (non-reviewer actor, or reviewer not assigned to this domain)
  * 404:   { error: string }  (unknown cycle/domain pair)
  */
 import { z } from "zod";

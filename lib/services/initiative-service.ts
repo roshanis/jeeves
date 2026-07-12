@@ -52,7 +52,7 @@ import { deriveTier } from "../triage/rules";
 import { requiredDomains } from "../triage/routing";
 import { fastLaneEligibility } from "../approval/eligibility";
 import { applicabilityApplies } from "./applicability";
-import { FAST_LANE_POLICY, SYSTEM_ACTOR } from "./actors";
+import { ACTOR_DIRECTORY, FAST_LANE_POLICY, SYSTEM_ACTOR, isPersonaKey, reviewerDomainFor } from "./actors";
 
 /* -------------------------------------------------------------------------
  * Shared errors
@@ -167,6 +167,33 @@ async function loadInitiativeOrThrow(
   const row = rows[0];
   if (!row) throw new NotFoundError("initiative", initiativeId);
   return row;
+}
+
+/**
+ * Requester-ownership guard for requester-role-gated mutations (`submitIntake`
+ * and any future one). Ownership is determined by matching the acting
+ * actor's directory display name (`ACTOR_DIRECTORY[actor.id].name`) against
+ * `initiatives.requester` (a display-name string set at `createDraft` time)
+ * — no schema change / no `requesterId` column needed. Only enforced when
+ * the acting actor is a requester-role actor, so SYSTEM_ACTOR/admin internal
+ * calls that legitimately act on any initiative are never blocked. Throws
+ * the same `IllegalTransitionError` type used elsewhere so route handlers
+ * map this to 403 without an additional catch clause.
+ */
+function requireRequesterOwnership(
+  actor: Actor,
+  initiative: { id: string; slug: string; requester: string },
+): void {
+  if (actor.role !== "requester") return;
+  const actorName = isPersonaKey(actor.id) ? ACTOR_DIRECTORY[actor.id].name : actor.id;
+  if (actorName !== initiative.requester) {
+    throw new IllegalTransitionError(
+      `requester '${actor.id}' does not own initiative '${initiative.slug}'`,
+      "intake_draft",
+      "submit",
+      actor.role,
+    );
+  }
 }
 
 async function latestIntakeVersion(
@@ -304,6 +331,7 @@ export async function submitIntake(
 ): Promise<SubmitIntakeResult | SubmitIntakeBlockedResult> {
   return db.transaction(async (tx) => {
     const initiative = await loadInitiativeOrThrow(tx, initiativeId);
+    requireRequesterOwnership(actor, initiative);
     const intake = await latestIntakeVersion(tx, initiativeId);
     if (!intake) {
       throw new ValidationError("initiative has no intake version to submit");
@@ -548,6 +576,28 @@ function requireReviewerRole(actor: Actor): void {
   }
 }
 
+/**
+ * Reviewer-domain-assignment guard shared by signReview/returnReview,
+ * enforced AFTER `requireReviewerRole`. Each of the 4 named reviewer
+ * personas owns exactly one governance domain (`reviewerDomainFor`,
+ * mirroring the client's `REVIEWER_DOMAIN`); a reviewer may only sign/return
+ * a review in THEIR domain. A reviewer with no standing assignment
+ * (`reviewerDomainFor` returns `null`) can sign nothing. Reuses
+ * `IllegalTransitionError` — the same type `requireReviewerRole` throws —
+ * so route handlers map this to 403 without any additional catch clause.
+ */
+function requireReviewerDomainMatch(actor: Actor, domain: Domain): void {
+  const assignedDomain = reviewerDomainFor(actor.id);
+  if (assignedDomain !== domain) {
+    throw new IllegalTransitionError(
+      `reviewer '${actor.id}' is assigned to '${assignedDomain ?? "none"}', not '${domain}'`,
+      "in_review",
+      "start_review",
+      actor.role,
+    );
+  }
+}
+
 export interface SignReviewResult {
   cycleId: string;
   domain: Domain;
@@ -570,6 +620,7 @@ export async function signReview(
   editedDraftMd?: string,
 ): Promise<SignReviewResult> {
   requireReviewerRole(actor);
+  requireReviewerDomainMatch(actor, domain);
   return db.transaction(async (tx) => {
     const decision = await loadReviewDecisionOrThrow(tx, cycleId, domain);
     if (decision.status === "signed") {
@@ -620,6 +671,7 @@ export async function returnReview(
   reason: string,
 ): Promise<ReturnReviewResult> {
   requireReviewerRole(actor);
+  requireReviewerDomainMatch(actor, domain);
   if (!reason || reason.trim().length === 0) {
     throw new ValidationError("returnReview requires a non-empty reason");
   }

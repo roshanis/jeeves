@@ -275,6 +275,96 @@ describe("lib/services/initiative-service", () => {
     });
   });
 
+  describe("reviewer-domain assignment authz", () => {
+    async function setUpInReview() {
+      const draft = await svc.createDraft(db, {
+        payload: CHAMPION_PREFILL_PAYLOAD,
+        requesterActor: REQUESTER,
+        requesterName: "Priya Raman",
+      });
+      await svc.submitIntake(db, draft.initiativeId, REQUESTER);
+      await svc.triage(db, draft.initiativeId);
+      return draft;
+    }
+
+    it("a reviewer signing a domain they are NOT assigned to is rejected — IllegalTransitionError, no row change", async () => {
+      await setUpInReview();
+      // elena-vasquez (REVIEWER) is assigned clinical-safety, not privacy-hipaa.
+      const rows = await db
+        .select()
+        .from(reviewDecisions)
+        .where(eq(reviewDecisions.domain, "privacy-hipaa"));
+      const rd = rows[0]!;
+
+      await expect(svc.signReview(db, rd.cycleId, "privacy-hipaa", REVIEWER)).rejects.toThrow(
+        IllegalTransitionError,
+      );
+      const unchanged = (
+        await db.select().from(reviewDecisions).where(eq(reviewDecisions.id, rd.id))
+      )[0]!;
+      expect(unchanged.status).toBe("pending");
+      expect(unchanged.reviewer).toBeNull();
+    });
+
+    it("a reviewer returning a domain they are NOT assigned to is rejected — IllegalTransitionError, no row change", async () => {
+      await setUpInReview();
+      // marcus-webb owns privacy-hipaa, not legal.
+      const rows = await db.select().from(reviewDecisions).where(eq(reviewDecisions.domain, "legal"));
+      const rd = rows[0]!;
+      const MARCUS = { id: "marcus-webb", role: "reviewer" as const };
+
+      await expect(
+        svc.returnReview(db, rd.cycleId, "legal", MARCUS, "Needs more detail."),
+      ).rejects.toThrow(IllegalTransitionError);
+      const unchanged = (
+        await db.select().from(reviewDecisions).where(eq(reviewDecisions.id, rd.id))
+      )[0]!;
+      expect(unchanged.status).toBe("pending");
+    });
+
+    it("each of the 4 named reviewers CAN sign their own assigned domain (control case)", async () => {
+      await setUpInReview();
+      const assignments: [string, "clinical-safety" | "privacy-hipaa" | "responsible-ai" | "legal"][] = [
+        ["elena-vasquez", "clinical-safety"],
+        ["marcus-webb", "privacy-hipaa"],
+        ["sofia-grant", "responsible-ai"],
+        ["james-liu", "legal"],
+      ];
+      for (const [reviewerId, domain] of assignments) {
+        const rows = await db.select().from(reviewDecisions).where(eq(reviewDecisions.domain, domain));
+        const rd = rows[0]!;
+        await db
+          .update(reviewDecisions)
+          .set({ draftMd: `Draft for ${domain}.`, status: "drafted" })
+          .where(eq(reviewDecisions.id, rd.id));
+        const result = await svc.signReview(db, rd.cycleId, domain, {
+          id: reviewerId,
+          role: "reviewer" as const,
+        });
+        expect(result.status).toBe("signed");
+      }
+    });
+  });
+
+  describe("requester ownership authz", () => {
+    it("a non-owner requester cannot submitIntake() — IllegalTransitionError, no state change", async () => {
+      const draft = await svc.createDraft(db, {
+        payload: CHAMPION_PREFILL_PAYLOAD,
+        requesterActor: REQUESTER,
+        requesterName: "Priya Raman",
+      });
+      // dan-kowalski is a real requester persona but does NOT own this initiative.
+      const OTHER_REQUESTER = { id: "dan-kowalski", role: "requester" as const };
+
+      await expect(svc.submitIntake(db, draft.initiativeId, OTHER_REQUESTER)).rejects.toThrow(
+        IllegalTransitionError,
+      );
+
+      const row = (await db.select().from(initiatives).where(eq(initiatives.id, draft.initiativeId)))[0]!;
+      expect(row.state).toBe("intake_draft"); // unchanged
+    });
+  });
+
   describe("transactionality", () => {
     it("a forced failure mid-triage rolls back both the state change and any partial rows", async () => {
       const draft = await svc.createDraft(db, {

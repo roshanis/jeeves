@@ -6,7 +6,7 @@
  * directory — NEVER trust a role claim in a request body (task brief §4;
  * plan.md AGENTS.md hard rule 4/5 — authoritative state lives in app code).
  */
-import type { Actor, ActorRole } from "../domain/types";
+import type { Actor, ActorRole, Domain } from "../domain/types";
 
 /** Stable persona keys the demo session UI offers (seed-spec §1 actors). */
 export type PersonaKey =
@@ -63,6 +63,30 @@ export function actorName(personaKey: string): string {
 
 /** system pseudo-actor for automated transitions (triage, fast-lane). */
 export const SYSTEM_ACTOR: Actor = { id: "system", role: "system" };
+
+/**
+ * Server-side mirror of `lib/client/personas.ts`'s `REVIEWER_DOMAIN` (seed-
+ * spec §1): each of the 4 named reviewer personas owns exactly one
+ * governance domain. Must be kept identical to the client map — if one
+ * changes, update both in the same change.
+ */
+const REVIEWER_DOMAIN: Record<string, Domain> = {
+  "elena-vasquez": "clinical-safety",
+  "marcus-webb": "privacy-hipaa",
+  "sofia-grant": "responsible-ai",
+  "james-liu": "legal",
+};
+
+/**
+ * The governance domain a reviewer persona is assigned to, or `null` if the
+ * actor is not one of the 4 named reviewer personas (including non-reviewer
+ * roles and reviewers with no standing assignment). Used by
+ * `initiative-service.ts`'s `signReview`/`returnReview` to enforce that a
+ * reviewer may only act on their own domain.
+ */
+export function reviewerDomainFor(actorId: string): Domain | null {
+  return REVIEWER_DOMAIN[actorId] ?? null;
+}
 
 /**
  * Standing fast-lane policy (seed-spec §2 fast-lane counterpoint; plan §1

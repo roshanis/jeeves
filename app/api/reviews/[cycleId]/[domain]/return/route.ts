@@ -1,13 +1,16 @@
 /**
  * POST /api/reviews/[cycleId]/[domain]/return — reviewer returns a domain
  * review with a required reason (task brief deliverable 3). Reviewer-role
- * only.
+ * only, AND the reviewer must be assigned to this exact domain (each of the
+ * 4 named reviewer personas owns exactly one domain); `returnReview` itself
+ * enforces both and throws `IllegalTransitionError` otherwise (mapped to
+ * 403 here).
  *
  * Body:  { reason: string }
  * 200:   { cycleId, domain, status: "returned" }
  * 401/429: as other mutating routes.
  * 400:   { error: string }  (missing/empty reason, invalid body, input-size gap)
- * 403:   { error: string }  (non-reviewer actor)
+ * 403:   { error: string }  (non-reviewer actor, or reviewer not assigned to this domain)
  * 404:   { error: string }  (unknown cycle/domain pair)
  */
 import { z } from "zod";

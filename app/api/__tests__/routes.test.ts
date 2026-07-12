@@ -267,6 +267,17 @@ describe("full champion route chain: submit -> triage -> draft-run -> sign -> de
     );
     expect(signAsRequesterRes.status).toBe(403);
 
+    // elena-vasquez is a REVIEWER but is assigned clinical-safety, not legal —
+    // reviewer-domain-assignment authz rejects a same-role, wrong-domain sign with 403.
+    const signWrongDomainRes = await signPost(
+      new Request(`http://localhost/api/reviews/${cycleId}/legal/sign`, {
+        method: "POST",
+        headers: bearer(reviewerToken, "10.0.0.1"),
+      }),
+      { params: Promise.resolve({ cycleId, domain: "legal" }) },
+    );
+    expect(signWrongDomainRes.status).toBe(403);
+
     const { POST: decidePost } = await import("../initiatives/[id]/decide/route");
     const decideRes = await decidePost(
       new Request(`http://localhost/api/initiatives/${initiativeId}/decide`, {
@@ -293,6 +304,48 @@ describe("full champion route chain: submit -> triage -> draft-run -> sign -> de
       { params: Promise.resolve({ id: initiativeId }) },
     );
     expect(decideAsRequesterRes.status).toBe(403);
+  });
+});
+
+describe("requester ownership authz on submit", () => {
+  it("a requester who does not own the initiative gets 403 on submit; owner can still submit after", async () => {
+    const ownerToken = await issueSessionFor("priya-raman");
+    const otherRequesterToken = await issueSessionFor("dan-kowalski");
+
+    const { POST: createInitiative } = await import("../initiatives/route");
+    const createRes = await createInitiative(
+      new Request("http://localhost/api/initiatives", {
+        method: "POST",
+        headers: bearer(ownerToken, "13.0.0.1"),
+        body: JSON.stringify({ payload: CHAMPION_PAYLOAD }),
+      }),
+    );
+    expect(createRes.status).toBe(200);
+    const { initiativeId } = await createRes.json();
+
+    const { POST: submitPost } = await import("../initiatives/[id]/submit/route");
+
+    // dan-kowalski is a real requester persona but does not own this initiative.
+    const nonOwnerRes = await submitPost(
+      new Request(`http://localhost/api/initiatives/${initiativeId}/submit`, {
+        method: "POST",
+        headers: bearer(otherRequesterToken, "13.0.0.2"),
+      }),
+      { params: Promise.resolve({ id: initiativeId }) },
+    );
+    expect(nonOwnerRes.status).toBe(403);
+
+    // The owning requester can still submit normally.
+    const ownerRes = await submitPost(
+      new Request(`http://localhost/api/initiatives/${initiativeId}/submit`, {
+        method: "POST",
+        headers: bearer(ownerToken, "13.0.0.1"),
+      }),
+      { params: Promise.resolve({ id: initiativeId }) },
+    );
+    expect(ownerRes.status).toBe(200);
+    const ownerJson = await ownerRes.json();
+    expect(ownerJson.submitted).toBe(true);
   });
 });
 

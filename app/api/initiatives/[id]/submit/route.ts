@@ -4,15 +4,18 @@
  * prevent submission (200 with `submitted: false` + gap list, not an
  * error — this is an expected/normal outcome, not a failure of the route).
  *
- * Auth: session required, role `requester`.
+ * Auth: session required, role `requester`, and the acting requester must
+ * OWN the initiative (`submitIntake` enforces this and throws
+ * `IllegalTransitionError` otherwise, mapped to 403 here).
  * Body:  (none)
  * 200:   { submitted: true, completenessPct: number }
  *      | { submitted: false, gaps: CompletenessGap[] }
  * 401/429: as other mutating routes.
+ * 403:   { error: string }  (non-requester actor, or requester does not own the initiative)
  * 404:   { error: string }  (unknown initiative id)
  */
 import { getDb } from "@/lib/db/client";
-import { NotFoundError, submitIntake } from "@/lib/services/initiative-service";
+import { IllegalTransitionError, NotFoundError, submitIntake } from "@/lib/services/initiative-service";
 import { runMutationGuard } from "@/lib/services/route-guard";
 
 export async function POST(
@@ -36,6 +39,9 @@ export async function POST(
   } catch (err) {
     if (err instanceof NotFoundError) {
       return Response.json({ error: err.message }, { status: 404 });
+    }
+    if (err instanceof IllegalTransitionError) {
+      return Response.json({ error: err.message }, { status: 403 });
     }
     throw err;
   }
