@@ -4,7 +4,9 @@ import { probeConnector } from "./health";
 // Guarantee under test: with no key, probeConnector must NOT touch the
 // network — so we mock `ai`'s generateText and assert it is never called.
 const generateText = vi.fn(async () => ({ text: "ok" }));
-vi.mock("ai", () => ({ generateText: (...args: unknown[]) => generateText(...args) }));
+// The wrapper deliberately ignores the args probeConnector passes — the tests
+// only assert whether/how often the provider call happened, never its shape.
+vi.mock("ai", () => ({ generateText: () => generateText() }));
 vi.mock("@ai-sdk/openai", () => ({ openai: (id: string) => ({ id }) }));
 
 describe("probeConnector", () => {

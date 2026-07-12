@@ -12,6 +12,15 @@ const nextConfig: NextConfig = {
   // DATABASE_URL is set.
   serverExternalPackages: ["@electric-sql/pglite"],
 
+  // The /agents/[id] detail page reads the agent instruction files (the real
+  // system prompts) off disk at runtime. Force-include the whole agents/
+  // corpus in that route's serverless-function bundle so the reads resolve in
+  // a traced/serverless deploy (not just when process.cwd() happens to be the
+  // repo root under `next dev`/`next start`).
+  outputFileTracingIncludes: {
+    "/agents/[id]": ["./agents/**/*.md"],
+  },
+
   // Baseline security response headers, applied to every route. This is a
   // deliberately conservative set: no Content-Security-Policy here. A
   // strict CSP is the right long-term follow-up but risks breaking

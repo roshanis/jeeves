@@ -16,8 +16,22 @@ import { Badge } from "@/components/ui/badge";
 
 const SHARED_REVIEWER_INSTRUCTIONS_PATH = "agents/reviewer/instructions.md";
 
+/**
+ * Reads an instruction file that lives under the repo `agents/` directory.
+ * The `"agents"` path segment is a STATIC literal on purpose — per Next.js's
+ * file-tracing guidance (`path.join(process.cwd(), 'subfolder', dynamicRest)`),
+ * a statically-scoped subfolder lets the bundler trace and include the whole
+ * `agents/` tree in this route's serverless function, instead of warning that
+ * it cannot analyze a fully-dynamic path (and potentially shipping the route
+ * without the files). `next.config.ts`'s `outputFileTracingIncludes` belt-and-
+ * braces the same guarantee. Paths outside `agents/` (e.g. the completeness
+ * agent's inline-prompt marker) are not files and return null.
+ */
 function readInstructionsFile(repoRelativePath: string): string | null {
-  const absolutePath = path.join(process.cwd(), repoRelativePath);
+  const prefix = "agents/";
+  if (!repoRelativePath.startsWith(prefix)) return null;
+  const relativeToAgents = repoRelativePath.slice(prefix.length);
+  const absolutePath = path.join(process.cwd(), "agents", relativeToAgents);
   if (!existsSync(absolutePath)) {
     return null;
   }
