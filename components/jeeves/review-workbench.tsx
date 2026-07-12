@@ -15,6 +15,7 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import type { ReviewRow } from "@/lib/data/dto";
 import type { Domain, Tier } from "@/lib/domain/types";
+import { ageBucket, ageMsSince, formatAge, type AgeBucket } from "@/lib/format/aging";
 import {
   Table,
   TableBody,
@@ -61,10 +62,90 @@ const DOMAIN_ORDER: Domain[] = [
   "data-governance",
 ];
 
+// Hydration-safe "current time" for the aging view: null on the server (so
+// SSR + first client render match and show the placeholder), then a single
+// cached client clock read. Cached so useSyncExternalStore sees a stable
+// snapshot — the aging view doesn't need a live-ticking clock, and this avoids
+// both a hydration mismatch and a setState-in-effect re-render.
+const SUBSCRIBE_NOOP = (): (() => void) => () => {};
+let cachedClientNow: number | null = null;
+function getClientNow(): number {
+  if (cachedClientNow === null) cachedClientNow = Date.now();
+  return cachedClientNow;
+}
+function getServerNow(): number | null {
+  return null;
+}
+function useClientNow(): number | null {
+  return React.useSyncExternalStore(SUBSCRIBE_NOOP, getClientNow, getServerNow);
+}
+
+const AGE_BUCKET_CLASSES: Record<AgeBucket, string> = {
+  fresh: "bg-muted text-muted-foreground",
+  aging: "bg-amber-500/15 text-amber-700 dark:text-amber-400",
+  overdue: "bg-destructive/10 text-destructive",
+};
+
+/**
+ * Oldest still-waiting (unsigned) age in ms across `rows`, or null when there
+ * is nothing waiting / the clock isn't mounted yet. Drives each domain queue's
+ * aging chip.
+ */
+function oldestUnsignedAgeMs(rows: ReviewQueueRow[], nowMs: number | null): number | null {
+  if (nowMs === null) return null;
+  const ages = rows
+    .filter((r) => r.review.status !== "signed")
+    .map((r) => ageMsSince(r.review.createdAt, nowMs));
+  return ages.length > 0 ? Math.max(...ages) : null;
+}
+
+/** Small colored age pill for a queue chip (oldest waiting item). */
+function QueueAgingBadge({ ageMs }: { ageMs: number | null }) {
+  if (ageMs === null) return null;
+  return (
+    <span
+      className={`ml-1.5 rounded px-1 py-0.5 text-[10px] font-medium tabular-nums ${AGE_BUCKET_CLASSES[ageBucket(ageMs)]}`}
+      title="Oldest review waiting in this queue"
+    >
+      {formatAge(ageMs)}
+    </span>
+  );
+}
+
+/** Per-row "Age" cell — waiting time for unsigned reviews, muted dash once signed. */
+function QueueAgeCell({
+  createdAt,
+  status,
+  nowMs,
+}: {
+  createdAt: string;
+  status: ReviewRow["status"];
+  nowMs: number | null;
+}) {
+  if (status === "signed") {
+    return <span className="text-muted-foreground">—</span>;
+  }
+  if (nowMs === null) {
+    return <span className="text-muted-foreground tabular-nums">·</span>;
+  }
+  const ageMs = ageMsSince(createdAt, nowMs);
+  return (
+    <span
+      className={`inline-flex items-center rounded px-1.5 py-0.5 text-xs font-medium tabular-nums ${AGE_BUCKET_CLASSES[ageBucket(ageMs)]}`}
+      title={`In queue since ${createdAt.slice(0, 10)}`}
+    >
+      {formatAge(ageMs)}
+    </span>
+  );
+}
+
 export function ReviewWorkbench({ rows }: { rows: ReviewQueueRow[] }) {
   const { reviewerDomain } = useRole();
   const [selected, setSelected] = React.useState<ReviewQueueRow | null>(null);
   const [override, setOverride] = React.useState<Domain | "all" | null>(null);
+  // Queue aging clock — null on server/first render (placeholder), then the
+  // cached client time. See useClientNow above for the hydration rationale.
+  const nowMs = useClientNow();
 
   const effectiveFilter = override ?? reviewerDomain ?? "all";
   const isPersonaDefault = override === null && reviewerDomain !== null;
@@ -120,9 +201,10 @@ export function ReviewWorkbench({ rows }: { rows: ReviewQueueRow[] }) {
                 >
                   {rows.length}
                 </span>
+                <QueueAgingBadge ageMs={oldestUnsignedAgeMs(rows, nowMs)} />
               </button>
               {presentDomains.map((domain) => {
-                const count = rows.filter((row) => row.review.domain === domain).length;
+                const domainRows = rows.filter((row) => row.review.domain === domain);
                 const isActive = effectiveFilter === domain;
                 return (
                   <button
@@ -143,8 +225,9 @@ export function ReviewWorkbench({ rows }: { rows: ReviewQueueRow[] }) {
                           : "text-muted-foreground/70"
                       }`}
                     >
-                      {count}
+                      {domainRows.length}
                     </span>
+                    <QueueAgingBadge ageMs={oldestUnsignedAgeMs(domainRows, nowMs)} />
                   </button>
                 );
               })}
@@ -163,6 +246,7 @@ export function ReviewWorkbench({ rows }: { rows: ReviewQueueRow[] }) {
                 <TableHead>Tier</TableHead>
                 <TableHead>Domain</TableHead>
                 <TableHead>Status</TableHead>
+                <TableHead>Age</TableHead>
                 <TableHead>Reviewer</TableHead>
                 <TableHead>Last updated</TableHead>
               </TableRow>
@@ -188,6 +272,13 @@ export function ReviewWorkbench({ rows }: { rows: ReviewQueueRow[] }) {
                   <TableCell>{DOMAIN_LABEL[row.review.domain]}</TableCell>
                   <TableCell>
                     <ReviewStatusBadge status={row.review.status} />
+                  </TableCell>
+                  <TableCell>
+                    <QueueAgeCell
+                      createdAt={row.review.createdAt}
+                      status={row.review.status}
+                      nowMs={nowMs}
+                    />
                   </TableCell>
                   <TableCell className="text-muted-foreground">
                     {row.review.reviewer ?? "—"}

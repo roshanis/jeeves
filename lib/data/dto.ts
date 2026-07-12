@@ -25,6 +25,8 @@ export interface ReviewRow {
   domain: Domain;
   status: "pending" | "drafted" | "signed" | "returned";
   reviewer: string | null;
+  /** When this review entered the queue (review_decision createdAt) — drives the workbench "Age" / queue-aging view. */
+  createdAt: string; // ISO
   signedAt: string | null; // ISO
   draftMd: string | null;
   citations: string[]; // MP-§ anchors

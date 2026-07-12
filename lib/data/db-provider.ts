@@ -362,6 +362,7 @@ export class DbDataProvider implements DataProvider {
         domain: rd.domain as Domain,
         status: rd.status as ReviewRow["status"],
         reviewer: rd.reviewer,
+        createdAt: toIso(rd.createdAt),
         signedAt: rd.signedAt ? toIso(rd.signedAt) : null,
         draftMd: rd.draftMd,
         citations: rd.citations,

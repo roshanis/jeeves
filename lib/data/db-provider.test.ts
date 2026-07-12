@@ -115,6 +115,11 @@ describe("lib/data/db-provider", () => {
       );
       const signedReviews = detail!.reviews.filter((r) => r.status === "signed");
       expect(signedReviews.length).toBeGreaterThanOrEqual(3);
+      // Every review carries an ISO createdAt (queue-entry time) for the aging view.
+      for (const r of detail!.reviews) {
+        expect(typeof r.createdAt).toBe("string");
+        expect(Number.isNaN(Date.parse(r.createdAt))).toBe(false);
+      }
     });
 
     it("breach candidate (#4): 30-point eval series with the 0.08 threshold attached", async () => {

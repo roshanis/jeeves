@@ -402,6 +402,10 @@ function buildReviews(init: InitiativeFixture): ReviewRow[] {
     const status = reviewStatusFor(init, domain, index);
     const reviewer = status === "pending" ? null : REVIEWER_BY_DOMAIN[domain];
     const signedAt = status === "signed" ? isoAt(-20 + index * 2) : null;
+    // When this review entered the queue — spread across each cycle's domains
+    // so the workbench aging view shows a believable fresh -> overdue gradient
+    // (synthetic demo data). Signed rows carry it for tooltip/turnaround only.
+    const createdAt = isoAt(5 - index * 3);
     let draftMd: string | null = null;
     let citations: string[] = [];
 
@@ -435,6 +439,7 @@ function buildReviews(init: InitiativeFixture): ReviewRow[] {
       domain,
       status,
       reviewer,
+      createdAt,
       signedAt,
       draftMd,
       citations,
