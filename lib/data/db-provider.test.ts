@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createTestDb, closeTestDb, type TestDb } from "../db/test-client";
 import { seedDatabase } from "../../scripts/seed";
+import { initiatives } from "../db/schema";
 import { DbDataProvider } from "./db-provider";
 
 /**
@@ -283,6 +284,83 @@ describe("lib/data/db-provider", () => {
       expect(row.detail).toContain("0.08");
       expect(row.detail).toContain("Q2 quality initiative");
       expect(row.eventTs).toBe("2026-06-01T00:00:00.000Z"); // base-30d
+    });
+  });
+
+  /**
+   * M2.5 inc.2a: optional workspace filter on listInitiatives/getInitiativeDetail.
+   * Non-breaking — omitting `opts` entirely (every existing call site, incl.
+   * every test above) must keep returning all 12 seeded (workspace_id NULL)
+   * rows. These two extra rows are workspace-tagged directly (bypassing
+   * createDraft) so they layer cleanly on top of the shared seeded fixture.
+   */
+  describe("workspace-scoped reads (M2.5 inc.2a foundation)", () => {
+    const WS_A = "ws_test_alpha";
+    const WS_B = "ws_test_beta";
+    const now = new Date("2026-07-10T00:00:00.000Z");
+
+    beforeAll(async () => {
+      await db.insert(initiatives).values([
+        {
+          id: "init-ws-alpha",
+          slug: "ws-alpha-initiative",
+          title: "Workspace Alpha Draft",
+          requester: "Priya Raman",
+          state: "intake_draft",
+          tier: null,
+          accountableApprover: null,
+          createdAt: now,
+          updatedAt: now,
+          workspaceId: WS_A,
+        },
+        {
+          id: "init-ws-beta",
+          slug: "ws-beta-initiative",
+          title: "Workspace Beta Draft",
+          requester: "Dan Kowalski",
+          state: "intake_draft",
+          tier: null,
+          accountableApprover: null,
+          createdAt: now,
+          updatedAt: now,
+          workspaceId: WS_B,
+        },
+      ]);
+    });
+
+    it("listInitiatives() with no argument returns everything unfiltered (14 rows: 12 seeded + 2 workspace-tagged)", async () => {
+      const rows = await provider.listInitiatives();
+      expect(rows).toHaveLength(14);
+      expect(rows.map((r) => r.slug)).toEqual(
+        expect.arrayContaining(["ws-alpha-initiative", "ws-beta-initiative"]),
+      );
+    });
+
+    it("listInitiatives({ viewerWorkspaceId: null }) returns only the 12 null-workspace (seeded/public) rows", async () => {
+      const rows = await provider.listInitiatives({ viewerWorkspaceId: null });
+      expect(rows).toHaveLength(12);
+      expect(rows.map((r) => r.slug)).not.toContain("ws-alpha-initiative");
+      expect(rows.map((r) => r.slug)).not.toContain("ws-beta-initiative");
+    });
+
+    it("listInitiatives({ viewerWorkspaceId: WS_A }) returns the 12 null-workspace rows plus WS_A's own row (13 total)", async () => {
+      const rows = await provider.listInitiatives({ viewerWorkspaceId: WS_A });
+      expect(rows).toHaveLength(13);
+      expect(rows.map((r) => r.slug)).toContain("ws-alpha-initiative");
+      expect(rows.map((r) => r.slug)).not.toContain("ws-beta-initiative");
+    });
+
+    it("getInitiativeDetail returns the row when omitted/matching workspace, and null for a foreign workspace", async () => {
+      expect(await provider.getInitiativeDetail("ws-alpha-initiative")).not.toBeNull();
+      expect(
+        await provider.getInitiativeDetail("ws-alpha-initiative", { viewerWorkspaceId: WS_A }),
+      ).not.toBeNull();
+      expect(
+        await provider.getInitiativeDetail("ws-alpha-initiative", { viewerWorkspaceId: null }),
+      ).toBeNull();
+      expect(
+        await provider.getInitiativeDetail("ws-alpha-initiative", { viewerWorkspaceId: WS_B }),
+      ).toBeNull(); // foreign workspace -> treated as not found
     });
   });
 });

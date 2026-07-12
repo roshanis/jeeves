@@ -8,7 +8,7 @@
 import type { Domain, OverlayFlags, Tier } from "@/lib/domain/types";
 import { deriveTier } from "@/lib/triage/rules";
 import { requiredDomains } from "@/lib/triage/routing";
-import type { DataProvider } from "./provider";
+import type { DataProvider, WorkspaceScopedReadOptions } from "./provider";
 import type {
   AuditEventRow,
   AuditQueryRow,
@@ -180,6 +180,10 @@ interface InitiativeFixture {
   accountableApprover: string | null;
   domainsSigned: number;
   overdue: boolean;
+  // Workspace isolation foundation (M2.5 inc.2a) — absent/undefined on every
+  // seeded fixture below, i.e. all 12 behave as workspace_id IS NULL
+  // (seeded/public), matching the real DB provider's seeded rows.
+  workspaceId?: string | null;
 }
 
 // Overlay-flag order per seed-spec §2.1: PHI, member-facing, care-coverage,
@@ -837,6 +841,27 @@ const SUMMARIES: InitiativeSummary[] = INITIATIVES.map(toSummary);
 const DETAILS: Map<string, InitiativeDetail> = new Map(
   INITIATIVES.map((init) => [init.slug, toDetail(init)]),
 );
+// Workspace isolation foundation (M2.5 inc.2a) — every seeded fixture's
+// workspaceId is undefined/absent, normalized to null here (all fixtures are
+// "seeded/public", matching the DB provider's untagged seeded rows).
+const WORKSPACE_BY_SLUG: Map<string, string | null> = new Map(
+  INITIATIVES.map((init) => [init.slug, init.workspaceId ?? null]),
+);
+
+/**
+ * Shared workspace-visibility check for the mock provider — mirrors
+ * DbDataProvider's semantics (see lib/data/provider.ts's
+ * WorkspaceScopedReadOptions doc): `opts` omitted -> visible to everyone.
+ */
+function isVisibleToViewer(slug: string, opts?: WorkspaceScopedReadOptions): boolean {
+  if (!opts || !("viewerWorkspaceId" in opts)) return true;
+  const rowWorkspaceId = WORKSPACE_BY_SLUG.get(slug) ?? null;
+  const viewerWorkspaceId = opts.viewerWorkspaceId;
+  if (viewerWorkspaceId === null || viewerWorkspaceId === undefined) {
+    return rowWorkspaceId === null;
+  }
+  return rowWorkspaceId === null || rowWorkspaceId === viewerWorkspaceId;
+}
 
 // ---------------------------------------------------------------------------
 // Outcome metrics (seed-spec §6) — computed constants, not seeded per-record,
@@ -932,12 +957,19 @@ function q01ControlChangesQuery(): AuditQueryRow[] {
 // ---------------------------------------------------------------------------
 
 export class MockDataProvider implements DataProvider {
-  async listInitiatives(): Promise<InitiativeSummary[]> {
-    return SUMMARIES;
+  async listInitiatives(opts?: WorkspaceScopedReadOptions): Promise<InitiativeSummary[]> {
+    if (!opts || !("viewerWorkspaceId" in opts)) return SUMMARIES;
+    return SUMMARIES.filter((s) => isVisibleToViewer(s.slug, opts));
   }
 
-  async getInitiativeDetail(slug: string): Promise<InitiativeDetail | null> {
-    return DETAILS.get(slug) ?? null;
+  async getInitiativeDetail(
+    slug: string,
+    opts?: WorkspaceScopedReadOptions,
+  ): Promise<InitiativeDetail | null> {
+    const detail = DETAILS.get(slug) ?? null;
+    if (!detail) return null;
+    if (!isVisibleToViewer(slug, opts)) return null;
+    return detail;
   }
 
   async outcomeMetrics(): Promise<OutcomeMetrics> {

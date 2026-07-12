@@ -1,0 +1,11 @@
+-- Hand-written migration (not drizzle-kit generated — drizzle.config.ts
+-- requires DATABASE_URL, unavailable in this environment).
+--
+-- M2.5 inc.2a: workspace isolation foundation (non-breaking). Adds a
+-- nullable `workspace_id` to `initiatives` so live, session-bound creates
+-- can be tagged to the requester's workspace while seeded/shared demo rows
+-- stay untagged (NULL) and remain visible to everyone. No read path filters
+-- on this column yet by default — DataProvider (lib/data/provider.ts) only
+-- filters when a caller explicitly opts in via `viewerWorkspaceId`.
+ALTER TABLE "initiatives" ADD COLUMN "workspace_id" text;
+--> statement-breakpoint

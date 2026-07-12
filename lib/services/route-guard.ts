@@ -104,26 +104,48 @@ export async function issueDemoSession(
   return { token: session.token, workspaceId: session.workspaceId, expiresAt: session.expiresAt };
 }
 
+export interface ResolvedSession {
+  actor: Actor | null;
+  workspaceId: string | null;
+}
+
+/**
+ * Resolve a bearer/cookie session token to its `Actor` + the session's
+ * `workspaceId` (M2.5 inc.2a — workspace isolation foundation). Role ALWAYS
+ * comes from the server-side persona directory keyed by the token — never
+ * from anything in the request body (task brief §4).
+ */
+export async function resolveSession(token: string | null): Promise<ResolvedSession> {
+  if (!token) return { actor: null, workspaceId: null };
+
+  const [session] = await getDb()
+    .select({
+      personaKey: sessions.personaKey,
+      expiresAt: sessions.expiresAt,
+      workspaceId: sessions.workspaceId,
+    })
+    .from(sessions)
+    .where(eq(sessions.token, token))
+    .limit(1);
+  if (!session) return { actor: null, workspaceId: null };
+
+  if (session.expiresAt <= Date.now()) {
+    await getDb().delete(sessions).where(eq(sessions.token, token));
+    return { actor: null, workspaceId: null };
+  }
+  return { actor: resolveActor(session.personaKey), workspaceId: session.workspaceId ?? null };
+}
+
 /**
  * Resolve a bearer/cookie session token to its `Actor`. Role ALWAYS comes
  * from the server-side persona directory keyed by the token — never from
  * anything in the request body (task brief §4).
+ *
+ * Kept as a thin wrapper over `resolveSession` for existing callers/tests
+ * that only need the actor.
  */
 export async function resolveSessionActor(token: string | null): Promise<Actor | null> {
-  if (!token) return null;
-
-  const [session] = await getDb()
-    .select({ personaKey: sessions.personaKey, expiresAt: sessions.expiresAt })
-    .from(sessions)
-    .where(eq(sessions.token, token))
-    .limit(1);
-  if (!session) return null;
-
-  if (session.expiresAt <= Date.now()) {
-    await getDb().delete(sessions).where(eq(sessions.token, token));
-    return null;
-  }
-  return resolveActor(session.personaKey);
+  return (await resolveSession(token)).actor;
 }
 
 /* -------------------------------------------------------------------------
@@ -172,6 +194,8 @@ export interface MutationGuardOptions {
 export interface MutationGuardSuccess {
   ok: true;
   actor: Actor;
+  /** The session's bound workspace (M2.5 inc.2a). Null if somehow absent. */
+  workspaceId: string | null;
 }
 
 export type MutationGuardResult = MutationGuardSuccess | { ok: false; failure: GuardFailure };
@@ -192,7 +216,7 @@ export async function runMutationGuard(
   options: MutationGuardOptions = {},
 ): Promise<MutationGuardResult> {
   const token = extractSessionToken(req);
-  const actor = await resolveSessionActor(token);
+  const { actor, workspaceId } = await resolveSession(token);
   if (!actor) {
     return { ok: false, failure: { kind: "unauthorized", status: 401, message: "invalid or missing session" } };
   }
@@ -232,7 +256,7 @@ export async function runMutationGuard(
     }
   }
 
-  return { ok: true, actor };
+  return { ok: true, actor, workspaceId };
 }
 
 /** Exposed for tests that want to exhaust/reset the shared budget deterministically. */

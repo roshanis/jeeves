@@ -480,4 +480,29 @@ describe("lib/services/initiative-service", () => {
       expect(triageEvent?.actor).toBe(SYSTEM_ACTOR.id);
     });
   });
+
+  describe("createDraft workspace tagging (M2.5 inc.2a foundation)", () => {
+    it("persists the passed workspaceId on the created initiative row", async () => {
+      const draft = await svc.createDraft(db, {
+        payload: CHAMPION_PREFILL_PAYLOAD,
+        requesterActor: REQUESTER,
+        requesterName: "Priya Raman",
+        workspaceId: "ws_test_123",
+      });
+
+      const row = (await db.select().from(initiatives).where(eq(initiatives.id, draft.initiativeId)))[0]!;
+      expect(row.workspaceId).toBe("ws_test_123");
+    });
+
+    it("defaults to a null workspaceId when omitted (non-breaking / seeded-style creation)", async () => {
+      const draft = await svc.createDraft(db, {
+        payload: CHAMPION_PREFILL_PAYLOAD,
+        requesterActor: REQUESTER,
+        requesterName: "Priya Raman",
+      });
+
+      const row = (await db.select().from(initiatives).where(eq(initiatives.id, draft.initiativeId)))[0]!;
+      expect(row.workspaceId).toBeNull();
+    });
+  });
 });

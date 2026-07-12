@@ -44,6 +44,13 @@ export const initiatives = pgTable("initiatives", {
   accountableApprover: text("accountable_approver"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  // Workspace isolation foundation (M2.5 inc.2a) — nullable so seeded/shared
+  // demo rows (created outside a workspace-bound session) stay visible to
+  // everyone unchanged. Only rows created by a live, session-bound requester
+  // get tagged. Filtering on this column is entirely OPT-IN via
+  // DataProvider's `viewerWorkspaceId` (lib/data/provider.ts) — omitting it
+  // preserves today's behavior exactly. See drizzle/0004_initiatives_workspace.sql.
+  workspaceId: text("workspace_id"),
 });
 
 export const intakeVersions = pgTable(

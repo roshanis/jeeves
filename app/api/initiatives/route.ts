@@ -50,6 +50,7 @@ export async function POST(req: Request): Promise<Response> {
     payload: parsed.data,
     requesterActor: guard.actor,
     requesterName,
+    workspaceId: guard.workspaceId,
   });
 
   return Response.json(result, { status: 200 });

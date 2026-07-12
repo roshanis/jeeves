@@ -237,6 +237,12 @@ export interface CreateDraftInput {
   payload: IntakePayload;
   requesterActor: Actor;
   requesterName: string;
+  /**
+   * Workspace to tag the created initiative with (M2.5 inc.2a foundation).
+   * Omitted/undefined/null -> row stays untagged (workspace_id NULL),
+   * matching today's behavior for seeded/non-session creation paths.
+   */
+  workspaceId?: string | null;
 }
 
 export interface CreateDraftResult {
@@ -254,7 +260,7 @@ export interface CreateDraftResult {
  * versa, would be an equally invalid partial state).
  */
 export async function createDraft(db: Db, input: CreateDraftInput): Promise<CreateDraftResult> {
-  const { payload, requesterActor, requesterName } = input;
+  const { payload, requesterActor, requesterName, workspaceId } = input;
 
   return db.transaction(async (tx) => {
     const initiativeId = `init-${randomUUID()}`;
@@ -271,6 +277,7 @@ export async function createDraft(db: Db, input: CreateDraftInput): Promise<Crea
       accountableApprover: null,
       createdAt: ts,
       updatedAt: ts,
+      workspaceId: workspaceId ?? null,
     });
 
     const completeness = evaluateCompleteness(payload);

@@ -29,6 +29,13 @@
       "when": 1783738680649,
       "tag": "0003_sessions",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1783738680650,
+      "tag": "0004_initiatives_workspace",
+      "breakpoints": true
     }
   ]
 }

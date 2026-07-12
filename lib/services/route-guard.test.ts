@@ -140,6 +140,16 @@ describe("lib/services/route-guard", () => {
       expect(result.actor).toEqual({ id: "elena-vasquez", role: "reviewer" });
     });
 
+    it("returns the session's workspaceId in the success result (M2.5 inc.2a)", async () => {
+      const session = (await issueDemoSession(PASSCODE, PASSCODE, "priya-raman"))!;
+      const req = reqWithBearer(session.token, "6.6.6.7");
+      const result = await runMutationGuard(req, undefined);
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error("unreachable");
+      expect(result.workspaceId).toBe(session.workspaceId);
+      expect(result.workspaceId).not.toBeNull();
+    });
+
     it("429s after a burst exceeds the rate-limit capacity", async () => {
       const session = (await issueDemoSession(PASSCODE, PASSCODE, "priya-raman"))!;
       const clientIp = "7.7.7.7";

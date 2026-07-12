@@ -7,7 +7,7 @@
 // method loads the tables it needs in full and assembles the read model in
 // memory — simpler and more auditable than a lattice of joins, and well
 // within budget for a Neon/PGlite demo database.
-import { asc, eq } from "drizzle-orm";
+import { asc, eq, isNull, or, type SQL } from "drizzle-orm";
 import type { Domain, LifecycleState, OverlayFlags, Tier } from "@/lib/domain/types";
 import { resolveThreshold } from "@/lib/controls/evaluate";
 import { getDb, type Db } from "@/lib/db/client";
@@ -37,7 +37,7 @@ import type {
   ReviewRow,
   TelemetrySeries,
 } from "./dto";
-import type { DataProvider } from "./provider";
+import type { DataProvider, WorkspaceScopedReadOptions } from "./provider";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -103,6 +103,36 @@ export class DbDataProvider implements DataProvider {
   }
 
   /* ---------------------------------------------------------------- */
+
+  /**
+   * SQL predicate for the optional workspace filter (M2.5 inc.2a). Returns
+   * `undefined` when `opts` is omitted -> no WHERE clause added, i.e. today's
+   * unfiltered behavior. See WorkspaceScopedReadOptions in provider.ts for
+   * full semantics.
+   */
+  private workspaceFilterSql(opts?: WorkspaceScopedReadOptions): SQL | undefined {
+    if (!opts || !("viewerWorkspaceId" in opts)) return undefined;
+    const viewerWorkspaceId = opts.viewerWorkspaceId;
+    if (viewerWorkspaceId === null || viewerWorkspaceId === undefined) {
+      return isNull(initiatives.workspaceId);
+    }
+    return or(isNull(initiatives.workspaceId), eq(initiatives.workspaceId, viewerWorkspaceId));
+  }
+
+  /**
+   * In-memory equivalent of `workspaceFilterSql`, for rows already loaded via
+   * `loadSnapshot()` (which is itself always unfiltered — shared across
+   * methods that must never filter, e.g. outcomeMetrics/controlCatalog/
+   * auditQuery). Returns true (visible) when `opts` is omitted.
+   */
+  private isVisibleToViewer(init: InitiativeRecord, opts?: WorkspaceScopedReadOptions): boolean {
+    if (!opts || !("viewerWorkspaceId" in opts)) return true;
+    const viewerWorkspaceId = opts.viewerWorkspaceId;
+    if (viewerWorkspaceId === null || viewerWorkspaceId === undefined) {
+      return init.workspaceId === null;
+    }
+    return init.workspaceId === null || init.workspaceId === viewerWorkspaceId;
+  }
 
   private async loadSnapshot(): Promise<PortfolioSnapshot> {
     const [
@@ -291,15 +321,23 @@ export class DbDataProvider implements DataProvider {
 
   /* ---------------------------------------------------------------- */
 
-  async listInitiatives(): Promise<InitiativeSummary[]> {
+  async listInitiatives(opts?: WorkspaceScopedReadOptions): Promise<InitiativeSummary[]> {
+    const filter = this.workspaceFilterSql(opts);
     const snap = await this.loadSnapshot();
-    return snap.initiatives.map((init) => this.summaryOf(snap, init));
+    const visibleInitiatives = filter
+      ? await this.db.select().from(initiatives).where(filter).orderBy(asc(initiatives.slug))
+      : snap.initiatives;
+    return visibleInitiatives.map((init) => this.summaryOf(snap, init));
   }
 
-  async getInitiativeDetail(slug: string): Promise<InitiativeDetail | null> {
+  async getInitiativeDetail(
+    slug: string,
+    opts?: WorkspaceScopedReadOptions,
+  ): Promise<InitiativeDetail | null> {
     const snap = await this.loadSnapshot();
     const init = snap.initiatives.find((i) => i.slug === slug);
     if (!init) return null;
+    if (!this.isVisibleToViewer(init, opts)) return null;
 
     const summary = this.summaryOf(snap, init);
 
