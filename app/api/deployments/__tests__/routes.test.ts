@@ -8,7 +8,6 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
-import { randomUUID } from "node:crypto";
 import { createTestDb, closeTestDb, type TestDb } from "@/lib/db/test-client";
 import { resetGuardStateForTests } from "@/lib/services/route-guard";
 import { seedDatabase } from "@/scripts/seed";
@@ -182,20 +181,15 @@ describe("POST /api/deployments/[id]/rollback", () => {
     return init!.id;
   }
 
+  // pa-correspondence-model is seeded with a genuine prior retired v1.9 as a
+  // rollback target — use it directly rather than synthesizing a duplicate.
   async function seedPriorRetiredVersion(initiativeId: string): Promise<string> {
-    const id = `dep-test-${randomUUID()}`;
-    await testDb.insert(deploymentVersions).values({
-      id,
-      initiativeId,
-      version: "v1.9",
-      status: "retired",
-      modelVersion: "meridian-correspondence-1.9",
-      selfHosted: false,
-      feedbackProvenanceSignedOff: true,
-      deployedAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 30),
-      retiredAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 10),
-    });
-    return id;
+    const rows = await testDb
+      .select()
+      .from(deploymentVersions)
+      .where(eq(deploymentVersions.initiativeId, initiativeId));
+    const v19 = rows.find((d) => d.version === "v1.9" && d.status === "retired")!;
+    return v19.id;
   }
 
   it("401s an unauthenticated request", async () => {
