@@ -547,6 +547,73 @@ export function testAgentConnection(token: string): Promise<ConnectorHealth> {
   return request<ConnectorHealth>("/api/agents/health", { method: "POST", token });
 }
 
+/* --- M4 control-exception workflow (app/api/exceptions/**) --- */
+
+export type ExceptionStatus = "requested" | "approved" | "rejected" | "revoked" | "expired";
+
+/** Mirrors lib/services/exception-service.ts#ExceptionRow (wire shape). */
+export interface ExceptionRow {
+  id: string;
+  controlId: string;
+  effectiveControlId: string;
+  initiativeId: string | null;
+  status: ExceptionStatus;
+  reason: string;
+  requestedBy: string;
+  requestedAt: string;
+  decidedBy: string | null;
+  decidedAt: string | null;
+  decisionReason: string | null;
+  expiresAt: number | null;
+  supersedesId: string | null;
+}
+
+export interface ExceptionActionResult {
+  id: string;
+  controlId: string;
+  status: ExceptionStatus;
+  expiresAt: number | null;
+}
+
+/** GET /api/exceptions — public read-only list (optionally by status). */
+export async function listExceptions(status?: ExceptionStatus): Promise<ExceptionRow[]> {
+  const q = status ? `?status=${encodeURIComponent(status)}` : "";
+  const result = await request<{ exceptions: ExceptionRow[] }>(`/api/exceptions${q}`, { method: "GET" });
+  return result.exceptions;
+}
+
+/** POST /api/exceptions/[id]/decide — approver/admin only; never the requester (SoD). */
+export function decideException(
+  token: string,
+  id: string,
+  approve: boolean,
+  reason: string,
+): Promise<ExceptionActionResult> {
+  return request<ExceptionActionResult>(`/api/exceptions/${encodeURIComponent(id)}/decide`, {
+    method: "POST",
+    token,
+    body: { approve, reason },
+  });
+}
+
+/** POST /api/exceptions/[id]/revoke — approver/admin only. */
+export function revokeException(token: string, id: string, reason: string): Promise<ExceptionActionResult> {
+  return request<ExceptionActionResult>(`/api/exceptions/${encodeURIComponent(id)}/revoke`, {
+    method: "POST",
+    token,
+    body: { reason },
+  });
+}
+
+/** POST /api/exceptions/[id]/renew — opens a new requested exception superseding an approved one. */
+export function renewException(token: string, id: string, reason: string): Promise<ExceptionActionResult> {
+  return request<ExceptionActionResult>(`/api/exceptions/${encodeURIComponent(id)}/renew`, {
+    method: "POST",
+    token,
+    body: { reason },
+  });
+}
+
 /** GET /api/deployments/promotions — public read-only list of RL checkpoints awaiting sign-off. */
 export function listPromotions(): Promise<PromotionListItem[]> {
   return request<PromotionListItem[]>("/api/deployments/promotions", { method: "GET" });

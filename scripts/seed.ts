@@ -13,6 +13,7 @@ import type { Db } from "../lib/db/client";
 import {
   auditEvents,
   controlDefinitions,
+  controlExceptions,
   deploymentVersions,
   effectiveControls,
   incidents,
@@ -666,6 +667,7 @@ export async function seedDatabase(db: Db): Promise<RowCounts> {
   await db.execute(`ALTER TABLE audit_events ENABLE TRIGGER ALL;`);
   await db.delete(incidents);
   await db.delete(observations);
+  await db.delete(controlExceptions);
   await db.delete(effectiveControls);
   await db.delete(initiativeDecisions);
   await db.delete(reviewDecisions);
@@ -2322,8 +2324,9 @@ export async function seedDatabase(db: Db): Promise<RowCounts> {
       after: "deployed",
     });
 
+    const hrExceptionEcId = nextId("ec");
     await db.insert(effectiveControls).values({
-      id: nextId("ec"),
+      id: hrExceptionEcId,
       deploymentId: depId,
       controlId: "R-01",
       version: 1,
@@ -2340,6 +2343,25 @@ export async function seedDatabase(db: Db): Promise<RowCounts> {
       action: "exception_requested",
       detail: "Requested an exception to the R-01 semi-annual bias-audit cadence (MP-R-2.3) pending Program Office review.",
       metadata: { controlId: "R-01", citations: ["MP-R-2.3"] },
+    });
+    // Seed the pending control_exception row (M4) so the demo opens with one
+    // exception awaiting an accountable approver's decision on /controls.
+    await db.insert(controlExceptions).values({
+      id: "exc-seed-hr-r01",
+      effectiveControlId: hrExceptionEcId,
+      controlId: "R-01",
+      initiativeId: initId,
+      status: "requested",
+      reason:
+        "Waive the R-01 semi-annual bias-audit cadence (MP-R-2.3) for this cycle pending the Q3 model refresh.",
+      requestedBy: "nia-okafor",
+      requestedAt: dateAt(-30),
+      decidedBy: null,
+      decidedAt: null,
+      decisionReason: null,
+      expiresAt: null,
+      supersedesId: null,
+      createdAt: dateAt(-30),
     });
     // No telemetry for #11 — not in seed-spec §4's series enumeration.
   }
