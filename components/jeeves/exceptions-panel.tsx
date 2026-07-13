@@ -101,6 +101,7 @@ export function ExceptionsPanel({ exceptions }: { exceptions: ExceptionRow[] }) 
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[44rem] border-collapse text-sm">
+              <caption className="sr-only">Control exceptions and their status</caption>
               <thead className="border-b bg-muted/50 text-xs uppercase tracking-wide">
                 <tr>
                   <th className="px-4 py-2 text-left font-medium text-muted-foreground">Control</th>
@@ -166,6 +167,7 @@ export function ExceptionsPanel({ exceptions }: { exceptions: ExceptionRow[] }) 
           <textarea
             className="min-h-24 w-full rounded-md border border-input bg-transparent p-2 text-sm"
             placeholder="Reason (required)"
+            aria-label="Exception decision reason"
             value={reason}
             maxLength={2000}
             onChange={(ev) => setReason(ev.target.value)}

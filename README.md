@@ -164,6 +164,24 @@ Note: `scripts/seed.ts` refuses to run when `NODE_ENV=production` unless
 `ALLOW_SEED=1` is explicitly set, to prevent an accidental reseed of a live
 hosted demo.
 
+**Optional env vars** (all default to a safe, honest fallback):
+
+| Variable | Effect when set | When unset |
+| --- | --- | --- |
+| `OPENAI_API_KEY` | Agents draft live via OpenAI | Deterministic keyless mock adapter |
+| `PHOENIX_ENDPOINT` | Monitoring shows a configured telemetry connector | "Synthetic telemetry (demo)" — in-repo synthetic series |
+| `CRON_SECRET` | `GET /api/cron/monitor` runs scheduled monitoring (bearer-authenticated; wired to a 6-hourly Vercel cron in `vercel.json`) | The cron endpoint returns 503; the manual `POST /api/monitor/run` admin action still works |
+
+**Demo reset ritual** — before a live walkthrough, run:
+
+```bash
+DEMO_PASSCODE=<passcode> npm run reset:demo
+```
+
+It re-seeds to the canonical state, clears live session + budget state, and
+prints a pre-flight checklist (passcode, agent/telemetry connector status,
+cron secret, build SHA, and a 12-initiative smoke count).
+
 See `docs/deploy.md` for the full Vercel + Neon deployment runbook, known
 gaps, and a demo-day checklist.
 

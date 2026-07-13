@@ -132,5 +132,13 @@ Owner nuance (Claude judgement): this is a **synthetic-data, read-only-public / 
 - **M4 — Governance operations + release:** full control-catalog fields (owner, cadence, applicability, enforcement mode, remediation owner, evidence freshness, versions) + filtering; exception request/approve/expire/renew/reject/revoke workflow with SoD + full audit linkage; security-reviewer pass + accessibility/browser pass; demo reset ritual (workspace reset, connector check, budget check, build SHA, smoke test, passcode rotation); preview → walkthrough → **human-approved** production promotion.
 - Gate between milestones: tests green, code-reviewer verdict, build-log entry, human checkpoint.
 
+### 13c. Status snapshot (2026-07-13, "complete M2–M5" pass)
+
+- **M2 — DONE.** Console, case-file record + workbench, all-8 durable fan-out, both chats hardened, all-8 honesty (golden path). *Open:* one live-provider smoke (manual — unblocked by adding `OPENAI_API_KEY`).
+- **M2.5 — DONE (core) + hardened.** Pooled driver, DB sessions + atomic budget, per-browser workspace isolation, ownership + reviewer-domain authz, **required-review completeness gate** (`approved`⇒all signed / `conditionally_approved`⇒all drafted), 8 accountable reviewers, security headers **+ CSP**, guarded seeding. *Open:* durable/shared rate limiting (accepted per-instance demo posture); the isolated Vercel-preview two-session verification (needs a human deploy).
+- **M3 — DONE.** Authenticated idempotent **scheduled monitoring** (`/api/cron/monitor` + vercel.json), honest env-gated **telemetry connector** (health/last-sync) + **synthetic OTel traces**, **cost/token-budget** + **GPU-quota** panels, **promotion view extensions** (history / eval comparison / rollback).
+- **M4 — DONE (core).** Full **control-catalog** fields + filtering, **control-exception workflow** (request/approve/reject/revoke/renew/expire) with SoD + audit + UI, **demo reset ritual** (`npm run reset:demo`). *Open:* a formal security-reviewer + accessibility/browser pass; **human-approved production promotion** (by design — a human gates prod).
+- **M5** is not a defined milestone: it maps to the §11 post-demo backlog (real ServiceNow/Ariba/Arize-Phoenix-over-OTel/RBAC integrations) — intentionally deferred under the "no fake integrations" hard rule.
+
 ---
 *GO given — building. Each phase still ends with tests green + reviewed diff before merge (Plan-First Gate satisfied 2026-07-11). Milestone reorder accepted 2026-07-11 per Codex review; recorded in `agents-build-log.md`.*

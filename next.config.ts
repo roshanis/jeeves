@@ -21,17 +21,34 @@ const nextConfig: NextConfig = {
     "/agents/[id]": ["./agents/**/*.md"],
   },
 
-  // Baseline security response headers, applied to every route. This is a
-  // deliberately conservative set: no Content-Security-Policy here. A
-  // strict CSP is the right long-term follow-up but risks breaking
-  // Recharts and Next's own inline styles/scripts in this demo without a
-  // careful nonce/hash rollout — tracked as a documented follow-up rather
-  // than shipped half-configured.
+  // Baseline security response headers, applied to every route. Includes a
+  // Content-Security-Policy that pins every fetchable resource to same-origin
+  // (blocks external script/style/font/img/connect, framing, object/embed,
+  // base-uri hijack, and cross-origin form posts). `script-src`/`style-src`
+  // retain 'unsafe-inline' as a documented pragmatic tradeoff: Next's own
+  // hydration bootstrap and Recharts inject inline scripts/styles without a
+  // nonce, and this demo has no nonce/hash rollout — so a full strict-dynamic
+  // CSP remains the follow-up, but this still eliminates the external-injection
+  // surface a missing CSP leaves open.
   async headers() {
+    const csp = [
+      "default-src 'self'",
+      "script-src 'self' 'unsafe-inline'",
+      "style-src 'self' 'unsafe-inline'",
+      "img-src 'self' data: blob:",
+      "font-src 'self' data:",
+      "connect-src 'self'",
+      "worker-src 'self' blob:",
+      "frame-ancestors 'none'",
+      "base-uri 'self'",
+      "form-action 'self'",
+      "object-src 'none'",
+    ].join("; ");
     return [
       {
         source: "/:path*",
         headers: [
+          { key: "Content-Security-Policy", value: csp },
           // Disallow framing entirely — this app has no embed use case.
           { key: "X-Frame-Options", value: "DENY" },
           // Stop browsers from MIME-sniffing responses away from the
