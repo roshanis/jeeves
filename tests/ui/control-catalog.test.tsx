@@ -66,4 +66,37 @@ describe("ControlCatalog", () => {
     expect(q01?.threshold).not.toBeNull();
     expect(runtimeGroup!.textContent).toContain(String(q01!.threshold));
   });
+
+  it("renders the full catalog fields — owner and enforcement-mode badge", async () => {
+    const controls = await getProvider().controlCatalog();
+    const { container } = renderWithProviders(
+      <ControlCatalog controls={controls} />,
+    );
+
+    const control = controls[0];
+    expect(control.owner).toBeDefined();
+    expect(container.textContent).toContain(control.owner);
+
+    const enforcementBadges = container.querySelectorAll(
+      '[data-slot="enforcement-mode"]',
+    );
+    expect(enforcementBadges.length).toBeGreaterThan(0);
+
+    const modesPresent = new Set(
+      controls.map((c) => c.enforcementMode).filter(Boolean),
+    );
+    expect(modesPresent.size).toBeGreaterThan(0);
+  });
+
+  it("renders an evidence-freshness indicator per control", async () => {
+    const controls = await getProvider().controlCatalog();
+    const { container } = renderWithProviders(
+      <ControlCatalog controls={controls} />,
+    );
+
+    const freshnessBadges = container.querySelectorAll(
+      '[data-slot="evidence-freshness"]',
+    );
+    expect(freshnessBadges.length).toBeGreaterThan(0);
+  });
 });

@@ -546,29 +546,44 @@ export class DbDataProvider implements DataProvider {
       "met",
     ];
     const statusByControl = new Map<string, ControlRow["status"]>();
+    // Track the specific effective_controls row that produced the winning
+    // (worst) status per control, so remediationOwner/evidenceAt/dueAt on
+    // the catalog row reflect that same instance rather than an arbitrary one.
+    const worstEcByControl = new Map<string, EffectiveControlRecord>();
     for (const ec of snap.effectiveControls) {
       const current = statusByControl.get(ec.controlId);
       const incoming = ec.status as ControlRow["status"];
       if (!current || severity.indexOf(incoming) < severity.indexOf(current)) {
         statusByControl.set(ec.controlId, incoming);
+        worstEcByControl.set(ec.controlId, ec);
       }
     }
 
     return snap.controlDefs
       .slice()
       .sort((a, b) => a.id.localeCompare(b.id))
-      .map((def) => ({
-        id: def.id,
-        name: def.name,
-        domain: def.domain as ControlRow["domain"],
-        status: statusByControl.get(def.id) ?? "met",
-        policySource: def.policySource,
-        threshold:
-          def.id === "Q-01" && def.tierDefaultThresholds
-            ? ((def.tierDefaultThresholds as Record<Tier, number>).high ?? null)
-            : null,
-        evidence: def.requiredEvidence,
-      }));
+      .map((def) => {
+        const ec = worstEcByControl.get(def.id);
+        return {
+          id: def.id,
+          name: def.name,
+          domain: def.domain as ControlRow["domain"],
+          status: statusByControl.get(def.id) ?? "met",
+          policySource: def.policySource,
+          threshold:
+            def.id === "Q-01" && def.tierDefaultThresholds
+              ? ((def.tierDefaultThresholds as Record<Tier, number>).high ?? null)
+              : null,
+          evidence: def.requiredEvidence,
+          owner: def.owner,
+          cadence: def.cadence,
+          enforcementMode: def.enforcementMode as ControlRow["enforcementMode"],
+          remediationOwner: ec?.remediationOwner ?? def.remediationOwner,
+          requiredEvidence: def.requiredEvidence,
+          evidenceAt: ec?.evidenceAt ? toIso(ec.evidenceAt) : null,
+          dueAt: ec?.dueAt ? toIso(ec.dueAt) : null,
+        };
+      });
   }
 
   async auditQuery(id: CannedAuditQueryId): Promise<AuditQueryRow[]> {

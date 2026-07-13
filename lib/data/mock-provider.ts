@@ -120,25 +120,32 @@ interface CatalogEntry {
   name: string;
   domain: Domain;
   policySource: string;
+  // M4 catalog fields (control_definitions columns) — hand-picked plausible,
+  // deterministic values per control; no randomness, mirrors real-schema shape.
+  owner: string;
+  cadence: string;
+  enforcementMode: "monitor" | "gate" | "block";
+  remediationOwner: string | null;
+  requiredEvidence: string;
 }
 
 const CONTROL_CATALOG: CatalogEntry[] = [
-  { id: "L-01", name: "Vendor contract AI addendum", domain: "legal", policySource: "MP-L v3 §MP-L-2" },
-  { id: "L-02", name: "Marketing-claims review", domain: "legal", policySource: "MP-L v3 §MP-L-3" },
-  { id: "P-01", name: "Vendor risk assessment", domain: "procurement", policySource: "MP-P v2 §MP-P-2" },
-  { id: "P-02", name: "SaaS data-residency attestation", domain: "procurement", policySource: "MP-P v2 §MP-P-3" },
-  { id: "T-01", name: "Architecture review record", domain: "tech-architecture", policySource: "MP-T v2 §MP-T-2" },
-  { id: "T-02", name: "Disaster-recovery plan", domain: "tech-architecture", policySource: "MP-T v2 §MP-T-3" },
-  { id: "R-01", name: "Bias & fairness testing", domain: "responsible-ai", policySource: "MP-R v4 §MP-R-2" },
-  { id: "R-02", name: "Model card published", domain: "responsible-ai", policySource: "MP-R v4 §MP-R-3" },
-  { id: "S-01", name: "Pen test / threat model", domain: "security", policySource: "MP-S v3 §MP-S-2" },
-  { id: "S-02", name: "Secrets & access review", domain: "security", policySource: "MP-S v3 §MP-S-3" },
-  { id: "H-01", name: "PHI minimization & BAA", domain: "privacy-hipaa", policySource: "MP-H v3 §MP-H-2" },
-  { id: "H-02", name: "De-identification validation", domain: "privacy-hipaa", policySource: "MP-H v3 §MP-H-3" },
-  { id: "C-01", name: "Clinician-in-the-loop protocol", domain: "clinical-safety", policySource: "MP-C v3 §MP-C-2" },
-  { id: "C-02", name: "Adverse-event monitoring", domain: "clinical-safety", policySource: "MP-C v3 §MP-C-3" },
-  { id: "D-01", name: "Data lineage & sourcing approval", domain: "data-governance", policySource: "MP-D v2 §MP-D-2" },
-  { id: "D-02", name: "Retention & disposal schedule", domain: "data-governance", policySource: "MP-D v2 §MP-D-3" },
+  { id: "L-01", name: "Vendor contract AI addendum", domain: "legal", policySource: "MP-L v3 §MP-L-2", owner: JAMES, cadence: "per-contract", enforcementMode: "gate", remediationOwner: JAMES, requiredEvidence: "Signed AI addendum on file" },
+  { id: "L-02", name: "Marketing-claims review", domain: "legal", policySource: "MP-L v3 §MP-L-3", owner: JAMES, cadence: "per-campaign", enforcementMode: "monitor", remediationOwner: JAMES, requiredEvidence: "Legal sign-off memo" },
+  { id: "P-01", name: "Vendor risk assessment", domain: "procurement", policySource: "MP-P v2 §MP-P-2", owner: NIA, cadence: "annual", enforcementMode: "gate", remediationOwner: NIA, requiredEvidence: "Completed vendor risk questionnaire" },
+  { id: "P-02", name: "SaaS data-residency attestation", domain: "procurement", policySource: "MP-P v2 §MP-P-3", owner: NIA, cadence: "annual", enforcementMode: "monitor", remediationOwner: NIA, requiredEvidence: "Vendor data-residency attestation letter" },
+  { id: "T-01", name: "Architecture review record", domain: "tech-architecture", policySource: "MP-T v2 §MP-T-2", owner: RAY, cadence: "per-deployment", enforcementMode: "gate", remediationOwner: RAY, requiredEvidence: "Architecture review record (ARB sign-off)" },
+  { id: "T-02", name: "Disaster-recovery plan", domain: "tech-architecture", policySource: "MP-T v2 §MP-T-3", owner: RAY, cadence: "annual", enforcementMode: "monitor", remediationOwner: RAY, requiredEvidence: "DR runbook + last test date" },
+  { id: "R-01", name: "Bias & fairness testing", domain: "responsible-ai", policySource: "MP-R v4 §MP-R-2", owner: SOFIA, cadence: "per-deployment", enforcementMode: "gate", remediationOwner: SOFIA, requiredEvidence: "Fairness test report" },
+  { id: "R-02", name: "Model card published", domain: "responsible-ai", policySource: "MP-R v4 §MP-R-3", owner: SOFIA, cadence: "per-deployment", enforcementMode: "monitor", remediationOwner: SOFIA, requiredEvidence: "Published model card URL" },
+  { id: "S-01", name: "Pen test / threat model", domain: "security", policySource: "MP-S v3 §MP-S-2", owner: DAN, cadence: "annual", enforcementMode: "block", remediationOwner: DAN, requiredEvidence: "Pen test report + threat model doc" },
+  { id: "S-02", name: "Secrets & access review", domain: "security", policySource: "MP-S v3 §MP-S-3", owner: DAN, cadence: "quarterly", enforcementMode: "gate", remediationOwner: DAN, requiredEvidence: "Access review sign-off" },
+  { id: "H-01", name: "PHI minimization & BAA", domain: "privacy-hipaa", policySource: "MP-H v3 §MP-H-2", owner: MARCUS, cadence: "per-deployment", enforcementMode: "block", remediationOwner: MARCUS, requiredEvidence: "Executed BAA + minimization review" },
+  { id: "H-02", name: "De-identification validation", domain: "privacy-hipaa", policySource: "MP-H v3 §MP-H-3", owner: MARCUS, cadence: "quarterly", enforcementMode: "gate", remediationOwner: MARCUS, requiredEvidence: "De-identification validation report" },
+  { id: "C-01", name: "Clinician-in-the-loop protocol", domain: "clinical-safety", policySource: "MP-C v3 §MP-C-2", owner: ELENA, cadence: "per-deployment", enforcementMode: "block", remediationOwner: ELENA, requiredEvidence: "Clinician-in-the-loop protocol doc" },
+  { id: "C-02", name: "Adverse-event monitoring", domain: "clinical-safety", policySource: "MP-C v3 §MP-C-3", owner: ELENA, cadence: "quarterly", enforcementMode: "gate", remediationOwner: ELENA, requiredEvidence: "Adverse-event monitoring log" },
+  { id: "D-01", name: "Data lineage & sourcing approval", domain: "data-governance", policySource: "MP-D v2 §MP-D-2", owner: PRIYA, cadence: "per-deployment", enforcementMode: "gate", remediationOwner: PRIYA, requiredEvidence: "Data lineage & sourcing approval memo" },
+  { id: "D-02", name: "Retention & disposal schedule", domain: "data-governance", policySource: "MP-D v2 §MP-D-3", owner: PRIYA, cadence: "annual", enforcementMode: "monitor", remediationOwner: PRIYA, requiredEvidence: "Retention & disposal schedule doc" },
 ];
 
 // Q-01 default threshold: tier-specific defaults are High=0.08, Critical=0.05
@@ -990,7 +997,10 @@ export class MockDataProvider implements DataProvider {
   }
 
   async controlCatalog(): Promise<ControlRow[]> {
-    const domainRows: ControlRow[] = CONTROL_CATALOG.map((entry) => ({
+    // Deterministic evidenceAt fixture: index-based offset so a handful of
+    // controls land past the 90-day staleness window (see
+    // control-catalog.tsx#evidenceFreshness) without any randomness.
+    const domainRows: ControlRow[] = CONTROL_CATALOG.map((entry, i) => ({
       id: entry.id,
       name: entry.name,
       domain: entry.domain,
@@ -998,6 +1008,15 @@ export class MockDataProvider implements DataProvider {
       policySource: entry.policySource,
       threshold: null,
       evidence: `${entry.name} evidence on file (catalog default)`,
+      owner: entry.owner,
+      cadence: entry.cadence,
+      enforcementMode: entry.enforcementMode,
+      remediationOwner: entry.remediationOwner,
+      requiredEvidence: entry.requiredEvidence,
+      // Alternate fresh/stale across the catalog: even index -> recent
+      // (fresh), odd index -> 120 days old (stale).
+      evidenceAt: isoAt(i % 2 === 0 ? -10 : -120),
+      dueAt: isoAt(30 + i),
     }));
 
     const q01Row: ControlRow = {
@@ -1008,6 +1027,13 @@ export class MockDataProvider implements DataProvider {
       policySource: null,
       threshold: Q01_DEFAULT_THRESHOLD,
       evidence: "Global default threshold (High tier); Critical tier uses 0.05 per-initiative.",
+      owner: RAY,
+      cadence: "continuous",
+      enforcementMode: "block",
+      remediationOwner: RAY,
+      requiredEvidence: "Eval observation stream (eval_hallucination) within threshold",
+      evidenceAt: isoAt(-1),
+      dueAt: null,
     };
 
     return [...domainRows, q01Row];

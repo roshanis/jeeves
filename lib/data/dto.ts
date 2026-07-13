@@ -54,6 +54,20 @@ export interface ControlRow {
   policySource: string | null; // e.g. "MP-H v3 §MP-H-2"
   threshold: number | null; // Q-01 only
   evidence: string | null;
+  /** Control owner (control_definitions.owner) — the accountable role/person for the control. */
+  owner?: string;
+  /** Review cadence (control_definitions.cadence), e.g. "quarterly", "per-deployment". */
+  cadence?: string;
+  /** How the control is enforced today (control_definitions.enforcementMode). */
+  enforcementMode?: "monitor" | "gate" | "block";
+  /** Who remediates when this control is out of compliance (effective_controls.remediationOwner, falling back to control_definitions.remediationOwner). */
+  remediationOwner?: string | null;
+  /** What evidence artifact satisfies this control (control_definitions.requiredEvidence). */
+  requiredEvidence?: string;
+  /** ISO timestamp evidence was last attached (effective_controls.evidenceAt) — drives the evidence-freshness indicator; null/undefined when no evidence has been recorded. */
+  evidenceAt?: string | null;
+  /** ISO timestamp this control's current cycle is due (effective_controls.dueAt). */
+  dueAt?: string | null;
 }
 
 export interface TelemetrySeries {
