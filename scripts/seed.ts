@@ -1445,6 +1445,20 @@ export async function seedDatabase(db: Db): Promise<RowCounts> {
       after: "approved",
     });
 
+    // Prior superseded version — retired when v2.0 deployed. Gives this
+    // promotion-storyline initiative a genuine rollback target (M3 rollback).
+    await db.insert(deploymentVersions).values({
+      id: nextId("dep"),
+      initiativeId: initId,
+      version: "v1.9",
+      status: "retired",
+      modelVersion: "meridian-correspondence-1.9",
+      selfHosted: false,
+      feedbackProvenanceSignedOff: true,
+      deployedAt: dateAt(-140),
+      retiredAt: dateAt(-70),
+    });
+
     const depV1Id = nextId("dep");
     await db.insert(deploymentVersions).values({
       id: depV1Id,

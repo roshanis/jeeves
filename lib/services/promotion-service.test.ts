@@ -15,6 +15,8 @@ import { auditEvents, deploymentVersions, initiatives } from "../db/schema";
 import {
   listPromotions,
   promoteCheckpoint,
+  deploymentHistory,
+  rollbackDeployment,
   ForbiddenError,
   ValidationError,
   NotFoundError,
@@ -173,6 +175,150 @@ describe("lib/services/promotion-service", () => {
       const rows = await db.select().from(deploymentVersions).where(eq(deploymentVersions.initiativeId, initiativeId));
       const v21 = rows.find((d) => d.version === "v2.1")!;
       expect(v21.status).toBe("deployed");
+    });
+  });
+
+  describe("deploymentHistory", () => {
+    it("returns pa-correspondence-model's versions newest-first, with isCurrent set only on the deployed row", async () => {
+      const initiativeId = await paCorrespondenceModelId(db);
+
+      const history = await deploymentHistory(db, initiativeId);
+      // Seeded: v1.9 (retired), v2.0 (deployed), v2.1 (awaiting sign-off).
+      expect(history.length).toBe(3);
+      // Newest-first by deployedAt: v2.1 (most recent) then v2.0 then v1.9 (oldest).
+      expect(history[0]!.version).toBe("v2.1");
+      expect(history[1]!.version).toBe("v2.0");
+      expect(history[2]!.version).toBe("v1.9");
+
+      const v20 = history.find((h) => h.version === "v2.0")!;
+      const v21 = history.find((h) => h.version === "v2.1")!;
+      const v19 = history.find((h) => h.version === "v1.9")!;
+      expect(v20.status).toBe("deployed");
+      expect(v20.isCurrent).toBe(true);
+      expect(v21.status).toBe("awaiting_promotion_signoff");
+      expect(v21.isCurrent).toBe(false);
+      expect(v19.status).toBe("retired");
+      expect(v19.isCurrent).toBe(false);
+      expect(typeof v20.deployedAt).toBe("string");
+    });
+
+    it("returns an empty array for an initiative with no deployment_versions rows", async () => {
+      const [init] = await db.select().from(initiatives).where(eq(initiatives.slug, "provider-dedup-agent"));
+      const history = await deploymentHistory(db, init!.id);
+      expect(history).toEqual([]);
+    });
+  });
+
+  describe("rollbackDeployment", () => {
+    /**
+     * pa-correspondence-model is now seeded with a genuine prior retired
+     * version (v1.9) as a rollback target, so these tests use it directly.
+     */
+    async function seedPriorRetiredVersion(initiativeId: string): Promise<string> {
+      const rows = await db
+        .select()
+        .from(deploymentVersions)
+        .where(eq(deploymentVersions.initiativeId, initiativeId));
+      const v19 = rows.find((d) => d.version === "v1.9" && d.status === "retired")!;
+      return v19.id;
+    }
+
+    it("rolls back to the prior retired version, retires the current one, and writes an audit event", async () => {
+      const initiativeId = await paCorrespondenceModelId(db);
+      const priorId = await seedPriorRetiredVersion(initiativeId);
+
+      const result = await rollbackDeployment(
+        db,
+        initiativeId,
+        APPROVER,
+        priorId,
+        "Rolling back due to regression in v2.0 correspondence quality.",
+      );
+
+      expect(result.initiativeId).toBe(initiativeId);
+      expect(result.fromVersion).toBe("v2.0");
+      expect(result.toVersion).toBe("v1.9");
+      expect(result.toDeploymentVersionId).toBe(priorId);
+      expect(result.status).toBe("deployed");
+
+      const rows = await db.select().from(deploymentVersions).where(eq(deploymentVersions.initiativeId, initiativeId));
+      const v20 = rows.find((d) => d.version === "v2.0")!;
+      const v19 = rows.find((d) => d.version === "v1.9")!;
+      expect(v20.status).toBe("retired");
+      expect(v20.retiredAt).not.toBeNull();
+      expect(v19.status).toBe("deployed");
+      expect(v19.retiredAt).toBeNull();
+
+      const events = await db.select().from(auditEvents).where(eq(auditEvents.initiativeId, initiativeId));
+      const rollbackEvent = events.find((e) => e.action === "deployment_rolled_back");
+      expect(rollbackEvent).toBeTruthy();
+      expect(rollbackEvent!.before).toBe("v2.0");
+      expect(rollbackEvent!.after).toBe("v1.9");
+      expect((rollbackEvent!.metadata as { fromVersion: string; toVersion: string }).fromVersion).toBe("v2.0");
+      expect((rollbackEvent!.metadata as { fromVersion: string; toVersion: string }).toVersion).toBe("v1.9");
+    });
+
+    it("also accepts an admin actor (SoD allows approver OR admin for rollback)", async () => {
+      const initiativeId = await paCorrespondenceModelId(db);
+      const priorId = await seedPriorRetiredVersion(initiativeId);
+
+      const result = await rollbackDeployment(db, initiativeId, ADMIN, priorId, "Admin-initiated rollback.");
+      expect(result.status).toBe("deployed");
+    });
+
+    it("rejects a reviewer actor with ForbiddenError (SoD)", async () => {
+      const initiativeId = await paCorrespondenceModelId(db);
+      const priorId = await seedPriorRetiredVersion(initiativeId);
+
+      await expect(
+        rollbackDeployment(db, initiativeId, REVIEWER, priorId, "reason"),
+      ).rejects.toThrow(ForbiddenError);
+    });
+
+    it("throws ValidationError when reason is empty", async () => {
+      const initiativeId = await paCorrespondenceModelId(db);
+      const priorId = await seedPriorRetiredVersion(initiativeId);
+
+      await expect(rollbackDeployment(db, initiativeId, APPROVER, priorId, "  ")).rejects.toThrow(
+        ValidationError,
+      );
+    });
+
+    it("throws NotFoundError for an unknown initiative id", async () => {
+      await expect(
+        rollbackDeployment(db, "init-does-not-exist", APPROVER, "dep-does-not-exist", "reason"),
+      ).rejects.toThrow(NotFoundError);
+    });
+
+    it("throws ValidationError when the initiative has no prior (retired/paused) version to roll back to", async () => {
+      // member-chat-copilot is seeded with exactly one deployment_versions row
+      // (v1.2, deployed) — no prior version exists.
+      const [init] = await db.select().from(initiatives).where(eq(initiatives.slug, "member-chat-copilot"));
+      const rows = await db.select().from(deploymentVersions).where(eq(deploymentVersions.initiativeId, init!.id));
+      expect(rows.length).toBe(1);
+
+      await expect(
+        rollbackDeployment(db, init!.id, APPROVER, "dep-does-not-exist", "reason"),
+      ).rejects.toThrow(ValidationError);
+    });
+
+    it("throws ValidationError when the target deployment version is not retired/paused (e.g. already the current deployed row)", async () => {
+      const initiativeId = await paCorrespondenceModelId(db);
+      const rows = await db.select().from(deploymentVersions).where(eq(deploymentVersions.initiativeId, initiativeId));
+      const v20 = rows.find((d) => d.version === "v2.0")!;
+
+      await expect(
+        rollbackDeployment(db, initiativeId, APPROVER, v20.id, "reason"),
+      ).rejects.toThrow(ValidationError);
+    });
+
+    it("throws NotFoundError when the target deployment version id does not exist", async () => {
+      const initiativeId = await paCorrespondenceModelId(db);
+      await seedPriorRetiredVersion(initiativeId);
+
+      await expect(
+        rollbackDeployment(db, initiativeId, APPROVER, "dep-does-not-exist", "reason"),
+      ).rejects.toThrow(NotFoundError);
     });
   });
 });

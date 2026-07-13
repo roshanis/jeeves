@@ -261,6 +261,28 @@ export interface PromoteCheckpointResult {
   status: "deployed";
 }
 
+/** One deployment_versions row for an initiative (mirrors promotion-service.ts#DeploymentHistoryEntry). */
+export interface DeploymentHistoryEntry {
+  id: string;
+  version: string;
+  status: "deployed" | "paused" | "awaiting_promotion_signoff" | "retired";
+  modelVersion: string | null;
+  deployedAt: string;
+  pausedAt: string | null;
+  retiredAt: string | null;
+  isCurrent: boolean;
+}
+
+/** Result shape of POST /api/deployments/[id]/rollback (mirrors promotion-service.ts#RollbackDeploymentResult). */
+export interface RollbackDeploymentResult {
+  initiativeId: string;
+  fromDeploymentVersionId: string;
+  fromVersion: string;
+  toDeploymentVersionId: string;
+  toVersion: string;
+  status: "deployed";
+}
+
 /** Result of POST /api/agents/health (mirrors lib/agents/health.ts#ConnectorHealth). */
 export interface ConnectorHealth {
   configured: boolean;
@@ -631,5 +653,18 @@ export function promoteCheckpoint(
   return request<PromoteCheckpointResult>(
     `/api/deployments/promotions/${encodeURIComponent(id)}/promote`,
     { method: "POST", token, body: input },
+  );
+}
+
+/** POST /api/deployments/[id]/rollback — approver/admin-only; [id] is the INITIATIVE id. */
+export function rollbackDeployment(
+  token: string,
+  initiativeId: string,
+  targetDeploymentVersionId: string,
+  reason: string,
+): Promise<RollbackDeploymentResult> {
+  return request<RollbackDeploymentResult>(
+    `/api/deployments/${encodeURIComponent(initiativeId)}/rollback`,
+    { method: "POST", token, body: { targetDeploymentVersionId, reason } },
   );
 }

@@ -8,6 +8,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
+import { randomUUID } from "node:crypto";
 import { createTestDb, closeTestDb, type TestDb } from "@/lib/db/test-client";
 import { resetGuardStateForTests } from "@/lib/services/route-guard";
 import { seedDatabase } from "@/scripts/seed";
@@ -165,5 +166,125 @@ describe("POST /api/deployments/promotions/[id]/promote", () => {
       { params: Promise.resolve({ id: deploymentVersionId }) },
     );
     expect([400, 409]).toContain(res2.status);
+  });
+});
+
+/**
+ * POST /api/deployments/[id]/rollback tests. The seeded pa-correspondence-model
+ * initiative has only v2.0 (deployed) + v2.1 (awaiting-signoff) — no prior
+ * retired/paused version — so each test seeds a synthetic prior "v1.9"
+ * (retired) row directly, mirroring promotion-service.test.ts's approach.
+ * (See report: a seeded multi-version rollback scenario is a follow-up.)
+ */
+describe("POST /api/deployments/[id]/rollback", () => {
+  async function paCorrespondenceModelId(): Promise<string> {
+    const [init] = await testDb.select().from(initiatives).where(eq(initiatives.slug, "pa-correspondence-model"));
+    return init!.id;
+  }
+
+  async function seedPriorRetiredVersion(initiativeId: string): Promise<string> {
+    const id = `dep-test-${randomUUID()}`;
+    await testDb.insert(deploymentVersions).values({
+      id,
+      initiativeId,
+      version: "v1.9",
+      status: "retired",
+      modelVersion: "meridian-correspondence-1.9",
+      selfHosted: false,
+      feedbackProvenanceSignedOff: true,
+      deployedAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 30),
+      retiredAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 10),
+    });
+    return id;
+  }
+
+  it("401s an unauthenticated request", async () => {
+    const initiativeId = await paCorrespondenceModelId();
+    const priorId = await seedPriorRetiredVersion(initiativeId);
+    const { POST } = await import("../[id]/rollback/route");
+    const res = await POST(
+      new Request(`http://localhost/api/deployments/${initiativeId}/rollback`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-forwarded-for": "41.0.0.1" },
+        body: JSON.stringify({ targetDeploymentVersionId: priorId, reason: "rollback" }),
+      }),
+      { params: Promise.resolve({ id: initiativeId }) },
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it("200s the happy path for an approver session", async () => {
+    const initiativeId = await paCorrespondenceModelId();
+    const priorId = await seedPriorRetiredVersion(initiativeId);
+    const token = await issueSessionFor("angela-torres", "41.0.0.2");
+    const { POST } = await import("../[id]/rollback/route");
+    const res = await POST(
+      new Request(`http://localhost/api/deployments/${initiativeId}/rollback`, {
+        method: "POST",
+        headers: bearer(token, "41.0.0.2"),
+        body: JSON.stringify({
+          targetDeploymentVersionId: priorId,
+          reason: "Regression found in v2.0; rolling back to v1.9.",
+        }),
+      }),
+      { params: Promise.resolve({ id: initiativeId }) },
+    );
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.status).toBe("deployed");
+    expect(json.toVersion).toBe("v1.9");
+    expect(json.fromVersion).toBe("v2.0");
+
+    const rows = await testDb.select().from(deploymentVersions).where(eq(deploymentVersions.initiativeId, initiativeId));
+    const v19 = rows.find((d) => d.version === "v1.9")!;
+    const v20 = rows.find((d) => d.version === "v2.0")!;
+    expect(v19.status).toBe("deployed");
+    expect(v20.status).toBe("retired");
+  });
+
+  it("403s a non-approver, non-admin session (reviewer persona)", async () => {
+    const initiativeId = await paCorrespondenceModelId();
+    const priorId = await seedPriorRetiredVersion(initiativeId);
+    const token = await issueSessionFor("elena-vasquez", "41.0.0.3");
+    const { POST } = await import("../[id]/rollback/route");
+    const res = await POST(
+      new Request(`http://localhost/api/deployments/${initiativeId}/rollback`, {
+        method: "POST",
+        headers: bearer(token, "41.0.0.3"),
+        body: JSON.stringify({ targetDeploymentVersionId: priorId, reason: "trying anyway" }),
+      }),
+      { params: Promise.resolve({ id: initiativeId }) },
+    );
+    expect(res.status).toBe(403);
+  });
+
+  it("400s a missing/empty reason for an authenticated approver", async () => {
+    const initiativeId = await paCorrespondenceModelId();
+    const priorId = await seedPriorRetiredVersion(initiativeId);
+    const token = await issueSessionFor("angela-torres", "41.0.0.4");
+    const { POST } = await import("../[id]/rollback/route");
+    const res = await POST(
+      new Request(`http://localhost/api/deployments/${initiativeId}/rollback`, {
+        method: "POST",
+        headers: bearer(token, "41.0.0.4"),
+        body: JSON.stringify({ targetDeploymentVersionId: priorId, reason: "" }),
+      }),
+      { params: Promise.resolve({ id: initiativeId }) },
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("404s an unknown initiative id", async () => {
+    const token = await issueSessionFor("angela-torres", "41.0.0.5");
+    const { POST } = await import("../[id]/rollback/route");
+    const res = await POST(
+      new Request("http://localhost/api/deployments/init-does-not-exist/rollback", {
+        method: "POST",
+        headers: bearer(token, "41.0.0.5"),
+        body: JSON.stringify({ targetDeploymentVersionId: "dep-does-not-exist", reason: "reason" }),
+      }),
+      { params: Promise.resolve({ id: "init-does-not-exist" }) },
+    );
+    expect(res.status).toBe(404);
   });
 });

@@ -145,9 +145,10 @@ describe("lib/data/db-provider", () => {
       expect(q01!.policySource).toBeNull(); // INDEX.md: Q-01 is not policy-cited
     });
 
-    it("promotion (#5): v2.0 deployed and v2.1 awaiting_promotion_signoff", async () => {
+    it("promotion (#5): v1.9 retired, v2.0 deployed, v2.1 awaiting_promotion_signoff", async () => {
       const detail = await provider.getInitiativeDetail("pa-correspondence-model");
       expect(detail!.deployments).toEqual([
+        expect.objectContaining({ version: "v1.9", status: "retired" }),
         expect.objectContaining({ version: "v2.0", status: "deployed" }),
         expect.objectContaining({ version: "v2.1", status: "awaiting_promotion_signoff" }),
       ]);

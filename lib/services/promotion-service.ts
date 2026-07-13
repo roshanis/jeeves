@@ -66,6 +66,31 @@ import type * as schema from "../db/schema";
 import { auditEvents, deploymentVersions, initiatives } from "../db/schema";
 import type { Actor } from "../domain/types";
 
+/**
+ * requireApproverOrAdminWithReason — SoD guard for `rollbackDeployment` (M3
+ * promotion-view extension). Deliberately DISTINCT from
+ * `requireApproverWithAttestation` above (promotion is an approver-only
+ * attestation act) because a rollback is an operational remediation action,
+ * structurally closer to `admin-service.ts`'s `pauseDeployment`/
+ * `resumeDeployment` (admin-gated) than to a sign-off — but since rolling
+ * back also un-does a promotion decision an approver made, both roles are
+ * accepted here. Reuses THIS file's own `ForbiddenError`/`ValidationError`
+ * (not `IllegalTransitionError` from lib/lifecycle/transitions.ts, which
+ * requires a `LifecycleState`/`LifecycleAction` pair that doesn't exist for
+ * deployment-version-scoped rollback — same rationale as JUDGMENT CALL 2/3
+ * above for promoteCheckpoint).
+ */
+function requireApproverOrAdminWithReason(actor: Actor, reason: string): void {
+  if (actor.role !== "approver" && actor.role !== "admin") {
+    throw new ForbiddenError(
+      `deployment rollback requires role 'approver' or 'admin'; actor role is '${actor.role}'`,
+    );
+  }
+  if (!reason || reason.trim().length === 0) {
+    throw new ValidationError("deployment rollback requires a non-empty reason");
+  }
+}
+
 type Tx = PgDatabase<PgQueryResultHKT, typeof schema>;
 
 export class ForbiddenError extends Error {
@@ -341,6 +366,189 @@ export async function promoteCheckpoint(
       promotedVersion: target.version,
       supersededDeploymentVersionId: currentDeployed?.id ?? null,
       supersededVersion: currentDeployed?.version ?? null,
+      status: "deployed" as const,
+    };
+  });
+}
+
+/* -------------------------------------------------------------------------
+ * 3. deploymentHistory (M3 promotion-view extension — read-only)
+ * ---------------------------------------------------------------------- */
+
+export interface DeploymentHistoryEntry {
+  id: string;
+  version: string;
+  status: "deployed" | "paused" | "awaiting_promotion_signoff" | "retired";
+  modelVersion: string | null;
+  deployedAt: string;
+  pausedAt: string | null;
+  retiredAt: string | null;
+  /** True for the single row (if any) with status === "deployed" for this initiative. */
+  isCurrent: boolean;
+}
+
+/**
+ * All `deployment_versions` rows for `initiativeId`, newest-first by
+ * `deployedAt`. Public/read-only — no actor/role gating (mirrors
+ * `listPromotions`'s "no route is role-scoped" posture for reads). Returns
+ * `[]` for an unknown initiative id rather than throwing, since this is a
+ * pure read helper meant to back an always-rendered timeline panel (the
+ * caller decides how to present "no history").
+ */
+export async function deploymentHistory(
+  db: Db,
+  initiativeId: string,
+): Promise<DeploymentHistoryEntry[]> {
+  const rows = await db
+    .select()
+    .from(deploymentVersions)
+    .where(eq(deploymentVersions.initiativeId, initiativeId));
+
+  return rows
+    .slice()
+    .sort((a, b) => b.deployedAt.getTime() - a.deployedAt.getTime())
+    .map((d) => ({
+      id: d.id,
+      version: d.version,
+      status: d.status as DeploymentHistoryEntry["status"],
+      modelVersion: d.modelVersion ?? null,
+      deployedAt: d.deployedAt.toISOString(),
+      pausedAt: d.pausedAt ? d.pausedAt.toISOString() : null,
+      retiredAt: d.retiredAt ? d.retiredAt.toISOString() : null,
+      isCurrent: d.status === "deployed",
+    }));
+}
+
+/* -------------------------------------------------------------------------
+ * 4. rollbackDeployment (M3 promotion-view extension — mutation)
+ * ---------------------------------------------------------------------- */
+
+export interface RollbackDeploymentResult {
+  initiativeId: string;
+  fromDeploymentVersionId: string;
+  fromVersion: string;
+  toDeploymentVersionId: string;
+  toVersion: string;
+  status: "deployed";
+}
+
+/**
+ * Roll an initiative's live deployment back to a prior version. Rules
+ * (enforced in order):
+ *
+ *  1. Role: `actor.role` must be `"approver"` or `"admin"` (SoD — see
+ *     `requireApproverOrAdminWithReason` above); every other role is
+ *     rejected with `ForbiddenError`.
+ *  2. Reason: `reason` must be non-empty after `.trim()` (`ValidationError`
+ *     otherwise). Checked before opening a transaction, matching
+ *     `promoteCheckpoint`'s precedent of validating actor/input up front.
+ *  3. Initiative existence: `initiativeId` must resolve to a real
+ *     `initiatives` row (`NotFoundError` if not).
+ *  4. Current version: the initiative's current `status === "deployed"` row
+ *     must exist (`ValidationError` if there is no current deployed version
+ *     to roll back FROM — nothing is live to supersede).
+ *  5. Target version: `targetDeploymentVersionId` must name a
+ *     `deployment_versions` row that (a) exists (`NotFoundError` if not),
+ *     (b) belongs to the SAME initiative (`ValidationError` if it belongs to
+ *     a different initiative — never allow cross-initiative rollback), and
+ *     (c) currently has `status === "retired"` or `status === "paused"`
+ *     (`ValidationError` otherwise — e.g. targeting the already-current
+ *     deployed row, or an awaiting-signoff checkpoint that was never live).
+ *  6. Flip, transactionally: the current `deployed` row becomes `"retired"`
+ *     (`retiredAt` stamped); the target row becomes `"deployed"`
+ *     (`retiredAt`/`pausedAt` cleared, `deployedAt` re-stamped to now).
+ *  7. Audit, in the SAME transaction: one `audit_events` row,
+ *     `action: "deployment_rolled_back"`, `before`/`after` = the version
+ *     STRINGS being superseded/restored (not status enum values — the task
+ *     brief specifies "before/after = version strings" for this action,
+ *     distinct from `promoteCheckpoint`'s events which use status values;
+ *     the version strings are the more useful audit signal for "what did we
+ *     roll back to"), `metadata: { fromVersion, toVersion, reason }`.
+ *  8. Returns a `RollbackDeploymentResult`.
+ */
+export async function rollbackDeployment(
+  db: Db,
+  initiativeId: string,
+  actor: Actor,
+  targetDeploymentVersionId: string,
+  reason: string,
+): Promise<RollbackDeploymentResult> {
+  requireApproverOrAdminWithReason(actor, reason);
+
+  return db.transaction(async (tx) => {
+    const initiativeRows = await tx
+      .select()
+      .from(initiatives)
+      .where(eq(initiatives.id, initiativeId));
+    if (!initiativeRows[0]) throw new NotFoundError("initiative", initiativeId);
+
+    const siblingRows = await tx
+      .select()
+      .from(deploymentVersions)
+      .where(eq(deploymentVersions.initiativeId, initiativeId));
+
+    const currentDeployed = siblingRows
+      .filter((d) => d.status === "deployed")
+      .sort((a, b) => b.deployedAt.getTime() - a.deployedAt.getTime())[0];
+    if (!currentDeployed) {
+      throw new ValidationError(
+        `initiative ${initiativeId} has no currently-deployed version to roll back`,
+      );
+    }
+
+    const priorCandidates = siblingRows.filter(
+      (d) => d.id !== currentDeployed.id && (d.status === "retired" || d.status === "paused"),
+    );
+    if (priorCandidates.length === 0) {
+      throw new ValidationError(
+        `initiative ${initiativeId} has no prior (retired or paused) deployment version to roll back to`,
+      );
+    }
+
+    const target = siblingRows.find((d) => d.id === targetDeploymentVersionId);
+    if (!target) throw new NotFoundError("deploymentVersion", targetDeploymentVersionId);
+
+    if (target.id === currentDeployed.id) {
+      throw new ValidationError(
+        `deployment version ${targetDeploymentVersionId} is already the current deployed version`,
+      );
+    }
+    if (target.status !== "retired" && target.status !== "paused") {
+      throw new ValidationError(
+        `deployment version ${targetDeploymentVersionId} is not a prior (retired or paused) version of initiative ${initiativeId} (current status: '${target.status}')`,
+      );
+    }
+
+    const ts = Date.now();
+
+    await tx
+      .update(deploymentVersions)
+      .set({ status: "retired", retiredAt: new Date(ts) })
+      .where(eq(deploymentVersions.id, currentDeployed.id));
+
+    await tx
+      .update(deploymentVersions)
+      .set({ status: "deployed", deployedAt: new Date(ts), retiredAt: null, pausedAt: null })
+      .where(eq(deploymentVersions.id, target.id));
+
+    await insertAuditEvent(
+      tx,
+      initiativeId,
+      actor,
+      "deployment_rolled_back",
+      currentDeployed.version,
+      target.version,
+      `${actor.id} rolled back deployment from ${currentDeployed.version} to ${target.version}: ${reason}`,
+      ts,
+      { fromVersion: currentDeployed.version, toVersion: target.version, reason },
+    );
+
+    return {
+      initiativeId,
+      fromDeploymentVersionId: currentDeployed.id,
+      fromVersion: currentDeployed.version,
+      toDeploymentVersionId: target.id,
+      toVersion: target.version,
       status: "deployed" as const,
     };
   });
