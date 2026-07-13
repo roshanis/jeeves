@@ -5,6 +5,10 @@ import { listIncidents, type IncidentListRow } from "@/lib/services/monitor-serv
 import type { InitiativeDetail, TelemetrySeries } from "@/lib/data/dto";
 import { SyntheticDataLabel } from "@/components/jeeves/synthetic-data-label";
 import { LifecycleBadge } from "@/components/jeeves/lifecycle-badge";
+import { telemetryConnectorStatus, syntheticTraces } from "@/lib/telemetry/connector";
+import { TelemetryConnectorCard } from "@/components/jeeves/telemetry-connector-card";
+import { GpuQuotaCard } from "@/components/jeeves/gpu-quota-card";
+import { CostBudgetCard, type PortfolioCostPoint } from "@/components/jeeves/cost-budget-card";
 import {
   Card,
   CardContent,
@@ -19,6 +23,22 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+
+/** Portfolio-wide daily cost: sums each operating deployment's cost_tokens_usd_day
+ * series by timestamp. Pure aggregation over data the page already loaded. */
+function portfolioCostSeries(details: InitiativeDetail[]): PortfolioCostPoint[] {
+  const totals = new Map<string, number>();
+  for (const d of details) {
+    const cost = d.telemetry.find((t) => t.kind === "cost_tokens_usd_day");
+    if (!cost) continue;
+    for (const p of cost.points) {
+      totals.set(p.ts, (totals.get(p.ts) ?? 0) + p.value);
+    }
+  }
+  return [...totals.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([ts, totalUsd]) => ({ ts, totalUsd: Math.round(totalUsd * 100) / 100 }));
+}
 
 async function loadIncidents(): Promise<IncidentListRow[]> {
   const dbMode = process.env.DATA_PROVIDER === "db" || !!process.env.DATABASE_URL;
@@ -53,6 +73,18 @@ export default async function MonitoringPage() {
     .filter((d): d is InitiativeDetail => d !== null)
     .filter((d) => d.deployments.length > 0);
 
+  const connectorStatus = telemetryConnectorStatus();
+  // Traces keyed off the GPU initiative when present (a stable, meaningful
+  // seed), else the first operating initiative, else a fixed fallback slug —
+  // still fully deterministic (no Math.random/Date.now).
+  const gpuInitiative = operating.find((d) =>
+    d.telemetry.some((t) => t.kind === "gpu_util_pct"),
+  );
+  const traceSeedSlug = gpuInitiative?.summary.slug ?? operating[0]?.summary.slug ?? "monitoring";
+  const traces = syntheticTraces(traceSeedSlug);
+  const portfolioCost = portfolioCostSeries(operating);
+  const gpuSeries = gpuInitiative?.telemetry.find((t) => t.kind === "gpu_util_pct");
+
   return (
     <div className="flex flex-col gap-6">
       <div>
@@ -66,6 +98,31 @@ export default async function MonitoringPage() {
           Eval quality, cost, and utilization across every deployment. Open an
           initiative to see full telemetry, or run the monitor from Administration.
         </p>
+      </div>
+
+      <TelemetryConnectorCard status={connectorStatus} traces={traces} />
+
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <CostBudgetCard points={portfolioCost} />
+        {gpuInitiative && gpuSeries ? (
+          <GpuQuotaCard
+            slug={gpuInitiative.summary.slug}
+            title={gpuInitiative.summary.title}
+            series={gpuSeries}
+          />
+        ) : (
+          <Card data-slot="gpu-quota-card-missing">
+            <CardHeader className="border-b bg-muted/40 py-3">
+              <CardTitle className="text-sm">GPU utilization vs quota</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-muted-foreground">
+                No self-hosted initiative with GPU telemetry (claims-ocr-coder) is
+                present in this data set.
+              </p>
+            </CardContent>
+          </Card>
+        )}
       </div>
 
       <Card className="overflow-hidden">
