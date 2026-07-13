@@ -231,13 +231,27 @@ describe("full champion route chain: submit -> triage -> draft-run -> sign -> de
       new Request(`http://localhost/api/initiatives/${initiativeId}/draft-run`, {
         method: "POST",
         headers: bearer(requesterToken, "10.0.0.1"),
-        body: JSON.stringify({ domains: ["responsible-ai", "privacy-hipaa", "clinical-safety", "legal"] }),
+        // Draft ALL 8 required domains: the champion is Critical (8 domains) and
+        // conditional approval now requires every required review to be at least
+        // drafted (M2.5 completeness gate).
+        body: JSON.stringify({
+          domains: [
+            "legal",
+            "procurement",
+            "tech-architecture",
+            "responsible-ai",
+            "security",
+            "privacy-hipaa",
+            "clinical-safety",
+            "data-governance",
+          ],
+        }),
       }),
       { params: Promise.resolve({ id: initiativeId }) },
     );
     expect(draftRunRes.status).toBe(200);
     const draftRunJson = await draftRunRes.json();
-    expect(draftRunJson.outcomes.filter((o: { status: string }) => o.status === "drafted")).toHaveLength(4);
+    expect(draftRunJson.outcomes.filter((o: { status: string }) => o.status === "drafted")).toHaveLength(8);
 
     const progressRes = await draftRunGet(
       new Request(`http://localhost/api/initiatives/${initiativeId}/draft-run?cycleId=${cycleId}`),

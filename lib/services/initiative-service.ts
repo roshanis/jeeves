@@ -842,7 +842,35 @@ export async function decide(
     }
 
     const action = DECISION_TO_ACTION[decision];
+    // transition() enforces SoD/role FIRST (only an approver may decide) — so
+    // a non-approver gets IllegalTransitionError before any completeness rule.
     const result = transition(initiative.state as LifecycleState, action, actor, { ts: nowTs() });
+
+    // Required-review completeness gate (M2.5): an approval cannot outrun the
+    // domain reviews. A full `approved` requires EVERY required review SIGNED;
+    // a `conditionally_approved` requires every required review at least
+    // DRAFTED (none still pending, returned, or failed) — the conditions
+    // capture residual risk, but an outstanding or objected review is not
+    // "residual". `rejected` has no completeness precondition.
+    if (decision === "approved" || decision === "conditionally_approved") {
+      const decisions = await tx
+        .select()
+        .from(reviewDecisions)
+        .where(eq(reviewDecisions.cycleId, cycle.id));
+      const blocking = decisions.filter((d) =>
+        decision === "approved"
+          ? d.status !== "signed"
+          : d.status !== "signed" && d.status !== "drafted",
+      );
+      if (blocking.length > 0) {
+        const need = decision === "approved" ? "signed" : "drafted or signed";
+        throw new ValidationError(
+          `cannot ${decision}: ${blocking.length} of ${decisions.length} required domain review(s) not ${need} (${blocking
+            .map((d) => `${d.domain}:${d.status}`)
+            .join(", ")})`,
+        );
+      }
+    }
 
     await updateInitiativeState(tx, initiativeId, result.after, {
       accountableApprover: actor.id,

@@ -9,6 +9,7 @@ import { IllegalTransitionError, NotFoundError, ValidationError } from "./initia
 import * as svc from "./initiative-service";
 import { SYSTEM_ACTOR } from "./actors";
 import { createMockAgentPort } from "../agents/mock-adapter";
+import type { Domain } from "../domain/types";
 
 /** Seed just the control catalog (seed-spec §3) — not the full 12-initiative dataset,
  * which would collide with the initiatives this test suite creates directly. */
@@ -111,13 +112,17 @@ describe("lib/services/initiative-service", () => {
       expect(pendingRds).toHaveLength(8);
       expect(pendingRds.every((r) => r.status === "pending")).toBe(true);
 
-      // Simulate a draft having landed (draft-run tested separately in review-run.test.ts) by
-      // writing directly, then sign it.
+      // Simulate the draft-run landing (tested separately in review-run.test.ts):
+      // draft ALL required domains, since conditional approval now requires every
+      // required review to be at least drafted (M2.5 completeness gate). Then sign
+      // clinical-safety as its assigned reviewer.
+      for (const rd of pendingRds) {
+        await db
+          .update(reviewDecisions)
+          .set({ draftMd: `Draft ${rd.domain} assessment.`, status: "drafted" })
+          .where(eq(reviewDecisions.id, rd.id));
+      }
       const clinicalRd = pendingRds.find((r) => r.domain === "clinical-safety")!;
-      await db
-        .update(reviewDecisions)
-        .set({ draftMd: "Draft clinical safety assessment.", status: "drafted" })
-        .where(eq(reviewDecisions.id, clinicalRd.id));
 
       const signResult = await svc.signReview(
         db,
@@ -419,6 +424,93 @@ describe("lib/services/initiative-service", () => {
       const rows = await db.select().from(reviewDecisions).where(eq(reviewDecisions.domain, domain));
       return rows[0]!.cycleId;
     }
+  });
+
+  describe("required-review completeness gate (decide)", () => {
+    const DOMAIN_REVIEWER: Record<Domain, { id: string; role: "reviewer" }> = {
+      "clinical-safety": { id: "elena-vasquez", role: "reviewer" },
+      "privacy-hipaa": { id: "marcus-webb", role: "reviewer" },
+      "responsible-ai": { id: "sofia-grant", role: "reviewer" },
+      legal: { id: "james-liu", role: "reviewer" },
+      security: { id: "devon-clarke", role: "reviewer" },
+      "tech-architecture": { id: "wei-zhang", role: "reviewer" },
+      "data-governance": { id: "grace-kim", role: "reviewer" },
+      procurement: { id: "tom-brennan", role: "reviewer" },
+    };
+
+    async function setUpInReview() {
+      const draft = await svc.createDraft(db, {
+        payload: CHAMPION_PREFILL_PAYLOAD,
+        requesterActor: REQUESTER,
+        requesterName: "Priya Raman",
+      });
+      await svc.submitIntake(db, draft.initiativeId, REQUESTER);
+      const triageResult = await svc.triage(db, draft.initiativeId);
+      if (triageResult.branch !== "review") throw new Error("expected review branch");
+      return { initiativeId: draft.initiativeId, cycleId: triageResult.cycleId };
+    }
+
+    async function draftAll(cycleId: string): Promise<Domain[]> {
+      const rds = await db.select().from(reviewDecisions).where(eq(reviewDecisions.cycleId, cycleId));
+      for (const rd of rds) {
+        await db
+          .update(reviewDecisions)
+          .set({ draftMd: `Draft ${rd.domain}.`, status: "drafted" })
+          .where(eq(reviewDecisions.id, rd.id));
+      }
+      return rds.map((r) => r.domain as Domain);
+    }
+
+    it("blocks `approved` until every required review is signed", async () => {
+      const { initiativeId, cycleId } = await setUpInReview();
+      await draftAll(cycleId); // drafted, not signed
+      await expect(
+        svc.decide(db, initiativeId, APPROVER, { decision: "approved" }),
+      ).rejects.toThrow(ValidationError);
+    });
+
+    it("blocks `conditionally_approved` while any required review is still pending", async () => {
+      const { initiativeId, cycleId } = await setUpInReview();
+      const rds = await db.select().from(reviewDecisions).where(eq(reviewDecisions.cycleId, cycleId));
+      for (const rd of rds.slice(1)) {
+        await db
+          .update(reviewDecisions)
+          .set({ draftMd: "d", status: "drafted" })
+          .where(eq(reviewDecisions.id, rd.id));
+      }
+      await expect(
+        svc.decide(db, initiativeId, APPROVER, {
+          decision: "conditionally_approved",
+          conditions: [{ text: "100% human review.", controlId: "C-01" }],
+        }),
+      ).rejects.toThrow(ValidationError);
+    });
+
+    it("allows `conditionally_approved` once every required review is at least drafted", async () => {
+      const { initiativeId, cycleId } = await setUpInReview();
+      await draftAll(cycleId);
+      const res = await svc.decide(db, initiativeId, APPROVER, {
+        decision: "conditionally_approved",
+        conditions: [{ text: "100% human review.", controlId: "C-01" }],
+      });
+      expect(res.type).toBe("conditionally_approved");
+    });
+
+    it("allows `approved` once all 8 domain reviewers have signed (full completeness)", async () => {
+      const { initiativeId, cycleId } = await setUpInReview();
+      const domains = await draftAll(cycleId);
+      for (const domain of domains) {
+        await svc.signReview(db, cycleId, domain, DOMAIN_REVIEWER[domain]);
+      }
+      const res = await svc.decide(db, initiativeId, APPROVER, { decision: "approved" });
+      expect(res.type).toBe("approved");
+    });
+
+    it("allows `rejected` regardless of review completeness", async () => {
+      const { initiativeId } = await setUpInReview();
+      const res = await svc.decide(db, initiativeId, APPROVER, { decision: "rejected" });
+      expect(res.type).toBe("rejected");
+    });
   });
 
   describe("requester ownership authz", () => {

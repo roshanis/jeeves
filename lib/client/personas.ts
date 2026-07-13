@@ -24,6 +24,10 @@ export const LIVE_PERSONAS: LivePersona[] = [
   { personaKey: "marcus-webb", label: "Marcus Webb", role: "reviewer" },
   { personaKey: "sofia-grant", label: "Sofia Grant", role: "reviewer" },
   { personaKey: "james-liu", label: "James Liu", role: "reviewer" },
+  { personaKey: "devon-clarke", label: "Devon Clarke", role: "reviewer" },
+  { personaKey: "wei-zhang", label: "Wei Zhang", role: "reviewer" },
+  { personaKey: "grace-kim", label: "Grace Kim", role: "reviewer" },
+  { personaKey: "tom-brennan", label: "Tom Brennan", role: "reviewer" },
   { personaKey: "angela-torres", label: "Angela Torres", role: "approver" },
   { personaKey: "ray-chen", label: "Ray Chen", role: "admin" },
   { personaKey: "nia-okafor", label: "Nia Okafor", role: "program" },
@@ -66,16 +70,21 @@ export function roleKeyForActorRole(role: LivePersona["role"]): RoleKey {
 }
 
 /**
- * The 4 named reviewer personas each own exactly one governance domain
- * (seed-spec §1). This is what makes the "Reviewer" role specific: Sofia
+ * The 8 named reviewer personas each own exactly one governance domain
+ * (seed-spec §1) — one accountable reviewer per domain, so every required
+ * review is signable. This is what makes the "Reviewer" role specific: Sofia
  * Grant (Responsible AI) owns eval-quality & fairness signals, not James Liu
- * (Legal) or the other domain reviewers.
+ * (Legal) or the other domain reviewers. Mirrors lib/services/actors.ts.
  */
 export const REVIEWER_DOMAIN: Record<string, Domain> = {
   "elena-vasquez": "clinical-safety",
   "marcus-webb": "privacy-hipaa",
   "sofia-grant": "responsible-ai",
   "james-liu": "legal",
+  "devon-clarke": "security",
+  "wei-zhang": "tech-architecture",
+  "grace-kim": "data-governance",
+  "tom-brennan": "procurement",
 };
 
 /** Looks up the governance domain owned by a reviewer persona, if any. */

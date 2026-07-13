@@ -240,12 +240,13 @@ describe("lib/services/admin-service", () => {
         .select()
         .from(initiatives)
         .where(eq(initiatives.slug, "provider-dedup-agent"));
-      // provider-dedup-agent is 3-of-5 signed at seed time (not all signed);
-      // decide() itself doesn't gate on domain completeness (that's a UI/
-      // workflow concern), so this proves the transition-level authority
-      // check passes for the correct role while the admin one above rejects.
-      const result = await decide(db, provider!.id, APPROVER, { decision: "approved" });
-      expect(result.type).toBe("approved");
+      // provider-dedup-agent is 3-of-5 signed at seed time, so an `approved`
+      // would (correctly) hit the M2.5 completeness gate — this test isolates
+      // the transition-level ROLE authority instead, using `rejected` (which
+      // has no completeness precondition): the approver passes the authority
+      // check while the admin one above is rejected.
+      const result = await decide(db, provider!.id, APPROVER, { decision: "rejected" });
+      expect(result.type).toBe("rejected");
     });
   });
 });

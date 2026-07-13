@@ -58,13 +58,14 @@ describe("DemoModeChip", () => {
     expect(screen.getByText("Read-only (public)")).toBeTruthy();
   });
 
-  it("lists all 9 personas grouped by role in the dialog", () => {
+  it("lists all 13 personas grouped by role in the dialog", () => {
     renderChip();
     fireEvent.click(screen.getByText("Read-only (public)"));
     const select = document.querySelector(
       '[data-slot="persona-select"]',
     ) as HTMLSelectElement;
-    expect(select.querySelectorAll("option")).toHaveLength(9);
+    // 13 = 2 requesters + 8 domain reviewers + approver + admin + program.
+    expect(select.querySelectorAll("option")).toHaveLength(13);
     expect(select.querySelectorAll("optgroup")).toHaveLength(5);
   });
 

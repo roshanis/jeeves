@@ -16,6 +16,10 @@ export type PersonaKey =
   | "marcus-webb"
   | "sofia-grant"
   | "james-liu"
+  | "devon-clarke"
+  | "wei-zhang"
+  | "grace-kim"
+  | "tom-brennan"
   | "angela-torres"
   | "ray-chen"
   | "nia-okafor";
@@ -34,6 +38,10 @@ export const ACTOR_DIRECTORY: Record<PersonaKey, ActorDirectoryEntry> = {
   "marcus-webb": { id: "marcus-webb", name: "Marcus Webb", role: "reviewer" },
   "sofia-grant": { id: "sofia-grant", name: "Sofia Grant", role: "reviewer" },
   "james-liu": { id: "james-liu", name: "James Liu", role: "reviewer" },
+  "devon-clarke": { id: "devon-clarke", name: "Devon Clarke", role: "reviewer" },
+  "wei-zhang": { id: "wei-zhang", name: "Wei Zhang", role: "reviewer" },
+  "grace-kim": { id: "grace-kim", name: "Grace Kim", role: "reviewer" },
+  "tom-brennan": { id: "tom-brennan", name: "Tom Brennan", role: "reviewer" },
   "angela-torres": { id: "angela-torres", name: "Angela Torres", role: "approver" },
   "ray-chen": { id: "ray-chen", name: "Ray Chen", role: "admin" },
   "nia-okafor": { id: "nia-okafor", name: "Nia Okafor", role: "program" },
@@ -66,15 +74,21 @@ export const SYSTEM_ACTOR: Actor = { id: "system", role: "system" };
 
 /**
  * Server-side mirror of `lib/client/personas.ts`'s `REVIEWER_DOMAIN` (seed-
- * spec §1): each of the 4 named reviewer personas owns exactly one
- * governance domain. Must be kept identical to the client map — if one
- * changes, update both in the same change.
+ * spec §1): each of the 8 named reviewer personas owns exactly one
+ * governance domain (one accountable reviewer per domain, so every required
+ * review is signable — a precondition for the completeness-before-approval
+ * gate). Must be kept identical to the client map — if one changes, update
+ * both in the same change.
  */
 const REVIEWER_DOMAIN: Record<string, Domain> = {
   "elena-vasquez": "clinical-safety",
   "marcus-webb": "privacy-hipaa",
   "sofia-grant": "responsible-ai",
   "james-liu": "legal",
+  "devon-clarke": "security",
+  "wei-zhang": "tech-architecture",
+  "grace-kim": "data-governance",
+  "tom-brennan": "procurement",
 };
 
 /**
