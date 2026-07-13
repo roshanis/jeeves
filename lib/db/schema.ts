@@ -325,6 +325,30 @@ export const sessions = pgTable("sessions", {
 });
 
 /* -------------------------------------------------------------------------
+ * Control exceptions (M4) — time-boxed, accountable exceptions to a control
+ * that cannot currently be met. Request -> approve/reject -> revoke/renew/
+ * expire, with separation of duties (requester != decider) and every
+ * transition linked to an audit_events row. See migration 0005.
+ * ---------------------------------------------------------------------- */
+export const controlExceptions = pgTable("control_exceptions", {
+  id: text("id").primaryKey(),
+  effectiveControlId: text("effective_control_id").notNull(),
+  controlId: text("control_id").notNull(),
+  initiativeId: text("initiative_id"),
+  // 'requested' | 'approved' | 'rejected' | 'revoked' | 'expired'
+  status: text("status").notNull(),
+  reason: text("reason").notNull(),
+  requestedBy: text("requested_by").notNull(),
+  requestedAt: timestamp("requested_at", { withTimezone: true }).notNull(),
+  decidedBy: text("decided_by"),
+  decidedAt: timestamp("decided_at", { withTimezone: true }),
+  decisionReason: text("decision_reason"),
+  expiresAt: bigint("expires_at", { mode: "number" }),
+  supersedesId: text("supersedes_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+});
+
+/* -------------------------------------------------------------------------
  * Composite PK helper re-export (not used above but kept available for
  * migration authors / future join tables without re-importing drizzle-orm).
  * ---------------------------------------------------------------------- */

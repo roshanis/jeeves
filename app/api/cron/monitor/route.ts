@@ -26,6 +26,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { getDb } from "@/lib/db/client";
 import { runMonitor } from "@/lib/services/monitor-service";
+import { expireDueExceptions } from "@/lib/services/exception-service";
 import { SYSTEM_ACTOR } from "@/lib/services/actors";
 
 // Kept in sync with app/api/monitor/run/route.ts#DEFAULT_MONITOR_NOW_TS (a
@@ -60,9 +61,14 @@ export async function GET(req: Request): Promise<Response> {
     return Response.json({ error: "nowTs must be a valid ISO-8601 timestamp" }, { status: 400 });
   }
 
-  const result = await runMonitor(getDb(), SYSTEM_ACTOR, nowTs);
+  const db = getDb();
+  const result = await runMonitor(db, SYSTEM_ACTOR, nowTs);
+  // Also expire any control exceptions past their deadline (M4). Expiry is a
+  // real-time deadline, so it uses the wall clock — independent of the
+  // monitor's synthetic telemetry replay point (`nowTs`).
+  const expiredExceptions = await expireDueExceptions(db, Date.now());
   return Response.json(
-    { ranAt: new Date(nowTs).toISOString(), nowTs, ...result },
+    { ranAt: new Date(nowTs).toISOString(), nowTs, expiredExceptions: expiredExceptions.length, ...result },
     { status: 200 },
   );
 }
