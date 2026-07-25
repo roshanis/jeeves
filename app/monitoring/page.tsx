@@ -2,6 +2,10 @@ import Link from "next/link";
 import { getAppProvider, getCurrentWorkspaceId } from "@/app/_lib/data-provider";
 import { getDb } from "@/lib/db/client";
 import { listIncidents, type IncidentListRow } from "@/lib/services/monitor-service";
+import {
+  deploymentWorkspaceMap,
+  isDeploymentVisible,
+} from "@/lib/services/viewer-workspace";
 import type { InitiativeDetail, TelemetrySeries } from "@/lib/data/dto";
 import { SyntheticDataLabel } from "@/components/jeeves/synthetic-data-label";
 import { LifecycleBadge } from "@/components/jeeves/lifecycle-badge";
@@ -40,11 +44,22 @@ function portfolioCostSeries(details: InitiativeDetail[]): PortfolioCostPoint[] 
     .map(([ts, totalUsd]) => ({ ts, totalUsd: Math.round(totalUsd * 100) / 100 }));
 }
 
-async function loadIncidents(): Promise<IncidentListRow[]> {
+// Incidents carry no workspace column of their own — ownership resolves via
+// deploymentId -> initiative.workspaceId (P0 read-isolation pass,
+// external-review finding 2), same filtering GET /api/monitor/incidents
+// applies over HTTP.
+async function loadIncidents(viewerWorkspaceId: string | null): Promise<IncidentListRow[]> {
   const dbMode = process.env.DATA_PROVIDER === "db" || !!process.env.DATABASE_URL;
   if (!dbMode) return [];
   try {
-    return await listIncidents(getDb());
+    const db = getDb();
+    const [incidents, workspaceByDeployment] = await Promise.all([
+      listIncidents(db),
+      deploymentWorkspaceMap(db),
+    ]);
+    return incidents.filter((inc) =>
+      isDeploymentVisible(workspaceByDeployment, inc.deploymentId, viewerWorkspaceId),
+    );
   } catch {
     return [];
   }
@@ -66,7 +81,7 @@ export default async function MonitoringPage() {
   const initiatives = await provider.listInitiatives({ viewerWorkspaceId });
   const [details, incidents] = await Promise.all([
     Promise.all(initiatives.map((i) => provider.getInitiativeDetail(i.slug, { viewerWorkspaceId }))),
-    loadIncidents(),
+    loadIncidents(viewerWorkspaceId),
   ]);
 
   const operating = details

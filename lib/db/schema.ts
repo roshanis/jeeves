@@ -139,24 +139,36 @@ export const reviewDecisions = pgTable(
  * a direct source with approver + conditions + citations.
  * ---------------------------------------------------------------------- */
 
-export const initiativeDecisions = pgTable("initiative_decisions", {
-  id: text("id").primaryKey(),
-  initiativeId: text("initiative_id")
-    .notNull()
-    .references(() => initiatives.id),
-  cycleId: text("cycle_id")
-    .notNull()
-    .references(() => reviewCycles.id),
-  type: text("type").notNull(), // 'approved' | 'conditionally_approved' | 'rejected' | 'fast_lane_approved'
-  approver: text("approver").notNull(),
-  policyId: text("policy_id"), // set for fast_lane_approved
-  citations: jsonb("citations").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
-  conditions: jsonb("conditions")
-    .$type<{ text: string; controlId: string }[]>()
-    .notNull()
-    .default(sql`'[]'::jsonb`),
-  decidedAt: timestamp("decided_at", { withTimezone: true }).notNull(),
-});
+export const initiativeDecisions = pgTable(
+  "initiative_decisions",
+  {
+    id: text("id").primaryKey(),
+    initiativeId: text("initiative_id")
+      .notNull()
+      .references(() => initiatives.id),
+    cycleId: text("cycle_id")
+      .notNull()
+      .references(() => reviewCycles.id),
+    type: text("type").notNull(), // 'approved' | 'conditionally_approved' | 'rejected' | 'fast_lane_approved'
+    approver: text("approver").notNull(),
+    policyId: text("policy_id"), // set for fast_lane_approved
+    citations: jsonb("citations").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+    conditions: jsonb("conditions")
+      .$type<{ text: string; controlId: string }[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    decidedAt: timestamp("decided_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    // Security-hardening pass (external review finding #3 — governance
+    // transitions race under concurrency): at most one initiative-level
+    // decision per review cycle. Paired with decide()'s compare-and-set
+    // UPDATE (lib/services/initiative-service.ts) — this index is the
+    // last-line, DB-enforced backstop against two concurrent decide() calls
+    // both writing a row for the same cycle. See drizzle/0006_initiative_decisions_cycle_uq.sql.
+    uniqueIndex("initiative_decisions_cycle_uq").on(t.cycleId),
+  ],
+);
 
 /* -------------------------------------------------------------------------
  * Deployment versions
@@ -329,24 +341,42 @@ export const sessions = pgTable("sessions", {
  * that cannot currently be met. Request -> approve/reject -> revoke/renew/
  * expire, with separation of duties (requester != decider) and every
  * transition linked to an audit_events row. See migration 0005.
+ *
+ * External-review finding #5 (P1): a renewal opens a second 'requested' row
+ * while the original stays 'approved' (supersession happens later, atomically,
+ * when the renewal is decided — lib/services/exception-service.ts). Two
+ * partial unique indexes (migration 0007) are the DB-level backstop for the
+ * app-layer active-exception check: at most one 'requested' AND at most one
+ * 'approved' row per effective_control_id at a time.
  * ---------------------------------------------------------------------- */
-export const controlExceptions = pgTable("control_exceptions", {
-  id: text("id").primaryKey(),
-  effectiveControlId: text("effective_control_id").notNull(),
-  controlId: text("control_id").notNull(),
-  initiativeId: text("initiative_id"),
-  // 'requested' | 'approved' | 'rejected' | 'revoked' | 'expired'
-  status: text("status").notNull(),
-  reason: text("reason").notNull(),
-  requestedBy: text("requested_by").notNull(),
-  requestedAt: timestamp("requested_at", { withTimezone: true }).notNull(),
-  decidedBy: text("decided_by"),
-  decidedAt: timestamp("decided_at", { withTimezone: true }),
-  decisionReason: text("decision_reason"),
-  expiresAt: bigint("expires_at", { mode: "number" }),
-  supersedesId: text("supersedes_id"),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
-});
+export const controlExceptions = pgTable(
+  "control_exceptions",
+  {
+    id: text("id").primaryKey(),
+    effectiveControlId: text("effective_control_id").notNull(),
+    controlId: text("control_id").notNull(),
+    initiativeId: text("initiative_id"),
+    // 'requested' | 'approved' | 'rejected' | 'revoked' | 'expired' | 'superseded'
+    status: text("status").notNull(),
+    reason: text("reason").notNull(),
+    requestedBy: text("requested_by").notNull(),
+    requestedAt: timestamp("requested_at", { withTimezone: true }).notNull(),
+    decidedBy: text("decided_by"),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    decisionReason: text("decision_reason"),
+    expiresAt: bigint("expires_at", { mode: "number" }),
+    supersedesId: text("supersedes_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    uniqueIndex("control_exceptions_one_requested_uq")
+      .on(t.effectiveControlId)
+      .where(sql`${t.status} = 'requested'`),
+    uniqueIndex("control_exceptions_one_approved_uq")
+      .on(t.effectiveControlId)
+      .where(sql`${t.status} = 'approved'`),
+  ],
+);
 
 /* -------------------------------------------------------------------------
  * Composite PK helper re-export (not used above but kept available for

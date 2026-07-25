@@ -155,15 +155,20 @@ export async function POST(req: Request): Promise<Response> {
   let rows: readonly Readonly<Record<string, unknown>>[];
   let queryUsed: string;
 
+  // Ground only on rows the caller's workspace may see (external-review
+  // finding #2): seeded/shared rows plus the session's own workspace — never
+  // the whole portfolio.
+  const scope = { viewerWorkspaceId: guard.workspaceId };
+
   if (strategy.kind === "canned") {
-    const auditRows: AuditQueryRow[] = await provider.auditQuery(strategy.id);
+    const auditRows: AuditQueryRow[] = await provider.auditQuery(strategy.id, scope);
     rows = auditRows as unknown as Readonly<Record<string, unknown>>[];
     queryUsed = strategy.id;
   } else {
     // Structured-read fallback: the question appears to name a specific
     // initiative not necessarily covered well by a canned query — ground on
     // that initiative's own audit event history instead.
-    const detail = await provider.getInitiativeDetail(strategy.slug);
+    const detail = await provider.getInitiativeDetail(strategy.slug, scope);
     if (detail) {
       rows = detail.events as unknown as Readonly<Record<string, unknown>>[];
       queryUsed = `initiative-events:${strategy.slug}`;
@@ -171,7 +176,7 @@ export async function POST(req: Request): Promise<Response> {
       // The "slug" we matched wasn't a real initiative — fall back to the
       // documented default canned query rather than returning an empty
       // grounding set for a plausible-looking but wrong guess.
-      const auditRows: AuditQueryRow[] = await provider.auditQuery("member-facing-phi");
+      const auditRows: AuditQueryRow[] = await provider.auditQuery("member-facing-phi", scope);
       rows = auditRows as unknown as Readonly<Record<string, unknown>>[];
       queryUsed = "member-facing-phi";
     }

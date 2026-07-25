@@ -26,6 +26,7 @@ import type { DataProvider } from "@/lib/data/provider";
 import type { InitiativeDetail, InitiativeSummary } from "@/lib/data/dto";
 import { getProvider } from "@/lib/data";
 import { DbDataProvider } from "@/lib/data/db-provider";
+import { resolveWorkspaceCookieSecret, verifyWorkspaceCookie } from "@/lib/security/workspace-cookie";
 
 const WORKSPACE_COOKIE = "jeeves_workspace";
 
@@ -48,10 +49,17 @@ export function getAppProvider(): DataProvider {
  * visitor (M2.5 inc.2b). This reads the `jeeves_workspace` cookie set by
  * POST /api/session — it is a READ-SCOPING hint, never an auth credential.
  * null => seeded-only; a value => seeded + that workspace's live-created rows.
+ *
+ * Security-hardening pass: POST /api/session now signs this cookie
+ * (lib/security/workspace-cookie.ts) so a caller cannot simply set an
+ * arbitrary `jeeves_workspace` value to read another workspace's
+ * live-created rows. Verified here the same way; an invalid/unsigned/
+ * tampered cookie degrades to null (seeded-only view), never an error.
  */
 export async function getCurrentWorkspaceId(): Promise<string | null> {
   const cookieStore = await cookies();
-  return cookieStore.get(WORKSPACE_COOKIE)?.value ?? null;
+  const raw = cookieStore.get(WORKSPACE_COOKIE)?.value ?? null;
+  return verifyWorkspaceCookie(raw, resolveWorkspaceCookieSecret());
 }
 
 /** `listInitiatives` scoped to the current viewer's workspace (seeded + own). */

@@ -7,11 +7,14 @@
  * version, and writes two audit events transactionally. Mirrors
  * lib/services/admin-service.test.ts's direct-DB, no-HTTP test convention.
  */
+import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { createTestDb, closeTestDb, type TestDb } from "../db/test-client";
 import { seedDatabase } from "../../scripts/seed";
 import { auditEvents, deploymentVersions, initiatives } from "../db/schema";
+import { createDraft } from "./initiative-service";
+import { CHAMPION_PREFILL_PAYLOAD } from "../intake/champion-prefill";
 import {
   listPromotions,
   promoteCheckpoint,
@@ -231,6 +234,7 @@ describe("lib/services/promotion-service", () => {
         db,
         initiativeId,
         APPROVER,
+        null,
         priorId,
         "Rolling back due to regression in v2.0 correspondence quality.",
       );
@@ -262,7 +266,7 @@ describe("lib/services/promotion-service", () => {
       const initiativeId = await paCorrespondenceModelId(db);
       const priorId = await seedPriorRetiredVersion(initiativeId);
 
-      const result = await rollbackDeployment(db, initiativeId, ADMIN, priorId, "Admin-initiated rollback.");
+      const result = await rollbackDeployment(db, initiativeId, ADMIN, null, priorId, "Admin-initiated rollback.");
       expect(result.status).toBe("deployed");
     });
 
@@ -271,7 +275,7 @@ describe("lib/services/promotion-service", () => {
       const priorId = await seedPriorRetiredVersion(initiativeId);
 
       await expect(
-        rollbackDeployment(db, initiativeId, REVIEWER, priorId, "reason"),
+        rollbackDeployment(db, initiativeId, REVIEWER, null, priorId, "reason"),
       ).rejects.toThrow(ForbiddenError);
     });
 
@@ -279,14 +283,14 @@ describe("lib/services/promotion-service", () => {
       const initiativeId = await paCorrespondenceModelId(db);
       const priorId = await seedPriorRetiredVersion(initiativeId);
 
-      await expect(rollbackDeployment(db, initiativeId, APPROVER, priorId, "  ")).rejects.toThrow(
+      await expect(rollbackDeployment(db, initiativeId, APPROVER, null, priorId, "  ")).rejects.toThrow(
         ValidationError,
       );
     });
 
     it("throws NotFoundError for an unknown initiative id", async () => {
       await expect(
-        rollbackDeployment(db, "init-does-not-exist", APPROVER, "dep-does-not-exist", "reason"),
+        rollbackDeployment(db, "init-does-not-exist", APPROVER, null, "dep-does-not-exist", "reason"),
       ).rejects.toThrow(NotFoundError);
     });
 
@@ -298,7 +302,7 @@ describe("lib/services/promotion-service", () => {
       expect(rows.length).toBe(1);
 
       await expect(
-        rollbackDeployment(db, init!.id, APPROVER, "dep-does-not-exist", "reason"),
+        rollbackDeployment(db, init!.id, APPROVER, null, "dep-does-not-exist", "reason"),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -308,7 +312,7 @@ describe("lib/services/promotion-service", () => {
       const v20 = rows.find((d) => d.version === "v2.0")!;
 
       await expect(
-        rollbackDeployment(db, initiativeId, APPROVER, v20.id, "reason"),
+        rollbackDeployment(db, initiativeId, APPROVER, null, v20.id, "reason"),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -317,8 +321,92 @@ describe("lib/services/promotion-service", () => {
       await seedPriorRetiredVersion(initiativeId);
 
       await expect(
-        rollbackDeployment(db, initiativeId, APPROVER, "dep-does-not-exist", "reason"),
+        rollbackDeployment(db, initiativeId, APPROVER, null, "dep-does-not-exist", "reason"),
       ).rejects.toThrow(NotFoundError);
+    });
+  });
+
+  /* -----------------------------------------------------------------------
+   * Security-hardening pass — external-review finding #1: workspace
+   * isolation is not an authorization boundary on mutations.
+   * -------------------------------------------------------------------- */
+  describe("rollbackDeployment — workspace authorization", () => {
+    /** A fresh initiative + two deployment_versions rows (deployed + retired), tagged with `workspaceId`. */
+    async function initiativeWithDeploymentsInWorkspace(
+      workspaceId: string | null,
+    ): Promise<{ initiativeId: string; currentId: string; priorId: string }> {
+      const draft = await createDraft(db, {
+        payload: CHAMPION_PREFILL_PAYLOAD,
+        requesterActor: { id: "priya-raman", role: "requester" },
+        requesterName: "Priya Raman",
+        workspaceId,
+      });
+      const priorId = `dep-prior-${randomUUID()}`;
+      const currentId = `dep-current-${randomUUID()}`;
+      await db.insert(deploymentVersions).values({
+        id: priorId,
+        initiativeId: draft.initiativeId,
+        version: "v1.0",
+        status: "retired",
+        modelVersion: null,
+        selfHosted: false,
+        feedbackProvenanceSignedOff: false,
+        deployedAt: new Date(Date.now() - 100_000),
+        pausedAt: null,
+        retiredAt: new Date(),
+      });
+      await db.insert(deploymentVersions).values({
+        id: currentId,
+        initiativeId: draft.initiativeId,
+        version: "v2.0",
+        status: "deployed",
+        modelVersion: null,
+        selfHosted: false,
+        feedbackProvenanceSignedOff: false,
+        deployedAt: new Date(),
+        pausedAt: null,
+        retiredAt: null,
+      });
+      return { initiativeId: draft.initiativeId, currentId, priorId };
+    }
+
+    it("a mismatched workspace session gets NotFoundError (same shape as unknown id)", async () => {
+      const { initiativeId, priorId } = await initiativeWithDeploymentsInWorkspace("ws-A");
+      await expect(
+        rollbackDeployment(db, initiativeId, APPROVER, "ws-B", priorId, "reason"),
+      ).rejects.toThrow(NotFoundError);
+      await expect(
+        rollbackDeployment(db, initiativeId, APPROVER, "ws-B", priorId, "reason"),
+      ).rejects.toThrow(`initiative not found: ${initiativeId}`);
+    });
+
+    it("the owning workspace session succeeds", async () => {
+      const { initiativeId, priorId } = await initiativeWithDeploymentsInWorkspace("ws-A");
+      const result = await rollbackDeployment(db, initiativeId, APPROVER, "ws-A", priorId, "reason");
+      expect(result.status).toBe("deployed");
+    });
+
+    it("a null-workspace session cannot roll back a workspace-tagged initiative", async () => {
+      const { initiativeId, priorId } = await initiativeWithDeploymentsInWorkspace("ws-A");
+      await expect(
+        rollbackDeployment(db, initiativeId, APPROVER, null, priorId, "reason"),
+      ).rejects.toThrow(NotFoundError);
+    });
+
+    it("a seeded (null-workspace) initiative is rollback-able from ANY session workspace", async () => {
+      const { initiativeId, priorId } = await initiativeWithDeploymentsInWorkspace(null);
+      const result = await rollbackDeployment(db, initiativeId, APPROVER, "ws-anything", priorId, "reason");
+      expect(result.status).toBe("deployed");
+    });
+
+    it("no partial write happens on a workspace-mismatch rejection", async () => {
+      const { initiativeId, currentId, priorId } = await initiativeWithDeploymentsInWorkspace("ws-A");
+      await expect(
+        rollbackDeployment(db, initiativeId, APPROVER, "ws-B", priorId, "reason"),
+      ).rejects.toThrow(NotFoundError);
+      const rows = await db.select().from(deploymentVersions).where(eq(deploymentVersions.initiativeId, initiativeId));
+      expect(rows.find((d) => d.id === currentId)!.status).toBe("deployed"); // unchanged
+      expect(rows.find((d) => d.id === priorId)!.status).toBe("retired"); // unchanged
     });
   });
 });

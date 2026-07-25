@@ -28,7 +28,7 @@
  * rather than silently working around it.
  */
 import { randomUUID } from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import type { Db } from "../db/client";
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import type * as schema from "../db/schema";
@@ -55,6 +55,7 @@ import { requiredDomains } from "../triage/routing";
 import { fastLaneEligibility } from "../approval/eligibility";
 import { applicabilityApplies } from "./applicability";
 import { ACTOR_DIRECTORY, FAST_LANE_POLICY, SYSTEM_ACTOR, isPersonaKey, reviewerDomainFor } from "./actors";
+import { workspaceMismatch } from "./workspace-guard";
 
 /* -------------------------------------------------------------------------
  * Shared errors
@@ -73,6 +74,36 @@ export class ValidationError extends Error {
     super(message);
     this.name = "ValidationError";
     this.issues = issues;
+  }
+}
+
+/**
+ * Thrown when a compare-and-set UPDATE affects 0 rows because the row's
+ * state changed between this transaction's read and its write (security-
+ * hardening pass, external-review finding #3: "governance transitions race
+ * under concurrency"). Route handlers map this to HTTP 409.
+ */
+export class ConflictError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ConflictError";
+  }
+}
+
+/**
+ * Workspace-authorization guard (external-review finding #1): throws the
+ * SAME `NotFoundError` shape used for an unknown id when `resource`'s
+ * workspace doesn't match the acting session's — a workspace mismatch must
+ * never be distinguishable from "this id doesn't exist".
+ */
+function assertWorkspaceAccess(
+  resourceWorkspaceId: string | null,
+  sessionWorkspaceId: string | null,
+  entity: string,
+  id: string,
+): void {
+  if (workspaceMismatch(resourceWorkspaceId, sessionWorkspaceId)) {
+    throw new NotFoundError(entity, id);
   }
 }
 
@@ -524,6 +555,16 @@ export async function triage(
         decidedAt: new Date(nowTs()),
       });
 
+      // Live parity with seeded fast-lane initiatives (external-review
+      // finding #4): seed-spec #2 (marketing-ab-tester) carries
+      // effective_controls against a deployment row, so a LIVE fast-lane
+      // approval generates them too — same inner call `decide()` uses for
+      // approved/conditionally_approved, run inside this same transaction.
+      // Not surfaced on `TriageFastLaneResult` (kept additive/minimal on
+      // the client-facing type); callers that need it read the DB/UI, same
+      // as every other side effect of triage().
+      await generateEffectiveControlsInTx(tx, initiativeId);
+
       return {
         branch: "fast-lane",
         tier,
@@ -626,12 +667,34 @@ export async function signReview(
   cycleId: string,
   domain: Domain,
   actor: Actor,
+  sessionWorkspaceId: string | null,
   editedDraftMd?: string,
 ): Promise<SignReviewResult> {
   requireReviewerRole(actor);
   requireReviewerDomainMatch(actor, domain);
   return db.transaction(async (tx) => {
     const decision = await loadReviewDecisionOrThrow(tx, cycleId, domain);
+
+    // Resolve the owning initiative's workspace up front (also needed below
+    // for the audit event's initiativeId — one lookup, reused) and enforce
+    // workspace authorization BEFORE any business-logic validation.
+    const cycle = await tx.select().from(reviewCycles).where(eq(reviewCycles.id, cycleId));
+    const initiativeId = cycle[0]?.initiativeId ?? null;
+    if (initiativeId) {
+      const [initiative] = await tx
+        .select({ workspaceId: initiatives.workspaceId })
+        .from(initiatives)
+        .where(eq(initiatives.id, initiativeId));
+      if (initiative) {
+        assertWorkspaceAccess(
+          initiative.workspaceId,
+          sessionWorkspaceId,
+          "reviewDecision",
+          `${cycleId}/${domain}`,
+        );
+      }
+    }
+
     if (decision.status === "signed") {
       throw new ValidationError(`review for ${domain} in cycle ${cycleId} is already signed`);
     }
@@ -640,13 +703,18 @@ export async function signReview(
       throw new ValidationError(`cannot sign ${domain} in cycle ${cycleId}: no draft content`);
     }
 
-    await tx
+    // Compare-and-set (external-review finding #3): only write if the row's
+    // status is still what THIS transaction observed it to be.
+    const updated = await tx
       .update(reviewDecisions)
       .set({ status: "signed", reviewer: actor.id, draftMd, signedAt: new Date(nowTs()) })
-      .where(eq(reviewDecisions.id, decision.id));
-
-    const cycle = await tx.select().from(reviewCycles).where(eq(reviewCycles.id, cycleId));
-    const initiativeId = cycle[0]?.initiativeId ?? null;
+      .where(and(eq(reviewDecisions.id, decision.id), eq(reviewDecisions.status, decision.status)))
+      .returning();
+    if (updated.length === 0) {
+      throw new ConflictError(
+        `review ${domain} in cycle ${cycleId} changed concurrently (expected status '${decision.status}')`,
+      );
+    }
 
     await tx.insert(auditEvents).values({
       id: `evt-${randomUUID()}`,
@@ -677,6 +745,7 @@ export async function returnReview(
   cycleId: string,
   domain: Domain,
   actor: Actor,
+  sessionWorkspaceId: string | null,
   reason: string,
 ): Promise<ReturnReviewResult> {
   requireReviewerRole(actor);
@@ -687,13 +756,33 @@ export async function returnReview(
   return db.transaction(async (tx) => {
     const decision = await loadReviewDecisionOrThrow(tx, cycleId, domain);
 
-    await tx
-      .update(reviewDecisions)
-      .set({ status: "returned", reviewer: actor.id, returnReason: reason })
-      .where(eq(reviewDecisions.id, decision.id));
-
     const cycle = await tx.select().from(reviewCycles).where(eq(reviewCycles.id, cycleId));
     const initiativeId = cycle[0]?.initiativeId ?? null;
+    if (initiativeId) {
+      const [initiative] = await tx
+        .select({ workspaceId: initiatives.workspaceId })
+        .from(initiatives)
+        .where(eq(initiatives.id, initiativeId));
+      if (initiative) {
+        assertWorkspaceAccess(
+          initiative.workspaceId,
+          sessionWorkspaceId,
+          "reviewDecision",
+          `${cycleId}/${domain}`,
+        );
+      }
+    }
+
+    const updated = await tx
+      .update(reviewDecisions)
+      .set({ status: "returned", reviewer: actor.id, returnReason: reason })
+      .where(and(eq(reviewDecisions.id, decision.id), eq(reviewDecisions.status, decision.status)))
+      .returning();
+    if (updated.length === 0) {
+      throw new ConflictError(
+        `review ${domain} in cycle ${cycleId} changed concurrently (expected status '${decision.status}')`,
+      );
+    }
 
     await tx.insert(auditEvents).values({
       id: `evt-${randomUUID()}`,
@@ -749,6 +838,7 @@ export async function runReviewAgent(
   cycleId: string,
   domain: Domain,
   actor: Actor,
+  sessionWorkspaceId: string | null,
   /** Overridable for tests (inject a fake AgentPort); defaults to the real port inside runSingleDomainDraft. */
   port?: AgentPort,
 ): Promise<RunReviewAgentResult> {
@@ -762,6 +852,27 @@ export async function runReviewAgent(
     .where(and(eq(reviewDecisions.cycleId, cycleId), eq(reviewDecisions.domain, domain)));
   const decision = decisionRows[0];
   if (!decision) throw new NotFoundError("reviewDecision", `${cycleId}/${domain}`);
+
+  // Not wrapped in a transaction (see file comment above) — best-effort
+  // workspace check against the current committed state, same as every
+  // other read/write in this function.
+  const cycleRows = await db.select().from(reviewCycles).where(eq(reviewCycles.id, cycleId));
+  const initiativeId = cycleRows[0]?.initiativeId ?? null;
+  if (initiativeId) {
+    const [initiative] = await db
+      .select({ workspaceId: initiatives.workspaceId })
+      .from(initiatives)
+      .where(eq(initiatives.id, initiativeId));
+    if (initiative) {
+      assertWorkspaceAccess(
+        initiative.workspaceId,
+        sessionWorkspaceId,
+        "reviewDecision",
+        `${cycleId}/${domain}`,
+      );
+    }
+  }
+
   if (decision.status === "signed") {
     throw new ValidationError(
       `review for ${domain} in cycle ${cycleId} is already signed; return it before re-drafting`,
@@ -769,9 +880,6 @@ export async function runReviewAgent(
   }
 
   const outcome = await runSingleDomainDraft(db, cycleId, domain, port);
-
-  const cycleRows = await db.select().from(reviewCycles).where(eq(reviewCycles.id, cycleId));
-  const initiativeId = cycleRows[0]?.initiativeId ?? null;
   await db.insert(auditEvents).values({
     id: `evt-${randomUUID()}`,
     initiativeId,
@@ -808,6 +916,15 @@ export interface DecideResult {
   decisionId: string;
   type: DecisionType;
   after: LifecycleState;
+  /**
+   * Present only when `type` is `approved` or `conditionally_approved`
+   * (external-review finding #4: "the live champion workflow stops before
+   * control generation") — the effective-controls generation `decide()` now
+   * runs itself, in the SAME transaction as the decision, right after the
+   * decision row + closed cycle + audit event. Absent for `rejected`:
+   * nothing to control.
+   */
+  controlsGenerated?: { deploymentId: string; created: number };
 }
 
 const DECISION_TO_ACTION = {
@@ -827,6 +944,7 @@ export async function decide(
   db: Db,
   initiativeId: string,
   actor: Actor,
+  sessionWorkspaceId: string | null,
   input: DecideInput,
 ): Promise<DecideResult> {
   const { decision, conditions = [], citations = [] } = input;
@@ -836,6 +954,7 @@ export async function decide(
 
   return db.transaction(async (tx) => {
     const initiative = await loadInitiativeOrThrow(tx, initiativeId);
+    assertWorkspaceAccess(initiative.workspaceId, sessionWorkspaceId, "initiative", initiativeId);
     const cycle = await latestReviewCycle(tx, initiativeId);
     if (!cycle) {
       throw new ValidationError("initiative has no review cycle to decide on");
@@ -872,9 +991,28 @@ export async function decide(
       }
     }
 
-    await updateInitiativeState(tx, initiativeId, result.after, {
-      accountableApprover: actor.id,
-    });
+    // Compare-and-set (external-review finding #3 — "governance transitions
+    // race under concurrency"): only advance the initiative's state if it is
+    // STILL the state this transaction read at the top (`initiative.state`).
+    // Two concurrent decide() calls both reading 'in_review' would, without
+    // this predicate, both pass transition()/completeness above and both
+    // write — one silently clobbering the other's decision. Combined with
+    // the `initiative_decisions_cycle_uq` unique index (migration 0006),
+    // this makes a second concurrent decide() fail loudly instead.
+    const updatedInitiative = await tx
+      .update(initiatives)
+      .set({
+        state: result.after,
+        accountableApprover: actor.id,
+        updatedAt: new Date(nowTs()),
+      })
+      .where(and(eq(initiatives.id, initiativeId), eq(initiatives.state, initiative.state)))
+      .returning();
+    if (updatedInitiative.length === 0) {
+      throw new ConflictError(
+        `initiative ${initiativeId} changed concurrently (expected state '${initiative.state}')`,
+      );
+    }
 
     const decisionId = `decision-${randomUUID()}`;
     await tx.insert(initiativeDecisions).values({
@@ -889,7 +1027,14 @@ export async function decide(
       decidedAt: new Date(nowTs()),
     });
 
-    await tx.update(reviewCycles).set({ closedAt: new Date(nowTs()) }).where(eq(reviewCycles.id, cycle.id));
+    const closedCycle = await tx
+      .update(reviewCycles)
+      .set({ closedAt: new Date(nowTs()) })
+      .where(and(eq(reviewCycles.id, cycle.id), isNull(reviewCycles.closedAt)))
+      .returning();
+    if (closedCycle.length === 0) {
+      throw new ConflictError(`review cycle ${cycle.id} was already closed concurrently`);
+    }
 
     await insertAuditEvent(
       tx,
@@ -899,7 +1044,25 @@ export async function decide(
       { conditions, citations },
     );
 
-    return { initiativeId, decisionId, type: decision, after: result.after };
+    // External-review finding #4 ("the live champion workflow stops before
+    // control generation"): approved/conditionally_approved decisions
+    // generate the deployment's effective controls right here, in the SAME
+    // transaction as the decision — a decision recorded with no controls
+    // (or vice versa) must never be observable. `rejected` has nothing to
+    // control, so it's skipped. Runs through `generateEffectiveControlsInTx`
+    // (section 6 below) rather than the standalone `generateEffectiveControls`
+    // export, which opens its OWN transaction and would defeat the
+    // atomicity this fixes.
+    let controlsGenerated: DecideResult["controlsGenerated"];
+    if (decision === "approved" || decision === "conditionally_approved") {
+      const controlsResult = await generateEffectiveControlsInTx(tx, initiativeId);
+      controlsGenerated = {
+        deploymentId: controlsResult.deploymentId,
+        created: controlsResult.created.length,
+      };
+    }
+
+    return { initiativeId, decisionId, type: decision, after: result.after, controlsGenerated };
   });
 }
 
@@ -924,97 +1087,117 @@ export interface GenerateEffectiveControlsResult {
  * approval, before any `deploy` transition) has somewhere to attach them —
  * matching seed-spec #8's shape (conditionally approved, no deployment
  * seeded yet).
+ *
+ * Takes a transaction-scoped `tx` rather than opening its own — callers that
+ * need this as part of a larger atomic write (`decide()`'s post-decision
+ * transition, `triage()`'s fast-lane branch — external-review finding #4)
+ * call this directly inside their own `db.transaction()`. The standalone
+ * `generateEffectiveControls` export below is a thin wrapper for callers
+ * that are NOT already inside a transaction.
+ */
+async function generateEffectiveControlsInTx(
+  tx: Tx,
+  initiativeId: string,
+): Promise<GenerateEffectiveControlsResult> {
+  const initiative = await loadInitiativeOrThrow(tx, initiativeId);
+  const ra = await latestRiskAssessment(tx, initiativeId);
+  if (!ra) {
+    throw new ValidationError("initiative has no risk assessment; run triage() first");
+  }
+  const tier = ra.tier as Tier;
+  const flags = ra.flags as unknown as OverlayFlags;
+
+  const defs = await tx.select().from(controlDefinitions);
+  const applicable = defs.filter(
+    (d) => d.domain !== "runtime" && applicabilityApplies(d.applicability, tier, flags),
+  );
+
+  const deploymentRows = await tx
+    .select()
+    .from(deploymentVersions)
+    .where(eq(deploymentVersions.initiativeId, initiativeId));
+  let deployment = deploymentRows.slice().sort((a, b) => b.deployedAt.getTime() - a.deployedAt.getTime())[0];
+  if (!deployment) {
+    const deploymentId = `dep-${randomUUID()}`;
+    const ts = new Date(nowTs());
+    await tx.insert(deploymentVersions).values({
+      id: deploymentId,
+      initiativeId,
+      version: "v1.0",
+      status: "awaiting_promotion_signoff",
+      modelVersion: null,
+      selfHosted: false,
+      feedbackProvenanceSignedOff: false,
+      deployedAt: ts,
+      pausedAt: null,
+      retiredAt: null,
+    });
+    deployment = {
+      id: deploymentId,
+      initiativeId,
+      version: "v1.0",
+      status: "awaiting_promotion_signoff",
+      modelVersion: null,
+      selfHosted: false,
+      feedbackProvenanceSignedOff: false,
+      deployedAt: ts,
+      pausedAt: null,
+      retiredAt: null,
+    };
+  }
+
+  const existingEcs = await tx
+    .select()
+    .from(effectiveControls)
+    .where(eq(effectiveControls.deploymentId, deployment.id));
+
+  const created: { controlId: string; version: number }[] = [];
+  for (const def of applicable) {
+    const priorVersions = existingEcs.filter((ec) => ec.controlId === def.id).map((ec) => ec.version);
+    const nextVersion = priorVersions.length === 0 ? 1 : Math.max(...priorVersions) + 1;
+    await tx.insert(effectiveControls).values({
+      id: `ec-${randomUUID()}`,
+      deploymentId: deployment.id,
+      controlId: def.id,
+      version: nextVersion,
+      status: "pending",
+      thresholdOverride: null,
+      evidence: null,
+      evidenceAt: null,
+      dueAt: null,
+      remediationOwner: def.remediationOwner,
+      createdAt: new Date(nowTs()),
+    });
+    created.push({ controlId: def.id, version: nextVersion });
+  }
+
+  await tx.insert(auditEvents).values({
+    id: `evt-${randomUUID()}`,
+    initiativeId,
+    ts: new Date(nowTs()),
+    actor: SYSTEM_ACTOR.id,
+    actorRole: SYSTEM_ACTOR.role,
+    action: "effective_controls_generated",
+    detail: `Generated ${created.length} effective control(s) for deployment ${deployment.id} (tier=${initiative.tier}).`,
+    before: null,
+    after: null,
+    metadata: { controlIds: created.map((c) => c.controlId) },
+  });
+
+  return { deploymentId: deployment.id, created };
+}
+
+/**
+ * Standalone entry point — a thin wrapper around `generateEffectiveControlsInTx`
+ * for callers that are NOT already inside a `db.transaction()` (pre-existing
+ * direct callers/tests, and any future ad-hoc "regenerate controls" action).
+ * `decide()` and `triage()`'s fast-lane branch call the inner function
+ * directly instead, so control-generation shares their transaction rather
+ * than opening a second one.
  */
 export async function generateEffectiveControls(
   db: Db,
   initiativeId: string,
 ): Promise<GenerateEffectiveControlsResult> {
-  return db.transaction(async (tx) => {
-    const initiative = await loadInitiativeOrThrow(tx, initiativeId);
-    const ra = await latestRiskAssessment(tx, initiativeId);
-    if (!ra) {
-      throw new ValidationError("initiative has no risk assessment; run triage() first");
-    }
-    const tier = ra.tier as Tier;
-    const flags = ra.flags as unknown as OverlayFlags;
-
-    const defs = await tx.select().from(controlDefinitions);
-    const applicable = defs.filter(
-      (d) => d.domain !== "runtime" && applicabilityApplies(d.applicability, tier, flags),
-    );
-
-    const deploymentRows = await tx
-      .select()
-      .from(deploymentVersions)
-      .where(eq(deploymentVersions.initiativeId, initiativeId));
-    let deployment = deploymentRows.slice().sort((a, b) => b.deployedAt.getTime() - a.deployedAt.getTime())[0];
-    if (!deployment) {
-      const deploymentId = `dep-${randomUUID()}`;
-      const ts = new Date(nowTs());
-      await tx.insert(deploymentVersions).values({
-        id: deploymentId,
-        initiativeId,
-        version: "v1.0",
-        status: "awaiting_promotion_signoff",
-        modelVersion: null,
-        selfHosted: false,
-        feedbackProvenanceSignedOff: false,
-        deployedAt: ts,
-        pausedAt: null,
-        retiredAt: null,
-      });
-      deployment = {
-        id: deploymentId,
-        initiativeId,
-        version: "v1.0",
-        status: "awaiting_promotion_signoff",
-        modelVersion: null,
-        selfHosted: false,
-        feedbackProvenanceSignedOff: false,
-        deployedAt: ts,
-        pausedAt: null,
-        retiredAt: null,
-      };
-    }
-
-    const existingEcs = await tx
-      .select()
-      .from(effectiveControls)
-      .where(eq(effectiveControls.deploymentId, deployment.id));
-
-    const created: { controlId: string; version: number }[] = [];
-    for (const def of applicable) {
-      const priorVersions = existingEcs.filter((ec) => ec.controlId === def.id).map((ec) => ec.version);
-      const nextVersion = priorVersions.length === 0 ? 1 : Math.max(...priorVersions) + 1;
-      await tx.insert(effectiveControls).values({
-        id: `ec-${randomUUID()}`,
-        deploymentId: deployment.id,
-        controlId: def.id,
-        version: nextVersion,
-        status: "pending",
-        thresholdOverride: null,
-        evidence: null,
-        evidenceAt: null,
-        dueAt: null,
-        remediationOwner: def.remediationOwner,
-        createdAt: new Date(nowTs()),
-      });
-      created.push({ controlId: def.id, version: nextVersion });
-    }
-
-    await tx.insert(auditEvents).values({
-      id: `evt-${randomUUID()}`,
-      initiativeId,
-      ts: new Date(nowTs()),
-      actor: SYSTEM_ACTOR.id,
-      actorRole: SYSTEM_ACTOR.role,
-      action: "effective_controls_generated",
-      detail: `Generated ${created.length} effective control(s) for deployment ${deployment.id} (tier=${initiative.tier}).`,
-      before: null,
-      after: null,
-      metadata: { controlIds: created.map((c) => c.controlId) },
-    });
-
-    return { deploymentId: deployment.id, created };
-  });
+  return db.transaction((tx) => generateEffectiveControlsInTx(tx, initiativeId));
 }

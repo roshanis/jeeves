@@ -161,6 +161,13 @@ export interface DecideResult {
   decisionId: string;
   type: DecisionType;
   after: LifecycleState;
+  /**
+   * Present only for approved/conditionally_approved decisions (external-
+   * review finding #4): decide() now generates the deployment's effective
+   * controls itself, atomically with the decision. Mirrors
+   * lib/services/initiative-service.ts#DecideResult.
+   */
+  controlsGenerated?: { deploymentId: string; created: number };
 }
 
 /* --- P3 monitor + admin actions (app/api/monitor/**, app/api/admin/**) --- */
@@ -571,7 +578,7 @@ export function testAgentConnection(token: string): Promise<ConnectorHealth> {
 
 /* --- M4 control-exception workflow (app/api/exceptions/**) --- */
 
-export type ExceptionStatus = "requested" | "approved" | "rejected" | "revoked" | "expired";
+export type ExceptionStatus = "requested" | "approved" | "rejected" | "revoked" | "expired" | "superseded";
 
 /** Mirrors lib/services/exception-service.ts#ExceptionRow (wire shape). */
 export interface ExceptionRow {

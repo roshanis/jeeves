@@ -1,6 +1,10 @@
 import { getAppProvider, getCurrentWorkspaceId } from "@/app/_lib/data-provider";
 import { getDb } from "@/lib/db/client";
 import { listIncidents, type IncidentListRow } from "@/lib/services/monitor-service";
+import {
+  deploymentWorkspaceMap,
+  isDeploymentVisible,
+} from "@/lib/services/viewer-workspace";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -26,12 +30,23 @@ import type { ThresholdInitiativeOption } from "@/components/jeeves/threshold-ed
 
 // Incidents come from the DB (post-breach). In mock/read-only mode there is no
 // DB to query, so we skip the fetch entirely and render the empty state.
-async function loadIncidents(): Promise<IncidentListRow[]> {
+// Incidents carry no workspace column of their own — ownership resolves via
+// deploymentId -> initiative.workspaceId (P0 read-isolation pass,
+// external-review finding 2), same filtering GET /api/monitor/incidents
+// applies over HTTP.
+async function loadIncidents(viewerWorkspaceId: string | null): Promise<IncidentListRow[]> {
   const dbMode =
     process.env.DATA_PROVIDER === "db" || !!process.env.DATABASE_URL;
   if (!dbMode) return [];
   try {
-    return await listIncidents(getDb());
+    const db = getDb();
+    const [incidents, workspaceByDeployment] = await Promise.all([
+      listIncidents(db),
+      deploymentWorkspaceMap(db),
+    ]);
+    return incidents.filter((inc) =>
+      isDeploymentVisible(workspaceByDeployment, inc.deploymentId, viewerWorkspaceId),
+    );
   } catch {
     // A missing/unseeded store must not crash the console.
     return [];
@@ -42,10 +57,10 @@ export default async function AdminPage() {
   const provider = getAppProvider();
   const viewerWorkspaceId = await getCurrentWorkspaceId();
   const [catalog, initiatives, q01Changes, incidents] = await Promise.all([
-    provider.controlCatalog(),
+    provider.controlCatalog({ viewerWorkspaceId }),
     provider.listInitiatives({ viewerWorkspaceId }),
-    provider.auditQuery("q01-control-changes"),
-    loadIncidents(),
+    provider.auditQuery("q01-control-changes", { viewerWorkspaceId }),
+    loadIncidents(viewerWorkspaceId),
   ]);
 
   const q01 = catalog.find((c) => c.id === "Q-01");

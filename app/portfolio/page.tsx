@@ -9,7 +9,7 @@ export default async function PortfolioPage() {
   const viewerWorkspaceId = await getCurrentWorkspaceId();
   const [initiatives, metrics] = await Promise.all([
     provider.listInitiatives({ viewerWorkspaceId }),
-    provider.outcomeMetrics(),
+    provider.outcomeMetrics({ viewerWorkspaceId }),
   ]);
 
   return (

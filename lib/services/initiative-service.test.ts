@@ -1,11 +1,21 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTestDb, closeTestDb, type TestDb } from "../db/test-client";
 import { CHAMPION_PREFILL_PAYLOAD } from "../intake/champion-prefill";
 import type { IntakePayload } from "../intake/types";
-import { auditEvents, controlDefinitions, effectiveControls, initiatives, reviewDecisions } from "../db/schema";
+import {
+  auditEvents,
+  controlDefinitions,
+  deploymentVersions,
+  effectiveControls,
+  initiativeDecisions,
+  initiatives,
+  reviewCycles,
+  reviewDecisions,
+  riskAssessments,
+} from "../db/schema";
 import { eq } from "drizzle-orm";
 import { CONTROL_SEEDS } from "../../scripts/seed";
-import { IllegalTransitionError, NotFoundError, ValidationError } from "./initiative-service";
+import { ConflictError, IllegalTransitionError, NotFoundError, ValidationError } from "./initiative-service";
 import * as svc from "./initiative-service";
 import { SYSTEM_ACTOR } from "./actors";
 import { createMockAgentPort } from "../agents/mock-adapter";
@@ -129,6 +139,7 @@ describe("lib/services/initiative-service", () => {
         triageResult.cycleId,
         "clinical-safety",
         REVIEWER,
+        null,
         "Edited clinical safety assessment — reviewer approved with edits.",
       );
       expect(signResult.status).toBe("signed");
@@ -140,7 +151,7 @@ describe("lib/services/initiative-service", () => {
       expect(signedRow.reviewer).toBe(REVIEWER.id);
       expect(signedRow.draftMd).toContain("reviewer approved with edits");
 
-      const decideResult = await svc.decide(db, draft.initiativeId, APPROVER, {
+      const decideResult = await svc.decide(db, draft.initiativeId, APPROVER, null, {
         decision: "conditionally_approved",
         conditions: [
           { text: "100% human review for 90 days.", controlId: "C-01" },
@@ -156,18 +167,32 @@ describe("lib/services/initiative-service", () => {
       expect(afterDecide.state).toBe("conditionally_approved");
       expect(afterDecide.accountableApprover).toBe(APPROVER.id);
 
-      const controlsResult = await svc.generateEffectiveControls(db, draft.initiativeId);
-      expect(controlsResult.created.length).toBeGreaterThan(0);
-      // Critical tier + PHI + vendor + member-facing + care-coverage -> expect a broad set incl. H-01/H-02, C-01/C-02.
-      const controlIds = controlsResult.created.map((c) => c.controlId);
-      expect(controlIds).toEqual(expect.arrayContaining(["H-01", "C-01", "C-02", "L-01"]));
-      expect(controlsResult.created.every((c) => c.version === 1)).toBe(true);
+      // External-review finding #4 ("live champion workflow stops before
+      // control generation"): decide() now generates the deployment's
+      // effective controls itself, in the SAME transaction as the decision
+      // — no separate generateEffectiveControls() call needed on the live
+      // path (the standalone export still exists as a thin wrapper, see the
+      // "generateEffectiveControls" describe block below).
+      expect(decideResult.controlsGenerated).toBeTruthy();
+      expect(decideResult.controlsGenerated!.created).toBeGreaterThan(0);
+      const deploymentId = decideResult.controlsGenerated!.deploymentId;
 
       const ecRows = await db
         .select()
         .from(effectiveControls)
-        .where(eq(effectiveControls.deploymentId, controlsResult.deploymentId));
-      expect(ecRows).toHaveLength(controlsResult.created.length);
+        .where(eq(effectiveControls.deploymentId, deploymentId));
+      expect(ecRows).toHaveLength(decideResult.controlsGenerated!.created);
+      // Critical tier + PHI + vendor + member-facing + care-coverage -> expect a broad set incl. H-01/H-02, C-01/C-02.
+      const controlIds = ecRows.map((r) => r.controlId);
+      expect(controlIds).toEqual(expect.arrayContaining(["H-01", "C-01", "C-02", "L-01"]));
+      expect(ecRows.every((r) => r.version === 1)).toBe(true);
+
+      const depRows = await db
+        .select()
+        .from(deploymentVersions)
+        .where(eq(deploymentVersions.id, deploymentId));
+      expect(depRows).toHaveLength(1);
+      expect(depRows[0]!.status).toBe("awaiting_promotion_signoff");
 
       // Audit trail: every domain-change step wrote at least one audit event.
       const events = await db
@@ -218,6 +243,36 @@ describe("lib/services/initiative-service", () => {
         .where(eq(auditEvents.initiativeId, draft.initiativeId));
       expect(events.some((e) => e.action === "fast_lane_approve")).toBe(true);
     });
+
+    it("fast-lane approval ALSO generates effective controls — live parity with seeded fast-lane initiatives (seed-spec #2 marketing-ab-tester carries effective_controls against a deployment row)", async () => {
+      const draft = await svc.createDraft(db, {
+        payload: lowTierPayload(),
+        requesterActor: { id: "dan-kowalski", role: "requester" },
+        requesterName: "Dan Kowalski",
+      });
+      await svc.submitIntake(db, draft.initiativeId, { id: "dan-kowalski", role: "requester" });
+      const triageResult = await svc.triage(db, draft.initiativeId);
+      expect(triageResult.branch).toBe("fast-lane");
+
+      const deps = await db
+        .select()
+        .from(deploymentVersions)
+        .where(eq(deploymentVersions.initiativeId, draft.initiativeId));
+      expect(deps).toHaveLength(1);
+      expect(deps[0]!.status).toBe("awaiting_promotion_signoff");
+
+      const ecRows = await db
+        .select()
+        .from(effectiveControls)
+        .where(eq(effectiveControls.deploymentId, deps[0]!.id));
+      expect(ecRows.length).toBeGreaterThan(0);
+
+      const events = await db
+        .select()
+        .from(auditEvents)
+        .where(eq(auditEvents.initiativeId, draft.initiativeId));
+      expect(events.some((e) => e.action === "effective_controls_generated")).toBe(true);
+    });
   });
 
   describe("separation of duties (SoD)", () => {
@@ -235,7 +290,7 @@ describe("lib/services/initiative-service", () => {
     it("admin cannot decide() — IllegalTransitionError", async () => {
       const draft = await setUpInReview();
       await expect(
-        svc.decide(db, draft.initiativeId, ADMIN, { decision: "approved" }),
+        svc.decide(db, draft.initiativeId, ADMIN, null, { decision: "approved" }),
       ).rejects.toThrow(IllegalTransitionError);
 
       // No partial state change: initiative stays in_review.
@@ -246,7 +301,7 @@ describe("lib/services/initiative-service", () => {
     it("reviewer cannot decide() — IllegalTransitionError", async () => {
       const draft = await setUpInReview();
       await expect(
-        svc.decide(db, draft.initiativeId, REVIEWER, { decision: "approved" }),
+        svc.decide(db, draft.initiativeId, REVIEWER, null, { decision: "approved" }),
       ).rejects.toThrow(IllegalTransitionError);
     });
 
@@ -258,7 +313,7 @@ describe("lib/services/initiative-service", () => {
         .where(eq(reviewDecisions.domain, "clinical-safety"));
       const rd = cycles.find((r) => r.status === "pending")!;
 
-      await expect(svc.signReview(db, rd.cycleId, "clinical-safety", ADMIN)).rejects.toThrow(
+      await expect(svc.signReview(db, rd.cycleId, "clinical-safety", ADMIN, null)).rejects.toThrow(
         IllegalTransitionError,
       );
       const unchanged = (
@@ -275,7 +330,7 @@ describe("lib/services/initiative-service", () => {
         .where(eq(reviewDecisions.domain, "legal"));
       const rd = rows.find((r) => r.cycleId) ?? rows[0]!;
       void draft;
-      await expect(svc.signReview(db, rd.cycleId, "legal", APPROVER)).rejects.toThrow(
+      await expect(svc.signReview(db, rd.cycleId, "legal", APPROVER, null)).rejects.toThrow(
         IllegalTransitionError,
       );
     });
@@ -302,7 +357,7 @@ describe("lib/services/initiative-service", () => {
         .where(eq(reviewDecisions.domain, "privacy-hipaa"));
       const rd = rows[0]!;
 
-      await expect(svc.signReview(db, rd.cycleId, "privacy-hipaa", REVIEWER)).rejects.toThrow(
+      await expect(svc.signReview(db, rd.cycleId, "privacy-hipaa", REVIEWER, null)).rejects.toThrow(
         IllegalTransitionError,
       );
       const unchanged = (
@@ -320,7 +375,7 @@ describe("lib/services/initiative-service", () => {
       const MARCUS = { id: "marcus-webb", role: "reviewer" as const };
 
       await expect(
-        svc.returnReview(db, rd.cycleId, "legal", MARCUS, "Needs more detail."),
+        svc.returnReview(db, rd.cycleId, "legal", MARCUS, null, "Needs more detail."),
       ).rejects.toThrow(IllegalTransitionError);
       const unchanged = (
         await db.select().from(reviewDecisions).where(eq(reviewDecisions.id, rd.id))
@@ -343,10 +398,13 @@ describe("lib/services/initiative-service", () => {
           .update(reviewDecisions)
           .set({ draftMd: `Draft for ${domain}.`, status: "drafted" })
           .where(eq(reviewDecisions.id, rd.id));
-        const result = await svc.signReview(db, rd.cycleId, domain, {
-          id: reviewerId,
-          role: "reviewer" as const,
-        });
+        const result = await svc.signReview(
+          db,
+          rd.cycleId,
+          domain,
+          { id: reviewerId, role: "reviewer" as const },
+          null,
+        );
         expect(result.status).toBe("signed");
       }
     });
@@ -367,7 +425,14 @@ describe("lib/services/initiative-service", () => {
     it("the assigned reviewer drafts their own domain and writes a review_agent_run audit event", async () => {
       const draft = await setUpInReview();
 
-      const result = await svc.runReviewAgent(db, await cycleFor("clinical-safety"), "clinical-safety", REVIEWER, createMockAgentPort());
+      const result = await svc.runReviewAgent(
+        db,
+        await cycleFor("clinical-safety"),
+        "clinical-safety",
+        REVIEWER,
+        null,
+        createMockAgentPort(),
+      );
       expect(result.status).toBe("drafted");
       expect(result.draftMd).toBeTruthy();
 
@@ -389,14 +454,28 @@ describe("lib/services/initiative-service", () => {
       await setUpInReview();
       // elena-vasquez owns clinical-safety, not privacy-hipaa.
       await expect(
-        svc.runReviewAgent(db, await cycleFor("privacy-hipaa"), "privacy-hipaa", REVIEWER, createMockAgentPort()),
+        svc.runReviewAgent(
+          db,
+          await cycleFor("privacy-hipaa"),
+          "privacy-hipaa",
+          REVIEWER,
+          null,
+          createMockAgentPort(),
+        ),
       ).rejects.toThrow(IllegalTransitionError);
     });
 
     it("a non-reviewer (approver) cannot run the agent (IllegalTransitionError)", async () => {
       await setUpInReview();
       await expect(
-        svc.runReviewAgent(db, await cycleFor("clinical-safety"), "clinical-safety", APPROVER, createMockAgentPort()),
+        svc.runReviewAgent(
+          db,
+          await cycleFor("clinical-safety"),
+          "clinical-safety",
+          APPROVER,
+          null,
+          createMockAgentPort(),
+        ),
       ).rejects.toThrow(IllegalTransitionError);
     });
 
@@ -404,18 +483,18 @@ describe("lib/services/initiative-service", () => {
       await setUpInReview();
       const cycleId = await cycleFor("clinical-safety");
       // Draft then sign as the assigned reviewer.
-      await svc.runReviewAgent(db, cycleId, "clinical-safety", REVIEWER, createMockAgentPort());
-      await svc.signReview(db, cycleId, "clinical-safety", REVIEWER, "Signed clinical safety draft.");
+      await svc.runReviewAgent(db, cycleId, "clinical-safety", REVIEWER, null, createMockAgentPort());
+      await svc.signReview(db, cycleId, "clinical-safety", REVIEWER, null, "Signed clinical safety draft.");
 
       await expect(
-        svc.runReviewAgent(db, cycleId, "clinical-safety", REVIEWER, createMockAgentPort()),
+        svc.runReviewAgent(db, cycleId, "clinical-safety", REVIEWER, null, createMockAgentPort()),
       ).rejects.toThrow(ValidationError);
     });
 
     it("404s (NotFoundError) when the (cycle, domain) review does not exist", async () => {
       await setUpInReview();
       await expect(
-        svc.runReviewAgent(db, "cycle-does-not-exist", "clinical-safety", REVIEWER, createMockAgentPort()),
+        svc.runReviewAgent(db, "cycle-does-not-exist", "clinical-safety", REVIEWER, null, createMockAgentPort()),
       ).rejects.toThrow(NotFoundError);
     });
 
@@ -465,7 +544,7 @@ describe("lib/services/initiative-service", () => {
       const { initiativeId, cycleId } = await setUpInReview();
       await draftAll(cycleId); // drafted, not signed
       await expect(
-        svc.decide(db, initiativeId, APPROVER, { decision: "approved" }),
+        svc.decide(db, initiativeId, APPROVER, null, { decision: "approved" }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -479,7 +558,7 @@ describe("lib/services/initiative-service", () => {
           .where(eq(reviewDecisions.id, rd.id));
       }
       await expect(
-        svc.decide(db, initiativeId, APPROVER, {
+        svc.decide(db, initiativeId, APPROVER, null, {
           decision: "conditionally_approved",
           conditions: [{ text: "100% human review.", controlId: "C-01" }],
         }),
@@ -489,7 +568,7 @@ describe("lib/services/initiative-service", () => {
     it("allows `conditionally_approved` once every required review is at least drafted", async () => {
       const { initiativeId, cycleId } = await setUpInReview();
       await draftAll(cycleId);
-      const res = await svc.decide(db, initiativeId, APPROVER, {
+      const res = await svc.decide(db, initiativeId, APPROVER, null, {
         decision: "conditionally_approved",
         conditions: [{ text: "100% human review.", controlId: "C-01" }],
       });
@@ -500,15 +579,15 @@ describe("lib/services/initiative-service", () => {
       const { initiativeId, cycleId } = await setUpInReview();
       const domains = await draftAll(cycleId);
       for (const domain of domains) {
-        await svc.signReview(db, cycleId, domain, DOMAIN_REVIEWER[domain]);
+        await svc.signReview(db, cycleId, domain, DOMAIN_REVIEWER[domain], null);
       }
-      const res = await svc.decide(db, initiativeId, APPROVER, { decision: "approved" });
+      const res = await svc.decide(db, initiativeId, APPROVER, null, { decision: "approved" });
       expect(res.type).toBe("approved");
     });
 
     it("allows `rejected` regardless of review completeness", async () => {
       const { initiativeId } = await setUpInReview();
-      const res = await svc.decide(db, initiativeId, APPROVER, { decision: "rejected" });
+      const res = await svc.decide(db, initiativeId, APPROVER, null, { decision: "rejected" });
       expect(res.type).toBe("rejected");
     });
   });
@@ -585,7 +664,7 @@ describe("lib/services/initiative-service", () => {
       await svc.triage(db, draft.initiativeId);
 
       await expect(
-        svc.decide(db, draft.initiativeId, APPROVER, { decision: "conditionally_approved" }),
+        svc.decide(db, draft.initiativeId, APPROVER, null, { decision: "conditionally_approved" }),
       ).rejects.toThrow(ValidationError);
 
       const row = (await db.select().from(initiatives).where(eq(initiatives.id, draft.initiativeId)))[0]!;
@@ -625,6 +704,170 @@ describe("lib/services/initiative-service", () => {
       await expect(svc.generateEffectiveControls(db, draft.initiativeId)).rejects.toThrow(
         ValidationError,
       );
+    });
+  });
+
+  /* -----------------------------------------------------------------------
+   * External-review finding #4 ("live champion workflow stops before
+   * control generation"): decide() must call generateEffectiveControls
+   * itself, in the SAME transaction as the decision, for approved/
+   * conditionally_approved outcomes — a decision recorded with no controls
+   * (or vice versa) must never be observable. rejected has nothing to
+   * control.
+   * -------------------------------------------------------------------- */
+  describe("decide() -> effective controls (external-review finding #4: post-decision transition)", () => {
+    const DOMAIN_REVIEWER: Record<Domain, { id: string; role: "reviewer" }> = {
+      "clinical-safety": { id: "elena-vasquez", role: "reviewer" },
+      "privacy-hipaa": { id: "marcus-webb", role: "reviewer" },
+      "responsible-ai": { id: "sofia-grant", role: "reviewer" },
+      legal: { id: "james-liu", role: "reviewer" },
+      security: { id: "devon-clarke", role: "reviewer" },
+      "tech-architecture": { id: "wei-zhang", role: "reviewer" },
+      "data-governance": { id: "grace-kim", role: "reviewer" },
+      procurement: { id: "tom-brennan", role: "reviewer" },
+    };
+
+    /** Champion payload, drafted + fully signed across all 8 required domains, ready for decide(). */
+    async function setUpSignedInReview(): Promise<{ initiativeId: string; cycleId: string }> {
+      const draft = await svc.createDraft(db, {
+        payload: CHAMPION_PREFILL_PAYLOAD,
+        requesterActor: REQUESTER,
+        requesterName: "Priya Raman",
+      });
+      await svc.submitIntake(db, draft.initiativeId, REQUESTER);
+      const triageResult = await svc.triage(db, draft.initiativeId);
+      if (triageResult.branch !== "review") throw new Error("expected review branch");
+      const rds = await db
+        .select()
+        .from(reviewDecisions)
+        .where(eq(reviewDecisions.cycleId, triageResult.cycleId));
+      for (const rd of rds) {
+        await db
+          .update(reviewDecisions)
+          .set({ draftMd: `Draft ${rd.domain}.`, status: "drafted" })
+          .where(eq(reviewDecisions.id, rd.id));
+      }
+      for (const rd of rds) {
+        await svc.signReview(
+          db,
+          triageResult.cycleId,
+          rd.domain as Domain,
+          DOMAIN_REVIEWER[rd.domain as Domain],
+          null,
+        );
+      }
+      return { initiativeId: draft.initiativeId, cycleId: triageResult.cycleId };
+    }
+
+    it("conditionally_approved generates effective_controls + a placeholder deployment atomically with the decision", async () => {
+      const { initiativeId } = await setUpSignedInReview();
+      const res = await svc.decide(db, initiativeId, APPROVER, null, {
+        decision: "conditionally_approved",
+        conditions: [{ text: "100% human review.", controlId: "C-01" }],
+      });
+      expect(res.controlsGenerated).toBeTruthy();
+      expect(res.controlsGenerated!.created).toBeGreaterThan(0);
+
+      const deps = await db
+        .select()
+        .from(deploymentVersions)
+        .where(eq(deploymentVersions.initiativeId, initiativeId));
+      expect(deps).toHaveLength(1);
+      expect(deps[0]!.status).toBe("awaiting_promotion_signoff");
+      expect(deps[0]!.id).toBe(res.controlsGenerated!.deploymentId);
+
+      const ecRows = await db
+        .select()
+        .from(effectiveControls)
+        .where(eq(effectiveControls.deploymentId, deps[0]!.id));
+      expect(ecRows).toHaveLength(res.controlsGenerated!.created);
+
+      const events = await db.select().from(auditEvents).where(eq(auditEvents.initiativeId, initiativeId));
+      expect(events.some((e) => e.action === "effective_controls_generated")).toBe(true);
+    });
+
+    it("approved also generates effective controls", async () => {
+      const { initiativeId } = await setUpSignedInReview();
+      const res = await svc.decide(db, initiativeId, APPROVER, null, { decision: "approved" });
+      expect(res.controlsGenerated).toBeTruthy();
+      expect(res.controlsGenerated!.created).toBeGreaterThan(0);
+    });
+
+    it("rejected does NOT generate any effective controls or deployment", async () => {
+      const { initiativeId } = await setUpSignedInReview();
+      const res = await svc.decide(db, initiativeId, APPROVER, null, { decision: "rejected" });
+      expect(res.controlsGenerated).toBeUndefined();
+
+      const deps = await db
+        .select()
+        .from(deploymentVersions)
+        .where(eq(deploymentVersions.initiativeId, initiativeId));
+      expect(deps).toHaveLength(0);
+
+      const events = await db.select().from(auditEvents).where(eq(auditEvents.initiativeId, initiativeId));
+      expect(events.some((e) => e.action === "effective_controls_generated")).toBe(false);
+    });
+
+    it("a second decide() on a later reassessment cycle increments effective_controls versions on the SAME deployment", async () => {
+      const { initiativeId } = await setUpSignedInReview();
+      const first = await svc.decide(db, initiativeId, APPROVER, null, { decision: "approved" });
+      expect(first.controlsGenerated).toBeTruthy();
+      const deploymentId = first.controlsGenerated!.deploymentId;
+      const v1Rows = await db
+        .select()
+        .from(effectiveControls)
+        .where(eq(effectiveControls.deploymentId, deploymentId));
+      expect(v1Rows.length).toBeGreaterThan(0);
+      expect(v1Rows.every((r) => r.version === 1)).toBe(true);
+
+      // Reach a reassessment cycle WITHOUT going through the deploy/pause
+      // pipeline — there is no live "deploy" service function in this
+      // codebase yet (deploy only exists as a lifecycle-table edge and in
+      // seed data), so this directly mirrors what
+      // lib/services/monitor-service.ts#runMonitor does for a REAL breach:
+      // moves the initiative straight to 're_review' and opens a second
+      // review_cycles row of kind 'reassessment' with NO per-domain
+      // review_decisions rows (monitor-service.ts doesn't insert any for a
+      // reassessment cycle either — decide()'s completeness gate is a no-op
+      // over an empty review-decisions set either way). decide()'s own
+      // state-transition/versioning logic is what's under test here, not
+      // the breach-detection pipeline itself.
+      const raRows = await db
+        .select()
+        .from(riskAssessments)
+        .where(eq(riskAssessments.initiativeId, initiativeId));
+      const latestRa = raRows.slice().sort((a, b) => b.version - a.version)[0]!;
+      const reassessCycleId = `cycle-reassess-${initiativeId}`;
+      await db.insert(reviewCycles).values({
+        id: reassessCycleId,
+        initiativeId,
+        kind: "reassessment",
+        riskAssessmentId: latestRa.id,
+        openedAt: new Date(Date.now() + 1000), // strictly later than the initial cycle
+        closedAt: null,
+        incidentId: null,
+      });
+      await db.update(initiatives).set({ state: "re_review" }).where(eq(initiatives.id, initiativeId));
+
+      // re_review only permits the 'approve' action (see lib/lifecycle/transitions.ts).
+      const second = await svc.decide(db, initiativeId, APPROVER, null, { decision: "approved" });
+      expect(second.type).toBe("approved");
+      expect(second.controlsGenerated).toBeTruthy();
+      expect(second.controlsGenerated!.deploymentId).toBe(deploymentId); // same deployment reused, not a new one
+
+      const deps = await db
+        .select()
+        .from(deploymentVersions)
+        .where(eq(deploymentVersions.initiativeId, initiativeId));
+      expect(deps).toHaveLength(1); // still just the one deployment
+
+      const allEcRows = await db
+        .select()
+        .from(effectiveControls)
+        .where(eq(effectiveControls.deploymentId, deploymentId));
+      const v2Rows = allEcRows.filter((r) => r.version === 2);
+      expect(v2Rows.length).toBe(v1Rows.length);
+      expect(v2Rows.map((r) => r.controlId).sort()).toEqual(v1Rows.map((r) => r.controlId).sort());
     });
   });
 
@@ -670,6 +913,357 @@ describe("lib/services/initiative-service", () => {
 
       const row = (await db.select().from(initiatives).where(eq(initiatives.id, draft.initiativeId)))[0]!;
       expect(row.workspaceId).toBeNull();
+    });
+  });
+
+  /* -----------------------------------------------------------------------
+   * Security-hardening pass — external-review finding #1: workspace
+   * isolation is not an authorization boundary on mutations. decide() and
+   * signReview() now resolve the target initiative's workspace inside their
+   * transaction and enforce it against the caller's session workspace.
+   * -------------------------------------------------------------------- */
+  describe("workspace authorization on mutations (external-review finding #1)", () => {
+    async function initiativeReadyToDecide(
+      workspaceId: string | null,
+    ): Promise<{ initiativeId: string; cycleId: string }> {
+      const draft = await svc.createDraft(db, {
+        payload: CHAMPION_PREFILL_PAYLOAD,
+        requesterActor: REQUESTER,
+        requesterName: "Priya Raman",
+        workspaceId,
+      });
+      await svc.submitIntake(db, draft.initiativeId, REQUESTER);
+      const triageResult = await svc.triage(db, draft.initiativeId);
+      if (triageResult.branch !== "review") throw new Error("expected review branch");
+      return { initiativeId: draft.initiativeId, cycleId: triageResult.cycleId };
+    }
+
+    describe("decide()", () => {
+      it("a session bound to a DIFFERENT workspace gets NotFoundError — same shape as an unknown id", async () => {
+        const { initiativeId } = await initiativeReadyToDecide("ws-A");
+        await expect(
+          svc.decide(db, initiativeId, APPROVER, "ws-B", { decision: "rejected" }),
+        ).rejects.toThrow(NotFoundError);
+        await expect(
+          svc.decide(db, initiativeId, APPROVER, "ws-B", { decision: "rejected" }),
+        ).rejects.toThrow(`initiative not found: ${initiativeId}`);
+      });
+
+      it("a session bound to the OWNING workspace succeeds", async () => {
+        const { initiativeId } = await initiativeReadyToDecide("ws-A");
+        const res = await svc.decide(db, initiativeId, APPROVER, "ws-A", { decision: "rejected" });
+        expect(res.type).toBe("rejected");
+      });
+
+      it("a session with a NULL workspace cannot decide a workspace-tagged initiative", async () => {
+        const { initiativeId } = await initiativeReadyToDecide("ws-A");
+        await expect(
+          svc.decide(db, initiativeId, APPROVER, null, { decision: "rejected" }),
+        ).rejects.toThrow(NotFoundError);
+      });
+
+      it("a seeded (null-workspace) initiative is decidable from ANY session workspace", async () => {
+        const { initiativeId } = await initiativeReadyToDecide(null);
+        const res = await svc.decide(db, initiativeId, APPROVER, "ws-anything-at-all", {
+          decision: "rejected",
+        });
+        expect(res.type).toBe("rejected");
+      });
+
+      it("no partial write happens on a workspace-mismatch rejection", async () => {
+        const { initiativeId } = await initiativeReadyToDecide("ws-A");
+        await expect(
+          svc.decide(db, initiativeId, APPROVER, "ws-B", { decision: "rejected" }),
+        ).rejects.toThrow(NotFoundError);
+        const row = (await db.select().from(initiatives).where(eq(initiatives.id, initiativeId)))[0]!;
+        expect(row.state).toBe("in_review"); // unchanged
+        const decisions = await db
+          .select()
+          .from(initiativeDecisions)
+          .where(eq(initiativeDecisions.initiativeId, initiativeId));
+        expect(decisions).toHaveLength(0);
+      });
+    });
+
+    describe("signReview()", () => {
+      async function draftedClinicalSafety(cycleId: string): Promise<string> {
+        const rows = await db
+          .select()
+          .from(reviewDecisions)
+          .where(eq(reviewDecisions.cycleId, cycleId));
+        const rd = rows.find((r) => r.domain === "clinical-safety")!;
+        await db
+          .update(reviewDecisions)
+          .set({ draftMd: "Draft clinical-safety.", status: "drafted" })
+          .where(eq(reviewDecisions.id, rd.id));
+        return rd.id;
+      }
+
+      it("a session bound to a DIFFERENT workspace gets NotFoundError", async () => {
+        const { cycleId } = await initiativeReadyToDecide("ws-A");
+        await draftedClinicalSafety(cycleId);
+        await expect(
+          svc.signReview(db, cycleId, "clinical-safety", REVIEWER, "ws-B"),
+        ).rejects.toThrow(NotFoundError);
+      });
+
+      it("a session bound to the OWNING workspace succeeds", async () => {
+        const { cycleId } = await initiativeReadyToDecide("ws-A");
+        await draftedClinicalSafety(cycleId);
+        const res = await svc.signReview(db, cycleId, "clinical-safety", REVIEWER, "ws-A");
+        expect(res.status).toBe("signed");
+      });
+
+      it("a NULL-workspace session cannot sign a workspace-tagged review", async () => {
+        const { cycleId } = await initiativeReadyToDecide("ws-A");
+        await draftedClinicalSafety(cycleId);
+        await expect(
+          svc.signReview(db, cycleId, "clinical-safety", REVIEWER, null),
+        ).rejects.toThrow(NotFoundError);
+      });
+
+      it("a seeded (null-workspace) review is signable from ANY session workspace", async () => {
+        const { cycleId } = await initiativeReadyToDecide(null);
+        const rdId = await draftedClinicalSafety(cycleId);
+        const res = await svc.signReview(db, cycleId, "clinical-safety", REVIEWER, "ws-anything");
+        expect(res.status).toBe("signed");
+        const row = (await db.select().from(reviewDecisions).where(eq(reviewDecisions.id, rdId)))[0]!;
+        expect(row.status).toBe("signed");
+      });
+    });
+  });
+
+  /* -----------------------------------------------------------------------
+   * Security-hardening pass — external-review finding #3: governance
+   * transitions race under concurrency. decide()/signReview() now do
+   * compare-and-set (CAS) updates instead of blind read-then-write, and
+   * initiative_decisions has a unique (cycle_id) index (migration 0006).
+   *
+   * PGlite is effectively single-connection (verified empirically: firing
+   * two decide()/signReview() calls via Promise.all fully serializes them —
+   * the second call's own fresh read already observes the first call's
+   * committed write, so it is rejected by the PRE-EXISTING transition()/
+   * "already signed" guards before ever reaching the new CAS code). True
+   * overlapping transactions aren't reproducible in this environment, so
+   * the CAS-triggering tests below simulate the race deterministically by
+   * injecting a same-transaction write (via `tx`) between decide()/
+   * signReview()'s own read and its CAS update — this reproduces the exact
+   * DB-visible effect a genuinely concurrent committed write would have
+   * (the predicate no longer matches), without relying on nondeterministic
+   * true parallelism.
+   * -------------------------------------------------------------------- */
+  describe("concurrency: compare-and-set + unique constraint (external-review finding #3)", () => {
+    it("initiative_decisions_cycle_uq: a second row for the same cycle violates the unique index", async () => {
+      const draft = await svc.createDraft(db, {
+        payload: CHAMPION_PREFILL_PAYLOAD,
+        requesterActor: REQUESTER,
+        requesterName: "Priya Raman",
+      });
+      await svc.submitIntake(db, draft.initiativeId, REQUESTER);
+      const triageResult = await svc.triage(db, draft.initiativeId);
+      if (triageResult.branch !== "review") throw new Error("expected review branch");
+
+      await db.insert(initiativeDecisions).values({
+        id: "decision-first",
+        initiativeId: draft.initiativeId,
+        cycleId: triageResult.cycleId,
+        type: "rejected",
+        approver: APPROVER.id,
+        policyId: null,
+        citations: [],
+        conditions: [],
+        decidedAt: new Date(),
+      });
+
+      await expect(
+        db.insert(initiativeDecisions).values({
+          id: "decision-second",
+          initiativeId: draft.initiativeId,
+          cycleId: triageResult.cycleId,
+          type: "approved",
+          approver: APPROVER.id,
+          policyId: null,
+          citations: [],
+          conditions: [],
+          decidedAt: new Date(),
+        }),
+      ).rejects.toThrow();
+    });
+
+    it("decide() called twice sequentially on the same cycle: the second is rejected and no second decision row is written", async () => {
+      const draft = await svc.createDraft(db, {
+        payload: CHAMPION_PREFILL_PAYLOAD,
+        requesterActor: REQUESTER,
+        requesterName: "Priya Raman",
+      });
+      await svc.submitIntake(db, draft.initiativeId, REQUESTER);
+      await svc.triage(db, draft.initiativeId);
+
+      const first = await svc.decide(db, draft.initiativeId, APPROVER, null, { decision: "rejected" });
+      expect(first.type).toBe("rejected");
+
+      // The second call's own fresh read already sees the first call's
+      // committed 'rejected' state, so transition() rejects it before any
+      // write is attempted (IllegalTransitionError) — one of the two
+      // documented acceptable outcomes for this scenario alongside
+      // ConflictError. The safety property under test either way: no
+      // second initiative_decisions row.
+      await expect(
+        svc.decide(db, draft.initiativeId, APPROVER, null, { decision: "rejected" }),
+      ).rejects.toThrow(IllegalTransitionError);
+
+      const decisions = await db
+        .select()
+        .from(initiativeDecisions)
+        .where(eq(initiativeDecisions.initiativeId, draft.initiativeId));
+      expect(decisions).toHaveLength(1);
+    });
+
+    it("decide(): a write that lands between this transaction's read and its CAS update throws ConflictError, and the whole transaction rolls back", async () => {
+      const draft = await svc.createDraft(db, {
+        payload: CHAMPION_PREFILL_PAYLOAD,
+        requesterActor: REQUESTER,
+        requesterName: "Priya Raman",
+      });
+      await svc.submitIntake(db, draft.initiativeId, REQUESTER);
+      await svc.triage(db, draft.initiativeId);
+
+      // Test-only same-transaction write injection (see file-level comment
+      // above): the mock surface (a live Drizzle transaction-scoped query
+      // builder chain) isn't meaningfully typeable, so this block is `any`
+      // throughout by design, not an oversight.
+      /* eslint-disable @typescript-eslint/no-explicit-any */
+      const dbAny = db as any;
+      const realTransaction = dbAny.transaction.bind(dbAny);
+      const spy = vi.spyOn(dbAny, "transaction").mockImplementationOnce((cb: any) =>
+        realTransaction(async (tx: any) => {
+          const realUpdate = tx.update.bind(tx);
+          vi.spyOn(tx, "update").mockImplementation((table: any) => {
+            const builder = realUpdate(table);
+            if (table === initiatives) {
+              const realSet = builder.set.bind(builder);
+              builder.set = (values: Record<string, unknown>) => {
+                const base = realSet(values);
+                const realWhere = base.where.bind(base);
+                base.where = (cond: unknown) => {
+                  const afterWhere = realWhere(cond);
+                  const realReturning = afterWhere.returning.bind(afterWhere);
+                  afterWhere.returning = async (...args: unknown[]) => {
+                    // Simulated concurrent writer: flips the initiative's
+                    // state directly, inside the SAME transaction, between
+                    // decide()'s own read (captured as `initiative.state`)
+                    // and its CAS update below — reproducing the DB-visible
+                    // effect of another transaction's commit landing in
+                    // that window.
+                    await realUpdate(initiatives)
+                      .set({ state: "rejected" })
+                      .where(eq(initiatives.id, draft.initiativeId));
+                    return realReturning(...args);
+                  };
+                  return afterWhere;
+                };
+                return base;
+              };
+            }
+            return builder;
+          });
+          return cb(tx);
+        }),
+      );
+      /* eslint-enable @typescript-eslint/no-explicit-any */
+
+      let caught: unknown;
+      try {
+        await svc.decide(db, draft.initiativeId, APPROVER, null, { decision: "rejected" });
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(ConflictError);
+      expect((caught as Error).message).toContain("changed concurrently");
+
+      spy.mockRestore();
+
+      // Whole transaction rolled back — including the injected write.
+      const row = (await db.select().from(initiatives).where(eq(initiatives.id, draft.initiativeId)))[0]!;
+      expect(row.state).toBe("in_review");
+      const decisions = await db
+        .select()
+        .from(initiativeDecisions)
+        .where(eq(initiativeDecisions.initiativeId, draft.initiativeId));
+      expect(decisions).toHaveLength(0);
+    });
+
+    it("signReview(): a write that lands between this transaction's read and its CAS update throws ConflictError, and the whole transaction rolls back", async () => {
+      const draft = await svc.createDraft(db, {
+        payload: CHAMPION_PREFILL_PAYLOAD,
+        requesterActor: REQUESTER,
+        requesterName: "Priya Raman",
+      });
+      await svc.submitIntake(db, draft.initiativeId, REQUESTER);
+      const triageResult = await svc.triage(db, draft.initiativeId);
+      if (triageResult.branch !== "review") throw new Error("expected review branch");
+      const rows = await db
+        .select()
+        .from(reviewDecisions)
+        .where(eq(reviewDecisions.cycleId, triageResult.cycleId));
+      const rd = rows.find((r) => r.domain === "clinical-safety")!;
+      await db
+        .update(reviewDecisions)
+        .set({ draftMd: "Draft.", status: "drafted" })
+        .where(eq(reviewDecisions.id, rd.id));
+
+      // Test-only same-transaction write injection — see the decide() CAS
+      // test above for the full rationale; `any`-typed by design.
+      /* eslint-disable @typescript-eslint/no-explicit-any */
+      const dbAny = db as any;
+      const realTransaction = dbAny.transaction.bind(dbAny);
+      const spy = vi.spyOn(dbAny, "transaction").mockImplementationOnce((cb: any) =>
+        realTransaction(async (tx: any) => {
+          const realUpdate = tx.update.bind(tx);
+          vi.spyOn(tx, "update").mockImplementation((table: any) => {
+            const builder = realUpdate(table);
+            if (table === reviewDecisions) {
+              const realSet = builder.set.bind(builder);
+              builder.set = (values: Record<string, unknown>) => {
+                const base = realSet(values);
+                const realReturning = base.returning.bind(base);
+                base.returning = async (...args: unknown[]) => {
+                  // Simulated concurrent writer: returns the review
+                  // (changing its status) between signReview()'s own read
+                  // (captured as `decision.status`) and its CAS update.
+                  await realUpdate(reviewDecisions)
+                    .set({ status: "returned", returnReason: "simulated concurrent write" })
+                    .where(eq(reviewDecisions.id, rd.id));
+                  return realReturning(...args);
+                };
+                return base;
+              };
+            }
+            return builder;
+          });
+          return cb(tx);
+        }),
+      );
+      /* eslint-enable @typescript-eslint/no-explicit-any */
+
+      let caught: unknown;
+      try {
+        await svc.signReview(db, triageResult.cycleId, "clinical-safety", REVIEWER, null);
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(ConflictError);
+      expect((caught as Error).message).toContain("changed concurrently");
+
+      spy.mockRestore();
+
+      // Whole transaction rolled back — including the injected write; the
+      // row is back to its pre-transaction 'drafted' state, not 'signed'
+      // AND not 'returned'.
+      const finalRow = (
+        await db.select().from(reviewDecisions).where(eq(reviewDecisions.id, rd.id))
+      )[0]!;
+      expect(finalRow.status).toBe("drafted");
     });
   });
 });

@@ -1,10 +1,11 @@
-import { getAppProvider } from "@/app/_lib/data-provider";
+import { getAppProvider, getCurrentWorkspaceId } from "@/app/_lib/data-provider";
 import type { AuditQueryRow, CannedAuditQueryId } from "@/lib/data/dto";
 import { AuditConsole } from "@/components/jeeves/audit-console";
 import { AuditorChat } from "@/components/jeeves/auditor-chat";
 
 export default async function AuditPage() {
   const provider = getAppProvider();
+  const viewerWorkspaceId = await getCurrentWorkspaceId();
   const ids: CannedAuditQueryId[] = [
     "member-facing-phi",
     "approved-by-torres",
@@ -12,7 +13,7 @@ export default async function AuditPage() {
     "q01-control-changes",
   ];
   const entries = await Promise.all(
-    ids.map(async (id) => [id, await provider.auditQuery(id)] as const),
+    ids.map(async (id) => [id, await provider.auditQuery(id, { viewerWorkspaceId })] as const),
   );
   const results = Object.fromEntries(entries) as Record<
     CannedAuditQueryId,

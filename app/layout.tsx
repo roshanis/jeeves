@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Inter, Sora, JetBrains_Mono } from "next/font/google";
+import localFont from "next/font/local";
 import "./globals.css";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/sonner";
@@ -13,21 +13,33 @@ import { AppTopBar } from "@/components/jeeves/app-topbar";
 // Variable names align with the @theme mapping in globals.css — the previous
 // Geist wiring set --font-geist-sans while the theme read --font-sans, so
 // body text was silently falling back to the system font.
-const fontSans = Inter({
+//
+// Self-hosted via next/font/local (review finding 12): next/font/google
+// downloads font files from Google at build time, which fails in an
+// offline/hermetic build. The .woff2 files below are the latin-subset
+// variable fonts fetched from the same Google Fonts CDN (OFL-licensed) and
+// committed to app/fonts/ so the build never needs network access for
+// fonts. Each is a single variable-weight file (matching what next/font/
+// google would have served), so one `weight: "100 900"`-style range
+// declaration covers every weight actually used in the app (400/500/600).
+const fontSans = localFont({
+  src: "./fonts/Inter-Variable.woff2",
   variable: "--font-sans",
-  subsets: ["latin"],
+  weight: "100 900",
   display: "swap",
 });
 
-const fontHeading = Sora({
+const fontHeading = localFont({
+  src: "./fonts/Sora-Variable.woff2",
   variable: "--font-heading",
-  subsets: ["latin"],
+  weight: "100 800",
   display: "swap",
 });
 
-const fontMono = JetBrains_Mono({
+const fontMono = localFont({
+  src: "./fonts/JetBrainsMono-Variable.woff2",
   variable: "--font-mono",
-  subsets: ["latin"],
+  weight: "100 800",
   display: "swap",
 });
 

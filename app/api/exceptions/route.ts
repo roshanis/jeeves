@@ -1,7 +1,9 @@
 /**
  * Control-exception collection endpoint (M4).
  *
- * GET  /api/exceptions            — public read-only list (optionally ?status=)
+ * GET  /api/exceptions            — public read-only list (optionally ?status=),
+ *   workspace-scoped to the caller's viewer identity (external-review
+ *   finding #2 spillover — see viewer resolution below).
  * POST /api/exceptions            — request a new exception (session required).
  *   Body: { effectiveControlId: string, reason: string }
  *   200: { id, controlId, status: "requested", expiresAt }
@@ -10,6 +12,7 @@
 import { z } from "zod";
 import { getDb } from "@/lib/db/client";
 import { runMutationGuard } from "@/lib/services/route-guard";
+import { resolveViewerWorkspaceId } from "@/lib/services/viewer-workspace";
 import {
   listExceptions,
   requestException,
@@ -24,14 +27,15 @@ const bodySchema = z.object({
   reason: z.string().min(1).max(REASON_MAX),
 });
 
-const STATUSES: ExceptionStatus[] = ["requested", "approved", "rejected", "revoked", "expired"];
+const STATUSES: ExceptionStatus[] = ["requested", "approved", "rejected", "revoked", "expired", "superseded"];
 
 export async function GET(req: Request): Promise<Response> {
   const statusParam = new URL(req.url).searchParams.get("status");
   const status = statusParam && (STATUSES as string[]).includes(statusParam)
     ? (statusParam as ExceptionStatus)
     : undefined;
-  const exceptions = await listExceptions(getDb(), status);
+  const viewerWorkspaceId = await resolveViewerWorkspaceId(req);
+  const exceptions = await listExceptions(getDb(), status, { viewerWorkspaceId });
   return Response.json({ exceptions }, { status: 200 });
 }
 
@@ -61,7 +65,13 @@ export async function POST(req: Request): Promise<Response> {
   }
 
   try {
-    const result = await requestException(getDb(), parsed.data.effectiveControlId, guard.actor, parsed.data.reason);
+    const result = await requestException(
+      getDb(),
+      parsed.data.effectiveControlId,
+      guard.actor,
+      guard.workspaceId,
+      parsed.data.reason,
+    );
     return Response.json(result, { status: 200 });
   } catch (err) {
     if (err instanceof IllegalTransitionError) return Response.json({ error: err.message }, { status: 403 });

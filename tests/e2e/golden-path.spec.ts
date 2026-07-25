@@ -234,5 +234,21 @@ test.describe("live demo loop: create → triage → draft run → sign → deci
       timeout: 30_000,
     });
     await expect(auditTab).toContainText("1 condition(s)");
+
+    // --- Deployments + Controls: the live decision generates them too ----
+    // (external-review finding #4: "the live champion workflow stops
+    // before control generation" — decide() now creates the placeholder
+    // deployment and its effective controls in the SAME transaction as the
+    // decision, not just the lifecycle-state flip asserted above).
+    await page.getByRole("tab", { name: "Deployments" }).click();
+    const deploymentsTab = page.locator('[data-slot="deployments-tab"]');
+    await expect(deploymentsTab).toBeVisible({ timeout: 30_000 });
+    await expect(deploymentsTab).toContainText("v1.0");
+    await expect(deploymentsTab).toContainText("Awaiting promotion sign-off");
+
+    await page.getByRole("tab", { name: "Controls" }).click();
+    const controlsTab = page.locator('[data-slot="controls-tab"]');
+    await expect(controlsTab).toBeVisible({ timeout: 30_000 });
+    await expect(controlsTab.locator("tbody tr").first()).toBeVisible();
   });
 });

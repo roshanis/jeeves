@@ -1,6 +1,10 @@
 import { getAppProvider, getCurrentWorkspaceId } from "@/app/_lib/data-provider";
 import { getDb } from "@/lib/db/client";
 import { listIncidents, type IncidentListRow } from "@/lib/services/monitor-service";
+import {
+  deploymentWorkspaceMap,
+  isDeploymentVisible,
+} from "@/lib/services/viewer-workspace";
 import type { InitiativeSummary, InitiativeDetail } from "@/lib/data/dto";
 import { RoleAwareInbox } from "@/components/jeeves/role-aware-inbox";
 
@@ -13,11 +17,22 @@ const EVAL_KINDS = new Set(["eval_hallucination", "eval_relevance"]);
 // (the "program" role's primary-table filter) — kept consistent there with
 // the original set used here before the role-aware Inbox split.
 
-async function loadIncidents(): Promise<IncidentListRow[]> {
+// Incidents carry no workspace column of their own — ownership resolves via
+// deploymentId -> initiative.workspaceId (P0 read-isolation pass,
+// external-review finding 2), same filtering GET /api/monitor/incidents
+// applies over HTTP.
+async function loadIncidents(viewerWorkspaceId: string | null): Promise<IncidentListRow[]> {
   const dbMode = process.env.DATA_PROVIDER === "db" || !!process.env.DATABASE_URL;
   if (!dbMode) return [];
   try {
-    return await listIncidents(getDb());
+    const db = getDb();
+    const [incidents, workspaceByDeployment] = await Promise.all([
+      listIncidents(db),
+      deploymentWorkspaceMap(db),
+    ]);
+    return incidents.filter((inc) =>
+      isDeploymentVisible(workspaceByDeployment, inc.deploymentId, viewerWorkspaceId),
+    );
   } catch {
     return [];
   }
@@ -28,8 +43,8 @@ export default async function InboxPage() {
   const viewerWorkspaceId = await getCurrentWorkspaceId();
   const [initiatives, incidents, controls] = await Promise.all([
     provider.listInitiatives({ viewerWorkspaceId }),
-    loadIncidents(),
-    provider.controlCatalog(),
+    loadIncidents(viewerWorkspaceId),
+    provider.controlCatalog({ viewerWorkspaceId }),
   ]);
   const details = (
     await Promise.all(

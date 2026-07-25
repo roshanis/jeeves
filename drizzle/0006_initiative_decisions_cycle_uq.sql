@@ -1,0 +1,19 @@
+-- Hand-written migration (not drizzle-kit generated — drizzle.config.ts
+-- requires DATABASE_URL, unavailable in this environment).
+--
+-- Security-hardening pass (external review finding #3 — governance
+-- transitions race under concurrency): `decide()` previously did a
+-- read-then-update-by-row-ID with no conditional predicate, so two
+-- concurrent decide() calls on the same review cycle could both pass
+-- validation and each insert their own `initiative_decisions` row —
+-- duplicate/contradictory initiative-level decisions for one cycle. Paired
+-- with the compare-and-set UPDATE now in
+-- lib/services/initiative-service.ts#decide(), this unique index is the
+-- DB-enforced backstop: at most one initiative_decisions row per
+-- review_cycle, regardless of app-layer bugs or races.
+--
+-- Verified before adding: scripts/seed.ts inserts exactly one
+-- initiative_decisions row per seeded review cycle (9 initiatives, 9
+-- distinct cycleIds) — no existing seed/test data violates this constraint.
+CREATE UNIQUE INDEX "initiative_decisions_cycle_uq" ON "initiative_decisions" ("cycle_id");
+--> statement-breakpoint

@@ -39,4 +39,24 @@ describe("ExceptionsPanel", () => {
     renderWithProviders(<ExceptionsPanel exceptions={[]} />);
     expect(screen.getByText("No control exceptions on file.")).toBeDefined();
   });
+
+  /* -------------------------------------------------------------------------
+   * External-review finding #5: approving a renewal atomically supersedes
+   * the original exception it renews (lib/services/exception-service.ts). The
+   * client-side status union and badge map need a 'superseded' entry, and an
+   * unrecognized status string must render (not crash).
+   * ---------------------------------------------------------------------- */
+  it("renders a 'superseded' exception with its own badge, no action buttons", () => {
+    const superseded: ExceptionRow = { ...requested, id: "exc-2", status: "superseded" };
+    renderWithProviders(<ExceptionsPanel exceptions={[superseded]} />);
+    expect(screen.getByText("Superseded")).toBeDefined();
+    expect(screen.queryByText("Approve")).toBeNull();
+    expect(screen.queryByText("Revoke")).toBeNull();
+  });
+
+  it("does not crash on a status the client doesn't recognize — renders the raw value instead", () => {
+    const unknown = { ...requested, id: "exc-3", status: "some-future-status" } as unknown as ExceptionRow;
+    expect(() => renderWithProviders(<ExceptionsPanel exceptions={[unknown]} />)).not.toThrow();
+    expect(screen.getByText("some-future-status")).toBeDefined();
+  });
 });

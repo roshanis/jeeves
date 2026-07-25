@@ -62,7 +62,7 @@ export async function POST(
 
   const db = getDb();
   try {
-    const result = await runReviewAgent(db, cycleId, domain as Domain, guard.actor);
+    const result = await runReviewAgent(db, cycleId, domain as Domain, guard.actor, guard.workspaceId);
     return Response.json(result, { status: 200 });
   } catch (err) {
     if (err instanceof IllegalTransitionError) {
