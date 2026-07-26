@@ -5,8 +5,6 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/sonner";
 import { RoleProvider } from "@/components/jeeves/role-context";
 import { LiveSessionProvider } from "@/lib/client/session-context";
-import { AppSidebar } from "@/components/jeeves/app-sidebar";
-import { AppTopBar } from "@/components/jeeves/app-topbar";
 
 // Body: Inter (highly legible UI workhorse). Headings: Sora (geometric
 // display with more character). Mono: JetBrains Mono (ids, versions, code).
@@ -63,19 +61,12 @@ export default function RootLayout({
         <RoleProvider>
           <LiveSessionProvider>
             <TooltipProvider>
-              <div className="flex min-h-screen">
-                <AppSidebar />
-                <div className="flex min-w-0 flex-1 flex-col">
-                  <AppTopBar />
-                  <main className="mx-auto w-full max-w-[88rem] flex-1 px-5 py-6">
-                    {children}
-                  </main>
-                  <footer className="border-t px-5 py-4 text-center text-xs text-muted-foreground">
-                    Fictional demo. Synthetic data only. Not affiliated with any
-                    real organization.
-                  </footer>
-                </div>
-              </div>
+              {/* Console chrome (sidebar/top bar/mobile nav/footer) moved to
+                  app/(console)/layout.tsx so the public landing page at "/"
+                  (app/page.tsx) renders full-bleed, without the ops sidebar
+                  bleeding through. Every other route lives under the
+                  (console) route group and gets that chrome instead. */}
+              {children}
               <Toaster />
             </TooltipProvider>
           </LiveSessionProvider>
