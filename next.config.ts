@@ -12,6 +12,14 @@ const nextConfig: NextConfig = {
   // DATABASE_URL is set.
   serverExternalPackages: ["@electric-sql/pglite"],
 
+  // No code in this app uses next/image, so the /_next/image optimizer
+  // endpoint is pure attack surface: it hands request-selected image bytes
+  // to sharp/libvips, which currently carries unpatched HIGH CVEs
+  // (GHSA-f88m-g3jw-g9cj) with no fixed version reachable through any next
+  // release. Disabling optimization removes sharp from the runtime entirely
+  // at zero visual cost. Re-evaluate if next/image is ever adopted.
+  images: { unoptimized: true },
+
   // The /agents/[id] detail page reads the agent instruction files (the real
   // system prompts) off disk at runtime. Force-include the whole agents/
   // corpus in that route's serverless-function bundle so the reads resolve in

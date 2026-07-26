@@ -141,7 +141,8 @@ describe("POST /api/monitor/run", () => {
 describe("GET /api/monitor/incidents — public read-only", () => {
   it("200s with no session/auth header at all", async () => {
     const { GET } = await import("../incidents/route");
-    const res = await GET();
+    // Bare request, no cookie/auth → resolves to the public (null) viewer.
+    const res = await GET(new Request("http://localhost/api/monitor/incidents"));
     expect(res.status).toBe(200);
     const json = await res.json();
     expect(Array.isArray(json.incidents)).toBe(true);
@@ -154,7 +155,8 @@ describe("GET /api/monitor/incidents — public read-only", () => {
     await POST(new Request("http://localhost/api/monitor/run", { method: "POST", headers: bearer(token, "21.0.0.7") }));
 
     const { GET } = await import("../incidents/route");
-    const res = await GET();
+    // Bare request, no cookie/auth → resolves to the public (null) viewer.
+    const res = await GET(new Request("http://localhost/api/monitor/incidents"));
     const json = await res.json();
     expect(json.incidents.length).toBeGreaterThanOrEqual(1);
     expect(json.incidents[0].controlId).toBe("Q-01");

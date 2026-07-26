@@ -218,9 +218,9 @@ describe("GET /api/monitor/incidents — read isolation", () => {
     expect(wsATokenIds.length).toBe(wsBIds.length + 1);
   });
 
-  it("GET() with no request at all (existing call convention) degrades to the anonymous/seeded-only view", async () => {
+  it("a bare cookie-less request degrades to the anonymous/seeded-only view", async () => {
     const { GET } = await import("../monitor/incidents/route");
-    const res = await GET();
+    const res = await GET(new Request("http://localhost/api/monitor/incidents"));
     expect(res.status).toBe(200);
     const json = await res.json();
     expect(Array.isArray(json.incidents)).toBe(true);
@@ -288,9 +288,9 @@ describe("GET /api/deployments/promotions — read isolation", () => {
     expect(wsACookieSlugs).toContain(slug);
   });
 
-  it("GET() with no request at all (existing call convention) degrades to the anonymous/seeded-only view", async () => {
+  it("a bare cookie-less request degrades to the anonymous/seeded-only view", async () => {
     const { GET } = await import("../deployments/promotions/route");
-    const res = await GET();
+    const res = await GET(new Request("http://localhost/api/deployments/promotions"));
     expect(res.status).toBe(200);
     const json = (await res.json()) as { initiativeSlug: string }[];
     expect(json.some((p) => p.initiativeSlug === "pa-correspondence-model")).toBe(true);
