@@ -65,10 +65,18 @@ import { getAgentPort } from "../agents";
 import { generateMockIncidentSummary } from "../agents/mock-adapter";
 import type { GovernanceDomain } from "../agents/ports";
 import { SYSTEM_ACTOR } from "./actors";
+import { workspaceMismatch } from "./workspace-guard";
 
 type Tx = PgDatabase<PgQueryResultHKT, typeof schema>;
 
 const RUNTIME_CONTROL_ID = "Q-01";
+
+/** Explicit scope for trusted system jobs that intentionally scan every workspace. */
+export const UNSCOPED_WORKSPACE = Symbol("unscoped-workspace");
+export type MonitorWorkspaceScope =
+  | string
+  | null
+  | typeof UNSCOPED_WORKSPACE;
 
 /* -------------------------------------------------------------------------
  * Result shapes
@@ -122,7 +130,10 @@ function insertAuditEvent(
 }
 
 /** Deployments currently `deployed` with their owning initiative + tier + flags. */
-async function loadDeployedCandidates(tx: Tx): Promise<
+async function loadDeployedCandidates(
+  tx: Tx,
+  workspaceScope: MonitorWorkspaceScope,
+): Promise<
   Array<{
     deployment: typeof deploymentVersions.$inferSelect;
     initiative: typeof initiatives.$inferSelect;
@@ -147,6 +158,12 @@ async function loadDeployedCandidates(tx: Tx): Promise<
       .where(eq(initiatives.id, deployment.initiativeId));
     const initiative = initRows[0];
     if (!initiative || !initiative.tier) continue;
+    if (
+      workspaceScope !== UNSCOPED_WORKSPACE &&
+      workspaceMismatch(initiative.workspaceId, workspaceScope)
+    ) {
+      continue;
+    }
     result.push({ deployment, initiative, tier: initiative.tier as Tier });
   }
 
@@ -189,8 +206,11 @@ export async function runMonitor(
   db: Db,
   actor: Actor,
   nowTs: number,
+  workspaceScope: MonitorWorkspaceScope,
 ): Promise<RunMonitorResult> {
-  const candidates = await db.transaction(async (tx) => loadDeployedCandidates(tx));
+  const candidates = await db.transaction(async (tx) =>
+    loadDeployedCandidates(tx, workspaceScope),
+  );
 
   const breaches: BreachDetail[] = [];
   let evaluated = 0;

@@ -63,13 +63,18 @@ export async function POST(req: Request): Promise<Response> {
   const db = getDb();
 
   try {
-    const result = await setEvalThreshold(db, guard.actor, {
-      controlId: parsed.data.controlId,
-      initiativeId: parsed.data.initiativeId ?? null,
-      tier: parsed.data.tier,
-      newValue: parsed.data.value,
-      reason: parsed.data.reason,
-    });
+    const result = await setEvalThreshold(
+      db,
+      guard.actor,
+      {
+        controlId: parsed.data.controlId,
+        initiativeId: parsed.data.initiativeId ?? null,
+        tier: parsed.data.tier,
+        newValue: parsed.data.value,
+        reason: parsed.data.reason,
+      },
+      guard.workspaceId,
+    );
     return Response.json(result, { status: 200 });
   } catch (err) {
     if (err instanceof ForbiddenError) {

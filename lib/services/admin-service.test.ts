@@ -16,9 +16,10 @@ import {
   pauseDeployment,
   resumeDeployment,
   ForbiddenError,
+  NotFoundError,
   ValidationError,
 } from "./admin-service";
-import { runMonitor } from "./monitor-service";
+import { runMonitor, UNSCOPED_WORKSPACE } from "./monitor-service";
 import { IllegalTransitionError, decide } from "./initiative-service";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -81,7 +82,12 @@ describe("lib/services/admin-service", () => {
       const initiativeId = await memberChatCopilotId(db);
 
       // At the default threshold (0.08), base+8d does not yet breach.
-      const beforeTighten = await runMonitor(db, RAY_CHEN, BASE_DATE_MS + 8 * DAY_MS);
+      const beforeTighten = await runMonitor(
+        db,
+        RAY_CHEN,
+        BASE_DATE_MS + 8 * DAY_MS,
+        UNSCOPED_WORKSPACE,
+      );
       const [depBefore] = await db
         .select()
         .from(deploymentVersions)
@@ -97,7 +103,12 @@ describe("lib/services/admin-service", () => {
         reason: "Tighten ahead of schedule.",
       });
 
-      const afterTighten = await runMonitor(db, RAY_CHEN, BASE_DATE_MS + 8 * DAY_MS);
+      const afterTighten = await runMonitor(
+        db,
+        RAY_CHEN,
+        BASE_DATE_MS + 8 * DAY_MS,
+        UNSCOPED_WORKSPACE,
+      );
       const [depAfter] = await db
         .select()
         .from(deploymentVersions)
@@ -143,6 +154,54 @@ describe("lib/services/admin-service", () => {
       const defaults = def!.tierDefaultThresholds as Record<string, number>;
       expect(defaults.critical).toBe(0.04);
       expect(defaults.high).toBe(0.08); // other tiers untouched
+    });
+
+    it("returns NotFoundError for a foreign project before loading its deployment/control", async () => {
+      const initiativeId = await memberChatCopilotId(db);
+      await db
+        .update(initiatives)
+        .set({ workspaceId: "ws-A" })
+        .where(eq(initiatives.id, initiativeId));
+
+      await expect(
+        setEvalThreshold(
+          db,
+          RAY_CHEN,
+          {
+            controlId: "Q-01",
+            initiativeId,
+            newValue: 0.06,
+            reason: "foreign attempt",
+          },
+          "ws-B",
+        ),
+      ).rejects.toThrow(NotFoundError);
+      await expect(
+        setEvalThreshold(
+          db,
+          RAY_CHEN,
+          {
+            controlId: "Q-01",
+            initiativeId,
+            newValue: 0.06,
+            reason: "foreign attempt",
+          },
+          "ws-B",
+        ),
+      ).rejects.toThrow(`initiative not found: ${initiativeId}`);
+      await expect(
+        setEvalThreshold(
+          db,
+          RAY_CHEN,
+          {
+            controlId: "Q-01",
+            initiativeId,
+            newValue: 0.06,
+            reason: "owner override",
+          },
+          "ws-A",
+        ),
+      ).resolves.toMatchObject({ scope: "project-override", after: 0.06 });
     });
   });
 
@@ -203,12 +262,56 @@ describe("lib/services/admin-service", () => {
 
     it("resumeDeployment also restores a re_review (post-breach reassessment) initiative to deployed", async () => {
       const initiativeId = await memberChatCopilotId(db);
-      await runMonitor(db, RAY_CHEN, PLUS_14D);
+      await runMonitor(db, RAY_CHEN, PLUS_14D, UNSCOPED_WORKSPACE);
       const [init] = await db.select().from(initiatives).where(eq(initiatives.id, initiativeId));
       expect(init!.state).toBe("re_review");
 
       const result = await resumeDeployment(db, RAY_CHEN, initiativeId, "Reassessment complete, model retrained.");
       expect(result.after).toBe("deployed");
+    });
+
+    it("pauseDeployment checks workspace before lifecycle state and allows the owning workspace", async () => {
+      const initiativeId = await memberChatCopilotId(db);
+      await db
+        .update(initiatives)
+        .set({ workspaceId: "ws-A", state: "paused" })
+        .where(eq(initiatives.id, initiativeId));
+
+      await expect(
+        pauseDeployment(db, RAY_CHEN, initiativeId, "foreign attempt", "ws-B"),
+      ).rejects.toThrow(NotFoundError);
+
+      await db
+        .update(initiatives)
+        .set({ state: "deployed" })
+        .where(eq(initiatives.id, initiativeId));
+      await expect(
+        pauseDeployment(db, RAY_CHEN, initiativeId, "owner pause", "ws-A"),
+      ).resolves.toMatchObject({ after: "paused" });
+    });
+
+    it("resumeDeployment checks workspace before lifecycle state and allows null-workspace rows", async () => {
+      const initiativeId = await memberChatCopilotId(db);
+      await db
+        .update(initiatives)
+        .set({ workspaceId: "ws-A" })
+        .where(eq(initiatives.id, initiativeId));
+
+      await expect(
+        resumeDeployment(db, RAY_CHEN, initiativeId, "foreign attempt", "ws-B"),
+      ).rejects.toThrow(NotFoundError);
+
+      await db
+        .update(initiatives)
+        .set({ workspaceId: null, state: "paused" })
+        .where(eq(initiatives.id, initiativeId));
+      await db
+        .update(deploymentVersions)
+        .set({ status: "paused" })
+        .where(eq(deploymentVersions.initiativeId, initiativeId));
+      await expect(
+        resumeDeployment(db, RAY_CHEN, initiativeId, "shared resume", "ws-any"),
+      ).resolves.toMatchObject({ after: "deployed" });
     });
   });
 

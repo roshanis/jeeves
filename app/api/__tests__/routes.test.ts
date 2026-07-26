@@ -416,14 +416,17 @@ describe("full champion route chain: submit -> triage -> draft-run -> sign -> de
 
 describe("requester ownership authz on submit", () => {
   it("a requester who does not own the initiative gets 403 on submit; owner can still submit after", async () => {
-    const ownerToken = await issueSessionFor("priya-raman");
-    const otherRequesterToken = await issueSessionFor("dan-kowalski");
+    const owner = await issueSessionInWorkspace("priya-raman");
+    const otherRequester = await issueSessionInWorkspace(
+      "dan-kowalski",
+      owner.workspaceCookie,
+    );
 
     const { POST: createInitiative } = await import("../initiatives/route");
     const createRes = await createInitiative(
       new Request("http://localhost/api/initiatives", {
         method: "POST",
-        headers: bearer(ownerToken, "13.0.0.1"),
+        headers: bearer(owner.token, "13.0.0.1"),
         body: JSON.stringify({ payload: CHAMPION_PAYLOAD }),
       }),
     );
@@ -436,7 +439,7 @@ describe("requester ownership authz on submit", () => {
     const nonOwnerRes = await submitPost(
       new Request(`http://localhost/api/initiatives/${initiativeId}/submit`, {
         method: "POST",
-        headers: bearer(otherRequesterToken, "13.0.0.2"),
+        headers: bearer(otherRequester.token, "13.0.0.2"),
       }),
       { params: Promise.resolve({ id: initiativeId }) },
     );
@@ -446,7 +449,7 @@ describe("requester ownership authz on submit", () => {
     const ownerRes = await submitPost(
       new Request(`http://localhost/api/initiatives/${initiativeId}/submit`, {
         method: "POST",
-        headers: bearer(ownerToken, "13.0.0.1"),
+        headers: bearer(owner.token, "13.0.0.1"),
       }),
       { params: Promise.resolve({ id: initiativeId }) },
     );

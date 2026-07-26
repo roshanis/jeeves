@@ -105,6 +105,7 @@ export async function POST(
       guard.actor,
       parsed.data.attestation,
       parsed.data.reason,
+      guard.workspaceId,
     );
     return Response.json(result, { status: 200 });
   } catch (err) {

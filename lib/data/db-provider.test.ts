@@ -10,6 +10,7 @@ import {
   initiatives,
   reviewCycles,
 } from "../db/schema";
+import { setEvalThreshold } from "../services/admin-service";
 import type { ControlRow } from "./dto";
 import { DbDataProvider } from "./db-provider";
 
@@ -490,6 +491,25 @@ describe("lib/data/db-provider", () => {
         remediationOwner: "Test Remediator",
         createdAt: now,
       });
+      await db.insert(effectiveControls).values({
+        id: "ec-ws-alpha-q01",
+        deploymentId: "dep-ws-alpha-1",
+        controlId: "Q-01",
+        version: 1,
+        status: "met",
+        createdAt: now,
+      });
+      await setEvalThreshold(
+        db,
+        { id: "ray-chen", role: "admin" },
+        {
+          controlId: "Q-01",
+          initiativeId: "init-ws-alpha",
+          newValue: 0.061,
+          reason: "workspace-alpha-private-threshold",
+        },
+        WS_A,
+      );
     });
 
     describe("outcomeMetrics", () => {
@@ -550,10 +570,25 @@ describe("lib/data/db-provider", () => {
     });
 
     describe('auditQuery("q01-control-changes")', () => {
-      it("is never filtered — a global admin event, not owned by any one initiative", async () => {
+      it("keeps tier-default events global but scopes initiative-linked project overrides", async () => {
         const anon = await provider.auditQuery("q01-control-changes", { viewerWorkspaceId: null });
+        const wsA = await provider.auditQuery("q01-control-changes", { viewerWorkspaceId: WS_A });
+        const wsB = await provider.auditQuery("q01-control-changes", { viewerWorkspaceId: WS_B });
         const unfiltered = await provider.auditQuery("q01-control-changes");
-        expect(anon).toEqual(unfiltered);
+
+        const hasPrivateOverride = (rows: Awaited<ReturnType<DbDataProvider["auditQuery"]>>) =>
+          rows.some((row) => row.detail.includes("workspace-alpha-private-threshold"));
+
+        expect(hasPrivateOverride(anon)).toBe(false);
+        expect(hasPrivateOverride(wsB)).toBe(false);
+        expect(hasPrivateOverride(wsA)).toBe(true);
+        expect(hasPrivateOverride(unfiltered)).toBe(true);
+
+        const seededGlobal = unfiltered.find((row) => row.detail.includes("Q2 quality initiative"));
+        expect(seededGlobal).toBeTruthy();
+        expect(anon).toContainEqual(seededGlobal);
+        expect(wsA).toContainEqual(seededGlobal);
+        expect(wsB).toContainEqual(seededGlobal);
       });
     });
   });

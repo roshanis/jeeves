@@ -25,7 +25,10 @@
  */
 import { timingSafeEqual } from "node:crypto";
 import { getDb } from "@/lib/db/client";
-import { runMonitor } from "@/lib/services/monitor-service";
+import {
+  runMonitor,
+  UNSCOPED_WORKSPACE,
+} from "@/lib/services/monitor-service";
 import { expireDueExceptions } from "@/lib/services/exception-service";
 import { SYSTEM_ACTOR } from "@/lib/services/actors";
 
@@ -62,7 +65,7 @@ export async function GET(req: Request): Promise<Response> {
   }
 
   const db = getDb();
-  const result = await runMonitor(db, SYSTEM_ACTOR, nowTs);
+  const result = await runMonitor(db, SYSTEM_ACTOR, nowTs, UNSCOPED_WORKSPACE);
   // Also expire any control exceptions past their deadline (M4). Expiry is a
   // real-time deadline, so it uses the wall clock — independent of the
   // monitor's synthetic telemetry replay point (`nowTs`).

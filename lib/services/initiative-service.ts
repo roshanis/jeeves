@@ -368,9 +368,11 @@ export async function submitIntake(
   db: Db,
   initiativeId: string,
   actor: Actor,
+  sessionWorkspaceId: string | null = null,
 ): Promise<SubmitIntakeResult | SubmitIntakeBlockedResult> {
   return db.transaction(async (tx) => {
     const initiative = await loadInitiativeOrThrow(tx, initiativeId);
+    assertWorkspaceAccess(initiative.workspaceId, sessionWorkspaceId, "initiative", initiativeId);
     requireRequesterOwnership(actor, initiative);
     const intake = await latestIntakeVersion(tx, initiativeId);
     if (!intake) {
@@ -448,10 +450,12 @@ export interface TriageReviewResult {
 export async function triage(
   db: Db,
   initiativeId: string,
+  sessionWorkspaceId: string | null = null,
   actor: Actor = SYSTEM_ACTOR,
 ): Promise<TriageFastLaneResult | TriageReviewResult> {
   return db.transaction(async (tx) => {
     const initiative = await loadInitiativeOrThrow(tx, initiativeId);
+    assertWorkspaceAccess(initiative.workspaceId, sessionWorkspaceId, "initiative", initiativeId);
     const intake = await latestIntakeVersion(tx, initiativeId);
     if (!intake) {
       throw new ValidationError("initiative has no intake version to triage");
@@ -808,11 +812,13 @@ export async function returnReview(
 export interface RunReviewAgentResult {
   cycleId: string;
   domain: Domain;
-  status: "drafted" | "failed";
+  status: "drafted" | "failed" | "skipped";
   /** Fresh draft markdown — present only when status === "drafted". */
   draftMd?: string;
   /** Human-readable failure reason — present only when status === "failed". */
   error?: string;
+  /** Present when a concurrent human signature wins the persistence race. */
+  reason?: "already signed";
 }
 
 /**
@@ -880,6 +886,12 @@ export async function runReviewAgent(
   }
 
   const outcome = await runSingleDomainDraft(db, cycleId, domain, port);
+  const detail =
+    outcome.status === "drafted"
+      ? `Ran the ${domain} review agent on demand — fresh draft generated.`
+      : outcome.status === "failed"
+        ? `Ran the ${domain} review agent on demand — draft failed: ${outcome.error ?? "unknown error"}.`
+        : `Ran the ${domain} review agent on demand — persistence skipped because the review was already signed.`;
   await db.insert(auditEvents).values({
     id: `evt-${randomUUID()}`,
     initiativeId,
@@ -887,13 +899,20 @@ export async function runReviewAgent(
     actor: actor.id,
     actorRole: actor.role,
     action: "review_agent_run",
-    detail:
-      outcome.status === "drafted"
-        ? `Ran the ${domain} review agent on demand — fresh draft generated.`
-        : `Ran the ${domain} review agent on demand — draft failed: ${outcome.error ?? "unknown error"}.`,
+    detail,
     before: decision.status,
-    after: outcome.status === "drafted" ? "drafted" : decision.status,
-    metadata: { domain, cycleId, status: outcome.status },
+    after:
+      outcome.status === "drafted"
+        ? "drafted"
+        : outcome.status === "skipped"
+          ? "signed"
+          : decision.status,
+    metadata: {
+      domain,
+      cycleId,
+      status: outcome.status,
+      ...(outcome.reason ? { reason: outcome.reason } : {}),
+    },
   });
 
   return outcome;

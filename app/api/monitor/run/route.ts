@@ -76,6 +76,6 @@ export async function POST(req: Request): Promise<Response> {
   }
 
   const db = getDb();
-  const result = await runMonitor(db, guard.actor, nowTs);
+  const result = await runMonitor(db, guard.actor, nowTs, guard.workspaceId);
   return Response.json(result, { status: 200 });
 }

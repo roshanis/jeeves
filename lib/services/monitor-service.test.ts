@@ -16,7 +16,11 @@ import {
   initiatives,
   reviewCycles,
 } from "../db/schema";
-import { runMonitor, listIncidents } from "./monitor-service";
+import {
+  runMonitor,
+  listIncidents,
+  UNSCOPED_WORKSPACE,
+} from "./monitor-service";
 import { SYSTEM_ACTOR } from "./actors";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -44,8 +48,35 @@ describe("lib/services/monitor-service", () => {
   });
 
   describe("runMonitor — breach detection + idempotency (plan.md §2 step 5)", () => {
+    it("filters foreign-workspace deployments before evaluation or mutation", async () => {
+      const { init, dep } = await memberChatCopilot(db);
+      await db
+        .update(initiatives)
+        .set({ workspaceId: "ws-A" })
+        .where(eq(initiatives.id, init.id));
+
+      const foreign = await runMonitor(db, RAY_CHEN, PLUS_14D, "ws-B");
+      expect(foreign.breaches.some((b) => b.deploymentId === dep.id)).toBe(false);
+      expect(foreign.incidentsCreated).toBe(0);
+
+      const [afterForeignInit] = await db
+        .select()
+        .from(initiatives)
+        .where(eq(initiatives.id, init.id));
+      const [afterForeignDep] = await db
+        .select()
+        .from(deploymentVersions)
+        .where(eq(deploymentVersions.id, dep.id));
+      expect(afterForeignInit!.state).toBe("deployed");
+      expect(afterForeignDep!.status).toBe("deployed");
+
+      const owner = await runMonitor(db, RAY_CHEN, PLUS_14D, "ws-A");
+      expect(owner.breaches.some((b) => b.deploymentId === dep.id)).toBe(true);
+      expect(owner.incidentsCreated).toBe(1);
+    });
+
     it("does not breach #4 member-chat-copilot at nowTs=base+8d (before the sustained window)", async () => {
-      const result = await runMonitor(db, SYSTEM_ACTOR, PLUS_8D);
+      const result = await runMonitor(db, SYSTEM_ACTOR, PLUS_8D, UNSCOPED_WORKSPACE);
       const chatCopilotBreach = result.breaches.find((b) => b.deploymentId);
       const { dep } = await memberChatCopilot(db);
       const breachForDep = result.breaches.find((b) => b.deploymentId === dep.id);
@@ -62,7 +93,7 @@ describe("lib/services/monitor-service", () => {
       expect(initBefore.state).toBe("deployed");
       expect(depBefore.status).toBe("deployed");
 
-      const result = await runMonitor(db, RAY_CHEN, PLUS_14D);
+      const result = await runMonitor(db, RAY_CHEN, PLUS_14D, UNSCOPED_WORKSPACE);
 
       const { init: initAfter, dep: depAfter } = await memberChatCopilot(db);
       expect(initAfter.state).toBe("re_review");
@@ -117,14 +148,14 @@ describe("lib/services/monitor-service", () => {
     });
 
     it("a second runMonitor call at the same nowTs creates zero new incidents/transitions (idempotent re-run)", async () => {
-      const first = await runMonitor(db, RAY_CHEN, PLUS_14D);
+      const first = await runMonitor(db, RAY_CHEN, PLUS_14D, UNSCOPED_WORKSPACE);
       expect(first.incidentsCreated).toBe(1);
 
       const { dep: depAfterFirst } = await memberChatCopilot(db);
       const incidentsAfterFirst = await db.select().from(incidents);
       const auditEventsAfterFirst = await db.select().from(auditEvents);
 
-      const second = await runMonitor(db, RAY_CHEN, PLUS_14D);
+      const second = await runMonitor(db, RAY_CHEN, PLUS_14D, UNSCOPED_WORKSPACE);
       expect(second.incidentsCreated).toBe(0);
 
       const { dep: depAfterSecond, init: initAfterSecond } = await memberChatCopilot(db);
@@ -151,13 +182,13 @@ describe("lib/services/monitor-service", () => {
       // 'deployed' after the first run's pause, then run again at the same
       // nowTs — the SAME breach window/identityKey must still resolve to
       // "already known", not a second incident.
-      const first = await runMonitor(db, RAY_CHEN, PLUS_14D);
+      const first = await runMonitor(db, RAY_CHEN, PLUS_14D, UNSCOPED_WORKSPACE);
       expect(first.incidentsCreated).toBe(1);
       const { dep } = await memberChatCopilot(db);
       await db.update(deploymentVersions).set({ status: "deployed" }).where(eq(deploymentVersions.id, dep.id));
 
       const incidentsBefore = await db.select().from(incidents);
-      const second = await runMonitor(db, RAY_CHEN, PLUS_14D);
+      const second = await runMonitor(db, RAY_CHEN, PLUS_14D, UNSCOPED_WORKSPACE);
       const incidentsAfter = await db.select().from(incidents);
 
       expect(second.incidentsCreated).toBe(0);
@@ -173,7 +204,7 @@ describe("lib/services/monitor-service", () => {
         .select()
         .from(initiatives)
         .where(eq(initiatives.slug, "fwa-anomaly-detector"));
-      const result = await runMonitor(db, SYSTEM_ACTOR, PLUS_14D);
+      const result = await runMonitor(db, SYSTEM_ACTOR, PLUS_14D, UNSCOPED_WORKSPACE);
       const [fwaDep] = fwa
         ? await db.select().from(deploymentVersions).where(eq(deploymentVersions.initiativeId, fwa.id))
         : [];
@@ -185,7 +216,7 @@ describe("lib/services/monitor-service", () => {
 
   describe("listIncidents — public read-only", () => {
     it("returns incidents sorted most-recent-first after a breach", async () => {
-      await runMonitor(db, RAY_CHEN, PLUS_14D);
+      await runMonitor(db, RAY_CHEN, PLUS_14D, UNSCOPED_WORKSPACE);
       const rows = await listIncidents(db);
       expect(rows.length).toBeGreaterThanOrEqual(1);
       expect(rows[0]!.controlId).toBe("Q-01");

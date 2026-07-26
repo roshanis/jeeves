@@ -291,6 +291,7 @@ export async function promoteCheckpoint(
   actor: Actor,
   provenanceAttestation: ProvenanceAttestation,
   reason: string,
+  sessionWorkspaceId: string | null = null,
 ): Promise<PromoteCheckpointResult> {
   requireApproverWithAttestation(actor, provenanceAttestation, reason);
 
@@ -301,6 +302,18 @@ export async function promoteCheckpoint(
       .where(eq(deploymentVersions.id, deploymentVersionId));
     const target = targetRows[0];
     if (!target) throw new NotFoundError("deploymentVersion", deploymentVersionId);
+
+    const initiativeRows = await tx
+      .select()
+      .from(initiatives)
+      .where(eq(initiatives.id, target.initiativeId));
+    const initiative = initiativeRows[0];
+    if (
+      !initiative ||
+      workspaceMismatch(initiative.workspaceId, sessionWorkspaceId)
+    ) {
+      throw new NotFoundError("deploymentVersion", deploymentVersionId);
+    }
 
     if (target.status !== "awaiting_promotion_signoff") {
       throw new ValidationError(

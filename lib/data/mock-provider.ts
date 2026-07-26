@@ -1061,9 +1061,9 @@ export class MockDataProvider implements DataProvider {
     id: CannedAuditQueryId,
     opts?: WorkspaceScopedReadOptions,
   ): Promise<AuditQueryRow[]> {
-    // "q01-control-changes" carries no `slug` (a global admin event, not
-    // owned by any one initiative — mirrors DbDataProvider's auditQuery),
-    // so it is never filtered. Every other canned query's rows are
+    // The static "q01-control-changes" fixture contains only the seeded
+    // tier-default event (no initiative-linked project overrides), so it is
+    // global for every viewer. Every other canned query's rows are
     // slug-keyed to a fixture initiative; filtered via the same
     // isVisibleToViewer() used by listInitiatives/getInitiativeDetail (a
     // no-op today since every fixture is seeded/public, see

@@ -63,7 +63,13 @@ export async function POST(
   const db = getDb();
 
   try {
-    const result = await resumeDeployment(db, guard.actor, id, parsed.data.reason);
+    const result = await resumeDeployment(
+      db,
+      guard.actor,
+      id,
+      parsed.data.reason,
+      guard.workspaceId,
+    );
     return Response.json(result, { status: 200 });
   } catch (err) {
     if (err instanceof ForbiddenError) {
