@@ -36,7 +36,19 @@ const STATUS_BADGE: Record<ExceptionRow["status"], { label: string; className: s
   rejected: { label: "Rejected", className: "bg-destructive/10 text-destructive" },
   revoked: { label: "Revoked", className: "bg-destructive/10 text-destructive" },
   expired: { label: "Expired", className: "bg-muted text-muted-foreground" },
+  // A renewal's approval atomically retires the exception it renews
+  // (external-review finding #5 — see lib/services/exception-service.ts).
+  superseded: { label: "Superseded", className: "bg-muted text-muted-foreground" },
 };
+
+/** Defensive fallback for a status the client doesn't recognize yet (e.g. a
+ * server ahead of this bundle) — renders the raw value rather than crashing
+ * on an undefined lookup. */
+const UNKNOWN_STATUS_BADGE = { label: "Unknown", className: "bg-muted text-muted-foreground" };
+
+function badgeFor(status: ExceptionRow["status"]): { label: string; className: string } {
+  return STATUS_BADGE[status] ?? { ...UNKNOWN_STATUS_BADGE, label: String(status) };
+}
 
 const ACTION_LABEL: Record<ActionKind, string> = {
   approve: "Approve exception",
@@ -113,7 +125,7 @@ export function ExceptionsPanel({ exceptions }: { exceptions: ExceptionRow[] }) 
               </thead>
               <tbody>
                 {exceptions.map((e) => {
-                  const badge = STATUS_BADGE[e.status];
+                  const badge = badgeFor(e.status);
                   return (
                     <tr key={e.id} data-slot="exception-row" className="border-b last:border-0 align-top">
                       <td className="px-4 py-2.5 font-mono text-xs">{e.controlId}</td>

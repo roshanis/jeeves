@@ -1,16 +1,46 @@
 import { test, expect } from "@playwright/test";
 
 // plan.md §8 test 12 — Playwright golden path (required, AGENTS.md hard rule
-// 8): a read-only champion storyline covering the home pipeline board, an
-// initiative detail page's Intake/Evals tabs, the audit query console, and
-// the control catalog. This suite is read-only end to end — it never
-// submits, signs, approves, or mutates anything (AGENTS.md hard rule 2: the
-// public/demo surfaces this test drives are read-only for every role).
+// 8): a read-only champion storyline covering the public landing page, the
+// home pipeline board, an initiative detail page's Intake/Evals tabs, the
+// audit query console, and the control catalog. This suite is read-only end
+// to end — it never submits, signs, approves, or mutates anything
+// (AGENTS.md hard rule 2: the public/demo surfaces this test drives are
+// read-only for every role).
 test.describe("champion storyline: read-only golden path", () => {
-  test("inbox renders the operations dashboard and the exact demo banner", async ({
+  test("landing page shows the hero and routes into the console", async ({
     page,
   }) => {
     await page.goto("/");
+
+    await expect(
+      page.getByRole("heading", { name: /every ai initiative/i }),
+    ).toBeVisible();
+
+    // Exact required banner string (lib/demo-banner.ts DEMO_BANNER_TEXT /
+    // ui-spec §7-8.1) — the landing page renders the same disclaimer strip
+    // as the console's app-topbar.
+    await expect(
+      page.getByText(
+        "Fictional demo — synthetic data. Meridian Health is a fictional payer; not affiliated with any real organization.",
+        { exact: true },
+      ),
+    ).toBeVisible();
+
+    await page.getByRole("link", { name: "Open the console" }).click();
+    await expect(page).toHaveURL(/\/inbox$/);
+    await expect(
+      page.getByRole("heading", { name: /what needs attention/i }),
+    ).toBeVisible();
+  });
+
+  // Ops Inbox moved from "/" to "/inbox" (the public landing page now owns
+  // "/" — see the test above), wrapped by the console chrome in
+  // app/(console)/layout.tsx.
+  test("inbox renders the operations dashboard and the exact demo banner", async ({
+    page,
+  }) => {
+    await page.goto("/inbox");
 
     // Exact required banner string (app-topbar DEMO_BANNER_TEXT / ui-spec §7-8.1).
     await expect(
@@ -234,5 +264,21 @@ test.describe("live demo loop: create → triage → draft run → sign → deci
       timeout: 30_000,
     });
     await expect(auditTab).toContainText("1 condition(s)");
+
+    // --- Deployments + Controls: the live decision generates them too ----
+    // (external-review finding #4: "the live champion workflow stops
+    // before control generation" — decide() now creates the placeholder
+    // deployment and its effective controls in the SAME transaction as the
+    // decision, not just the lifecycle-state flip asserted above).
+    await page.getByRole("tab", { name: "Deployments" }).click();
+    const deploymentsTab = page.locator('[data-slot="deployments-tab"]');
+    await expect(deploymentsTab).toBeVisible({ timeout: 30_000 });
+    await expect(deploymentsTab).toContainText("v1.0");
+    await expect(deploymentsTab).toContainText("Awaiting promotion sign-off");
+
+    await page.getByRole("tab", { name: "Controls" }).click();
+    const controlsTab = page.locator('[data-slot="controls-tab"]');
+    await expect(controlsTab).toBeVisible({ timeout: 30_000 });
+    await expect(controlsTab.locator("tbody tr").first()).toBeVisible();
   });
 });

@@ -1,7 +1,16 @@
+import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createTestDb, closeTestDb, type TestDb } from "../db/test-client";
 import { seedDatabase } from "../../scripts/seed";
-import { initiatives } from "../db/schema";
+import {
+  controlDefinitions,
+  deploymentVersions,
+  effectiveControls,
+  initiativeDecisions,
+  initiatives,
+  reviewCycles,
+} from "../db/schema";
+import type { ControlRow } from "./dto";
 import { DbDataProvider } from "./db-provider";
 
 /**
@@ -300,6 +309,66 @@ describe("lib/data/db-provider", () => {
   });
 
   /**
+   * Review finding 8: `initiative-service.ts`'s `decide()` writes the
+   * stable persona id (`actor.id`, e.g. "angela-torres") into
+   * `initiative_decisions.approver` for live approve/reject/conditional
+   * decisions, while the fast-lane path and scripts/seed.ts write the
+   * display name ("Angela Torres"). Before the fix, "approved-by-torres"
+   * filtered on `d.approver === "Angela Torres"` only, so a live decision
+   * stored under the persona id never showed up here. This test inserts a
+   * decision row directly with the persona-id form and asserts it's both
+   * matched and rendered with the human display name.
+   */
+  describe("auditQuery — approved-by-torres persona-id parity (review finding 8)", () => {
+    it("matches a decision whose approver is stored as the persona id 'angela-torres' and renders 'Angela Torres'", async () => {
+      const [mkt] = await db.select().from(initiatives).where(eq(initiatives.slug, "marketing-ab-tester"));
+      expect(mkt).toBeTruthy();
+      const [existingCycle] = await db
+        .select()
+        .from(reviewCycles)
+        .where(eq(reviewCycles.initiativeId, mkt!.id));
+      expect(existingCycle).toBeTruthy();
+
+      // initiative_decisions_cycle_uq allows at most one decision per review
+      // cycle, so this needs its own fresh cycle rather than reusing the
+      // one that already carries the seeded fast-lane decision.
+      const cycleId = "cycle-test-persona-id-approver";
+      await db.insert(reviewCycles).values({
+        id: cycleId,
+        initiativeId: mkt!.id,
+        kind: "reassessment",
+        riskAssessmentId: existingCycle!.riskAssessmentId,
+        openedAt: new Date("2026-07-19T00:00:00.000Z"),
+        closedAt: new Date("2026-07-20T00:00:00.000Z"),
+      });
+
+      await db.insert(initiativeDecisions).values({
+        id: "decision-test-persona-id-approver",
+        initiativeId: mkt!.id,
+        cycleId,
+        type: "approved",
+        approver: "angela-torres", // persona id, as written by decide() in initiative-service.ts
+        policyId: null,
+        citations: [],
+        conditions: [],
+        decidedAt: new Date("2026-07-20T00:00:00.000Z"),
+      });
+
+      const rows = await provider.auditQuery("approved-by-torres");
+      const personaIdRow = rows.find(
+        (r) => r.slug === "marketing-ab-tester" && r.detail.startsWith("approved"),
+      );
+      expect(personaIdRow).toBeTruthy();
+      // The row must render the human display name, never the raw persona id.
+      expect(personaIdRow!.approver).toBe("Angela Torres");
+
+      for (const row of rows) {
+        expect(row.approver).not.toBe("angela-torres");
+      }
+    });
+  });
+
+  /**
    * M2.5 inc.2a: optional workspace filter on listInitiatives/getInitiativeDetail.
    * Non-breaking — omitting `opts` entirely (every existing call site, incl.
    * every test above) must keep returning all 12 seeded (workspace_id NULL)
@@ -373,6 +442,119 @@ describe("lib/data/db-provider", () => {
       expect(
         await provider.getInitiativeDetail("ws-alpha-initiative", { viewerWorkspaceId: WS_B }),
       ).toBeNull(); // foreign workspace -> treated as not found
+    });
+  });
+
+  /**
+   * P0 read-isolation pass (external-review finding 2): "Only initiative
+   * list/detail methods accept workspace scoping; audit, controls and
+   * metrics do not." Extends the same WS_A/WS_B fixtures above (the
+   * ws-alpha-initiative row from the prior describe block) with one
+   * deployment + one synthetic overdue effective control, so the derived
+   * collections outcomeMetrics/controlCatalog/auditQuery aggregate over
+   * (cycles, deployments, effectiveControls, ...) are exercised too, not
+   * just the initiatives table itself.
+   */
+  describe("workspace-scoped derived reads: outcomeMetrics / controlCatalog / auditQuery (P0)", () => {
+    const WS_A = "ws_test_alpha";
+    const WS_B = "ws_test_beta";
+    const now = new Date("2026-07-10T00:00:00.000Z");
+
+    beforeAll(async () => {
+      await db.insert(deploymentVersions).values({
+        id: "dep-ws-alpha-1",
+        initiativeId: "init-ws-alpha",
+        version: "v1.0",
+        status: "deployed",
+        deployedAt: now,
+      });
+      // A fresh control id (not used by any seeded fixture) so its catalog
+      // status is unambiguous: 'overdue' only when this one instance is
+      // visible, 'met' (the no-instance default) otherwise.
+      await db.insert(controlDefinitions).values({
+        id: "TEST-01",
+        domain: "security",
+        name: "Workspace-isolation test control",
+        applicability: "test fixture only",
+        owner: "Test Owner",
+        requiredEvidence: "n/a",
+        cadence: "n/a",
+        enforcementMode: "monitor",
+      });
+      await db.insert(effectiveControls).values({
+        id: "ec-ws-alpha-1",
+        deploymentId: "dep-ws-alpha-1",
+        controlId: "TEST-01",
+        version: 1,
+        status: "overdue",
+        remediationOwner: "Test Remediator",
+        createdAt: now,
+      });
+    });
+
+    describe("outcomeMetrics", () => {
+      it("evidenceTotal and overdueControls reflect only rows the viewer can see", async () => {
+        const anon = await provider.outcomeMetrics({ viewerWorkspaceId: null });
+        const wsA = await provider.outcomeMetrics({ viewerWorkspaceId: WS_A });
+        const wsB = await provider.outcomeMetrics({ viewerWorkspaceId: WS_B });
+        const unfiltered = await provider.outcomeMetrics();
+
+        // 12 seeded; +1 for the viewer's own ws-tagged row; +2 (both
+        // ws-alpha and ws-beta) when unfiltered.
+        expect(anon.evidenceTotal).toBe(12);
+        expect(wsA.evidenceTotal).toBe(13);
+        expect(wsB.evidenceTotal).toBe(13);
+        expect(unfiltered.evidenceTotal).toBe(14);
+
+        // The ws-alpha-owned overdue effective control (TEST-01) only counts
+        // toward overdueControls for a viewer who can see ws-alpha.
+        expect(wsA.overdueControls).toBe(anon.overdueControls + 1);
+        expect(wsB.overdueControls).toBe(anon.overdueControls);
+        expect(unfiltered.overdueControls).toBe(anon.overdueControls + 1);
+      });
+    });
+
+    describe("controlCatalog", () => {
+      it("a ws-alpha-owned control instance only worsens the catalog status for a viewer who can see ws-alpha", async () => {
+        const byId = (rows: ControlRow[]) => new Map(rows.map((r) => [r.id, r]));
+
+        const anon = byId(await provider.controlCatalog({ viewerWorkspaceId: null }));
+        const wsA = byId(await provider.controlCatalog({ viewerWorkspaceId: WS_A }));
+        const wsB = byId(await provider.controlCatalog({ viewerWorkspaceId: WS_B }));
+        const unfiltered = byId(await provider.controlCatalog());
+
+        // The control DEFINITION itself (global catalog) is always present...
+        expect(anon.get("TEST-01")).toBeTruthy();
+        expect(wsB.get("TEST-01")).toBeTruthy();
+        // ...but its status only reflects the ws-alpha instance for viewers
+        // who can see ws-alpha; everyone else gets the no-instance default.
+        expect(anon.get("TEST-01")!.status).toBe("met");
+        expect(wsB.get("TEST-01")!.status).toBe("met");
+        expect(wsA.get("TEST-01")!.status).toBe("overdue");
+        expect(unfiltered.get("TEST-01")!.status).toBe("overdue");
+      });
+    });
+
+    describe('auditQuery("overdue-controls")', () => {
+      it("the ws-alpha-owned overdue control only appears for a viewer who can see ws-alpha", async () => {
+        const anon = await provider.auditQuery("overdue-controls", { viewerWorkspaceId: null });
+        const wsA = await provider.auditQuery("overdue-controls", { viewerWorkspaceId: WS_A });
+        const wsB = await provider.auditQuery("overdue-controls", { viewerWorkspaceId: WS_B });
+        const unfiltered = await provider.auditQuery("overdue-controls");
+
+        expect(anon.some((r) => r.slug === "ws-alpha-initiative")).toBe(false);
+        expect(wsB.some((r) => r.slug === "ws-alpha-initiative")).toBe(false);
+        expect(wsA.some((r) => r.slug === "ws-alpha-initiative")).toBe(true);
+        expect(unfiltered.some((r) => r.slug === "ws-alpha-initiative")).toBe(true);
+      });
+    });
+
+    describe('auditQuery("q01-control-changes")', () => {
+      it("is never filtered — a global admin event, not owned by any one initiative", async () => {
+        const anon = await provider.auditQuery("q01-control-changes", { viewerWorkspaceId: null });
+        const unfiltered = await provider.auditQuery("q01-control-changes");
+        expect(anon).toEqual(unfiltered);
+      });
     });
   });
 });

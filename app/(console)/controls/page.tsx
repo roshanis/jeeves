@@ -1,4 +1,4 @@
-import { getAppProvider } from "@/app/_lib/data-provider";
+import { getAppProvider, getCurrentWorkspaceId } from "@/app/_lib/data-provider";
 import { getDb } from "@/lib/db/client";
 import { listExceptions, type ExceptionRow } from "@/lib/services/exception-service";
 import { ControlCatalog } from "@/components/jeeves/control-catalog";
@@ -10,7 +10,8 @@ import { ExceptionsPanel } from "@/components/jeeves/exceptions-panel";
 // control-exception workflow (approver-gated actions live in ExceptionsPanel).
 export default async function ControlsPage() {
   const provider = getAppProvider();
-  const controls = await provider.controlCatalog();
+  const viewerWorkspaceId = await getCurrentWorkspaceId();
+  const controls = await provider.controlCatalog({ viewerWorkspaceId });
   const domainCount = new Set(
     controls.filter((c) => c.domain !== "runtime").map((c) => c.domain),
   ).size;
@@ -19,7 +20,7 @@ export default async function ControlsPage() {
   // read so a fresh/unseeded dev database never crashes the catalog page.
   let exceptions: ExceptionRow[] = [];
   try {
-    exceptions = await listExceptions(getDb());
+    exceptions = await listExceptions(getDb(), undefined, { viewerWorkspaceId });
   } catch {
     exceptions = [];
   }

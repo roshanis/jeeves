@@ -65,6 +65,7 @@ import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import type * as schema from "../db/schema";
 import { auditEvents, deploymentVersions, initiatives } from "../db/schema";
 import type { Actor } from "../domain/types";
+import { workspaceMismatch } from "./workspace-guard";
 
 /**
  * requireApproverOrAdminWithReason — SoD guard for `rollbackDeployment` (M3
@@ -470,6 +471,7 @@ export async function rollbackDeployment(
   db: Db,
   initiativeId: string,
   actor: Actor,
+  sessionWorkspaceId: string | null,
   targetDeploymentVersionId: string,
   reason: string,
 ): Promise<RollbackDeploymentResult> {
@@ -481,6 +483,12 @@ export async function rollbackDeployment(
       .from(initiatives)
       .where(eq(initiatives.id, initiativeId));
     if (!initiativeRows[0]) throw new NotFoundError("initiative", initiativeId);
+    // Workspace authorization (external-review finding #1): same NotFoundError
+    // shape as an unknown id on mismatch — never leaks that the initiative
+    // exists in a different workspace.
+    if (workspaceMismatch(initiativeRows[0].workspaceId, sessionWorkspaceId)) {
+      throw new NotFoundError("initiative", initiativeId);
+    }
 
     const siblingRows = await tx
       .select()

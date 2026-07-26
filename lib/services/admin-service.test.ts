@@ -222,7 +222,7 @@ describe("lib/services/admin-service", () => {
       expect(provider!.state).toBe("in_review");
 
       await expect(
-        decide(db, provider!.id, RAY_CHEN, { decision: "approved" }),
+        decide(db, provider!.id, RAY_CHEN, null, { decision: "approved" }),
       ).rejects.toThrow(IllegalTransitionError);
     });
 
@@ -245,7 +245,7 @@ describe("lib/services/admin-service", () => {
       // the transition-level ROLE authority instead, using `rejected` (which
       // has no completeness precondition): the approver passes the authority
       // check while the admin one above is rejected.
-      const result = await decide(db, provider!.id, APPROVER, { decision: "rejected" });
+      const result = await decide(db, provider!.id, APPROVER, null, { decision: "rejected" });
       expect(result.type).toBe("rejected");
     });
   });

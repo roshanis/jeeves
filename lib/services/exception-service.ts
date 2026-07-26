@@ -4,27 +4,44 @@
  *
  * Lifecycle:  request -> approve | reject
  *             approved -> revoke | renew | (auto) expire
+ *             renewal decided approve -> atomically supersedes the original
+ *               (approved -> superseded); renewal decided reject/original
+ *               revoked/expired first -> original's terminal state stands,
+ *               supersession is skipped (best-effort, never fails the
+ *               renewal's own decision)
  *
  * Separation of duties: anyone with a stake may REQUEST; only an approver or
  * admin may DECIDE / REVOKE, and never on an exception they requested
  * themselves. Every transition is written atomically with an `audit_events`
  * row (append-only at the DB level, migration 0002).
  *
- * The linked `effective_controls.status` reflects the exception: it moves to
- * `exception_requested` while an exception is active (requested OR approved),
- * and back to `overdue` on reject / revoke / expire. The precise exception
- * state (requested vs granted vs expired, expiry, who decided) lives on the
- * `control_exceptions` row — the effective-control status stays within its
- * existing enum so the read model / controls UI need no change.
+ * The linked `effective_controls.status` is DERIVED (`recomputeControlStatus`
+ * below) from ALL of the control's `control_exceptions` rows, not written
+ * unconditionally per transition (external-review finding #5: a renewal in
+ * flight left a control with TWO active exceptions — the still-approved
+ * original and a new 'requested' renewal — and rejecting/expiring either one
+ * unconditionally forced the control to 'overdue' even though the other was
+ * still active). It moves to `exception_requested` whenever ANY exception for
+ * the control is 'requested' or 'approved', and back to `overdue` otherwise.
+ * The precise exception state (requested vs granted vs expired vs superseded,
+ * expiry, who decided) lives on the `control_exceptions` row — the
+ * effective-control status stays within its existing enum so the read model /
+ * controls UI need no change.
+ *
+ * Active-exception uniqueness (at most one 'requested' and one 'approved' row
+ * per control) is enforced at the DB level by two partial unique indexes
+ * (migration 0007) as a backstop to the app-layer check in
+ * `requestException`/`renewException`.
  */
 import { randomUUID } from "node:crypto";
 import { and, eq, inArray, lte } from "drizzle-orm";
 import type { Db } from "../db/client";
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import type * as schema from "../db/schema";
-import { auditEvents, controlExceptions, deploymentVersions, effectiveControls } from "../db/schema";
+import { auditEvents, controlExceptions, deploymentVersions, effectiveControls, initiatives } from "../db/schema";
 import type { Actor } from "../domain/types";
-import { NotFoundError, ValidationError, IllegalTransitionError } from "./initiative-service";
+import { ConflictError, NotFoundError, ValidationError, IllegalTransitionError } from "./initiative-service";
+import { workspaceMismatch } from "./workspace-guard";
 
 type Tx = PgDatabase<PgQueryResultHKT, typeof schema>;
 
@@ -32,7 +49,7 @@ type Tx = PgDatabase<PgQueryResultHKT, typeof schema>;
 const DEFAULT_EXCEPTION_DAYS = 90;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-export type ExceptionStatus = "requested" | "approved" | "rejected" | "revoked" | "expired";
+export type ExceptionStatus = "requested" | "approved" | "rejected" | "revoked" | "expired" | "superseded";
 
 export interface ExceptionResult {
   id: string;
@@ -64,6 +81,89 @@ async function initiativeIdForEffectiveControl(tx: Tx, deploymentId: string): Pr
     .from(deploymentVersions)
     .where(eq(deploymentVersions.id, deploymentId));
   return dep?.initiativeId ?? null;
+}
+
+/**
+ * Resolve an initiative id (possibly null — e.g. an orphaned effective
+ * control) to its workspaceId. An unresolvable initiativeId is treated as
+ * shared/null-workspace (defensive: never accidentally hides a row this
+ * module can't attribute to a workspace).
+ */
+async function initiativeWorkspaceId(tx: Tx, initiativeId: string | null): Promise<string | null> {
+  if (!initiativeId) return null;
+  const [row] = await tx
+    .select({ workspaceId: initiatives.workspaceId })
+    .from(initiatives)
+    .where(eq(initiatives.id, initiativeId));
+  return row?.workspaceId ?? null;
+}
+
+/**
+ * Workspace-authorization guard (external-review finding #1, extended to
+ * control exceptions): resolves the exception's owning initiative via
+ * effectiveControl -> deployment -> initiative (or directly from a
+ * `control_exceptions.initiativeId` already on hand) and throws the SAME
+ * `NotFoundError` shape used for an unknown id on mismatch — an exception
+ * whose resolved initiative is NULL-workspace is shared/mutable by any
+ * session, matching `initiatives.workspaceId`'s semantics.
+ */
+async function assertExceptionWorkspaceAccess(
+  tx: Tx,
+  initiativeId: string | null,
+  sessionWorkspaceId: string | null,
+  entity: string,
+  id: string,
+): Promise<void> {
+  const resourceWorkspaceId = await initiativeWorkspaceId(tx, initiativeId);
+  if (workspaceMismatch(resourceWorkspaceId, sessionWorkspaceId)) {
+    throw new NotFoundError(entity, id);
+  }
+}
+
+/**
+ * Batch-resolve `workspaceId` for a set of initiative ids — used by
+ * `listExceptions`'s viewer-scoping filter (external-review finding #2
+ * spillover). A single query rather than the per-row, transaction-scoped
+ * `initiativeWorkspaceId` helper above (that one is typed to `Tx` for the
+ * single-row mutation guards; this one runs a plain read, possibly outside
+ * any transaction).
+ */
+async function initiativeWorkspaceIds(db: Db, initiativeIds: string[]): Promise<Map<string, string | null>> {
+  if (initiativeIds.length === 0) return new Map();
+  const rows = await db
+    .select({ id: initiatives.id, workspaceId: initiatives.workspaceId })
+    .from(initiatives)
+    .where(inArray(initiatives.id, initiativeIds));
+  return new Map(rows.map((r) => [r.id, r.workspaceId]));
+}
+
+/**
+ * Derive `effective_controls.status` from ALL of a control's
+ * `control_exceptions` rows and write it — the fix for external-review
+ * finding #5 ("Renewal leaves the original exception approved while opening
+ * a second requested exception. Rejecting the renewal or later expiring the
+ * old exception unconditionally marks the control overdue, even if another
+ * approved exception exists."). Any 'requested' or 'approved' exception for
+ * the control keeps it under `exception_requested`; otherwise it reverts to
+ * `overdue`. Call this — instead of writing `effectiveControls.status`
+ * directly — after every exception-state transition that could change which
+ * exceptions are active for a control.
+ */
+async function recomputeControlStatus(tx: Tx, effectiveControlId: string): Promise<void> {
+  const active = await tx
+    .select({ id: controlExceptions.id })
+    .from(controlExceptions)
+    .where(
+      and(
+        eq(controlExceptions.effectiveControlId, effectiveControlId),
+        inArray(controlExceptions.status, ["requested", "approved"]),
+      ),
+    )
+    .limit(1);
+  await tx
+    .update(effectiveControls)
+    .set({ status: active.length > 0 ? "exception_requested" : "overdue" })
+    .where(eq(effectiveControls.id, effectiveControlId));
 }
 
 async function audit(
@@ -100,6 +200,7 @@ export async function requestException(
   db: Db,
   effectiveControlId: string,
   actor: Actor,
+  sessionWorkspaceId: string | null,
   reason: string,
 ): Promise<ExceptionResult> {
   if (!reason || reason.trim().length === 0) {
@@ -108,6 +209,15 @@ export async function requestException(
   return db.transaction(async (tx) => {
     const [ec] = await tx.select().from(effectiveControls).where(eq(effectiveControls.id, effectiveControlId));
     if (!ec) throw new NotFoundError("effectiveControl", effectiveControlId);
+
+    const initiativeIdForCheck = await initiativeIdForEffectiveControl(tx, ec.deploymentId);
+    await assertExceptionWorkspaceAccess(
+      tx,
+      initiativeIdForCheck,
+      sessionWorkspaceId,
+      "effectiveControl",
+      effectiveControlId,
+    );
 
     const active = await tx
       .select()
@@ -124,7 +234,7 @@ export async function requestException(
       );
     }
 
-    const initiativeId = await initiativeIdForEffectiveControl(tx, ec.deploymentId);
+    const initiativeId = initiativeIdForCheck;
     const id = `exc-${randomUUID()}`;
     await tx.insert(controlExceptions).values({
       id,
@@ -142,10 +252,7 @@ export async function requestException(
       supersedesId: null,
       createdAt: new Date(nowTs()),
     });
-    await tx
-      .update(effectiveControls)
-      .set({ status: "exception_requested" })
-      .where(eq(effectiveControls.id, effectiveControlId));
+    await recomputeControlStatus(tx, effectiveControlId);
     await audit(
       tx,
       initiativeId,
@@ -169,6 +276,7 @@ export async function decideException(
   db: Db,
   exceptionId: string,
   actor: Actor,
+  sessionWorkspaceId: string | null,
   approve: boolean,
   decisionReason: string,
   expiresAt?: number,
@@ -180,6 +288,13 @@ export async function decideException(
   return db.transaction(async (tx) => {
     const [exc] = await tx.select().from(controlExceptions).where(eq(controlExceptions.id, exceptionId));
     if (!exc) throw new NotFoundError("controlException", exceptionId);
+    await assertExceptionWorkspaceAccess(
+      tx,
+      exc.initiativeId,
+      sessionWorkspaceId,
+      "controlException",
+      exceptionId,
+    );
     if (exc.status !== "requested") {
       throw new ValidationError(`exception ${exceptionId} is '${exc.status}', not 'requested'`);
     }
@@ -194,7 +309,30 @@ export async function decideException(
 
     const newStatus: ExceptionStatus = approve ? "approved" : "rejected";
     const grantedExpiry = approve ? (expiresAt ?? nowTs() + DEFAULT_EXCEPTION_DAYS * DAY_MS) : null;
-    await tx
+
+    // Atomic supersession (external-review finding #5): approving a renewal
+    // (a row with `supersedesId`) retires the original it renews. This MUST
+    // run BEFORE the renewal's own CAS update below — while the original is
+    // still 'approved', setting the renewal to 'approved' first would
+    // transiently give the control TWO 'approved' rows at once and trip the
+    // "at most one approved exception per control" partial unique index
+    // (migration 0007) mid-transaction. Best-effort by design: if the
+    // original is no longer 'approved' (already revoked/expired), this CAS
+    // simply affects 0 rows and the renewal's own decision still proceeds.
+    let supersededOriginal = false;
+    if (approve && exc.supersedesId) {
+      const superseded = await tx
+        .update(controlExceptions)
+        .set({ status: "superseded" })
+        .where(and(eq(controlExceptions.id, exc.supersedesId), eq(controlExceptions.status, "approved")))
+        .returning();
+      supersededOriginal = superseded.length > 0;
+    }
+
+    // Compare-and-set (external-review finding #5, mirroring finding #3's
+    // pattern elsewhere): only write if the row is still 'requested' as of
+    // this UPDATE, not just as of the SELECT above.
+    const decided = await tx
       .update(controlExceptions)
       .set({
         status: newStatus,
@@ -203,15 +341,30 @@ export async function decideException(
         decisionReason,
         expiresAt: grantedExpiry,
       })
-      .where(eq(controlExceptions.id, exceptionId));
-
-    // Approved -> control stays under active exception; rejected -> overdue.
-    if (!approve) {
-      await tx
-        .update(effectiveControls)
-        .set({ status: "overdue" })
-        .where(eq(effectiveControls.id, exc.effectiveControlId));
+      .where(and(eq(controlExceptions.id, exceptionId), eq(controlExceptions.status, "requested")))
+      .returning();
+    if (decided.length === 0) {
+      throw new ConflictError(`exception ${exceptionId} changed concurrently (expected status 'requested')`);
     }
+
+    if (supersededOriginal) {
+      await audit(
+        tx,
+        exc.initiativeId,
+        actor,
+        "control_exception_superseded",
+        `Exception ${exc.supersedesId} for ${exc.controlId} superseded by renewal ${exceptionId}.`,
+        "approved",
+        "superseded",
+        { exceptionId: exc.supersedesId, supersededBy: exceptionId, controlId: exc.controlId },
+      );
+    }
+
+    // Derive the control's status from ALL of its exceptions now that this
+    // one (and, on approval of a renewal, the superseded original) has
+    // moved — never a hardcoded overdue/exception_requested write.
+    await recomputeControlStatus(tx, exc.effectiveControlId);
+
     await audit(
       tx,
       exc.initiativeId,
@@ -231,6 +384,7 @@ export async function revokeException(
   db: Db,
   exceptionId: string,
   actor: Actor,
+  sessionWorkspaceId: string | null,
   reason: string,
 ): Promise<ExceptionResult> {
   requireDecider(actor);
@@ -240,17 +394,27 @@ export async function revokeException(
   return db.transaction(async (tx) => {
     const [exc] = await tx.select().from(controlExceptions).where(eq(controlExceptions.id, exceptionId));
     if (!exc) throw new NotFoundError("controlException", exceptionId);
+    await assertExceptionWorkspaceAccess(
+      tx,
+      exc.initiativeId,
+      sessionWorkspaceId,
+      "controlException",
+      exceptionId,
+    );
     if (exc.status !== "approved") {
       throw new ValidationError(`only an approved exception can be revoked; ${exceptionId} is '${exc.status}'`);
     }
-    await tx
+    // Compare-and-set (external-review finding #5): only write if the row is
+    // still 'approved' as of this UPDATE, not just as of the SELECT above.
+    const revoked = await tx
       .update(controlExceptions)
       .set({ status: "revoked", decidedBy: actor.id, decidedAt: new Date(nowTs()), decisionReason: reason })
-      .where(eq(controlExceptions.id, exceptionId));
-    await tx
-      .update(effectiveControls)
-      .set({ status: "overdue" })
-      .where(eq(effectiveControls.id, exc.effectiveControlId));
+      .where(and(eq(controlExceptions.id, exceptionId), eq(controlExceptions.status, "approved")))
+      .returning();
+    if (revoked.length === 0) {
+      throw new ConflictError(`exception ${exceptionId} changed concurrently (expected status 'approved')`);
+    }
+    await recomputeControlStatus(tx, exc.effectiveControlId);
     await audit(
       tx,
       exc.initiativeId,
@@ -275,6 +439,7 @@ export async function renewException(
   db: Db,
   exceptionId: string,
   actor: Actor,
+  sessionWorkspaceId: string | null,
   reason: string,
 ): Promise<ExceptionResult> {
   if (!reason || reason.trim().length === 0) {
@@ -283,6 +448,13 @@ export async function renewException(
   return db.transaction(async (tx) => {
     const [exc] = await tx.select().from(controlExceptions).where(eq(controlExceptions.id, exceptionId));
     if (!exc) throw new NotFoundError("controlException", exceptionId);
+    await assertExceptionWorkspaceAccess(
+      tx,
+      exc.initiativeId,
+      sessionWorkspaceId,
+      "controlException",
+      exceptionId,
+    );
     if (exc.status !== "approved") {
       throw new ValidationError(`only an approved exception can be renewed; ${exceptionId} is '${exc.status}'`);
     }
@@ -335,14 +507,18 @@ export async function expireDueExceptions(
   const expired: string[] = [];
   for (const exc of due) {
     await db.transaction(async (tx) => {
-      await tx
+      // Compare-and-set (external-review finding #5): a system sweep, not a
+      // user action — if another transaction already moved this row off
+      // 'approved' since the SELECT above (revoked, or superseded by a
+      // decided renewal), skip it silently rather than throwing.
+      const updated = await tx
         .update(controlExceptions)
         .set({ status: "expired" })
-        .where(eq(controlExceptions.id, exc.id));
-      await tx
-        .update(effectiveControls)
-        .set({ status: "overdue" })
-        .where(eq(effectiveControls.id, exc.effectiveControlId));
+        .where(and(eq(controlExceptions.id, exc.id), eq(controlExceptions.status, "approved")))
+        .returning();
+      if (updated.length === 0) return;
+
+      await recomputeControlStatus(tx, exc.effectiveControlId);
       await audit(
         tx,
         exc.initiativeId,
@@ -353,8 +529,8 @@ export async function expireDueExceptions(
         "expired",
         { exceptionId: exc.id, controlId: exc.controlId },
       );
+      expired.push(exc.id);
     });
-    expired.push(exc.id);
   }
   return expired;
 }
@@ -375,12 +551,51 @@ export interface ExceptionRow {
   supersedesId: string | null;
 }
 
-/** List exceptions, optionally filtered by status. Public read model support. */
-export async function listExceptions(db: Db, status?: ExceptionStatus): Promise<ExceptionRow[]> {
+export interface ListExceptionsOptions {
+  /**
+   * The resolved viewer's workspace (a valid session's workspaceId, else a
+   * verified signed `jeeves_workspace` cookie, else null) — external-review
+   * finding #2 spillover. An exception is visible when its `initiativeId` is
+   * null, OR the owning initiative's `workspaceId` is null, OR it equals
+   * this value. Pass `null` explicitly for an anonymous/no-session viewer;
+   * OMIT `opts` entirely (not this field) for an unfiltered internal read.
+   */
+  viewerWorkspaceId?: string | null;
+}
+
+/**
+ * List exceptions, optionally filtered by status. Public read model support.
+ *
+ * `opts` omitted -> unfiltered, for internal callers (e.g.
+ * app/controls/page.tsx, which renders the full board for an already
+ * workspace-agnostic view). Passing `opts` (even `{ viewerWorkspaceId: null
+ * }`) scopes the result to what that viewer may see — this is what
+ * `GET /api/exceptions` always does.
+ */
+export async function listExceptions(
+  db: Db,
+  status?: ExceptionStatus,
+  opts?: ListExceptionsOptions,
+): Promise<ExceptionRow[]> {
   const rows = status
     ? await db.select().from(controlExceptions).where(eq(controlExceptions.status, status))
     : await db.select().from(controlExceptions);
-  return rows
+
+  let visibleRows = rows;
+  if (opts) {
+    const viewerWorkspaceId = opts.viewerWorkspaceId ?? null;
+    const initiativeIds = Array.from(
+      new Set(rows.map((r) => r.initiativeId).filter((id): id is string => id !== null)),
+    );
+    const workspaceIds = await initiativeWorkspaceIds(db, initiativeIds);
+    visibleRows = rows.filter((r) => {
+      if (!r.initiativeId) return true;
+      const resourceWorkspaceId = workspaceIds.get(r.initiativeId) ?? null;
+      return !workspaceMismatch(resourceWorkspaceId, viewerWorkspaceId);
+    });
+  }
+
+  return visibleRows
     .slice()
     .sort((a, b) => b.requestedAt.getTime() - a.requestedAt.getTime())
     .map((r) => ({

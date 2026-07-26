@@ -30,9 +30,19 @@ export default defineConfig({
       reporter: ["text", "html"],
       include: ["lib/**/*.ts", "lib/**/*.tsx", "scripts/**/*.ts", "app/api/**/*.ts"],
       exclude: ["lib/db/schema.ts"],
-      // Thresholds are not enforced yet (plan.md §8 target of >80% on lib/
-      // logic applies once real domain logic lands) — coverage is configured
-      // and available for CI wiring later.
+      // Baseline measured 2026-07-25 via `pnpm test -- --coverage
+      // --no-file-parallelism` (722 tests, 67 files, all passing):
+      //   statements 85.74% | branches 75.01% | functions 88.81% | lines 86.96%
+      // Thresholds are set a margin below that baseline (plan.md §8 target of
+      // 80% applies to lines/statements, which were already >=85%) to catch
+      // real regressions while leaving room for another agent's in-flight
+      // test additions to land without tripping CI on drift alone.
+      thresholds: {
+        statements: 80,
+        lines: 80,
+        functions: 83,
+        branches: 70,
+      },
     },
   },
 });

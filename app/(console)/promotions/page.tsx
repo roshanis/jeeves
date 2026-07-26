@@ -19,7 +19,7 @@
  */
 import { getDb } from "@/lib/db/client";
 import { deploymentHistory, type DeploymentHistoryEntry } from "@/lib/services/promotion-service";
-import { getAppProvider } from "@/app/_lib/data-provider";
+import { getAppProvider, getCurrentWorkspaceId } from "@/app/_lib/data-provider";
 import type { TelemetrySeries } from "@/lib/data/dto";
 import { PromotionsPageClient } from "./promotions-page-client";
 
@@ -31,8 +31,9 @@ export interface InitiativeHistoryContext {
 export default async function PromotionsPage() {
   const provider = getAppProvider();
   const db = getDb();
+  const viewerWorkspaceId = await getCurrentWorkspaceId();
 
-  const summaries = await provider.listInitiatives();
+  const summaries = await provider.listInitiatives({ viewerWorkspaceId });
 
   const entries = await Promise.all(
     summaries
@@ -40,7 +41,7 @@ export default async function PromotionsPage() {
       .map(async (s) => {
         const [history, detail] = await Promise.all([
           deploymentHistory(db, s.initiativeId),
-          provider.getInitiativeDetail(s.slug),
+          provider.getInitiativeDetail(s.slug, { viewerWorkspaceId }),
         ]);
         const evalSeries =
           detail?.telemetry.find(

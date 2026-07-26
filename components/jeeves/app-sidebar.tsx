@@ -17,8 +17,12 @@ import {
 // Governance Operations Console navigation (Codex design review): a charcoal
 // left rail, not a marketing top-nav. Inbox is the working dashboard; every
 // route stays visible to all roles (role changes ACTIONS, not access — §0/§11).
-const NAV_ITEMS = [
-  { href: "/", label: "Inbox", icon: Inbox, exact: true },
+// Inbox now lives at /inbox — "/" is the public marketing landing page
+// (components/jeeves/landing-page.tsx), so the console's own "home" link
+// must point at the real ops route. Exported so app-mobile-nav.tsx (the
+// md:hidden nav strip) reuses the exact same item list instead of drifting.
+export const NAV_ITEMS = [
+  { href: "/inbox", label: "Inbox", icon: Inbox, exact: true },
   { href: "/portfolio", label: "Portfolio", icon: LayoutList },
   { href: "/reviews", label: "Reviews", icon: ClipboardCheck },
   { href: "/agents", label: "Agents", icon: Bot },
@@ -35,7 +39,7 @@ export function AppSidebar() {
   return (
     <aside className="hidden w-56 shrink-0 flex-col bg-sidebar text-sidebar-foreground md:flex">
       <Link
-        href="/"
+        href="/inbox"
         className="flex items-center gap-2.5 border-b border-sidebar-border px-4 py-4"
       >
         <span className="grid h-8 w-8 place-items-center rounded-md bg-sidebar-primary text-sidebar-primary-foreground">

@@ -69,6 +69,37 @@ export function actorName(personaKey: string): string {
   return ACTOR_DIRECTORY[personaKey].name;
 }
 
+/**
+ * Does `storedValue` (an `approver`/actor column read back from the DB)
+ * refer to the given persona? Review finding 8: `lib/services/initiative-
+ * service.ts`'s `decide()` writes the stable persona id (`actor.id`, e.g.
+ * "angela-torres") into `initiative_decisions.approver`, while its fast-lane
+ * path and `scripts/seed.ts` write the display name (`"Angela Torres"`,
+ * via `FAST_LANE_POLICY.accountableApprover` / `ACTORS.angelaTorres.name`).
+ * Both forms must match a canned audit query filtering on that persona, so
+ * this helper accepts either. Returns `false` for null/undefined/unknown
+ * values rather than throwing, since `approver` fields are sometimes null.
+ */
+export function actorMatches(
+  storedValue: string | null | undefined,
+  personaKey: PersonaKey,
+): boolean {
+  if (!storedValue) return false;
+  if (storedValue === personaKey) return true;
+  return storedValue === ACTOR_DIRECTORY[personaKey].name;
+}
+
+/**
+ * Human display name for an actor/approver field that may be stored as
+ * either a stable persona id or an already-resolved display name (review
+ * finding 8 — see `actorMatches` above). Values that match neither (e.g.
+ * "system", or free text) are returned unchanged.
+ */
+export function displayNameFor(idOrName: string): string {
+  if (isPersonaKey(idOrName)) return ACTOR_DIRECTORY[idOrName].name;
+  return idOrName;
+}
+
 /** system pseudo-actor for automated transitions (triage, fast-lane). */
 export const SYSTEM_ACTOR: Actor = { id: "system", role: "system" };
 

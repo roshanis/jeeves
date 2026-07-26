@@ -7,7 +7,7 @@ import { z } from "zod";
 import { getDb } from "@/lib/db/client";
 import { runMutationGuard } from "@/lib/services/route-guard";
 import { revokeException } from "@/lib/services/exception-service";
-import { NotFoundError, ValidationError, IllegalTransitionError } from "@/lib/services/initiative-service";
+import { ConflictError, NotFoundError, ValidationError, IllegalTransitionError } from "@/lib/services/initiative-service";
 
 const REASON_MAX = 2_000;
 const bodySchema = z.object({ reason: z.string().min(1).max(REASON_MAX) });
@@ -42,12 +42,13 @@ export async function POST(
 
   const { id } = await context.params;
   try {
-    const result = await revokeException(getDb(), id, guard.actor, parsed.data.reason);
+    const result = await revokeException(getDb(), id, guard.actor, guard.workspaceId, parsed.data.reason);
     return Response.json(result, { status: 200 });
   } catch (err) {
     if (err instanceof IllegalTransitionError) return Response.json({ error: err.message }, { status: 403 });
     if (err instanceof NotFoundError) return Response.json({ error: err.message }, { status: 404 });
     if (err instanceof ValidationError) return Response.json({ error: err.message }, { status: 400 });
+    if (err instanceof ConflictError) return Response.json({ error: err.message }, { status: 409 });
     throw err;
   }
 }

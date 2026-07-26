@@ -14,12 +14,24 @@
  */
 import { z } from "zod";
 import { checkSessionAttempt, clientKeyFor, issueDemoSession } from "@/lib/services/route-guard";
+import {
+  resolveWorkspaceCookieSecret,
+  signWorkspaceId,
+  verifyWorkspaceCookie,
+} from "@/lib/security/workspace-cookie";
 
 // Per-browser workspace cookie (M2.5 inc.2b). Read-scoping ONLY — it is not
 // an auth credential (mutations still require the Bearer token), so it opens
 // no CSRF surface. Set on first login and REUSED on later logins so every
 // persona acting in one browser shares the same demo workspace (the champion
 // loop spans requester -> reviewer -> approver logins).
+//
+// Security-hardening pass (external-review finding #1 continuation): the
+// value is now SIGNED (lib/security/workspace-cookie.ts) — `issueDemoSession`
+// used to trust the raw incoming cookie unconditionally, letting an attacker
+// "adopt" any workspace (and, once workspace checks gate mutations, mutate
+// it) just by setting the cookie. An invalid/unsigned/legacy/tampered cookie
+// -> treated as absent (fresh workspace), never an error.
 //
 // The cookie is read from the incoming Request and written via a Set-Cookie
 // header (rather than next/headers `cookies()`) so this handler works both in
@@ -38,9 +50,10 @@ function readWorkspaceCookie(req: Request): string | null {
   return match ? decodeURIComponent(match.slice(WORKSPACE_COOKIE.length + 1)) : null;
 }
 
-function workspaceCookieHeader(workspaceId: string): string {
+function workspaceCookieHeader(workspaceId: string, secret: string): string {
+  const signed = signWorkspaceId(workspaceId, secret);
   const parts = [
-    `${WORKSPACE_COOKIE}=${encodeURIComponent(workspaceId)}`,
+    `${WORKSPACE_COOKIE}=${encodeURIComponent(signed)}`,
     "HttpOnly",
     "SameSite=Lax",
     "Path=/",
@@ -79,7 +92,10 @@ export async function POST(req: Request): Promise<Response> {
     return Response.json({ error: "invalid request body" }, { status: 400 });
   }
 
-  const existingWorkspaceId = readWorkspaceCookie(req);
+  const secret = resolveWorkspaceCookieSecret();
+  // verifyWorkspaceCookie(...,  null) always returns null (never reuse
+  // without a secret) — no separate branch needed here.
+  const existingWorkspaceId = verifyWorkspaceCookie(readWorkspaceCookie(req), secret);
 
   const expected = process.env.DEMO_PASSCODE ?? "";
   const result = await issueDemoSession(
@@ -93,9 +109,11 @@ export async function POST(req: Request): Promise<Response> {
   }
 
   // Set (or refresh) the per-browser workspace cookie so subsequent logins in
-  // this browser reuse the same workspace.
-  return Response.json(result, {
-    status: 200,
-    headers: { "Set-Cookie": workspaceCookieHeader(result.workspaceId) },
-  });
+  // this browser reuse the same workspace. No secret available -> skip
+  // setting the cookie entirely rather than emitting an unsignable/unsigned
+  // value (never reuse without a secret).
+  const headers: HeadersInit | undefined = secret
+    ? { "Set-Cookie": workspaceCookieHeader(result.workspaceId, secret) }
+    : undefined;
+  return Response.json(result, { status: 200, headers });
 }

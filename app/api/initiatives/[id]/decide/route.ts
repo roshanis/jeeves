@@ -16,7 +16,13 @@
  */
 import { z } from "zod";
 import { getDb } from "@/lib/db/client";
-import { IllegalTransitionError, NotFoundError, ValidationError, decide } from "@/lib/services/initiative-service";
+import {
+  ConflictError,
+  IllegalTransitionError,
+  NotFoundError,
+  ValidationError,
+  decide,
+} from "@/lib/services/initiative-service";
 import { runMutationGuard } from "@/lib/services/route-guard";
 
 const bodySchema = z.object({
@@ -50,7 +56,7 @@ export async function POST(
   const db = getDb();
 
   try {
-    const result = await decide(db, id, guard.actor, parsed.data);
+    const result = await decide(db, id, guard.actor, guard.workspaceId, parsed.data);
     return Response.json(result, { status: 200 });
   } catch (err) {
     if (err instanceof IllegalTransitionError) {
@@ -61,6 +67,9 @@ export async function POST(
     }
     if (err instanceof ValidationError) {
       return Response.json({ error: err.message }, { status: 400 });
+    }
+    if (err instanceof ConflictError) {
+      return Response.json({ error: err.message }, { status: 409 });
     }
     throw err;
   }

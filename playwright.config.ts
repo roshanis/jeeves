@@ -15,7 +15,7 @@ import { defineConfig, devices } from "@playwright/test";
 //   (scripts/seed.ts wipes + reinserts), so every run starts from the same
 //   12 seeded initiatives.
 // - `DATA_PROVIDER=mock npm run build` forces the MOCK provider during
-//   prerendering: static pages (/ /audit /controls /reviews) freeze the
+//   prerendering: static pages (/ /inbox /audit /controls /reviews) freeze the
 //   baseline mock snapshot (exactly what the read-only tests assert), and
 //   the 17 parallel prerender workers never open PGlite concurrently.
 // - `npm run start` runs with DATA_PROVIDER=db (webServer.env below), so

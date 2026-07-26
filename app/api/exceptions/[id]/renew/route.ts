@@ -43,7 +43,7 @@ export async function POST(
 
   const { id } = await context.params;
   try {
-    const result = await renewException(getDb(), id, guard.actor, parsed.data.reason);
+    const result = await renewException(getDb(), id, guard.actor, guard.workspaceId, parsed.data.reason);
     return Response.json(result, { status: 200 });
   } catch (err) {
     if (err instanceof IllegalTransitionError) return Response.json({ error: err.message }, { status: 403 });

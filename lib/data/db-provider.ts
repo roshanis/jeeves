@@ -10,6 +10,7 @@
 import { asc, eq, isNull, or, type SQL } from "drizzle-orm";
 import type { Domain, LifecycleState, OverlayFlags, Tier } from "@/lib/domain/types";
 import { resolveThreshold } from "@/lib/controls/evaluate";
+import { actorMatches, displayNameFor } from "@/lib/services/actors";
 import { getDb, type Db } from "@/lib/db/client";
 import {
   auditEvents,
@@ -132,6 +133,54 @@ export class DbDataProvider implements DataProvider {
       return init.workspaceId === null;
     }
     return init.workspaceId === null || init.workspaceId === viewerWorkspaceId;
+  }
+
+  /**
+   * Filters every table in a snapshot down to rows whose owning initiative
+   * is visible to the viewer (P0 read-isolation pass — external-review
+   * finding 2). `opts` omitted -> returns `snap` unchanged (today's
+   * unfiltered behavior for every internal caller). Control DEFINITIONS
+   * (`controlDefs`) are never filtered — they are a global catalog, not
+   * owned by any initiative; only the per-instance `effectiveControls`
+   * layered on top of them are.
+   */
+  private visibleSnapshot(
+    snap: PortfolioSnapshot,
+    opts?: WorkspaceScopedReadOptions,
+  ): PortfolioSnapshot {
+    if (!opts || !("viewerWorkspaceId" in opts)) return snap;
+
+    const visibleInitiatives = snap.initiatives.filter((init) =>
+      this.isVisibleToViewer(init, opts),
+    );
+    const visibleInitiativeIds = new Set(visibleInitiatives.map((i) => i.id));
+
+    const visibleDeployments = snap.deployments.filter((d) =>
+      visibleInitiativeIds.has(d.initiativeId),
+    );
+    const visibleDeploymentIds = new Set(visibleDeployments.map((d) => d.id));
+
+    const visibleCycles = snap.cycles.filter((c) => visibleInitiativeIds.has(c.initiativeId));
+    const visibleCycleIds = new Set(visibleCycles.map((c) => c.id));
+
+    return {
+      initiatives: visibleInitiatives,
+      riskAssessments: snap.riskAssessments.filter((r) =>
+        visibleInitiativeIds.has(r.initiativeId),
+      ),
+      cycles: visibleCycles,
+      reviewDecisions: snap.reviewDecisions.filter((rd) => visibleCycleIds.has(rd.cycleId)),
+      decisions: snap.decisions.filter((d) => visibleInitiativeIds.has(d.initiativeId)),
+      deployments: visibleDeployments,
+      effectiveControls: snap.effectiveControls.filter((ec) =>
+        visibleDeploymentIds.has(ec.deploymentId),
+      ),
+      controlDefs: snap.controlDefs, // global catalog — never workspace-scoped
+      intakes: snap.intakes.filter((iv) => visibleInitiativeIds.has(iv.initiativeId)),
+      evalObservations: snap.evalObservations.filter((o) =>
+        visibleDeploymentIds.has(o.deploymentId),
+      ),
+    };
   }
 
   private async loadSnapshot(): Promise<PortfolioSnapshot> {
@@ -462,8 +511,8 @@ export class DbDataProvider implements DataProvider {
     return { summary, intake, reviews, decisions, controls, telemetry, deployments, events };
   }
 
-  async outcomeMetrics(): Promise<OutcomeMetrics> {
-    const snap = await this.loadSnapshot();
+  async outcomeMetrics(opts?: WorkspaceScopedReadOptions): Promise<OutcomeMetrics> {
+    const snap = this.visibleSnapshot(await this.loadSnapshot(), opts);
 
     // Median review cycle time over CLOSED cycles, in whole days.
     const durations = snap.cycles
@@ -531,8 +580,8 @@ export class DbDataProvider implements DataProvider {
     };
   }
 
-  async controlCatalog(): Promise<ControlRow[]> {
-    const snap = await this.loadSnapshot();
+  async controlCatalog(opts?: WorkspaceScopedReadOptions): Promise<ControlRow[]> {
+    const snap = this.visibleSnapshot(await this.loadSnapshot(), opts);
 
     // Aggregate a catalog-level status per definition from its effective
     // instances, worst-first. Definitions with no instances yet render as
@@ -586,8 +635,18 @@ export class DbDataProvider implements DataProvider {
       });
   }
 
-  async auditQuery(id: CannedAuditQueryId): Promise<AuditQueryRow[]> {
-    const snap = await this.loadSnapshot();
+  async auditQuery(
+    id: CannedAuditQueryId,
+    opts?: WorkspaceScopedReadOptions,
+  ): Promise<AuditQueryRow[]> {
+    // "q01-control-changes" is the one query not traceable to any single
+    // initiative (a global admin event on a portfolio-wide runtime control —
+    // see the case below), so it alone is answered from the unfiltered
+    // snapshot; every other canned query filters through visibleSnapshot.
+    const snap =
+      id === "q01-control-changes"
+        ? await this.loadSnapshot()
+        : this.visibleSnapshot(await this.loadSnapshot(), opts);
 
     switch (id) {
       case "member-facing-phi": {
@@ -629,9 +688,14 @@ export class DbDataProvider implements DataProvider {
       case "approved-by-torres": {
         // Seed-spec §7.2: everything APPROVED by Angela Torres (any
         // approval type incl. fast-lane/conditional; rejections excluded).
+        // Review finding 8: `decide()` writes the persona id ("angela-torres")
+        // while the fast-lane path and seed data write the display name
+        // ("Angela Torres") — actorMatches() accepts either so live
+        // approvals aren't silently dropped from this view, and
+        // displayNameFor() normalizes what's rendered either way.
         const initById = new Map(snap.initiatives.map((i) => [i.id, i]));
         return snap.decisions
-          .filter((d) => d.approver === "Angela Torres" && d.type !== "rejected")
+          .filter((d) => actorMatches(d.approver, "angela-torres") && d.type !== "rejected")
           .sort((a, b) => a.decidedAt.getTime() - b.decidedAt.getTime())
           .map((d) => {
             const init = initById.get(d.initiativeId);
@@ -644,7 +708,7 @@ export class DbDataProvider implements DataProvider {
               title: init?.title ?? "(unknown initiative)",
               tier: (init?.tier ?? null) as Tier | null,
               state: init?.state ?? "unknown",
-              approver: d.approver,
+              approver: displayNameFor(d.approver),
               detail: extras.join(" — "),
               eventTs: toIso(d.decidedAt),
             };

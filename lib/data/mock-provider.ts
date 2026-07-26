@@ -8,6 +8,7 @@
 import type { Domain, OverlayFlags, Tier } from "@/lib/domain/types";
 import { deriveTier } from "@/lib/triage/rules";
 import { requiredDomains } from "@/lib/triage/routing";
+import { actorMatches, displayNameFor } from "@/lib/services/actors";
 import type { DataProvider, WorkspaceScopedReadOptions } from "./provider";
 import type {
   AuditEventRow,
@@ -926,7 +927,11 @@ function memberFacingPhiQuery(): AuditQueryRow[] {
 }
 
 function approvedByTorresQuery(): AuditQueryRow[] {
-  return INITIATIVES.filter((init) => init.accountableApprover === ANGELA)
+  // Review finding 8 (kept in sync with lib/data/db-provider.ts): this
+  // fixture always stores the display name today, but goes through the same
+  // actorMatches()/displayNameFor() helpers so the two providers implement
+  // identical logic rather than the mock happening to agree by coincidence.
+  return INITIATIVES.filter((init) => actorMatches(init.accountableApprover, "angela-torres"))
     .map((init) => {
       const decision = buildDecisions(init)[0];
       return {
@@ -934,7 +939,7 @@ function approvedByTorresQuery(): AuditQueryRow[] {
         title: init.title,
         tier: init.tier,
         state: init.state,
-        approver: ANGELA,
+        approver: displayNameFor(ANGELA),
         detail: decision ? `${decision.type} on ${decision.at.slice(0, 10)}` : "approved",
         eventTs: decision?.at ?? null,
       };
@@ -992,11 +997,24 @@ export class MockDataProvider implements DataProvider {
     return detail;
   }
 
-  async outcomeMetrics(): Promise<OutcomeMetrics> {
+  // `_opts` unused: accepted for DataProvider interface parity with
+  // DbDataProvider; see body comment.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  async outcomeMetrics(_opts?: WorkspaceScopedReadOptions): Promise<OutcomeMetrics> {
+    // Static portfolio-wide constants (seed-spec §6) with no per-initiative
+    // derivation — every fixture below is seeded/public (workspaceId always
+    // null, see WORKSPACE_BY_SLUG), so there is no live-created data for
+    // `opts` to ever filter out. Accepted for DataProvider interface parity
+    // with DbDataProvider (P0 read-isolation pass, external-review finding
+    // 2) and so a future live-tagged mock fixture would have somewhere to
+    // plug in, but intentionally a no-op today.
     return OUTCOME_METRICS;
   }
 
-  async controlCatalog(): Promise<ControlRow[]> {
+  // `_opts` unused: global catalog, never workspace-scoped; see
+  // outcomeMetrics()'s comment above.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  async controlCatalog(_opts?: WorkspaceScopedReadOptions): Promise<ControlRow[]> {
     // Deterministic evidenceAt fixture: index-based offset so a handful of
     // controls land past the 90-day staleness window (see
     // control-catalog.tsx#evidenceFreshness) without any randomness.
@@ -1039,14 +1057,25 @@ export class MockDataProvider implements DataProvider {
     return [...domainRows, q01Row];
   }
 
-  async auditQuery(id: CannedAuditQueryId): Promise<AuditQueryRow[]> {
+  async auditQuery(
+    id: CannedAuditQueryId,
+    opts?: WorkspaceScopedReadOptions,
+  ): Promise<AuditQueryRow[]> {
+    // "q01-control-changes" carries no `slug` (a global admin event, not
+    // owned by any one initiative — mirrors DbDataProvider's auditQuery),
+    // so it is never filtered. Every other canned query's rows are
+    // slug-keyed to a fixture initiative; filtered via the same
+    // isVisibleToViewer() used by listInitiatives/getInitiativeDetail (a
+    // no-op today since every fixture is seeded/public, see
+    // WORKSPACE_BY_SLUG — kept for DataProvider interface parity/future
+    // live-tagged fixtures, per outcomeMetrics()'s comment above).
     switch (id) {
       case "member-facing-phi":
-        return memberFacingPhiQuery();
+        return memberFacingPhiQuery().filter((r) => isVisibleToViewer(r.slug!, opts));
       case "approved-by-torres":
-        return approvedByTorresQuery();
+        return approvedByTorresQuery().filter((r) => isVisibleToViewer(r.slug!, opts));
       case "overdue-controls":
-        return overdueControlsQuery();
+        return overdueControlsQuery().filter((r) => isVisibleToViewer(r.slug!, opts));
       case "q01-control-changes":
         return q01ControlChangesQuery();
     }

@@ -86,6 +86,7 @@ export async function POST(
       db,
       id,
       guard.actor,
+      guard.workspaceId,
       parsed.data.targetDeploymentVersionId,
       parsed.data.reason,
     );

@@ -3,10 +3,13 @@
 import { Search } from "lucide-react";
 import { RoleSwitcher } from "./role-switcher";
 import { DemoModeChip } from "./demo-mode-chip";
+import { DEMO_BANNER_TEXT } from "@/lib/demo-banner";
 
-// Exact required banner string (ui-spec §7/§8.1) — tests match on this text.
-export const DEMO_BANNER_TEXT =
-  "Fictional demo — synthetic data. Meridian Health is a fictional payer; not affiliated with any real organization.";
+// Re-exported so existing importers of DEMO_BANNER_TEXT from this module
+// keep working — the canonical constant now lives in lib/demo-banner.ts so
+// the public landing page (a server component) can render the identical
+// disclaimer strip without importing a "use client" console component.
+export { DEMO_BANNER_TEXT };
 
 /**
  * Operations-console top bar: a slim demo-disclaimer strip above a working
