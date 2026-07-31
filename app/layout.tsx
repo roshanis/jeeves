@@ -62,10 +62,12 @@ export default function RootLayout({
           <LiveSessionProvider>
             <TooltipProvider>
               {/* Console chrome (sidebar/top bar/mobile nav/footer) moved to
-                  app/(console)/layout.tsx so the public landing page at "/"
-                  (app/page.tsx) renders full-bleed, without the ops sidebar
-                  bleeding through. Every other route lives under the
-                  (console) route group and gets that chrome instead. */}
+                  app/(console)/layout.tsx so the public marketing site at
+                  "/", "/frameworks", "/pilot" (app/(marketing)/*, with its
+                  own chrome in app/(marketing)/layout.tsx) renders
+                  full-bleed, without the ops sidebar bleeding through. Every
+                  ops route lives under the (console) route group and gets
+                  that chrome instead. */}
               {children}
               <Toaster />
             </TooltipProvider>
