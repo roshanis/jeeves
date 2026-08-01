@@ -828,10 +828,16 @@ describe("lib/services/initiative-service", () => {
       // moves the initiative straight to 're_review' and opens a second
       // review_cycles row of kind 'reassessment' with NO per-domain
       // review_decisions rows (monitor-service.ts doesn't insert any for a
-      // reassessment cycle either — decide()'s completeness gate is a no-op
-      // over an empty review-decisions set either way). decide()'s own
+      // reassessment cycle either). Since the P2-6 hardening, decide()'s
+      // completeness gate resolves REQUIRED domains from the cycle's risk
+      // assessment regardless of which review_decisions rows exist, so a
+      // signed row is required for every required domain of THIS
+      // reassessment cycle before it will approve — see the
+      // "vacuous completeness gate (P2-6)" describe block below for the
+      // dedicated missing/zero-row coverage. decide()'s own
       // state-transition/versioning logic is what's under test here, not
-      // the breach-detection pipeline itself.
+      // the completeness gate itself, so the required signed rows are
+      // written directly.
       const raRows = await db
         .select()
         .from(riskAssessments)
@@ -848,6 +854,21 @@ describe("lib/services/initiative-service", () => {
         incidentId: null,
       });
       await db.update(initiatives).set({ state: "re_review" }).where(eq(initiatives.id, initiativeId));
+
+      for (const domain of latestRa.requiredDomains as Domain[]) {
+        await db.insert(reviewDecisions).values({
+          id: `rd-reassess-${initiativeId}-${domain}`,
+          cycleId: reassessCycleId,
+          domain,
+          status: "signed",
+          reviewer: DOMAIN_REVIEWER[domain].id,
+          draftMd: `Reassessment draft ${domain}.`,
+          citations: [],
+          signedAt: new Date(),
+          returnReason: null,
+          createdAt: new Date(),
+        });
+      }
 
       // re_review only permits the 'approve' action (see lib/lifecycle/transitions.ts).
       const second = await svc.decide(db, initiativeId, APPROVER, null, { decision: "approved" });
@@ -868,6 +889,183 @@ describe("lib/services/initiative-service", () => {
       const v2Rows = allEcRows.filter((r) => r.version === 2);
       expect(v2Rows.length).toBe(v1Rows.length);
       expect(v2Rows.map((r) => r.controlId).sort()).toEqual(v1Rows.map((r) => r.controlId).sort());
+    });
+  });
+
+  /* -----------------------------------------------------------------------
+   * External-review finding P2-6 ("vacuous completeness gate"): decide()'s
+   * gate used to filter rows that EXIST for the cycle, so a cycle with ZERO
+   * review_decisions rows (exactly what a runMonitor-created reassessment
+   * cycle is) — or one with rows for only SOME required domains — passed
+   * vacuously. A post-breach re_review -> approved needed no signed review
+   * at all. Fixed: required domains are resolved from the cycle's risk
+   * assessment (falling back to the initiative's latest one), and a missing
+   * row for a required domain is blocking, reported as `domain:missing`.
+   * -------------------------------------------------------------------- */
+  describe("decide() completeness gate resolves required domains from the risk assessment, not existing rows (external-review finding P2-6)", () => {
+    const DOMAIN_REVIEWER: Record<Domain, { id: string; role: "reviewer" }> = {
+      "clinical-safety": { id: "elena-vasquez", role: "reviewer" },
+      "privacy-hipaa": { id: "marcus-webb", role: "reviewer" },
+      "responsible-ai": { id: "sofia-grant", role: "reviewer" },
+      legal: { id: "james-liu", role: "reviewer" },
+      security: { id: "devon-clarke", role: "reviewer" },
+      "tech-architecture": { id: "wei-zhang", role: "reviewer" },
+      "data-governance": { id: "grace-kim", role: "reviewer" },
+      procurement: { id: "tom-brennan", role: "reviewer" },
+    };
+
+    /** Champion payload, fully signed + approved once, then a SECOND reassessment
+     * cycle opened directly against the DB (mirrors runMonitor's shape: kind
+     * 'reassessment', riskAssessmentId set, ZERO review_decisions rows), state
+     * forced to 're_review'. Returns the reassessment cycle's required domains
+     * (from the initiative's risk assessment) for the caller to populate. */
+    async function setUpZeroRowReassessmentCycle(): Promise<{
+      initiativeId: string;
+      reassessCycleId: string;
+      requiredDomains: Domain[];
+    }> {
+      const draft = await svc.createDraft(db, {
+        payload: CHAMPION_PREFILL_PAYLOAD,
+        requesterActor: REQUESTER,
+        requesterName: "Priya Raman",
+      });
+      await svc.submitIntake(db, draft.initiativeId, REQUESTER);
+      const triageResult = await svc.triage(db, draft.initiativeId);
+      if (triageResult.branch !== "review") throw new Error("expected review branch");
+      const initiativeId = draft.initiativeId;
+
+      const rds = await db
+        .select()
+        .from(reviewDecisions)
+        .where(eq(reviewDecisions.cycleId, triageResult.cycleId));
+      for (const rd of rds) {
+        await db
+          .update(reviewDecisions)
+          .set({ draftMd: `Draft ${rd.domain}.`, status: "drafted" })
+          .where(eq(reviewDecisions.id, rd.id));
+      }
+      for (const rd of rds) {
+        await svc.signReview(
+          db,
+          triageResult.cycleId,
+          rd.domain as Domain,
+          DOMAIN_REVIEWER[rd.domain as Domain],
+          null,
+        );
+      }
+      const first = await svc.decide(db, initiativeId, APPROVER, null, { decision: "approved" });
+      expect(first.type).toBe("approved");
+
+      const raRows = await db
+        .select()
+        .from(riskAssessments)
+        .where(eq(riskAssessments.initiativeId, initiativeId));
+      const latestRa = raRows.slice().sort((a, b) => b.version - a.version)[0]!;
+      const reassessCycleId = `cycle-p26-${initiativeId}`;
+      await db.insert(reviewCycles).values({
+        id: reassessCycleId,
+        initiativeId,
+        kind: "reassessment",
+        riskAssessmentId: latestRa.id,
+        openedAt: new Date(Date.now() + 1000),
+        closedAt: null,
+        incidentId: null,
+      });
+      await db.update(initiatives).set({ state: "re_review" }).where(eq(initiatives.id, initiativeId));
+
+      return { initiativeId, reassessCycleId, requiredDomains: latestRa.requiredDomains as Domain[] };
+    }
+
+    it("a reassessment cycle with ZERO review_decisions rows throws ValidationError listing every required domain as missing", async () => {
+      const { initiativeId, requiredDomains } = await setUpZeroRowReassessmentCycle();
+
+      let caught: unknown;
+      try {
+        await svc.decide(db, initiativeId, APPROVER, null, { decision: "approved" });
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(ValidationError);
+      for (const domain of requiredDomains) {
+        expect((caught as Error).message).toContain(`${domain}:missing`);
+      }
+
+      // No partial write from the blocked attempt.
+      const row = (await db.select().from(initiatives).where(eq(initiatives.id, initiativeId)))[0]!;
+      expect(row.state).toBe("re_review");
+    });
+
+    it("a reassessment cycle missing just ONE required domain's row is blocked, naming it as missing", async () => {
+      const { initiativeId, reassessCycleId, requiredDomains } = await setUpZeroRowReassessmentCycle();
+      const [missingDomain, ...restDomains] = requiredDomains;
+
+      for (const domain of restDomains) {
+        await db.insert(reviewDecisions).values({
+          id: `rd-p26-${initiativeId}-${domain}`,
+          cycleId: reassessCycleId,
+          domain,
+          status: "signed",
+          reviewer: DOMAIN_REVIEWER[domain].id,
+          draftMd: `Reassessment draft ${domain}.`,
+          citations: [],
+          signedAt: new Date(),
+          returnReason: null,
+          createdAt: new Date(),
+        });
+      }
+
+      let caught: unknown;
+      try {
+        await svc.decide(db, initiativeId, APPROVER, null, { decision: "approved" });
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(ValidationError);
+      expect((caught as Error).message).toContain(`${missingDomain}:missing`);
+    });
+
+    it("a reassessment cycle with every required domain signed approves (stays green on the happy path)", async () => {
+      const { initiativeId, reassessCycleId, requiredDomains } = await setUpZeroRowReassessmentCycle();
+
+      for (const domain of requiredDomains) {
+        await db.insert(reviewDecisions).values({
+          id: `rd-p26-ok-${initiativeId}-${domain}`,
+          cycleId: reassessCycleId,
+          domain,
+          status: "signed",
+          reviewer: DOMAIN_REVIEWER[domain].id,
+          draftMd: `Reassessment draft ${domain}.`,
+          citations: [],
+          signedAt: new Date(),
+          returnReason: null,
+          createdAt: new Date(),
+        });
+      }
+
+      const res = await svc.decide(db, initiativeId, APPROVER, null, { decision: "approved" });
+      expect(res.type).toBe("approved");
+    });
+
+    it("the fast-lane branch (triage()'s own initiative_decisions write) is never routed through decide()'s gate", async () => {
+      // Fast-lane eligible: low tier, no PHI/member-facing/care-coverage
+      // flags (mirrors seed #2 marketing-ab-tester — see lowTierPayload()).
+      const draft = await svc.createDraft(db, {
+        payload: lowTierPayload(),
+        requesterActor: REQUESTER,
+        requesterName: "Priya Raman",
+      });
+      await svc.submitIntake(db, draft.initiativeId, REQUESTER);
+      const result = await svc.triage(db, draft.initiativeId);
+      expect(result.branch).toBe("fast-lane");
+
+      const row = (await db.select().from(initiatives).where(eq(initiatives.id, draft.initiativeId)))[0]!;
+      expect(row.state).toBe("fast_lane_approved");
+      const decisions = await db
+        .select()
+        .from(initiativeDecisions)
+        .where(eq(initiativeDecisions.initiativeId, draft.initiativeId));
+      expect(decisions).toHaveLength(1);
+      expect(decisions[0]!.type).toBe("fast_lane_approved");
     });
   });
 
@@ -932,8 +1130,12 @@ describe("lib/services/initiative-service", () => {
         requesterName: "Priya Raman",
         workspaceId,
       });
-      await svc.submitIntake(db, draft.initiativeId, REQUESTER);
-      const triageResult = await svc.triage(db, draft.initiativeId);
+      // submitIntake()/triage() now ALSO enforce workspace authorization
+      // (external-review finding P2-4) — pass the SAME workspaceId this
+      // initiative was created with, matching how a real same-browser
+      // session would carry it through the whole flow.
+      await svc.submitIntake(db, draft.initiativeId, REQUESTER, workspaceId);
+      const triageResult = await svc.triage(db, draft.initiativeId, SYSTEM_ACTOR, workspaceId);
       if (triageResult.branch !== "review") throw new Error("expected review branch");
       return { initiativeId: draft.initiativeId, cycleId: triageResult.cycleId };
     }
@@ -982,6 +1184,113 @@ describe("lib/services/initiative-service", () => {
           .from(initiativeDecisions)
           .where(eq(initiativeDecisions.initiativeId, initiativeId));
         expect(decisions).toHaveLength(0);
+      });
+    });
+
+    /* ---------------------------------------------------------------------
+     * External-review finding P2-4: submitIntake()/triage() never received
+     * the session workspace, unlike decide()/signReview()/returnReview()/
+     * runReviewAgent() above — any authenticated demo session could submit
+     * or triage another workspace's live-created initiative by id. Same
+     * guard (`assertWorkspaceAccess`), same NotFoundError shape as an
+     * unknown id — no existence leak.
+     * -------------------------------------------------------------------- */
+    describe("submitIntake()", () => {
+      async function draftInWorkspace(workspaceId: string | null) {
+        return svc.createDraft(db, {
+          payload: CHAMPION_PREFILL_PAYLOAD,
+          requesterActor: REQUESTER,
+          requesterName: "Priya Raman",
+          workspaceId,
+        });
+      }
+
+      it("a session bound to a DIFFERENT workspace gets NotFoundError — same shape as an unknown id", async () => {
+        const draft = await draftInWorkspace("ws-A");
+        await expect(svc.submitIntake(db, draft.initiativeId, REQUESTER, "ws-B")).rejects.toThrow(
+          NotFoundError,
+        );
+        await expect(svc.submitIntake(db, draft.initiativeId, REQUESTER, "ws-B")).rejects.toThrow(
+          `initiative not found: ${draft.initiativeId}`,
+        );
+      });
+
+      it("no partial write happens on a workspace-mismatch rejection", async () => {
+        const draft = await draftInWorkspace("ws-A");
+        await expect(svc.submitIntake(db, draft.initiativeId, REQUESTER, "ws-B")).rejects.toThrow(
+          NotFoundError,
+        );
+        const row = (await db.select().from(initiatives).where(eq(initiatives.id, draft.initiativeId)))[0]!;
+        expect(row.state).toBe("intake_draft"); // unchanged
+      });
+
+      it("a session bound to the OWNING workspace succeeds", async () => {
+        const draft = await draftInWorkspace("ws-A");
+        const res = await svc.submitIntake(db, draft.initiativeId, REQUESTER, "ws-A");
+        expect(res.submitted).toBe(true);
+      });
+
+      it("a session with a NULL workspace cannot submit a workspace-tagged initiative", async () => {
+        const draft = await draftInWorkspace("ws-A");
+        await expect(svc.submitIntake(db, draft.initiativeId, REQUESTER, null)).rejects.toThrow(
+          NotFoundError,
+        );
+      });
+
+      it("a seeded (null-workspace) initiative is submittable from ANY session workspace", async () => {
+        const draft = await draftInWorkspace(null);
+        const res = await svc.submitIntake(db, draft.initiativeId, REQUESTER, "ws-anything-at-all");
+        expect(res.submitted).toBe(true);
+      });
+    });
+
+    describe("triage()", () => {
+      async function submittedInWorkspace(workspaceId: string | null): Promise<string> {
+        const draft = await svc.createDraft(db, {
+          payload: CHAMPION_PREFILL_PAYLOAD,
+          requesterActor: REQUESTER,
+          requesterName: "Priya Raman",
+          workspaceId,
+        });
+        await svc.submitIntake(db, draft.initiativeId, REQUESTER, workspaceId);
+        return draft.initiativeId;
+      }
+
+      it("a session bound to a DIFFERENT workspace gets NotFoundError — same shape as an unknown id", async () => {
+        const initiativeId = await submittedInWorkspace("ws-A");
+        await expect(svc.triage(db, initiativeId, SYSTEM_ACTOR, "ws-B")).rejects.toThrow(NotFoundError);
+        await expect(svc.triage(db, initiativeId, SYSTEM_ACTOR, "ws-B")).rejects.toThrow(
+          `initiative not found: ${initiativeId}`,
+        );
+      });
+
+      it("no partial write happens on a workspace-mismatch rejection", async () => {
+        const initiativeId = await submittedInWorkspace("ws-A");
+        await expect(svc.triage(db, initiativeId, SYSTEM_ACTOR, "ws-B")).rejects.toThrow(NotFoundError);
+        const row = (await db.select().from(initiatives).where(eq(initiatives.id, initiativeId)))[0]!;
+        expect(row.state).toBe("submitted"); // unchanged
+        const raRows = await db
+          .select()
+          .from(riskAssessments)
+          .where(eq(riskAssessments.initiativeId, initiativeId));
+        expect(raRows).toHaveLength(0);
+      });
+
+      it("a session bound to the OWNING workspace succeeds", async () => {
+        const initiativeId = await submittedInWorkspace("ws-A");
+        const res = await svc.triage(db, initiativeId, SYSTEM_ACTOR, "ws-A");
+        expect(res.tier).toBe("critical");
+      });
+
+      it("a session with a NULL workspace cannot triage a workspace-tagged initiative", async () => {
+        const initiativeId = await submittedInWorkspace("ws-A");
+        await expect(svc.triage(db, initiativeId, SYSTEM_ACTOR, null)).rejects.toThrow(NotFoundError);
+      });
+
+      it("a seeded (null-workspace) initiative is triageable from ANY session workspace", async () => {
+        const initiativeId = await submittedInWorkspace(null);
+        const res = await svc.triage(db, initiativeId, SYSTEM_ACTOR, "ws-anything-at-all");
+        expect(res.tier).toBe("critical");
       });
     });
 
@@ -1264,6 +1573,157 @@ describe("lib/services/initiative-service", () => {
         await db.select().from(reviewDecisions).where(eq(reviewDecisions.id, rd.id))
       )[0]!;
       expect(finalRow.status).toBe("drafted");
+    });
+
+    /* -----------------------------------------------------------------------
+     * External-review finding P2-5a: updateInitiativeState() was a plain
+     * `where(eq(id))` update, used by submitIntake()/triage() — two
+     * concurrent triage() calls both reading 'submitted' would both pass and
+     * both write, each creating its OWN risk_assessments/review_cycles rows
+     * (the 0006 unique index doesn't stop it: different cycleIds). Same
+     * write-injection technique as the decide()/signReview() tests above.
+     * -------------------------------------------------------------------- */
+    it("submitIntake(): a write that lands between this transaction's read and its CAS update throws ConflictError, and the whole transaction rolls back", async () => {
+      const draft = await svc.createDraft(db, {
+        payload: CHAMPION_PREFILL_PAYLOAD,
+        requesterActor: REQUESTER,
+        requesterName: "Priya Raman",
+      });
+
+      /* eslint-disable @typescript-eslint/no-explicit-any */
+      const dbAny = db as any;
+      const realTransaction = dbAny.transaction.bind(dbAny);
+      const spy = vi.spyOn(dbAny, "transaction").mockImplementationOnce((cb: any) =>
+        realTransaction(async (tx: any) => {
+          const realUpdate = tx.update.bind(tx);
+          vi.spyOn(tx, "update").mockImplementation((table: any) => {
+            const builder = realUpdate(table);
+            if (table === initiatives) {
+              const realSet = builder.set.bind(builder);
+              builder.set = (values: Record<string, unknown>) => {
+                const base = realSet(values);
+                const realWhere = base.where.bind(base);
+                base.where = (cond: unknown) => {
+                  const afterWhere = realWhere(cond);
+                  const realReturning = afterWhere.returning.bind(afterWhere);
+                  afterWhere.returning = async (...args: unknown[]) => {
+                    // Simulated concurrent second submitIntake()/triage()
+                    // call: flips the initiative's state directly, between
+                    // THIS submitIntake()'s own read ('intake_draft') and
+                    // its CAS update below.
+                    await realUpdate(initiatives)
+                      .set({ state: "triaged" })
+                      .where(eq(initiatives.id, draft.initiativeId));
+                    return realReturning(...args);
+                  };
+                  return afterWhere;
+                };
+                return base;
+              };
+            }
+            return builder;
+          });
+          return cb(tx);
+        }),
+      );
+      /* eslint-enable @typescript-eslint/no-explicit-any */
+
+      let caught: unknown;
+      try {
+        await svc.submitIntake(db, draft.initiativeId, REQUESTER);
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(ConflictError);
+      expect((caught as Error).message).toContain("changed concurrently");
+
+      spy.mockRestore();
+
+      // Whole transaction rolled back — including the injected write — back
+      // to the pre-transaction 'intake_draft' state.
+      const row = (await db.select().from(initiatives).where(eq(initiatives.id, draft.initiativeId)))[0]!;
+      expect(row.state).toBe("intake_draft");
+    });
+
+    it("triage(): a write that lands between this transaction's read and its first CAS update throws ConflictError, and the whole transaction rolls back — no duplicate risk assessment or review cycle", async () => {
+      const draft = await svc.createDraft(db, {
+        payload: CHAMPION_PREFILL_PAYLOAD,
+        requesterActor: REQUESTER,
+        requesterName: "Priya Raman",
+      });
+      await svc.submitIntake(db, draft.initiativeId, REQUESTER);
+
+      /* eslint-disable @typescript-eslint/no-explicit-any */
+      const dbAny = db as any;
+      const realTransaction = dbAny.transaction.bind(dbAny);
+      const spy = vi.spyOn(dbAny, "transaction").mockImplementationOnce((cb: any) =>
+        realTransaction(async (tx: any) => {
+          const realUpdate = tx.update.bind(tx);
+          let injected = false;
+          vi.spyOn(tx, "update").mockImplementation((table: any) => {
+            const builder = realUpdate(table);
+            // Only intercept the FIRST `initiatives` update in this
+            // transaction (triage()'s submitted->triaged transition, which
+            // happens before any risk_assessments/review_cycles writes) —
+            // triage() may issue up to two more `initiatives` updates later
+            // in the SAME transaction (fast-lane/start_review branches)
+            // which must run unmodified once the race has been reproduced.
+            if (table === initiatives && !injected) {
+              injected = true;
+              const realSet = builder.set.bind(builder);
+              builder.set = (values: Record<string, unknown>) => {
+                const base = realSet(values);
+                const realWhere = base.where.bind(base);
+                base.where = (cond: unknown) => {
+                  const afterWhere = realWhere(cond);
+                  const realReturning = afterWhere.returning.bind(afterWhere);
+                  afterWhere.returning = async (...args: unknown[]) => {
+                    // Simulated concurrent second triage() call: flips the
+                    // initiative's state directly, between THIS triage()'s
+                    // own read ('submitted') and its first CAS update below.
+                    await realUpdate(initiatives)
+                      .set({ state: "triaged" })
+                      .where(eq(initiatives.id, draft.initiativeId));
+                    return realReturning(...args);
+                  };
+                  return afterWhere;
+                };
+                return base;
+              };
+            }
+            return builder;
+          });
+          return cb(tx);
+        }),
+      );
+      /* eslint-enable @typescript-eslint/no-explicit-any */
+
+      let caught: unknown;
+      try {
+        await svc.triage(db, draft.initiativeId);
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(ConflictError);
+      expect((caught as Error).message).toContain("changed concurrently");
+
+      spy.mockRestore();
+
+      // Whole transaction rolled back — including the injected write — back
+      // to the pre-transaction 'submitted' state, and no risk_assessments/
+      // review_cycles rows from the "losing" call.
+      const row = (await db.select().from(initiatives).where(eq(initiatives.id, draft.initiativeId)))[0]!;
+      expect(row.state).toBe("submitted");
+      const raRows = await db
+        .select()
+        .from(riskAssessments)
+        .where(eq(riskAssessments.initiativeId, draft.initiativeId));
+      expect(raRows).toHaveLength(0);
+      const cycleRows = await db
+        .select()
+        .from(reviewCycles)
+        .where(eq(reviewCycles.initiativeId, draft.initiativeId));
+      expect(cycleRows).toHaveLength(0);
     });
   });
 });

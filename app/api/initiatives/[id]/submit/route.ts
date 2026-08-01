@@ -7,15 +7,28 @@
  * Auth: session required, role `requester`, and the acting requester must
  * OWN the initiative (`submitIntake` enforces this and throws
  * `IllegalTransitionError` otherwise, mapped to 403 here).
+ *
+ * Workspace authorization (external-review finding P2-4): the session's
+ * bound workspace (from `runMutationGuard`) is passed through to
+ * `submitIntake()`, which throws `NotFoundError` — mapped to 404 here, same
+ * shape as an unknown id — when the initiative belongs to a different
+ * workspace.
+ *
  * Body:  (none)
  * 200:   { submitted: true, completenessPct: number }
  *      | { submitted: false, gaps: CompletenessGap[] }
  * 401/429: as other mutating routes.
  * 403:   { error: string }  (non-requester actor, or requester does not own the initiative)
  * 404:   { error: string }  (unknown initiative id)
+ * 409:   { error: string }  (concurrent triage()/submitIntake() raced this initiative — retry)
  */
 import { getDb } from "@/lib/db/client";
-import { IllegalTransitionError, NotFoundError, submitIntake } from "@/lib/services/initiative-service";
+import {
+  ConflictError,
+  IllegalTransitionError,
+  NotFoundError,
+  submitIntake,
+} from "@/lib/services/initiative-service";
 import { runMutationGuard } from "@/lib/services/route-guard";
 
 export async function POST(
@@ -34,7 +47,7 @@ export async function POST(
   const db = getDb();
 
   try {
-    const result = await submitIntake(db, id, guard.actor);
+    const result = await submitIntake(db, id, guard.actor, guard.workspaceId);
     return Response.json(result, { status: 200 });
   } catch (err) {
     if (err instanceof NotFoundError) {
@@ -42,6 +55,9 @@ export async function POST(
     }
     if (err instanceof IllegalTransitionError) {
       return Response.json({ error: err.message }, { status: 403 });
+    }
+    if (err instanceof ConflictError) {
+      return Response.json({ error: err.message }, { status: 409 });
     }
     throw err;
   }

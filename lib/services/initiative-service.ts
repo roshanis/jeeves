@@ -11,21 +11,19 @@
  *      plan.md §8 "transactionality": a partial write (state changed, no
  *      audit row, or vice versa) must never be observable.
  *
- * IMPORTANT driver caveat (judgment call, documented per task brief): this
- * module always calls `db.transaction(fn)`. Under PGlite (all tests, and
- * local/dev when DATABASE_URL is unset) this is a REAL transaction with
- * rollback-on-throw. Under the Neon HTTP driver (production, when
- * DATABASE_URL is set) `drizzle-orm/neon-http`'s `transaction()` does not
- * wrap statements in BEGIN/COMMIT/ROLLBACK at all — see
- * node_modules/drizzle-orm/neon-http/session.d.ts, whose `transaction`
- * method takes an unused (`_transaction`) callback parameter. This is a
- * pre-existing limitation of the chosen Neon HTTP driver (plan.md §4), not
- * something introduced or fixable in this module; calling `db.transaction`
- * uniformly is still correct because (a) it is a real transaction in every
- * environment this task's tests exercise, and (b) it keeps the call sites
- * identical if/when the app moves to a pooled Neon driver that does support
- * HTTP-safe transactions. Flagged here and in the task's final report
- * rather than silently working around it.
+ * Driver note (corrected — a prior version of this comment claimed
+ * `db.transaction()` was a no-op under the Neon HTTP driver; that is no
+ * longer accurate and misled a reviewer): `lib/db/client.ts` builds its
+ * production `Db` handle via `drizzle-orm/neon-serverless` over a
+ * process-wide `@neondatabase/serverless` WebSocket `Pool`, specifically
+ * *because* the application requires real interactive transaction support
+ * (see that file's header). `db.transaction(fn)` is therefore a REAL
+ * transaction with rollback-on-throw in every environment this module runs
+ * in: PGlite (all tests, and local/dev when `DATABASE_URL` is unset) and the
+ * pooled Neon WebSocket driver (production, when `DATABASE_URL` is set)
+ * alike — including the compare-and-set (CAS) reads-then-writes and
+ * multi-statement writes throughout this file, which depend on that
+ * transactional isolation being real, not simulated.
  */
 import { randomUUID } from "node:crypto";
 import { and, eq, isNull } from "drizzle-orm";
@@ -173,13 +171,30 @@ async function insertAuditEvent(
   });
 }
 
+/**
+ * Compare-and-set (CAS) state update (external-review finding P2-5a:
+ * "concurrent triage()/submitIntake() duplicate work"). Requires the
+ * `observedState` the caller read the row to be in immediately before this
+ * write — mirrors `decide()`'s own CAS predicate (`eq(initiatives.state,
+ * observedState)` + `.returning()` rowcount check) rather than the prior
+ * blind `where(eq(id))` update. Two concurrent `triage()` calls that both
+ * read `'submitted'` would, without this predicate, both pass and both
+ * write — one call's risk_assessments/review_cycles rows silently
+ * duplicating the other's (the 0006 unique index doesn't catch this: the two
+ * cycles get different `cycleId`s). With the predicate, the losing call's
+ * update affects 0 rows and throws `ConflictError` — always BEFORE that
+ * call's OWN risk_assessments/review_cycles writes, since every call site in
+ * this file performs its first `updateInitiativeState` for a given
+ * transaction before any of its other domain-row writes.
+ */
 async function updateInitiativeState(
   tx: Tx,
   initiativeId: string,
+  observedState: LifecycleState,
   state: LifecycleState,
   extra?: { tier?: Tier; accountableApprover?: string | null },
 ): Promise<void> {
-  await tx
+  const updated = await tx
     .update(initiatives)
     .set({
       state,
@@ -189,7 +204,13 @@ async function updateInitiativeState(
         : {}),
       updatedAt: new Date(nowTs()),
     })
-    .where(eq(initiatives.id, initiativeId));
+    .where(and(eq(initiatives.id, initiativeId), eq(initiatives.state, observedState)))
+    .returning();
+  if (updated.length === 0) {
+    throw new ConflictError(
+      `initiative ${initiativeId} changed concurrently (expected state '${observedState}')`,
+    );
+  }
 }
 
 async function loadInitiativeOrThrow(
@@ -363,14 +384,23 @@ export interface SubmitIntakeBlockedResult {
  * is the "BLOCKING gates submission" requirement, enforced before
  * `transition()` is ever called so an illegal-but-blocked submit never
  * reaches the lifecycle layer.
+ *
+ * `sessionWorkspaceId` (external-review finding P2-4): workspace
+ * authorization, enforced BEFORE any business-logic validation — same
+ * pattern/error shape as `decide()`/`signReview()`/`returnReview()`. Default
+ * `null` so pre-existing internal/seeded callers (which never had a session
+ * workspace to pass) keep behaving exactly as before: `null` only ever
+ * grants access to a `null`-workspace (seeded/shared) initiative.
  */
 export async function submitIntake(
   db: Db,
   initiativeId: string,
   actor: Actor,
+  sessionWorkspaceId: string | null = null,
 ): Promise<SubmitIntakeResult | SubmitIntakeBlockedResult> {
   return db.transaction(async (tx) => {
     const initiative = await loadInitiativeOrThrow(tx, initiativeId);
+    assertWorkspaceAccess(initiative.workspaceId, sessionWorkspaceId, "initiative", initiativeId);
     requireRequesterOwnership(actor, initiative);
     const intake = await latestIntakeVersion(tx, initiativeId);
     if (!intake) {
@@ -399,7 +429,7 @@ export async function submitIntake(
       .set({ submitted: true, missing: completeness.gaps.map((g) => g.field) })
       .where(eq(intakeVersions.id, intake.id));
 
-    await updateInitiativeState(tx, initiativeId, result.after);
+    await updateInitiativeState(tx, initiativeId, initiative.state as LifecycleState, result.after);
     await insertAuditEvent(
       tx,
       initiativeId,
@@ -444,14 +474,23 @@ export interface TriageReviewResult {
  * `fast_lane_approved` (system actor, named accountable approver, standing
  * policy FL-2026-01) instead of leaving the initiative in `triaged`/
  * `in_review`.
+ *
+ * `sessionWorkspaceId` (external-review finding P2-4): workspace
+ * authorization, same pattern as `submitIntake()`/`decide()` — enforced
+ * before any other read/write. Default `null` so pre-existing internal/
+ * seeded callers (which never had a session workspace to pass, and — unlike
+ * `sessionWorkspaceId` — sit BEFORE `actor` in this function's positional
+ * parameter list, so both must default) keep behaving exactly as before.
  */
 export async function triage(
   db: Db,
   initiativeId: string,
   actor: Actor = SYSTEM_ACTOR,
+  sessionWorkspaceId: string | null = null,
 ): Promise<TriageFastLaneResult | TriageReviewResult> {
   return db.transaction(async (tx) => {
     const initiative = await loadInitiativeOrThrow(tx, initiativeId);
+    assertWorkspaceAccess(initiative.workspaceId, sessionWorkspaceId, "initiative", initiativeId);
     const intake = await latestIntakeVersion(tx, initiativeId);
     if (!intake) {
       throw new ValidationError("initiative has no intake version to triage");
@@ -466,7 +505,9 @@ export async function triage(
     const triageResult = transition(initiative.state as LifecycleState, "triage", actor, {
       ts: nowTs(),
     });
-    await updateInitiativeState(tx, initiativeId, triageResult.after, { tier });
+    await updateInitiativeState(tx, initiativeId, initiative.state as LifecycleState, triageResult.after, {
+      tier,
+    });
     await insertAuditEvent(
       tx,
       initiativeId,
@@ -533,7 +574,7 @@ export async function triage(
         policyId: FAST_LANE_POLICY.policyId,
         accountableApprover: FAST_LANE_POLICY.accountableApprover,
       });
-      await updateInitiativeState(tx, initiativeId, flResult.after, {
+      await updateInitiativeState(tx, initiativeId, triageResult.after, flResult.after, {
         accountableApprover: FAST_LANE_POLICY.accountableApprover,
       });
       await insertAuditEvent(
@@ -583,7 +624,7 @@ export async function triage(
     const startReviewResult = transition(triageResult.after, "start_review", SYSTEM_ACTOR, {
       ts: nowTs(),
     });
-    await updateInitiativeState(tx, initiativeId, startReviewResult.after);
+    await updateInitiativeState(tx, initiativeId, triageResult.after, startReviewResult.after);
     await insertAuditEvent(
       tx,
       initiativeId,
@@ -965,28 +1006,73 @@ export async function decide(
     // a non-approver gets IllegalTransitionError before any completeness rule.
     const result = transition(initiative.state as LifecycleState, action, actor, { ts: nowTs() });
 
-    // Required-review completeness gate (M2.5): an approval cannot outrun the
-    // domain reviews. A full `approved` requires EVERY required review SIGNED;
-    // a `conditionally_approved` requires every required review at least
-    // DRAFTED (none still pending, returned, or failed) — the conditions
-    // capture residual risk, but an outstanding or objected review is not
-    // "residual". `rejected` has no completeness precondition.
+    // Required-review completeness gate (M2.5, hardened for external-review
+    // finding P2-6 "vacuous completeness gate"): an approval cannot outrun
+    // the domain reviews. The REQUIRED domain set is resolved from the
+    // cycle's OWN risk assessment (`reviewCycles.riskAssessmentId` ->
+    // `riskAssessments.requiredDomains`) — NOT from whichever
+    // `review_decisions` rows happen to exist for the cycle. A reassessment
+    // cycle opened by `runMonitor` (lib/services/monitor-service.ts) is
+    // created with ZERO `review_decisions` rows by design (no per-domain
+    // redraft happens automatically on a breach), and even an initial cycle
+    // could in principle be short a row for one of its required domains;
+    // deriving "required" from "rows that happen to exist" made either shape
+    // pass vacuously — a post-breach re_review -> approved needed no signed
+    // review at all. Falls back to the initiative's latest risk assessment
+    // if the cycle's own `riskAssessmentId` doesn't resolve one; if NEITHER
+    // resolves, an approval must never proceed with no required-domain set
+    // at all, so this throws `ValidationError` rather than silently passing.
+    //
+    // A full `approved` requires a SIGNED row for EVERY required domain; a
+    // `conditionally_approved` requires every required domain at least
+    // DRAFTED (a missing, pending, returned, or failed review is blocking —
+    // the conditions capture residual risk, not an absent review).
+    // `rejected` has no completeness precondition. The fast-lane branch
+    // (triage()'s `eligibility.eligible` path) never calls `decide()` at
+    // all — it writes its own `initiative_decisions` row directly — so it
+    // is not, and must not be, routed through this gate.
     if (decision === "approved" || decision === "conditionally_approved") {
+      let cycleRequiredDomains: Domain[] | null = null;
+      if (cycle.riskAssessmentId) {
+        const [cycleRa] = await tx
+          .select({ requiredDomains: riskAssessments.requiredDomains })
+          .from(riskAssessments)
+          .where(eq(riskAssessments.id, cycle.riskAssessmentId));
+        if (cycleRa) cycleRequiredDomains = cycleRa.requiredDomains as Domain[];
+      }
+      if (!cycleRequiredDomains) {
+        const fallbackRa = await latestRiskAssessment(tx, initiativeId);
+        cycleRequiredDomains = fallbackRa ? (fallbackRa.requiredDomains as Domain[]) : null;
+      }
+      if (!cycleRequiredDomains || cycleRequiredDomains.length === 0) {
+        throw new ValidationError(
+          `cannot ${decision}: review cycle ${cycle.id} has no resolvable required-domain set (no risk assessment found for this cycle or the initiative)`,
+        );
+      }
+
       const decisions = await tx
         .select()
         .from(reviewDecisions)
         .where(eq(reviewDecisions.cycleId, cycle.id));
-      const blocking = decisions.filter((d) =>
-        decision === "approved"
-          ? d.status !== "signed"
-          : d.status !== "signed" && d.status !== "drafted",
-      );
-      if (blocking.length > 0) {
+      const byDomain = new Map(decisions.map((d) => [d.domain as Domain, d]));
+
+      const blockingDescriptions: string[] = [];
+      for (const domain of cycleRequiredDomains) {
+        const row = byDomain.get(domain);
+        if (!row) {
+          blockingDescriptions.push(`${domain}:missing`);
+          continue;
+        }
+        const satisfied =
+          decision === "approved"
+            ? row.status === "signed"
+            : row.status === "signed" || row.status === "drafted";
+        if (!satisfied) blockingDescriptions.push(`${domain}:${row.status}`);
+      }
+      if (blockingDescriptions.length > 0) {
         const need = decision === "approved" ? "signed" : "drafted or signed";
         throw new ValidationError(
-          `cannot ${decision}: ${blocking.length} of ${decisions.length} required domain review(s) not ${need} (${blocking
-            .map((d) => `${d.domain}:${d.status}`)
-            .join(", ")})`,
+          `cannot ${decision}: ${blockingDescriptions.length} of ${cycleRequiredDomains.length} required domain review(s) not ${need} (${blockingDescriptions.join(", ")})`,
         );
       }
     }
