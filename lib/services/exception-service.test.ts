@@ -23,10 +23,53 @@ afterEach(async () => {
   await closeTestDb(db);
 });
 
+// Filtered to a genuinely 'overdue' seeded control (fwa-anomaly-detector's
+// D-02) rather than just `rows[0]` — P2-8's status gate on `requestException`
+// means an arbitrary first row (many of which are seeded 'met') is no longer
+// a valid target for these tests.
 async function anEffectiveControl(): Promise<{ ecId: string; controlId: string }> {
-  const rows = await db.select().from(effectiveControls);
+  const rows = await db.select().from(effectiveControls).where(eq(effectiveControls.status, "overdue"));
   expect(rows.length).toBeGreaterThan(0);
   return { ecId: rows[0]!.id, controlId: rows[0]!.controlId };
+}
+
+/** A fresh effective control seeded directly at the given status, for P2-8 gate/restore tests. */
+async function anEffectiveControlWithStatus(status: string): Promise<{ ecId: string; controlId: string }> {
+  const draft = await createDraft(db, {
+    payload: CHAMPION_PREFILL_PAYLOAD,
+    requesterActor: { id: "priya-raman", role: "requester" },
+    requesterName: "Priya Raman",
+    workspaceId: null,
+  });
+  const [def] = await db.select().from(controlDefinitions).limit(1);
+  const deploymentId = `dep-test-${randomUUID()}`;
+  await db.insert(deploymentVersions).values({
+    id: deploymentId,
+    initiativeId: draft.initiativeId,
+    version: "v1.0",
+    status: "deployed",
+    modelVersion: null,
+    selfHosted: false,
+    feedbackProvenanceSignedOff: false,
+    deployedAt: new Date(),
+    pausedAt: null,
+    retiredAt: null,
+  });
+  const ecId = `ec-test-${randomUUID()}`;
+  await db.insert(effectiveControls).values({
+    id: ecId,
+    deploymentId,
+    controlId: def!.id,
+    version: 1,
+    status,
+    thresholdOverride: null,
+    evidence: null,
+    evidenceAt: null,
+    dueAt: null,
+    remediationOwner: null,
+    createdAt: new Date(),
+  });
+  return { ecId, controlId: def!.id };
 }
 
 /**
@@ -182,6 +225,85 @@ describe("exception-service", () => {
     // Idempotent: a second sweep finds nothing.
     const again = await svc.expireDueExceptions(db, Date.now());
     expect(again).toHaveLength(0);
+  });
+
+  /* -----------------------------------------------------------------------
+   * Review finding P2-8 (status-integrity bug): `requestException` had no
+   * precondition on the target control's status, and `recomputeControlStatus`
+   * unconditionally forced 'overdue' once no active exceptions remained.
+   * request-then-reject (or revoke/expire of the last active exception)
+   * against a control that wasn't 'overdue' when the exception was requested
+   * silently corrupted its status. Fixed by (a) gating `requestException` to
+   * controls whose status is 'overdue' or 'breached', and (b) recording
+   * `statusAtRequest` on the exception row and restoring it — instead of a
+   * hardcoded 'overdue' — on a terminal transition that leaves no other
+   * active exception.
+   * -------------------------------------------------------------------- */
+  describe("status-integrity gate and restore (review P2-8)", () => {
+    it("rejects a request against a 'met' control with ValidationError", async () => {
+      const { ecId } = await anEffectiveControlWithStatus("met");
+      await expect(svc.requestException(db, ecId, REQUESTER, null, "reason")).rejects.toThrow(ValidationError);
+    });
+
+    it("rejects a request against a 'pending' control with ValidationError", async () => {
+      const { ecId } = await anEffectiveControlWithStatus("pending");
+      await expect(svc.requestException(db, ecId, REQUESTER, null, "reason")).rejects.toThrow(ValidationError);
+    });
+
+    it("allows a request against a 'breached' control", async () => {
+      const { ecId } = await anEffectiveControlWithStatus("breached");
+      const res = await svc.requestException(db, ecId, REQUESTER, null, "reason");
+      expect(res.status).toBe("requested");
+    });
+
+    it("request-then-reject against an 'overdue' control leaves it 'overdue' (unchanged, still correct)", async () => {
+      const { ecId } = await anEffectiveControlWithStatus("overdue");
+      const req = await svc.requestException(db, ecId, REQUESTER, null, "reason");
+      await svc.decideException(db, req.id, APPROVER, null, false, "insufficient justification");
+      const [ec] = await db.select().from(effectiveControls).where(eq(effectiveControls.id, ecId));
+      expect(ec!.status).toBe("overdue");
+    });
+
+    it("full round-trip: request -> approve -> revoke restores the control to its statusAtRequest ('breached'), NOT unconditionally 'overdue'", async () => {
+      const { ecId } = await anEffectiveControlWithStatus("breached");
+      const req = await svc.requestException(db, ecId, REQUESTER, null, "reason");
+
+      const [reqRow] = await db.select().from(controlExceptions).where(eq(controlExceptions.id, req.id));
+      expect(reqRow!.statusAtRequest).toBe("breached");
+
+      await svc.decideException(db, req.id, APPROVER, null, true, "granted");
+      await svc.revokeException(db, req.id, ADMIN, null, "risk posture changed");
+
+      const [ec] = await db.select().from(effectiveControls).where(eq(effectiveControls.id, ecId));
+      expect(ec!.status).toBe("breached");
+    });
+
+    it("full round-trip via expiry: request -> approve -> expire restores the control to its statusAtRequest ('breached')", async () => {
+      const { ecId } = await anEffectiveControlWithStatus("breached");
+      const req = await svc.requestException(db, ecId, REQUESTER, null, "reason");
+      const pastExpiry = Date.now() - 1000;
+      await svc.decideException(db, req.id, APPROVER, null, true, "granted", pastExpiry);
+
+      await svc.expireDueExceptions(db, Date.now());
+      const [ec] = await db.select().from(effectiveControls).where(eq(effectiveControls.id, ecId));
+      expect(ec!.status).toBe("breached");
+    });
+
+    it("a renewal's statusAtRequest propagates from the original it renews, so restoring after the renewal is revoked still yields the true origin status", async () => {
+      const { ecId } = await anEffectiveControlWithStatus("breached");
+      const original = await svc.requestException(db, ecId, REQUESTER, null, "original reason");
+      await svc.decideException(db, original.id, APPROVER, null, true, "granted");
+      const renewal = await svc.renewException(db, original.id, REQUESTER, null, "renew");
+
+      const [renewalRow] = await db.select().from(controlExceptions).where(eq(controlExceptions.id, renewal.id));
+      expect(renewalRow!.statusAtRequest).toBe("breached");
+
+      await svc.decideException(db, renewal.id, APPROVER, null, true, "granted renewal"); // supersedes original
+      await svc.revokeException(db, renewal.id, ADMIN, null, "risk posture changed");
+
+      const [ec] = await db.select().from(effectiveControls).where(eq(effectiveControls.id, ecId));
+      expect(ec!.status).toBe("breached");
+    });
   });
 
   /* -----------------------------------------------------------------------
