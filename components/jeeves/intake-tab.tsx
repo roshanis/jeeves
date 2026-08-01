@@ -1,6 +1,7 @@
 // Intake tab (ui-spec §3.2): read-only rendering of the submitted
 // IntakeVersion, or the "Draft — not yet submitted" state for the champion.
 import type { InitiativeDetail } from "@/lib/data/dto";
+import { AlertTriangle } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -27,7 +28,11 @@ const FIELD_LABEL: Record<string, string> = {
 
 function renderValue(value: string | boolean | null): React.ReactNode {
   if (value === null) {
-    return <Badge variant="destructive">Missing</Badge>;
+    return (
+      <Badge variant="destructive" className="bg-status-critical-bg text-status-critical-fg">
+        Missing
+      </Badge>
+    );
   }
   if (typeof value === "boolean") {
     return value ? "Yes" : "No";
@@ -43,8 +48,9 @@ export function IntakeTab({ intake }: { intake: InitiativeDetail["intake"] }) {
   return (
     <div className="space-y-4" data-slot="intake-tab">
       {!intake.submitted ? (
-        <Alert>
-          <AlertTitle>Draft — not yet submitted</AlertTitle>
+        <Alert className="border-status-warning-fg/20 bg-status-warning-bg">
+          <AlertTriangle className="size-4 text-status-warning-fg" aria-hidden />
+          <AlertTitle className="text-status-warning-fg">Draft — not yet submitted</AlertTitle>
           <AlertDescription>
             This intake is still in draft. It is created live during the demo
             (champion storyline).
@@ -59,24 +65,26 @@ export function IntakeTab({ intake }: { intake: InitiativeDetail["intake"] }) {
         </Alert>
       ) : null}
 
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Field</TableHead>
-            <TableHead>Answer</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {Object.entries(intake.fields).map(([key, value]) => (
-            <TableRow key={key}>
-              <TableCell className="whitespace-normal font-medium">
-                {FIELD_LABEL[key] ?? key}
-              </TableCell>
-              <TableCell className="whitespace-normal">{renderValue(value)}</TableCell>
+      <div className="card-quiet overflow-hidden rounded-lg border">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Field</TableHead>
+              <TableHead>Answer</TableHead>
             </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+          </TableHeader>
+          <TableBody>
+            {Object.entries(intake.fields).map(([key, value]) => (
+              <TableRow key={key}>
+                <TableCell className="whitespace-normal font-medium">
+                  {FIELD_LABEL[key] ?? key}
+                </TableCell>
+                <TableCell className="whitespace-normal">{renderValue(value)}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
 
       {!intake.submitted ? (
         <GatedActionButton label="Continue intake" variant="outline" />

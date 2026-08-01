@@ -13,26 +13,31 @@ import {
 import { DOMAIN_LABEL } from "./domain-labels";
 import { cn } from "@/lib/utils";
 
+// Reserved status-family tokens (app/globals.css data-color contract):
+// met=good, pending=neutral, overdue=warning, breached=critical.
+// exception_requested rides the blue tier-medium slot — distinct from every
+// good/warning/serious/critical reading so "pending exception" never reads
+// as a violation.
 const STATUS_META: Record<ControlRow["status"], { label: string; className: string }> = {
   met: {
     label: "Met",
-    className: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300",
+    className: "bg-status-good-bg text-status-good-fg",
   },
   pending: {
     label: "Pending",
-    className: "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300",
+    className: "bg-status-neutral-bg text-status-neutral-fg",
   },
   overdue: {
     label: "Overdue",
-    className: "bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300",
+    className: "bg-status-warning-bg text-status-warning-fg",
   },
   breached: {
     label: "Breached",
-    className: "bg-red-200 text-red-900 dark:bg-red-900 dark:text-red-100",
+    className: "bg-status-critical-bg text-status-critical-fg",
   },
   exception_requested: {
     label: "Exception pending",
-    className: "bg-violet-100 text-violet-800 dark:bg-violet-950 dark:text-violet-300",
+    className: "bg-tier-medium-bg text-tier-medium-fg",
   },
 };
 
@@ -62,41 +67,43 @@ export function ControlsTab({ controls }: { controls: ControlRow[] }) {
   }
 
   return (
-    <Table data-slot="controls-tab">
-      <TableHeader>
-        <TableRow>
-          <TableHead>Control</TableHead>
-          <TableHead>Name</TableHead>
-          <TableHead>Domain</TableHead>
-          <TableHead>Status</TableHead>
-          <TableHead>Policy source</TableHead>
-          <TableHead>Threshold</TableHead>
-          <TableHead>Evidence</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {controls.map((control) => (
-          <TableRow key={control.id}>
-            <TableCell className="font-mono text-xs">{control.id}</TableCell>
-            <TableCell className="whitespace-normal">{control.name}</TableCell>
-            <TableCell>
-              {control.domain === "runtime" ? "Runtime" : DOMAIN_LABEL[control.domain]}
-            </TableCell>
-            <TableCell>
-              <ControlStatusChip status={control.status} />
-            </TableCell>
-            <TableCell className="text-xs text-muted-foreground">
-              {control.policySource ?? "—"}
-            </TableCell>
-            <TableCell className="tabular-nums">
-              {control.threshold ?? "—"}
-            </TableCell>
-            <TableCell className="max-w-64 truncate text-xs text-muted-foreground">
-              {control.evidence ?? "—"}
-            </TableCell>
+    <div className="card-quiet overflow-hidden rounded-lg border">
+      <Table data-slot="controls-tab">
+        <TableHeader>
+          <TableRow>
+            <TableHead>Control</TableHead>
+            <TableHead>Name</TableHead>
+            <TableHead>Domain</TableHead>
+            <TableHead>Status</TableHead>
+            <TableHead>Policy source</TableHead>
+            <TableHead>Threshold</TableHead>
+            <TableHead>Evidence</TableHead>
           </TableRow>
-        ))}
-      </TableBody>
-    </Table>
+        </TableHeader>
+        <TableBody>
+          {controls.map((control) => (
+            <TableRow key={control.id}>
+              <TableCell className="font-mono text-xs">{control.id}</TableCell>
+              <TableCell className="whitespace-normal">{control.name}</TableCell>
+              <TableCell>
+                {control.domain === "runtime" ? "Runtime" : DOMAIN_LABEL[control.domain]}
+              </TableCell>
+              <TableCell>
+                <ControlStatusChip status={control.status} />
+              </TableCell>
+              <TableCell className="text-xs text-muted-foreground">
+                {control.policySource ?? "—"}
+              </TableCell>
+              <TableCell className="tabular-nums">
+                {control.threshold ?? "—"}
+              </TableCell>
+              <TableCell className="max-w-64 truncate text-xs text-muted-foreground">
+                {control.evidence ?? "—"}
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </div>
   );
 }

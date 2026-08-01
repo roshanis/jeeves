@@ -22,6 +22,17 @@ import {
   useClientNow,
 } from "@/components/jeeves/queue-age";
 import {
+  Bot,
+  Cpu,
+  Database,
+  HeartPulse,
+  Lock,
+  Scale,
+  ShieldCheck,
+  ShoppingCart,
+  type LucideIcon,
+} from "lucide-react";
+import {
   Table,
   TableBody,
   TableCell,
@@ -42,7 +53,6 @@ import {
   runReviewAgent,
   signReview,
 } from "@/lib/client/api";
-import { Bot } from "lucide-react";
 import { useLiveInfo } from "@/lib/client/use-live-info";
 import { useLiveSessionOptional } from "@/lib/client/session-context";
 
@@ -66,6 +76,25 @@ const DOMAIN_ORDER: Domain[] = [
   "clinical-safety",
   "data-governance",
 ];
+
+// Per-domain glyph, purely decorative — pairs with DOMAIN_LABEL text so the
+// queue table and workbench header read faster without relying on color
+// alone. Mirrors the mapping in reviews-tab.tsx.
+const DOMAIN_ICON: Record<Domain, LucideIcon> = {
+  legal: Scale,
+  procurement: ShoppingCart,
+  "tech-architecture": Cpu,
+  "responsible-ai": Bot,
+  security: Lock,
+  "privacy-hipaa": ShieldCheck,
+  "clinical-safety": HeartPulse,
+  "data-governance": Database,
+};
+
+function DomainIcon({ domain, className }: { domain: Domain; className?: string }) {
+  const Icon = DOMAIN_ICON[domain];
+  return <Icon className={className} aria-hidden />;
+}
 
 export function ReviewWorkbench({ rows }: { rows: ReviewQueueRow[] }) {
   const { reviewerDomain } = useRole();
@@ -180,7 +209,8 @@ export function ReviewWorkbench({ rows }: { rows: ReviewQueueRow[] }) {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filteredRows.map((row) => (
+              {filteredRows.map((row) => {
+                return (
                 <TableRow
                   key={`${row.slug}-${row.review.domain}`}
                   onClick={() => setSelected(row)}
@@ -197,7 +227,12 @@ export function ReviewWorkbench({ rows }: { rows: ReviewQueueRow[] }) {
                   <TableCell>
                     <TierBadge tier={row.tier} />
                   </TableCell>
-                  <TableCell>{DOMAIN_LABEL[row.review.domain]}</TableCell>
+                  <TableCell>
+                    <span className="inline-flex items-center gap-1.5">
+                      <DomainIcon domain={row.review.domain} className="size-3.5 shrink-0 text-muted-foreground" />
+                      {DOMAIN_LABEL[row.review.domain]}
+                    </span>
+                  </TableCell>
                   <TableCell>
                     <ReviewStatusBadge status={row.review.status} />
                   </TableCell>
@@ -215,7 +250,8 @@ export function ReviewWorkbench({ rows }: { rows: ReviewQueueRow[] }) {
                     {row.review.signedAt?.slice(0, 10) ?? "—"}
                   </TableCell>
                 </TableRow>
-              ))}
+                );
+              })}
             </TableBody>
           </Table>
         </CardContent>
@@ -224,7 +260,8 @@ export function ReviewWorkbench({ rows }: { rows: ReviewQueueRow[] }) {
       {visibleSelected ? (
         <div>
           <div className="mb-3 flex items-center gap-2 text-sm">
-            <span className="font-semibold">
+            <span className="flex items-center gap-1.5 font-semibold">
+              <DomainIcon domain={visibleSelected.review.domain} className="size-4 shrink-0 text-muted-foreground" />
               {DOMAIN_LABEL[visibleSelected.review.domain]} review
             </span>
             <span className="text-muted-foreground">·</span>
@@ -242,7 +279,7 @@ export function ReviewWorkbench({ rows }: { rows: ReviewQueueRow[] }) {
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-3" data-slot="review-columns">
             <Card className="overflow-hidden">
               <CardHeader className="border-b bg-muted/40 py-2.5">
-                <CardTitle className="text-xs uppercase tracking-wide text-muted-foreground">
+                <CardTitle className="kicker">
                   1 · Evidence &amp; policy sources
                 </CardTitle>
               </CardHeader>
@@ -271,7 +308,7 @@ export function ReviewWorkbench({ rows }: { rows: ReviewQueueRow[] }) {
 
             <Card className="overflow-hidden">
               <CardHeader className="border-b bg-muted/40 py-2.5">
-                <CardTitle className="text-xs uppercase tracking-wide text-muted-foreground">
+                <CardTitle className="kicker">
                   2 · Agent-drafted assessment
                 </CardTitle>
               </CardHeader>
@@ -384,7 +421,7 @@ function AssessmentPane({ row }: { row: ReviewQueueRow }) {
   return (
     <Card className="overflow-hidden">
       <CardHeader className="border-b bg-muted/40 py-2.5">
-        <CardTitle className="text-xs uppercase tracking-wide text-muted-foreground">
+        <CardTitle className="kicker">
           3 · Reviewer findings &amp; sign-off
         </CardTitle>
       </CardHeader>

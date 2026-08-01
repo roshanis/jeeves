@@ -17,6 +17,17 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import type { ReviewRow } from "@/lib/data/dto";
 import type { Domain } from "@/lib/domain/types";
+import {
+  Bot,
+  Cpu,
+  Database,
+  HeartPulse,
+  Lock,
+  Scale,
+  ShieldCheck,
+  ShoppingCart,
+  type LucideIcon,
+} from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -42,6 +53,19 @@ export { DOMAIN_LABEL, ReviewStatusBadge } from "./domain-labels";
 
 const POLL_INTERVAL_MS = 1500;
 const MAX_POLLS = 80; // 2 minutes of polling at 1.5s — plenty for the mock adapter
+
+// Per-domain glyph, purely decorative — pairs with DOMAIN_LABEL text so the
+// review queue reads faster without relying on color alone.
+const DOMAIN_ICON: Record<Domain, LucideIcon> = {
+  legal: Scale,
+  procurement: ShoppingCart,
+  "tech-architecture": Cpu,
+  "responsible-ai": Bot,
+  security: Lock,
+  "privacy-hipaa": ShieldCheck,
+  "clinical-safety": HeartPulse,
+  "data-governance": Database,
+};
 
 export function ReviewsTab({ reviews, slug }: { reviews: ReviewRow[]; slug?: string }) {
   const router = useRouter();
@@ -178,9 +202,9 @@ export function ReviewsTab({ reviews, slug }: { reviews: ReviewRow[]; slug?: str
   return (
     <div className="space-y-3" data-slot="reviews-tab">
       {canRunDrafts ? (
-        <Card size="sm" data-slot="draft-run-panel">
+        <Card size="sm" data-slot="draft-run-panel" className="card-quiet">
           <CardHeader>
-            <CardTitle className="text-sm">Draft run — fan out to drafting agents</CardTitle>
+            <CardTitle className="kicker">Draft run — fan out to drafting agents</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
             <p className="text-xs text-muted-foreground">
@@ -220,73 +244,79 @@ export function ReviewsTab({ reviews, slug }: { reviews: ReviewRow[]; slug?: str
         </Card>
       ) : null}
 
-      {displayRows.map(({ review, status }) => (
-        <Card key={review.domain} size="sm" data-slot="review-row" data-domain={review.domain}>
-          <CardHeader className="flex-row items-center justify-between gap-2">
-            <CardTitle className="text-sm">{DOMAIN_LABEL[review.domain]}</CardTitle>
-            <div className="flex items-center gap-2">
-              {status === "failed" ? (
-                <Badge variant="destructive">Failed</Badge>
-              ) : (
-                <ReviewStatusBadge status={status} />
-              )}
-              {review.reviewer ? (
-                <span className="text-xs text-muted-foreground">{review.reviewer}</span>
-              ) : null}
-              {review.signedAt ? (
-                <span className="text-xs text-muted-foreground">
-                  signed {review.signedAt.slice(0, 10)}
-                </span>
-              ) : null}
-            </div>
-          </CardHeader>
-          {review.draftMd || review.citations.length > 0 || status === "drafted" || status === "returned" ? (
-            <CardContent className="space-y-2">
-              {review.draftMd ? (
-                <p className="whitespace-pre-wrap text-sm text-muted-foreground">
-                  {review.draftMd}
-                </p>
-              ) : null}
-              {review.citations.length > 0 ? (
-                <div className="flex flex-wrap gap-1.5">
-                  {review.citations.map((c) => (
-                    <Badge key={c} variant="outline">
-                      {c}
-                    </Badge>
-                  ))}
-                </div>
-              ) : null}
-              {status === "drafted" || status === "returned" ? (
-                <>
-                  <Separator />
-                  <div className="flex gap-2">
-                    <GatedActionButton
-                      label="Sign"
-                      requiresRole="reviewer"
-                      pending={actingDomain === review.domain}
-                      pendingLabel="Signing…"
-                      onAction={
-                        liveInfo?.cycleId ? () => void handleSign(review.domain) : undefined
-                      }
-                    />
-                    <GatedActionButton
-                      label="Return"
-                      variant="outline"
-                      requiresRole="reviewer"
-                      pending={actingDomain === review.domain}
-                      onAction={
-                        liveInfo?.cycleId
-                          ? () => setReturnDialogDomain(review.domain)
-                          : undefined
-                      }
-                    />
+      {displayRows.map(({ review, status }) => {
+        const DomainIcon = DOMAIN_ICON[review.domain];
+        return (
+          <Card key={review.domain} size="sm" data-slot="review-row" data-domain={review.domain} className="card-quiet overflow-hidden">
+            <CardHeader className="flex-row items-center justify-between gap-2 border-b py-2.5">
+              <CardTitle className="flex items-center gap-2 text-sm">
+                <DomainIcon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+                {DOMAIN_LABEL[review.domain]}
+              </CardTitle>
+              <div className="flex items-center gap-2">
+                {status === "failed" ? (
+                  <Badge variant="destructive">Failed</Badge>
+                ) : (
+                  <ReviewStatusBadge status={status} />
+                )}
+                {review.reviewer ? (
+                  <span className="text-xs text-muted-foreground">{review.reviewer}</span>
+                ) : null}
+                {review.signedAt ? (
+                  <span className="text-xs text-muted-foreground">
+                    signed {review.signedAt.slice(0, 10)}
+                  </span>
+                ) : null}
+              </div>
+            </CardHeader>
+            {review.draftMd || review.citations.length > 0 || status === "drafted" || status === "returned" ? (
+              <CardContent className="space-y-3 pt-4">
+                {review.draftMd ? (
+                  <p className="whitespace-pre-wrap text-sm leading-relaxed text-muted-foreground">
+                    {review.draftMd}
+                  </p>
+                ) : null}
+                {review.citations.length > 0 ? (
+                  <div className="flex flex-wrap gap-1.5">
+                    {review.citations.map((c) => (
+                      <Badge key={c} variant="outline" className="font-mono text-[11px]">
+                        {c}
+                      </Badge>
+                    ))}
                   </div>
-                </>
-              ) : null}
-            </CardContent>
-          ) : null}
-        </Card>
-      ))}
+                ) : null}
+                {status === "drafted" || status === "returned" ? (
+                  <>
+                    <Separator />
+                    <div className="flex justify-end gap-2">
+                      <GatedActionButton
+                        label="Sign"
+                        requiresRole="reviewer"
+                        pending={actingDomain === review.domain}
+                        pendingLabel="Signing…"
+                        onAction={
+                          liveInfo?.cycleId ? () => void handleSign(review.domain) : undefined
+                        }
+                      />
+                      <GatedActionButton
+                        label="Return"
+                        variant="outline"
+                        requiresRole="reviewer"
+                        pending={actingDomain === review.domain}
+                        onAction={
+                          liveInfo?.cycleId
+                            ? () => setReturnDialogDomain(review.domain)
+                            : undefined
+                        }
+                      />
+                    </div>
+                  </>
+                ) : null}
+              </CardContent>
+            ) : null}
+          </Card>
+        );
+      })}
 
       <ReturnReviewDialog
         open={returnDialogDomain !== null}

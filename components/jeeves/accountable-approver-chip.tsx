@@ -1,4 +1,5 @@
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { UserX } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 function initials(name: string): string {
@@ -25,7 +26,10 @@ export function AccountableApproverChip({
 }) {
   if (!name) {
     return (
-      <span className={cn("text-xs text-muted-foreground", className)}>
+      <span
+        className={cn("inline-flex items-center gap-1.5 text-xs text-muted-foreground", className)}
+      >
+        <UserX className="size-3.5 shrink-0" aria-hidden />
         No accountable approver yet
       </span>
     );
@@ -33,7 +37,7 @@ export function AccountableApproverChip({
 
   return (
     <span className={cn("inline-flex items-center gap-2", className)}>
-      <Avatar size="sm">
+      <Avatar size="sm" className="ring-1 ring-border">
         <AvatarFallback>{initials(name)}</AvatarFallback>
       </Avatar>
       <span className="flex flex-col leading-tight">
