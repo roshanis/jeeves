@@ -43,7 +43,7 @@ import {
   oldestUnsignedAgeMs,
   useClientNow,
 } from "@/components/jeeves/queue-age";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { buttonVariants } from "@/components/ui/button";
 import { useRole, type RoleKey } from "@/components/jeeves/role-context";
 
@@ -63,10 +63,14 @@ const DECISION_META: Record<
   DecisionRow["type"],
   { label: string; icon: typeof CheckCircle2; className: string }
 > = {
-  approved: { label: "Approved", icon: CheckCircle2, className: "text-emerald-600" },
-  conditionally_approved: { label: "Conditional approval", icon: FileCheck2, className: "text-amber-600" },
-  fast_lane_approved: { label: "Fast-lane approved", icon: CheckCircle2, className: "text-emerald-600" },
-  rejected: { label: "Rejected", icon: XCircle, className: "text-destructive" },
+  approved: { label: "Approved", icon: CheckCircle2, className: "text-status-good-fg" },
+  conditionally_approved: {
+    label: "Conditional approval",
+    icon: FileCheck2,
+    className: "text-status-warning-fg",
+  },
+  fast_lane_approved: { label: "Fast-lane approved", icon: CheckCircle2, className: "text-status-good-fg" },
+  rejected: { label: "Rejected", icon: XCircle, className: "text-status-critical-fg" },
 };
 
 type DecisionEntry = { dec: DecisionRow; title: string; slug: string };
@@ -88,6 +92,13 @@ export interface EvalBreachRow {
   state: LifecycleState;
 }
 
+/**
+ * Instrument-panel stat tile: kicker label, mono stat-value figure, and a
+ * small icon chip top-right that only picks up the semantic status color
+ * when the metric is an actual problem count (tone !== "default" and
+ * value > 0) — a zero-value "warn"/"alert" metric reads as neutral, since
+ * zero of a bad thing is good news, not a warning.
+ */
 function StatTile({
   icon: Icon,
   value,
@@ -99,24 +110,30 @@ function StatTile({
   label: string;
   tone?: "default" | "warn" | "alert";
 }) {
-  const toneClass =
-    tone === "alert"
-      ? "text-destructive"
-      : tone === "warn"
-        ? "text-amber-600"
-        : "text-primary";
+  const isProblem = tone !== "default" && value > 0;
+  const chipClass = isProblem
+    ? tone === "alert"
+      ? "bg-status-critical-bg text-status-critical-fg"
+      : "bg-status-warning-bg text-status-warning-fg"
+    : "bg-status-neutral-bg text-muted-foreground";
   return (
-    <Card>
-      <CardContent className="flex items-center gap-3 px-4 py-3.5">
-        <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-md bg-muted ${toneClass}`}>
-          <Icon className="h-5 w-5" aria-hidden />
+    <div className="card-quiet flex flex-col gap-2.5 rounded-lg border bg-card px-4 py-3.5">
+      <div className="flex items-start justify-between gap-2">
+        <span className="kicker">{label}</span>
+        <span className={`grid size-6 shrink-0 place-items-center rounded-md ${chipClass}`}>
+          <Icon className="size-3.5" aria-hidden />
         </span>
-        <div>
-          <div className="text-xl font-semibold tabular-nums leading-none">{value}</div>
-          <div className="mt-1 text-xs text-muted-foreground">{label}</div>
-        </div>
-      </CardContent>
-    </Card>
+      </div>
+      <div className="stat-value text-2xl text-foreground">{value}</div>
+    </div>
+  );
+}
+
+function CardSectionHeader({ title }: { title: string }) {
+  return (
+    <CardHeader className="border-b py-2.5">
+      <p className="kicker">{title}</p>
+    </CardHeader>
   );
 }
 
@@ -128,10 +145,8 @@ function OperationalAlertsCard({
   hasIncidents: boolean;
 }) {
   return (
-    <Card>
-      <CardHeader className="border-b bg-muted/40 py-3">
-        <CardTitle className="text-sm">Operational alerts</CardTitle>
-      </CardHeader>
+    <Card className="card-quiet">
+      <CardSectionHeader title="Operational alerts" />
       <CardContent className="p-0">
         {alerts.length === 0 && !hasIncidents ? (
           <p className="px-4 py-4 text-sm text-muted-foreground">
@@ -140,16 +155,28 @@ function OperationalAlertsCard({
         ) : (
           <ul className="divide-y">
             {alerts.map((i) => (
-              <li key={i.slug} className="flex items-start gap-2.5 px-4 py-3">
-                <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-destructive" aria-hidden />
-                <div className="min-w-0">
-                  <Link href={`/initiatives/${i.slug}`} className="text-sm font-medium hover:text-primary hover:underline">
-                    {i.title}
-                  </Link>
+              <li key={i.slug} className="flex items-start gap-2.5 px-4 py-2.5">
+                <ShieldAlert className="mt-0.5 size-4 shrink-0 text-status-critical-fg" aria-hidden />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-start justify-between gap-2">
+                    <Link
+                      href={`/initiatives/${i.slug}`}
+                      className="truncate text-sm font-medium hover:text-primary hover:underline"
+                    >
+                      {i.title}
+                    </Link>
+                    {i.updatedAt ? (
+                      <span className="shrink-0 font-mono text-[11px] text-muted-foreground">
+                        {i.updatedAt.slice(0, 10)}
+                      </span>
+                    ) : null}
+                  </div>
                   <div className="mt-1 flex items-center gap-2">
                     <LifecycleBadge state={i.state} />
                     {i.overdue ? (
-                      <span className="text-xs text-destructive">SLA breached</span>
+                      <span className="inline-flex items-center gap-1 text-[11px] font-medium text-status-serious-fg">
+                        <AlertTriangle className="size-3" aria-hidden /> SLA breached
+                      </span>
                     ) : null}
                   </div>
                 </div>
@@ -172,10 +199,8 @@ function RecentDecisionsCard({
   emptyText?: string;
 }) {
   return (
-    <Card>
-      <CardHeader className="border-b bg-muted/40 py-3">
-        <CardTitle className="text-sm">{title}</CardTitle>
-      </CardHeader>
+    <Card className="card-quiet">
+      <CardSectionHeader title={title} />
       <CardContent className="p-0">
         {recentDecisions.length === 0 ? (
           <p className="px-4 py-4 text-sm text-muted-foreground">{emptyText}</p>
@@ -185,14 +210,22 @@ function RecentDecisionsCard({
               const meta = DECISION_META[dec.type];
               const Icon = meta.icon;
               return (
-                <li key={`${slug}-${idx}`} className="flex items-start gap-2.5 px-4 py-3">
-                  <Icon className={`mt-0.5 h-4 w-4 shrink-0 ${meta.className}`} aria-hidden />
-                  <div className="min-w-0">
-                    <Link href={`/initiatives/${slug}`} className="text-sm font-medium hover:text-primary hover:underline">
-                      {initTitle}
-                    </Link>
+                <li key={`${slug}-${idx}`} className="flex items-start gap-2.5 px-4 py-2.5">
+                  <Icon className={`mt-0.5 size-4 shrink-0 ${meta.className}`} aria-hidden />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-start justify-between gap-2">
+                      <Link
+                        href={`/initiatives/${slug}`}
+                        className="truncate text-sm font-medium hover:text-primary hover:underline"
+                      >
+                        {initTitle}
+                      </Link>
+                      <span className="shrink-0 font-mono text-[11px] text-muted-foreground">
+                        {dec.at.slice(0, 10)}
+                      </span>
+                    </div>
                     <div className="mt-0.5 text-xs text-muted-foreground">
-                      {meta.label} · {dec.approver} · {dec.at.slice(0, 10)}
+                      {meta.label} · {dec.approver}
                     </div>
                   </div>
                 </li>
@@ -205,19 +238,50 @@ function RecentDecisionsCard({
   );
 }
 
+/**
+ * Compact "Viewing as" strip — sits inline in the page header row, right of
+ * the heading, instead of a full-width band. Kicker + persona name + a role
+ * chip so switching persona (top bar) is legible at a glance without eating
+ * a full row of vertical space.
+ */
 function RoleContextStrip({ label, actorName }: { label: string; actorName: string }) {
   return (
     <div
       data-slot="role-context-strip"
-      className="flex items-center justify-between rounded-lg border bg-muted/40 px-3 py-2 text-xs text-muted-foreground sm:text-sm"
+      className="card-quiet flex shrink-0 items-center gap-2.5 self-start rounded-lg border bg-card px-3 py-2"
+      title="Switch role in the top bar."
     >
-      <span>
-        Viewing as <span className="font-medium text-foreground">{label}</span> ·{" "}
-        {actorName}
+      <div className="leading-tight">
+        <p className="kicker">Viewing as</p>
+        <p className="text-sm font-medium text-foreground">{actorName}</p>
+      </div>
+      <span className="rounded-md bg-muted px-2 py-1 text-[11px] font-semibold whitespace-nowrap text-muted-foreground">
+        {label}
       </span>
-      <span className="hidden text-xs text-muted-foreground sm:inline">
-        Switch role in the top bar.
-      </span>
+    </div>
+  );
+}
+
+/** Shared page header row: eyebrow + heading + subhead on the left, the
+ * compact role-context strip right-aligned alongside it. */
+function PageHeader({
+  eyebrow,
+  heading,
+  subheading,
+}: {
+  eyebrow: string;
+  heading: string;
+  subheading: React.ReactNode;
+}) {
+  const { persona } = useRole();
+  return (
+    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+      <div>
+        <p className="kicker text-primary">{eyebrow}</p>
+        <h1 className="mt-1 text-2xl font-semibold tracking-tight">{heading}</h1>
+        <p className="mt-1 text-sm text-muted-foreground">{subheading}</p>
+      </div>
+      <RoleContextStrip label={persona.label} actorName={persona.actorName} />
     </div>
   );
 }
@@ -256,7 +320,6 @@ export function RoleAwareInbox({
 
   return (
     <div className="flex flex-col gap-6">
-      <RoleContextStrip label={persona.label} actorName={persona.actorName} />
       <RoleView
         roleKey={roleKey}
         actorName={persona.actorName}
@@ -364,16 +427,16 @@ function ProgramView({
 
   return (
     <>
-      <div>
-        <p className="text-xs font-semibold uppercase tracking-wider text-primary">
-          Program Office
-        </p>
-        <h1 className="mt-1 text-2xl font-semibold tracking-tight">What needs attention</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Meridian Health AI governance — {attention.length} of {initiatives.length}{" "}
-          initiatives are waiting on someone right now.
-        </p>
-      </div>
+      <PageHeader
+        eyebrow="Program Office"
+        heading="What needs attention"
+        subheading={
+          <>
+            Meridian Health AI governance — {attention.length} of {initiatives.length}{" "}
+            initiatives are waiting on someone right now.
+          </>
+        }
+      />
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatTile icon={ClipboardList} value={counts.inReview} label="In review" />
@@ -428,13 +491,11 @@ function RequesterView({
 
   return (
     <>
-      <div>
-        <p className="text-xs font-semibold uppercase tracking-wider text-primary">Requester</p>
-        <h1 className="mt-1 text-2xl font-semibold tracking-tight">Your initiatives</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Initiatives you&apos;ve submitted and what needs your input.
-        </p>
-      </div>
+      <PageHeader
+        eyebrow="Requester"
+        heading="Your initiatives"
+        subheading="Initiatives you've submitted and what needs your input."
+      />
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatTile icon={FilePlus2} value={drafts} label="Drafts" />
@@ -502,7 +563,7 @@ function DomainReviewQueueTable({
     return (
       <div
         data-slot="initiative-table"
-        className="rounded-lg border bg-card px-4 py-6 text-sm text-muted-foreground"
+        className="card-quiet rounded-lg border bg-card px-4 py-6 text-sm text-muted-foreground"
       >
         Nothing awaiting your review right now.
       </div>
@@ -510,15 +571,18 @@ function DomainReviewQueueTable({
   }
 
   return (
-    <div className="overflow-x-auto rounded-lg border bg-card" data-slot="initiative-table">
+    <div
+      className="scroll-thin card-quiet overflow-x-auto rounded-lg border bg-card"
+      data-slot="initiative-table"
+    >
       <table className="w-full min-w-[36rem] border-collapse text-sm">
         <caption className="sr-only">Reviews awaiting your signature</caption>
-        <thead className="border-b bg-muted/50 text-xs uppercase tracking-wide">
+        <thead className="border-b bg-muted/50 text-[11px] uppercase tracking-wide">
           <tr>
             <th className="px-3 py-2 text-left font-medium text-muted-foreground">Initiative</th>
             <th className="px-3 py-2 text-left font-medium text-muted-foreground">Tier</th>
             <th className="px-3 py-2 text-left font-medium text-muted-foreground">Your review</th>
-            <th className="px-3 py-2 text-left font-medium text-muted-foreground">Age</th>
+            <th className="px-3 py-2 text-right font-medium text-muted-foreground">Age</th>
             <th className="px-3 py-2 text-left font-medium text-muted-foreground">State</th>
           </tr>
         </thead>
@@ -526,7 +590,11 @@ function DomainReviewQueueTable({
           {rows.map((row) => {
             const review = row.reviews.find((r) => r.domain === domain);
             return (
-              <tr key={row.slug} data-slot="initiative-row" className="border-b last:border-0 hover:bg-muted/40">
+              <tr
+                key={row.slug}
+                data-slot="initiative-row"
+                className="h-11 border-b last:border-0 hover:bg-muted/40"
+              >
                 <td className="px-3 py-2">
                   <Link
                     href={`/initiatives/${row.slug}?tab=reviews`}
@@ -534,13 +602,13 @@ function DomainReviewQueueTable({
                   >
                     {row.title}
                   </Link>
-                  <div className="text-xs text-muted-foreground">{row.slug}</div>
+                  <div className="font-mono text-[11px] text-muted-foreground">{row.slug}</div>
                 </td>
                 <td className="px-3 py-2"><TierBadge tier={row.tier} /></td>
                 <td className="px-3 py-2">
                   {review ? <ReviewStatusBadge status={review.status} /> : null}
                 </td>
-                <td className="px-3 py-2">
+                <td className="px-3 py-2 text-right">
                   {review ? (
                     <QueueAgeCell createdAt={review.createdAt} status={review.status} nowMs={nowMs} />
                   ) : null}
@@ -557,10 +625,8 @@ function DomainReviewQueueTable({
 
 function EvalQualityCard({ evalBreaches }: { evalBreaches: EvalBreachRow[] }) {
   return (
-    <Card>
-      <CardHeader className="border-b bg-muted/40 py-3">
-        <CardTitle className="text-sm">Eval-quality &amp; fairness signals</CardTitle>
-      </CardHeader>
+    <Card className="card-quiet">
+      <CardSectionHeader title="Eval-quality & fairness signals" />
       <CardContent className="p-0">
         {evalBreaches.length === 0 ? (
           <p className="px-4 py-4 text-sm text-muted-foreground">
@@ -569,9 +635,9 @@ function EvalQualityCard({ evalBreaches }: { evalBreaches: EvalBreachRow[] }) {
         ) : (
           <ul className="divide-y">
             {evalBreaches.map((b) => (
-              <li key={b.slug} className="flex items-start gap-2.5 px-4 py-3">
-                <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-destructive" aria-hidden />
-                <div className="min-w-0">
+              <li key={b.slug} className="flex items-start gap-2.5 px-4 py-2.5">
+                <ShieldAlert className="mt-0.5 size-4 shrink-0 text-status-critical-fg" aria-hidden />
+                <div className="min-w-0 flex-1">
                   <Link
                     href={`/initiatives/${b.slug}?tab=evals`}
                     className="text-sm font-medium hover:text-primary hover:underline"
@@ -597,10 +663,8 @@ function EvalQualityCard({ evalBreaches }: { evalBreaches: EvalBreachRow[] }) {
 function DomainControlsCard({ domain, controls }: { domain: Domain; controls: ControlRow[] }) {
   const mine = controls.filter((c) => c.domain === domain);
   return (
-    <Card>
-      <CardHeader className="border-b bg-muted/40 py-3">
-        <CardTitle className="text-sm">{DOMAIN_LABEL[domain]} controls</CardTitle>
-      </CardHeader>
+    <Card className="card-quiet">
+      <CardSectionHeader title={`${DOMAIN_LABEL[domain]} controls`} />
       <CardContent className="p-0">
         {mine.length === 0 ? (
           <p className="px-4 py-4 text-sm text-muted-foreground">
@@ -609,10 +673,10 @@ function DomainControlsCard({ domain, controls }: { domain: Domain; controls: Co
         ) : (
           <ul className="divide-y">
             {mine.map((c) => (
-              <li key={c.id} className="flex items-center justify-between gap-2.5 px-4 py-3">
+              <li key={c.id} className="flex items-center justify-between gap-2.5 px-4 py-2.5">
                 <div className="min-w-0">
-                  <span className="text-sm font-medium">{c.id}</span>{" "}
-                  <span className="text-sm text-muted-foreground">{c.name}</span>
+                  <span className="font-mono text-xs text-muted-foreground">{c.id}</span>{" "}
+                  <span className="text-sm font-medium">{c.name}</span>
                 </div>
                 <ControlStatusChip status={c.status} />
               </li>
@@ -658,14 +722,11 @@ function ReviewerView({
 
     return (
       <>
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-wider text-primary">Reviewer</p>
-          <h1 className="mt-1 text-2xl font-semibold tracking-tight">Your review queue</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            This demo isn&apos;t filtered to one reviewer&apos;s assignments — it shows every
-            initiative awaiting a domain signature.
-          </p>
-        </div>
+        <PageHeader
+          eyebrow="Reviewer"
+          heading="Your review queue"
+          subheading="This demo isn't filtered to one reviewer's assignments — it shows every initiative awaiting a domain signature."
+        />
 
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
           <StatTile icon={ClipboardCheck} value={queue.length} label="Awaiting review" />
@@ -711,13 +772,11 @@ function ReviewerView({
 
   return (
     <>
-      <div>
-        <p className="text-xs font-semibold uppercase tracking-wider text-primary">Reviewer</p>
-        <h1 className="mt-1 text-2xl font-semibold tracking-tight">
-          Your {DOMAIN_LABEL[reviewerDomain]} reviews
-        </h1>
-        <p className="mt-1 text-sm text-muted-foreground">{DOMAIN_FOCUS[reviewerDomain]}</p>
-      </div>
+      <PageHeader
+        eyebrow="Reviewer"
+        heading={`Your ${DOMAIN_LABEL[reviewerDomain]} reviews`}
+        subheading={DOMAIN_FOCUS[reviewerDomain]}
+      />
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatTile icon={ClipboardCheck} value={queue.length} label="Awaiting my review" />
@@ -776,15 +835,11 @@ function AuditView({
 
   return (
     <>
-      <div>
-        <p className="text-xs font-semibold uppercase tracking-wider text-primary">
-          Audit / Leadership
-        </p>
-        <h1 className="mt-1 text-2xl font-semibold tracking-tight">Decisions &amp; approvals</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Oversight of what&apos;s awaiting your decision and what&apos;s already been decided.
-        </p>
-      </div>
+      <PageHeader
+        eyebrow="Audit / Leadership"
+        heading="Decisions & approvals"
+        subheading="Oversight of what's awaiting your decision and what's already been decided."
+      />
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatTile icon={Gavel} value={awaitingDecision.length} label="Awaiting decision" tone="warn" />
@@ -831,13 +886,11 @@ function AdminView({
 
   return (
     <>
-      <div>
-        <p className="text-xs font-semibold uppercase tracking-wider text-primary">Admin</p>
-        <h1 className="mt-1 text-2xl font-semibold tracking-tight">Operations &amp; controls</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Runtime enforcement — paused deployments, open incidents, and SLA health.
-        </p>
-      </div>
+      <PageHeader
+        eyebrow="Admin"
+        heading="Operations & controls"
+        subheading="Runtime enforcement — paused deployments, open incidents, and SLA health."
+      />
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatTile icon={PauseCircle} value={paused.length} label="Paused deployments" tone="alert" />

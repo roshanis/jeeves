@@ -2,9 +2,10 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { ArrowUpDown, AlertTriangle } from "lucide-react";
+import { ArrowUpDown, ArrowUp, ArrowDown, CircleCheck, TriangleAlert } from "lucide-react";
 import type { InitiativeSummary } from "@/lib/data/dto";
 import type { LifecycleState, Tier } from "@/lib/domain/types";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { TierBadge } from "./tier-badge";
 import { LifecycleBadge } from "./lifecycle-badge";
 import { InitiativeAgeCell, useClientNow } from "./queue-age";
@@ -51,28 +52,61 @@ function reviewsFraction(i: InitiativeSummary) {
   return i.domainsRequired === 0 ? 1 : i.domainsSigned / i.domainsRequired;
 }
 
+function initials(name: string): string {
+  return name
+    .split(" ")
+    .filter(Boolean)
+    .map((part) => part[0]?.toUpperCase() ?? "")
+    .slice(0, 2)
+    .join("");
+}
+
+/** Compact owner identity — initials avatar chip, full name on hover. */
+function OwnerCell({ name }: { name: string }) {
+  return (
+    <span className="inline-flex items-center gap-2" title={name}>
+      <Avatar size="sm">
+        <AvatarFallback>{initials(name)}</AvatarFallback>
+      </Avatar>
+      <span className="hidden truncate text-muted-foreground xl:inline">{name}</span>
+    </span>
+  );
+}
+
 // Sortable column header. Declared at module scope (not inside the table's
 // render) so React doesn't remount it every render — the sort handler is
 // passed in as a prop instead of closed over.
 function Th({
   k,
+  activeKey,
+  dir,
   onToggle,
   children,
+  align = "left",
   className = "",
 }: {
   k: SortKey;
+  activeKey: SortKey;
+  dir: 1 | -1;
   onToggle: (k: SortKey) => void;
   children: React.ReactNode;
+  align?: "left" | "right";
   className?: string;
 }) {
+  const active = k === activeKey;
+  const Icon = active ? (dir === 1 ? ArrowUp : ArrowDown) : ArrowUpDown;
   return (
-    <th className={`px-3 py-2 text-left font-medium ${className}`}>
+    <th
+      className={`px-3 py-2 font-medium ${align === "right" ? "text-right" : "text-left"} ${className}`}
+    >
       <button
         onClick={() => onToggle(k)}
-        className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground"
+        className={`inline-flex items-center gap-1 whitespace-nowrap transition-colors hover:text-foreground ${
+          align === "right" ? "flex-row-reverse" : ""
+        } ${active ? "text-foreground" : "text-muted-foreground"}`}
       >
         {children}
-        <ArrowUpDown className="h-3 w-3 opacity-50" aria-hidden />
+        <Icon className={`h-3 w-3 ${active ? "opacity-90" : "opacity-40"}`} aria-hidden />
       </button>
     </th>
   );
@@ -112,19 +146,28 @@ export function InitiativeTable({
   }
 
   return (
-    <div className="overflow-x-auto rounded-lg border bg-card" data-slot="initiative-table">
-      <table className="w-full min-w-[52rem] border-collapse text-sm">
+    <div
+      className="scroll-thin card-quiet overflow-x-auto rounded-lg border bg-card"
+      data-slot="initiative-table"
+    >
+      <table className="w-full min-w-[46rem] border-collapse text-sm">
         {caption ? <caption className="sr-only">{caption}</caption> : null}
-        <thead className="border-b bg-muted/50 text-xs uppercase tracking-wide">
+        <thead className="border-b bg-muted/50 text-[11px] uppercase tracking-wide">
           <tr>
-            <Th k="title" onToggle={toggle}>Initiative</Th>
+            <Th k="title" activeKey={sort} dir={dir} onToggle={toggle} className="min-w-[13rem]">
+              Initiative
+            </Th>
             <th className="px-3 py-2 text-left font-medium text-muted-foreground">Owner</th>
-            <Th k="tier" onToggle={toggle}>Tier</Th>
-            <Th k="state" onToggle={toggle}>State</Th>
-            <Th k="age" onToggle={toggle}>Age</Th>
-            <Th k="reviews" onToggle={toggle}>Reviews</Th>
-            <Th k="sla" onToggle={toggle}>SLA</Th>
-            <th className="px-3 py-2 text-left font-medium text-muted-foreground">Next action</th>
+            <Th k="tier" activeKey={sort} dir={dir} onToggle={toggle}>Tier</Th>
+            <Th k="state" activeKey={sort} dir={dir} onToggle={toggle}>State</Th>
+            <Th k="age" activeKey={sort} dir={dir} onToggle={toggle} align="right">Age</Th>
+            <Th k="reviews" activeKey={sort} dir={dir} onToggle={toggle} align="right">
+              Reviews
+            </Th>
+            <Th k="sla" activeKey={sort} dir={dir} onToggle={toggle}>SLA</Th>
+            <th className="hidden px-3 py-2 text-left font-medium text-muted-foreground lg:table-cell">
+              Next action
+            </th>
           </tr>
         </thead>
         <tbody>
@@ -132,33 +175,42 @@ export function InitiativeTable({
             <tr
               key={i.slug}
               data-slot="initiative-row"
-              className="border-b last:border-0 hover:bg-muted/40"
+              className="h-11 border-b last:border-0 hover:bg-muted/40"
             >
               <td className="px-3 py-2">
-                <Link href={`/initiatives/${i.slug}`} className="font-medium text-foreground hover:text-primary hover:underline">
+                <Link
+                  href={`/initiatives/${i.slug}`}
+                  className="font-medium text-foreground hover:text-primary hover:underline"
+                >
                   {i.title}
                 </Link>
-                <div className="text-xs text-muted-foreground">{i.slug}</div>
+                <div className="font-mono text-[11px] text-muted-foreground">{i.slug}</div>
               </td>
-              <td className="px-3 py-2 text-muted-foreground">{i.requester}</td>
+              <td className="px-3 py-2">
+                <OwnerCell name={i.requester} />
+              </td>
               <td className="px-3 py-2"><TierBadge tier={i.tier} /></td>
               <td className="px-3 py-2"><LifecycleBadge state={i.state} /></td>
-              <td className="px-3 py-2">
+              <td className="px-3 py-2 text-right">
                 <InitiativeAgeCell updatedAt={i.updatedAt} state={i.state} nowMs={nowMs} />
               </td>
-              <td className="px-3 py-2 tabular-nums text-muted-foreground">
+              <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">
                 {i.domainsSigned}/{i.domainsRequired}
               </td>
               <td className="px-3 py-2">
                 {i.overdue ? (
-                  <span className="inline-flex items-center gap-1 text-xs font-medium text-destructive">
-                    <AlertTriangle className="h-3.5 w-3.5" aria-hidden /> Breached
+                  <span className="inline-flex items-center gap-1 text-xs font-medium text-status-serious-fg">
+                    <TriangleAlert className="h-3.5 w-3.5" aria-hidden /> Breached
                   </span>
                 ) : (
-                  <span className="text-xs text-muted-foreground">On track</span>
+                  <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                    <CircleCheck className="h-3.5 w-3.5" aria-hidden /> On track
+                  </span>
                 )}
               </td>
-              <td className="px-3 py-2 text-xs text-muted-foreground">{NEXT_ACTION[i.state]}</td>
+              <td className="hidden px-3 py-2 text-xs text-muted-foreground lg:table-cell">
+                {NEXT_ACTION[i.state]}
+              </td>
             </tr>
           ))}
         </tbody>

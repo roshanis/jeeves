@@ -1,7 +1,7 @@
 import type { InitiativeSummary } from "@/lib/data/dto";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { EvidenceLink } from "./evidence-link";
-import { AlertTriangle } from "lucide-react";
+import { TriangleAlert } from "lucide-react";
 
 interface Callout {
   slug: string;
@@ -64,16 +64,23 @@ export function SlaCallouts({ initiatives }: { initiatives: InitiativeSummary[] 
   }
 
   return (
-    <Card data-slot="sla-callouts">
-      <CardContent className="divide-y">
-        {callouts.map((c) => (
-          <div key={`${c.slug}-${c.tab}`} className="flex items-center gap-2 py-2 first:pt-0 last:pb-0">
-            <AlertTriangle className="size-4 shrink-0 text-amber-600" />
-            <EvidenceLink slug={c.slug} tab={c.tab} className="text-sm">
-              {c.text}
-            </EvidenceLink>
-          </div>
-        ))}
+    <Card data-slot="sla-callouts" className="card-quiet">
+      <CardHeader className="border-b py-2.5">
+        <p className="kicker">SLA &amp; bottleneck callouts</p>
+      </CardHeader>
+      <CardContent className="divide-y p-0">
+        {callouts.length === 0 ? (
+          <p className="px-4 py-4 text-sm text-muted-foreground">No callouts right now.</p>
+        ) : (
+          callouts.map((c) => (
+            <div key={`${c.slug}-${c.tab}`} className="flex items-start gap-2.5 px-4 py-2.5">
+              <TriangleAlert className="mt-0.5 size-4 shrink-0 text-status-warning-fg" aria-hidden />
+              <EvidenceLink slug={c.slug} tab={c.tab} className="text-sm hover:text-primary hover:underline">
+                {c.text}
+              </EvidenceLink>
+            </div>
+          ))
+        )}
       </CardContent>
     </Card>
   );

@@ -1,7 +1,7 @@
 "use client";
 
 import { LineChart, Line, ResponsiveContainer } from "recharts";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Info } from "lucide-react";
 import type { OutcomeMetrics } from "@/lib/data/dto";
@@ -25,9 +25,9 @@ function OutcomeMetricCard({
   sparkline?: { i: number; value: number }[];
 }) {
   return (
-    <Card data-slot="outcome-metric-card" className="min-w-0">
+    <Card data-slot="outcome-metric-card" className="card-quiet min-w-0">
       <CardHeader className="flex-row items-center justify-between gap-2 pb-0">
-        <CardTitle className="text-xs font-medium text-muted-foreground">{label}</CardTitle>
+        <span className="kicker">{label}</span>
         <Tooltip>
           <TooltipTrigger
             render={
@@ -41,8 +41,8 @@ function OutcomeMetricCard({
       </CardHeader>
       <CardContent className="flex items-end justify-between gap-2">
         <div>
-          <div className="text-2xl font-semibold tabular-nums">{value}</div>
-          {subtext ? <div className="text-xs text-muted-foreground">{subtext}</div> : null}
+          <div className="stat-value text-2xl text-foreground">{value}</div>
+          {subtext ? <div className="mt-1 text-xs text-muted-foreground">{subtext}</div> : null}
         </div>
         {sparkline ? (
           <div className="h-8 w-16">
