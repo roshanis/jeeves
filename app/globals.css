@@ -46,62 +46,148 @@
   --radius-2xl: calc(var(--radius) * 1.8);
   --radius-3xl: calc(var(--radius) * 2.2);
   --radius-4xl: calc(var(--radius) * 2.6);
+  /* Data-color contract exposed as Tailwind color utilities
+     (bg-status-good-bg, text-tier-critical-fg, stroke-chart-grid, …) */
+  --color-chart-grid: var(--chart-grid);
+  --color-chart-axis: var(--chart-axis);
+  --color-seq-1: var(--seq-1);
+  --color-seq-2: var(--seq-2);
+  --color-seq-3: var(--seq-3);
+  --color-seq-4: var(--seq-4);
+  --color-seq-5: var(--seq-5);
+  --color-status-good: var(--status-good);
+  --color-status-good-fg: var(--status-good-fg);
+  --color-status-good-bg: var(--status-good-bg);
+  --color-status-warning: var(--status-warning);
+  --color-status-warning-fg: var(--status-warning-fg);
+  --color-status-warning-bg: var(--status-warning-bg);
+  --color-status-serious: var(--status-serious);
+  --color-status-serious-fg: var(--status-serious-fg);
+  --color-status-serious-bg: var(--status-serious-bg);
+  --color-status-critical: var(--status-critical);
+  --color-status-critical-fg: var(--status-critical-fg);
+  --color-status-critical-bg: var(--status-critical-bg);
+  --color-status-neutral-fg: var(--status-neutral-fg);
+  --color-status-neutral-bg: var(--status-neutral-bg);
+  --color-tier-low-fg: var(--tier-low-fg);
+  --color-tier-low-bg: var(--tier-low-bg);
+  --color-tier-medium-fg: var(--tier-medium-fg);
+  --color-tier-medium-bg: var(--tier-medium-bg);
+  --color-tier-high-fg: var(--tier-high-fg);
+  --color-tier-high-bg: var(--tier-high-bg);
+  --color-tier-critical-fg: var(--tier-critical-fg);
+  --color-tier-critical-bg: var(--tier-critical-bg);
+  --shadow-card: var(--shadow-card);
+  --shadow-raised: var(--shadow-raised);
 }
 
 /*
- * Jeeves — Governance Operations Console theme (per Codex design review).
+ * Jeeves — Governance Operations Console theme (per Codex design review;
+ * elevated in the 2026-08-01 design pass).
  * Restrained enterprise-ops language: white/soft-gray surfaces, CHARCOAL
  * navigation, TEAL for actions, AMBER for warnings, RED for incidents.
- * No gradients, minimal shadows, 8px corners. Cascades to every shadcn
- * component. Tier/status accents live in their own badge components.
+ * No gradients on data surfaces, two-layer soft shadows, 8-10px corners.
+ * Cascades to every shadcn component.
+ *
+ * DATA COLOR CONTRACT (dataviz-skill validated 2026-08-01, six-check
+ * validator, per mode against its chart surface):
+ *  - --chart-1..4 are the CATEGORICAL series slots, assigned in fixed
+ *    order (1 teal, 2 orange, 3 violet, 4 ochre), never cycled, never
+ *    reused for status. Slot 4 (light) sits below 3:1 contrast, so any
+ *    series drawn with it MUST carry a direct label or table view.
+ *  - --status-* are RESERVED state colors (good/warning/serious/critical)
+ *    for badges/alerts/thresholds — never used as series colors. Ship with
+ *    icon + label, never color alone.
+ *  - --tier-* map governance tiers onto the same reserved family.
+ *  - --seq-1..5 is the sequential (magnitude) teal ramp, light→dark.
+ *  - Chart chrome: --chart-grid hairline horizontal gridlines only,
+ *    --chart-axis for baselines/tick ink. Text on charts wears text
+ *    tokens (foreground/muted-foreground), never the series color.
  */
 :root {
-  --background: oklch(0.984 0.002 250);
-  --foreground: oklch(0.25 0.006 260);
+  --background: oklch(0.977 0.003 250);
+  --foreground: oklch(0.22 0.008 260);
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.25 0.006 260);
+  --card-foreground: oklch(0.22 0.008 260);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.25 0.006 260);
+  --popover-foreground: oklch(0.22 0.008 260);
   --primary: oklch(0.55 0.095 197);
   --primary-foreground: oklch(0.99 0.01 197);
-  --secondary: oklch(0.965 0.003 250);
+  --secondary: oklch(0.962 0.004 250);
   --secondary-foreground: oklch(0.30 0.008 260);
-  --muted: oklch(0.965 0.003 250);
-  --muted-foreground: oklch(0.52 0.008 260);
+  --muted: oklch(0.962 0.004 250);
+  --muted-foreground: oklch(0.50 0.010 258);
   --accent: oklch(0.95 0.022 197);
   --accent-foreground: oklch(0.36 0.06 200);
   --destructive: oklch(0.55 0.20 25);
-  --border: oklch(0.918 0.004 255);
-  --input: oklch(0.918 0.004 255);
+  --border: oklch(0.910 0.005 255);
+  --input: oklch(0.910 0.005 255);
   --ring: oklch(0.55 0.095 197);
-  --chart-1: oklch(0.56 0.095 197);
-  --chart-2: oklch(0.53 0.11 250);
-  --chart-3: oklch(0.72 0.13 68);
-  --chart-4: oklch(0.60 0.12 150);
-  --chart-5: oklch(0.57 0.19 25);
-  --radius: 0.5rem;
-  --sidebar: oklch(0.245 0.006 260);
-  --sidebar-foreground: oklch(0.90 0.004 260);
+  /* Categorical series (validated, light surface #fff) */
+  --chart-1: #0891a5;
+  --chart-2: #e26f2c;
+  --chart-3: #7c5cd6;
+  --chart-4: #c07f00;
+  --chart-5: #64748b; /* overflow/"other" only — fold extra series, never invent hues */
+  /* Chart chrome */
+  --chart-grid: oklch(0.93 0.003 255);
+  --chart-axis: oklch(0.80 0.006 255);
+  /* Sequential teal ramp (magnitude, light→dark) */
+  --seq-1: #d4ecef;
+  --seq-2: #9fd3da;
+  --seq-3: #5bb2be;
+  --seq-4: #1d8a9c;
+  --seq-5: #0b5f6e;
+  /* Reserved status family: fg on tinted bg passes WCAG text contrast */
+  --status-good: oklch(0.55 0.14 150);
+  --status-good-fg: oklch(0.38 0.10 150);
+  --status-good-bg: oklch(0.95 0.035 150);
+  --status-warning: oklch(0.68 0.13 70);
+  --status-warning-fg: oklch(0.44 0.10 60);
+  --status-warning-bg: oklch(0.96 0.045 85);
+  --status-serious: oklch(0.62 0.15 45);
+  --status-serious-fg: oklch(0.45 0.13 40);
+  --status-serious-bg: oklch(0.955 0.030 45);
+  --status-critical: oklch(0.55 0.20 25);
+  --status-critical-fg: oklch(0.44 0.17 25);
+  --status-critical-bg: oklch(0.955 0.025 20);
+  --status-neutral-fg: oklch(0.45 0.010 258);
+  --status-neutral-bg: oklch(0.955 0.004 250);
+  /* Governance tiers ride the reserved family */
+  --tier-low-fg: var(--status-neutral-fg);
+  --tier-low-bg: var(--status-neutral-bg);
+  --tier-medium-fg: oklch(0.42 0.09 250);
+  --tier-medium-bg: oklch(0.95 0.025 250);
+  --tier-high-fg: var(--status-warning-fg);
+  --tier-high-bg: var(--status-warning-bg);
+  --tier-critical-fg: var(--status-critical-fg);
+  --tier-critical-bg: var(--status-critical-bg);
+  /* Elevation: two soft layers, no hard edges */
+  --shadow-card: 0 1px 2px oklch(0.22 0.008 260 / 0.05), 0 1px 1px oklch(0.22 0.008 260 / 0.03);
+  --shadow-raised: 0 1px 2px oklch(0.22 0.008 260 / 0.06), 0 8px 24px -12px oklch(0.22 0.008 260 / 0.18);
+  --radius: 0.5625rem;
+  --sidebar: oklch(0.235 0.008 258);
+  --sidebar-foreground: oklch(0.87 0.005 260);
   --sidebar-primary: oklch(0.62 0.10 197);
   --sidebar-primary-foreground: oklch(0.99 0.01 197);
-  --sidebar-accent: oklch(0.31 0.008 260);
+  --sidebar-accent: oklch(0.30 0.010 258);
   --sidebar-accent-foreground: oklch(0.97 0.003 260);
   --sidebar-border: oklch(1 0 0 / 8%);
   --sidebar-ring: oklch(0.62 0.10 197);
 }
 
 .dark {
-  --background: oklch(0.19 0.004 260);
+  --background: oklch(0.185 0.005 260);
   --foreground: oklch(0.95 0.004 260);
-  --card: oklch(0.235 0.005 260);
+  --card: oklch(0.228 0.006 260);
   --card-foreground: oklch(0.95 0.004 260);
-  --popover: oklch(0.235 0.005 260);
+  --popover: oklch(0.228 0.006 260);
   --popover-foreground: oklch(0.95 0.004 260);
   --primary: oklch(0.68 0.10 197);
   --primary-foreground: oklch(0.18 0.02 200);
-  --secondary: oklch(0.29 0.006 260);
+  --secondary: oklch(0.285 0.006 260);
   --secondary-foreground: oklch(0.95 0.004 260);
-  --muted: oklch(0.29 0.006 260);
+  --muted: oklch(0.285 0.006 260);
   --muted-foreground: oklch(0.72 0.006 260);
   --accent: oklch(0.32 0.03 200);
   --accent-foreground: oklch(0.94 0.02 197);
@@ -109,16 +195,48 @@
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 14%);
   --ring: oklch(0.68 0.10 197);
-  --chart-1: oklch(0.68 0.10 197);
-  --chart-2: oklch(0.66 0.11 250);
-  --chart-3: oklch(0.78 0.13 70);
-  --chart-4: oklch(0.70 0.12 150);
-  --chart-5: oklch(0.66 0.17 25);
-  --sidebar: oklch(0.17 0.004 260);
-  --sidebar-foreground: oklch(0.90 0.004 260);
+  /* Categorical series (validated, dark surface #1a1a19-class) */
+  --chart-1: #17a0b5;
+  --chart-2: #e06a33;
+  --chart-3: #9585e0;
+  --chart-4: #bd8100;
+  --chart-5: #7d8a99;
+  --chart-grid: oklch(0.30 0.005 260);
+  --chart-axis: oklch(0.42 0.006 260);
+  --seq-1: #123c44;
+  --seq-2: #175560;
+  --seq-3: #1d7386;
+  --seq-4: #2496ad;
+  --seq-5: #4fc3d8;
+  --status-good: oklch(0.70 0.14 150);
+  --status-good-fg: oklch(0.80 0.13 150);
+  --status-good-bg: oklch(0.70 0.14 150 / 14%);
+  --status-warning: oklch(0.76 0.13 75);
+  --status-warning-fg: oklch(0.83 0.12 80);
+  --status-warning-bg: oklch(0.76 0.13 75 / 14%);
+  --status-serious: oklch(0.70 0.14 45);
+  --status-serious-fg: oklch(0.79 0.12 45);
+  --status-serious-bg: oklch(0.70 0.14 45 / 14%);
+  --status-critical: oklch(0.66 0.18 25);
+  --status-critical-fg: oklch(0.78 0.13 25);
+  --status-critical-bg: oklch(0.66 0.18 25 / 15%);
+  --status-neutral-fg: oklch(0.78 0.006 260);
+  --status-neutral-bg: oklch(1 0 0 / 8%);
+  --tier-low-fg: var(--status-neutral-fg);
+  --tier-low-bg: var(--status-neutral-bg);
+  --tier-medium-fg: oklch(0.78 0.09 250);
+  --tier-medium-bg: oklch(0.66 0.11 250 / 15%);
+  --tier-high-fg: var(--status-warning-fg);
+  --tier-high-bg: var(--status-warning-bg);
+  --tier-critical-fg: var(--status-critical-fg);
+  --tier-critical-bg: var(--status-critical-bg);
+  --shadow-card: 0 1px 2px oklch(0 0 0 / 0.35), 0 1px 1px oklch(0 0 0 / 0.25);
+  --shadow-raised: 0 1px 2px oklch(0 0 0 / 0.4), 0 10px 28px -12px oklch(0 0 0 / 0.55);
+  --sidebar: oklch(0.165 0.005 260);
+  --sidebar-foreground: oklch(0.87 0.005 260);
   --sidebar-primary: oklch(0.68 0.10 197);
   --sidebar-primary-foreground: oklch(0.18 0.02 200);
-  --sidebar-accent: oklch(0.27 0.006 260);
+  --sidebar-accent: oklch(0.265 0.006 260);
   --sidebar-accent-foreground: oklch(0.97 0.003 260);
   --sidebar-border: oklch(1 0 0 / 8%);
   --sidebar-ring: oklch(0.68 0.10 197);
@@ -141,5 +259,44 @@
   h1, h2, h3, h4, h5, h6 {
     font-family: var(--font-heading), var(--font-sans), ui-sans-serif, system-ui, sans-serif;
     letter-spacing: -0.014em;
+    text-wrap: balance;
+  }
+  /* Numbers line up everywhere data is compared. */
+  table, thead, tbody {
+    font-variant-numeric: tabular-nums;
+  }
+  ::selection {
+    background: oklch(0.55 0.095 197 / 22%);
+  }
+}
+
+@layer components {
+  /* Uppercase section label — the console's smallest heading rank. */
+  .kicker {
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted-foreground);
+  }
+  /* Big instrument-panel figure (stat tiles, hero numbers). */
+  .stat-value {
+    font-family: var(--font-mono), ui-monospace, monospace;
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    line-height: 1;
+  }
+  /* Card elevation rhythm: default flat card, .card-raised for emphasis. */
+  .card-quiet {
+    box-shadow: var(--shadow-card);
+  }
+  .card-raised {
+    box-shadow: var(--shadow-raised);
+  }
+  /* Thin, unobtrusive scrollbars inside data panes. */
+  .scroll-thin {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
   }
 }
