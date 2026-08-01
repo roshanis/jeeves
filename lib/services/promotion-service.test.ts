@@ -566,6 +566,161 @@ describe("lib/services/promotion-service", () => {
   });
 
   /* -----------------------------------------------------------------------
+   * P1 fix — external-review finding P2-5b: the retire-current and
+   * redeploy-target updates carried no status predicate/rowcount assert,
+   * mirroring the exact hazard promoteCheckpoint had before its own CAS fix
+   * above (see that describe block's file-level comment). Both updates are
+   * now compare-and-set (CAS), same pattern, same test technique: true
+   * overlapping transactions aren't reproducible against PGlite, so these
+   * tests simulate the race deterministically by injecting a
+   * same-transaction write (via `tx`) between rollbackDeployment's own read
+   * and its CAS update.
+   * -------------------------------------------------------------------- */
+  describe("rollbackDeployment — concurrency (compare-and-set)", () => {
+    async function seedPriorRetiredVersion(initiativeId: string): Promise<string> {
+      const rows = await db
+        .select()
+        .from(deploymentVersions)
+        .where(eq(deploymentVersions.initiativeId, initiativeId));
+      const v19 = rows.find((d) => d.version === "v1.9" && d.status === "retired")!;
+      return v19.id;
+    }
+
+    it("retire-current CAS: a concurrent write that changes the current-deployed row's status before the retire update throws ConflictError, and the whole transaction rolls back", async () => {
+      const initiativeId = await paCorrespondenceModelId(db);
+      const priorId = await seedPriorRetiredVersion(initiativeId);
+      const rows = await db.select().from(deploymentVersions).where(eq(deploymentVersions.initiativeId, initiativeId));
+      const v20Id = rows.find((d) => d.version === "v2.0")!.id;
+
+      /* eslint-disable @typescript-eslint/no-explicit-any */
+      const dbAny = db as any;
+      const realTransaction = dbAny.transaction.bind(dbAny);
+      const spy = vi.spyOn(dbAny, "transaction").mockImplementationOnce((cb: any) =>
+        realTransaction(async (tx: any) => {
+          const realUpdate = tx.update.bind(tx);
+          vi.spyOn(tx, "update").mockImplementation((table: any) => {
+            const builder = realUpdate(table);
+            if (table === deploymentVersions) {
+              const realSet = builder.set.bind(builder);
+              builder.set = (values: Record<string, unknown>) => {
+                const base = realSet(values);
+                if (values.status === "retired") {
+                  const realWhere = base.where.bind(base);
+                  base.where = (cond: unknown) => {
+                    const afterWhere = realWhere(cond);
+                    const realReturning = afterWhere.returning.bind(afterWhere);
+                    afterWhere.returning = async (...args: unknown[]) => {
+                      // Simulated concurrent writer: flips the current-deployed
+                      // row's status directly, inside the SAME transaction,
+                      // between rollbackDeployment's own read (captured as
+                      // `currentDeployed.status`) and its CAS update below.
+                      await realUpdate(deploymentVersions)
+                        .set({ status: "paused" })
+                        .where(eq(deploymentVersions.id, v20Id));
+                      return realReturning(...args);
+                    };
+                    return afterWhere;
+                  };
+                }
+                return base;
+              };
+            }
+            return builder;
+          });
+          return cb(tx);
+        }),
+      );
+      /* eslint-enable @typescript-eslint/no-explicit-any */
+
+      let caught: unknown;
+      try {
+        await rollbackDeployment(db, initiativeId, APPROVER, null, priorId, "reason");
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(ConflictError);
+
+      spy.mockRestore();
+
+      // Whole transaction rolled back — including the injected write, which
+      // never committed. State is exactly as it was before this call.
+      const after = await db.select().from(deploymentVersions).where(eq(deploymentVersions.initiativeId, initiativeId));
+      expect(after.find((d) => d.id === v20Id)!.status).toBe("deployed");
+      expect(after.find((d) => d.id === priorId)!.status).toBe("retired");
+      expect(after.filter((d) => d.status === "deployed")).toHaveLength(1);
+    });
+
+    it("redeploy-target CAS: a concurrent write that changes the target version's status before the redeploy update throws ConflictError, and the whole transaction rolls back", async () => {
+      const initiativeId = await paCorrespondenceModelId(db);
+      const priorId = await seedPriorRetiredVersion(initiativeId);
+      const rows = await db.select().from(deploymentVersions).where(eq(deploymentVersions.initiativeId, initiativeId));
+      const v20Id = rows.find((d) => d.version === "v2.0")!.id;
+
+      /* eslint-disable @typescript-eslint/no-explicit-any */
+      const dbAny = db as any;
+      const realTransaction = dbAny.transaction.bind(dbAny);
+      const spy = vi.spyOn(dbAny, "transaction").mockImplementationOnce((cb: any) =>
+        realTransaction(async (tx: any) => {
+          const realUpdate = tx.update.bind(tx);
+          vi.spyOn(tx, "update").mockImplementation((table: any) => {
+            const builder = realUpdate(table);
+            if (table === deploymentVersions) {
+              const realSet = builder.set.bind(builder);
+              builder.set = (values: Record<string, unknown>) => {
+                const base = realSet(values);
+                if (values.status === "deployed") {
+                  const realWhere = base.where.bind(base);
+                  base.where = (cond: unknown) => {
+                    const afterWhere = realWhere(cond);
+                    const realReturning = afterWhere.returning.bind(afterWhere);
+                    afterWhere.returning = async (...args: unknown[]) => {
+                      // Simulated concurrent writer: flips the target
+                      // (rollback-to) row's status directly, inside the SAME
+                      // transaction, between rollbackDeployment's own read
+                      // (captured as `target.status`) and its CAS update.
+                      await realUpdate(deploymentVersions)
+                        .set({ status: "deployed" })
+                        .where(eq(deploymentVersions.id, priorId));
+                      return realReturning(...args);
+                    };
+                    return afterWhere;
+                  };
+                }
+                return base;
+              };
+            }
+            return builder;
+          });
+          return cb(tx);
+        }),
+      );
+      /* eslint-enable @typescript-eslint/no-explicit-any */
+
+      let caught: unknown;
+      try {
+        await rollbackDeployment(db, initiativeId, APPROVER, null, priorId, "reason");
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(ConflictError);
+
+      spy.mockRestore();
+
+      // Whole transaction rolled back — including the injected write and the
+      // retire-current update that preceded it (both undone). State is
+      // exactly as it was before this call: v20 still deployed, v1.9 still
+      // retired. The pre-fix hazard this CAS prevents is exactly this
+      // in-flight moment (v20 retired + priorId force-set to "deployed" by
+      // the concurrent writer) being allowed to COMMIT as two 'deployed'
+      // rows — the CAS guarantees it never does.
+      const after = await db.select().from(deploymentVersions).where(eq(deploymentVersions.initiativeId, initiativeId));
+      expect(after.find((d) => d.id === v20Id)!.status).toBe("deployed");
+      expect(after.find((d) => d.id === priorId)!.status).toBe("retired");
+      expect(after.filter((d) => d.status === "deployed")).toHaveLength(1);
+    });
+  });
+
+  /* -----------------------------------------------------------------------
    * Security-hardening pass — external-review finding #1: workspace
    * isolation is not an authorization boundary on mutations.
    * -------------------------------------------------------------------- */

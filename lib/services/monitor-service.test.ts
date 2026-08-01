@@ -4,7 +4,7 @@
  * scenario exercises the actual #4 member-chat-copilot series described in
  * seed-spec §4 (days 11-13 sustained breach within base+14d).
  */
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { createTestDb, closeTestDb, type TestDb } from "../db/test-client";
 import { seedDatabase, BASE_DATE_MS } from "../../scripts/seed";
@@ -14,10 +14,13 @@ import {
   effectiveControls,
   incidents,
   initiatives,
+  observations,
   reviewCycles,
 } from "../db/schema";
 import { runMonitor, listIncidents } from "./monitor-service";
 import { SYSTEM_ACTOR } from "./actors";
+import { createDraft } from "./initiative-service";
+import { CHAMPION_PREFILL_PAYLOAD } from "../intake/champion-prefill";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const PLUS_14D = BASE_DATE_MS + 14 * DAY_MS;
@@ -27,6 +30,16 @@ const RAY_CHEN = { id: "ray-chen", role: "admin" as const };
 
 async function memberChatCopilot(db: TestDb) {
   const [init] = await db.select().from(initiatives).where(eq(initiatives.slug, "member-chat-copilot"));
+  const [dep] = await db.select().from(deploymentVersions).where(eq(deploymentVersions.initiativeId, init!.id));
+  return { init: init!, dep: dep! };
+}
+
+// #10 fwa-anomaly-detector: deployed, no Q-01 effective control / no
+// eval_hallucination series at seed time (seed-spec §4 — it has a
+// flatCostSeries only), so it's a clean host for a synthetic Q-01
+// breach fixture that won't collide with any pre-existing observations.
+async function fwaAnomalyDetector(db: TestDb) {
+  const [init] = await db.select().from(initiatives).where(eq(initiatives.slug, "fwa-anomaly-detector"));
   const [dep] = await db.select().from(deploymentVersions).where(eq(deploymentVersions.initiativeId, init!.id));
   return { init: init!, dep: dep! };
 }
@@ -180,6 +193,220 @@ describe("lib/services/monitor-service", () => {
       if (fwaDep) {
         expect(result.breaches.find((b) => b.deploymentId === fwaDep.id)).toBeUndefined();
       }
+    });
+  });
+
+  /* -----------------------------------------------------------------------
+   * P2-5b fix — external-review finding: the breach-pause flip
+   * (`initiatives.state` -> 'paused') carried no observed-state predicate —
+   * a concurrent change (e.g. an admin manually acting on the same
+   * initiative between the candidate scan and this transaction) would be
+   * silently clobbered. Now compare-and-set, mirroring
+   * promotion-service.test.ts's "promoteCheckpoint — concurrency" tests:
+   * true overlapping transactions aren't reproducible against PGlite, so
+   * this simulates the race deterministically by injecting a
+   * same-transaction write between the read and the CAS update.
+   *
+   * P2-7 fix — external-review finding: previously a single candidate's
+   * failure (this CAS conflict, an illegal-state pause attempt, or the FK
+   * hazard below) aborted the ENTIRE `runMonitor` call, for every
+   * deployment. Now isolated per-candidate: recorded in `result.errors`,
+   * the run completes, and other candidates are unaffected.
+   * -------------------------------------------------------------------- */
+  describe("runMonitor — per-candidate error isolation (external-review P2-5b/P2-7)", () => {
+    it("a concurrent write that changes the initiative's state before the breach-pause CAS update is recorded in result.errors and does not abort the run (no partial write for that candidate)", async () => {
+      const { init, dep } = await memberChatCopilot(db);
+
+      /* eslint-disable @typescript-eslint/no-explicit-any */
+      const dbAny = db as any;
+      const realTransaction = dbAny.transaction.bind(dbAny);
+      let txCallCount = 0;
+      const spy = vi.spyOn(dbAny, "transaction").mockImplementation((cb: any) => {
+        txCallCount += 1;
+        // Call #1 is runMonitor's own candidate scan (loadDeployedCandidates);
+        // call #2 is the breaching candidate's own transaction — inject there.
+        if (txCallCount !== 2) return realTransaction(cb);
+        return realTransaction(async (tx: any) => {
+          const realUpdate = tx.update.bind(tx);
+          vi.spyOn(tx, "update").mockImplementation((table: any) => {
+            const builder = realUpdate(table);
+            if (table === initiatives) {
+              const realSet = builder.set.bind(builder);
+              builder.set = (values: Record<string, unknown>) => {
+                const base = realSet(values);
+                if (values.state === "paused") {
+                  const realWhere = base.where.bind(base);
+                  base.where = (cond: unknown) => {
+                    const afterWhere = realWhere(cond);
+                    const realReturning = afterWhere.returning.bind(afterWhere);
+                    afterWhere.returning = async (...args: unknown[]) => {
+                      // Simulated concurrent writer: flips the initiative's
+                      // state directly, inside the SAME transaction, between
+                      // runMonitor's own read (`initiative.state`, captured
+                      // during the candidate scan) and its CAS update below.
+                      await realUpdate(initiatives).set({ state: "retired" }).where(eq(initiatives.id, init.id));
+                      return realReturning(...args);
+                    };
+                    return afterWhere;
+                  };
+                }
+                return base;
+              };
+            }
+            return builder;
+          });
+          return cb(tx);
+        });
+      });
+      /* eslint-enable @typescript-eslint/no-explicit-any */
+
+      const result = await runMonitor(db, SYSTEM_ACTOR, PLUS_14D);
+      spy.mockRestore();
+
+      // The run completed (did not throw) despite the CAS conflict.
+      expect(result.incidentsCreated).toBe(0);
+      const err = result.errors.find((e) => e.deploymentId === dep.id);
+      expect(err).toBeTruthy();
+      expect(err!.message).toContain("changed concurrently");
+      expect(result.breaches.find((b) => b.deploymentId === dep.id)).toBeUndefined();
+
+      // Whole per-candidate transaction rolled back — including the
+      // injected write — so the initiative/deployment are exactly as they
+      // were before this run, and no incident/reassessment was created.
+      const [initAfter] = await db.select().from(initiatives).where(eq(initiatives.id, init.id));
+      expect(initAfter!.state).toBe("deployed");
+      const [depAfter] = await db.select().from(deploymentVersions).where(eq(deploymentVersions.id, dep.id));
+      expect(depAfter!.status).toBe("deployed");
+      const incidentRows = await db.select().from(incidents).where(eq(incidents.deploymentId, dep.id));
+      expect(incidentRows).toHaveLength(0);
+    });
+
+    it("a breaching candidate whose initiative.state does not permit 'system' to pause is skipped (recorded in result.errors) while a genuinely breaching candidate still gets its incident", async () => {
+      const { init: chatInit, dep: chatDep } = await memberChatCopilot(db);
+      expect(chatInit.id).toBeTruthy();
+      const { init: fwaInit, dep: fwaDep } = await fwaAnomalyDetector(db);
+      expect(fwaInit.tier).toBeTruthy();
+
+      // Attach a synthetic Q-01 effective control + a sustained-breach
+      // eval_hallucination series (3 consecutive points far above every
+      // tier's threshold) to the second candidate.
+      await db.insert(effectiveControls).values({
+        id: `ec-test-${fwaDep.id}`,
+        deploymentId: fwaDep.id,
+        controlId: "Q-01",
+        version: 1,
+        status: "met",
+        evidence: "test fixture — synthetic breach series",
+        evidenceAt: new Date(BASE_DATE_MS),
+        createdAt: new Date(BASE_DATE_MS),
+      });
+      for (const d of [11, 12, 13]) {
+        await db.insert(observations).values({
+          id: `obs-test-${fwaDep.id}-${d}`,
+          deploymentId: fwaDep.id,
+          kind: "eval_hallucination",
+          ts: new Date(BASE_DATE_MS + d * DAY_MS),
+          value: 0.99,
+        });
+      }
+
+      // Data-drift scenario (the point of this test): the deployment row is
+      // still 'deployed' (so it remains a monitor candidate), but the
+      // OWNING initiative's lifecycle state has drifted to one that does not
+      // permit 'system' to 'pause' (lib/lifecycle/transitions.ts: 'pause' is
+      // only legal from 'deployed').
+      await db.update(initiatives).set({ state: "in_review" }).where(eq(initiatives.id, fwaInit.id));
+
+      const result = await runMonitor(db, SYSTEM_ACTOR, PLUS_14D);
+
+      // The genuinely breaching candidate still gets its incident.
+      const chatBreach = result.breaches.find((b) => b.deploymentId === chatDep.id);
+      expect(chatBreach).toBeTruthy();
+      expect(chatBreach!.isNew).toBe(true);
+      expect(result.incidentsCreated).toBe(1);
+
+      // The pause-illegal candidate is skipped, not thrown/aborted.
+      const skip = result.errors.find((e) => e.deploymentId === fwaDep.id);
+      expect(skip).toBeTruthy();
+      expect(skip!.message).toContain("in_review");
+      expect(skip!.message).toContain("pause");
+      expect(result.breaches.find((b) => b.deploymentId === fwaDep.id)).toBeUndefined();
+
+      // No incident/pause/reassessment for the skipped candidate.
+      const fwaIncidents = await db.select().from(incidents).where(eq(incidents.deploymentId, fwaDep.id));
+      expect(fwaIncidents).toHaveLength(0);
+      const [fwaInitAfter] = await db.select().from(initiatives).where(eq(initiatives.id, fwaInit.id));
+      expect(fwaInitAfter!.state).toBe("in_review");
+      const [fwaDepAfter] = await db.select().from(deploymentVersions).where(eq(deploymentVersions.id, fwaDep.id));
+      expect(fwaDepAfter!.status).toBe("deployed");
+    });
+
+    it("a deployed initiative with no risk assessment on file records a descriptive error instead of inserting an empty-string FK, with no partial (paused-but-no-cycle) write", async () => {
+      // Seeded initiatives all carry a risk assessment from their normal
+      // triage() history, and it's FK-referenced by their initial
+      // review_cycles row (can't just delete it out from under them). To get
+      // a deployed initiative with GENUINELY no risk assessment on file,
+      // build one directly: createDraft() never creates a risk assessment
+      // (only triage() does, per initiative-service.ts) — flip it straight
+      // to 'deployed' without ever calling triage(), and attach a synthetic
+      // Q-01 breach fixture, exactly like the pause-illegal-state test above.
+      const draft = await createDraft(db, {
+        payload: CHAMPION_PREFILL_PAYLOAD,
+        requesterActor: { id: "priya-raman", role: "requester" },
+        requesterName: "Priya Raman",
+      });
+      await db
+        .update(initiatives)
+        .set({ state: "deployed", tier: "high" })
+        .where(eq(initiatives.id, draft.initiativeId));
+      const depId = `dep-test-${draft.initiativeId}`;
+      await db.insert(deploymentVersions).values({
+        id: depId,
+        initiativeId: draft.initiativeId,
+        version: "v1.0",
+        status: "deployed",
+        modelVersion: null,
+        selfHosted: false,
+        deployedAt: new Date(BASE_DATE_MS),
+      });
+      await db.insert(effectiveControls).values({
+        id: `ec-test-${depId}`,
+        deploymentId: depId,
+        controlId: "Q-01",
+        version: 1,
+        status: "met",
+        evidence: "test fixture — synthetic breach series",
+        evidenceAt: new Date(BASE_DATE_MS),
+        createdAt: new Date(BASE_DATE_MS),
+      });
+      for (const d of [11, 12, 13]) {
+        await db.insert(observations).values({
+          id: `obs-test-${depId}-${d}`,
+          deploymentId: depId,
+          kind: "eval_hallucination",
+          ts: new Date(BASE_DATE_MS + d * DAY_MS),
+          value: 0.99,
+        });
+      }
+
+      const result = await runMonitor(db, SYSTEM_ACTOR, PLUS_14D);
+
+      expect(result.incidentsCreated).toBe(result.breaches.filter((b) => b.isNew).length);
+      const err = result.errors.find((e) => e.deploymentId === depId);
+      expect(err).toBeTruthy();
+      expect(err!.message).toMatch(/risk assessment/i);
+      expect(result.breaches.find((b) => b.deploymentId === depId)).toBeUndefined();
+
+      // Whole transaction rolled back — the initiative is never left
+      // paused with no reassessment cycle to show for it.
+      const [initAfter] = await db.select().from(initiatives).where(eq(initiatives.id, draft.initiativeId));
+      expect(initAfter!.state).toBe("deployed");
+      const [depAfter] = await db.select().from(deploymentVersions).where(eq(deploymentVersions.id, depId));
+      expect(depAfter!.status).toBe("deployed");
+      const cycles = await db.select().from(reviewCycles).where(eq(reviewCycles.initiativeId, draft.initiativeId));
+      expect(cycles).toHaveLength(0);
+      const incidentRows = await db.select().from(incidents).where(eq(incidents.deploymentId, depId));
+      expect(incidentRows).toHaveLength(0);
     });
   });
 

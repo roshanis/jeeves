@@ -6,7 +6,7 @@
  * initiative-service is rejected — separation of duties enforced from the
  * admin surface, not just initiative-service's own test file.
  */
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { createTestDb, closeTestDb, type TestDb } from "../db/test-client";
 import { seedDatabase, BASE_DATE_MS } from "../../scripts/seed";
@@ -17,6 +17,7 @@ import {
   resumeDeployment,
   ForbiddenError,
   ValidationError,
+  ConflictError,
 } from "./admin-service";
 import { runMonitor } from "./monitor-service";
 import { IllegalTransitionError, decide } from "./initiative-service";
@@ -209,6 +210,147 @@ describe("lib/services/admin-service", () => {
 
       const result = await resumeDeployment(db, RAY_CHEN, initiativeId, "Reassessment complete, model retrained.");
       expect(result.after).toBe("deployed");
+    });
+  });
+
+  /* -----------------------------------------------------------------------
+   * P2-5b fix — external-review finding: pauseDeployment/resumeDeployment
+   * flipped `initiatives.state` (and `deployment_versions.status`) with a
+   * plain `where(eq(id))` update, no observed-state predicate — a
+   * concurrent change (e.g. the breach monitor pausing the same deployment)
+   * would be silently clobbered. Both updates are now compare-and-set (CAS),
+   * mirroring promotion-service.test.ts's "promoteCheckpoint — concurrency"
+   * tests: true overlapping transactions aren't reproducible against PGlite,
+   * so these tests simulate the race deterministically by injecting a
+   * same-transaction write (via `tx`) between the service's own read and its
+   * CAS update — this reproduces the exact DB-visible effect a genuinely
+   * concurrent committed write would have (the predicate no longer matches).
+   * -------------------------------------------------------------------- */
+  describe("pauseDeployment / resumeDeployment — concurrency (compare-and-set)", () => {
+    it("pauseDeployment: a concurrent write that changes the initiative's state before the CAS update throws ConflictError, and the whole transaction rolls back (no partial write)", async () => {
+      const initiativeId = await memberChatCopilotId(db);
+
+      /* eslint-disable @typescript-eslint/no-explicit-any */
+      const dbAny = db as any;
+      const realTransaction = dbAny.transaction.bind(dbAny);
+      const spy = vi.spyOn(dbAny, "transaction").mockImplementationOnce((cb: any) =>
+        realTransaction(async (tx: any) => {
+          const realUpdate = tx.update.bind(tx);
+          vi.spyOn(tx, "update").mockImplementation((table: any) => {
+            const builder = realUpdate(table);
+            if (table === initiatives) {
+              const realSet = builder.set.bind(builder);
+              builder.set = (values: Record<string, unknown>) => {
+                const base = realSet(values);
+                if (values.state === "paused") {
+                  const realWhere = base.where.bind(base);
+                  base.where = (cond: unknown) => {
+                    const afterWhere = realWhere(cond);
+                    const realReturning = afterWhere.returning.bind(afterWhere);
+                    afterWhere.returning = async (...args: unknown[]) => {
+                      // Simulated concurrent writer: flips the initiative's
+                      // state directly, inside the SAME transaction, between
+                      // pauseDeployment's own read (captured as
+                      // `initiative.state`) and its CAS update below.
+                      await realUpdate(initiatives)
+                        .set({ state: "retired" })
+                        .where(eq(initiatives.id, initiativeId));
+                      return realReturning(...args);
+                    };
+                    return afterWhere;
+                  };
+                }
+                return base;
+              };
+            }
+            return builder;
+          });
+          return cb(tx);
+        }),
+      );
+      /* eslint-enable @typescript-eslint/no-explicit-any */
+
+      let caught: unknown;
+      try {
+        await pauseDeployment(db, RAY_CHEN, initiativeId, "Manual pause for maintenance.");
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(ConflictError);
+
+      spy.mockRestore();
+
+      // Whole transaction rolled back — including the injected write and any
+      // audit event that would otherwise have followed the CAS update.
+      const [init] = await db.select().from(initiatives).where(eq(initiatives.id, initiativeId));
+      expect(init!.state).toBe("deployed");
+      const [dep] = await db.select().from(deploymentVersions).where(eq(deploymentVersions.initiativeId, initiativeId));
+      expect(dep!.status).toBe("deployed");
+      expect(dep!.pausedAt).toBeNull();
+      const events = await db.select().from(auditEvents).where(eq(auditEvents.initiativeId, initiativeId));
+      expect(events.find((e) => e.action === "pause")).toBeUndefined();
+    });
+
+    it("resumeDeployment: a concurrent write that changes the initiative's state before the CAS update throws ConflictError, and the whole transaction rolls back (no partial write)", async () => {
+      const initiativeId = await memberChatCopilotId(db);
+      await pauseDeployment(db, RAY_CHEN, initiativeId, "Manual pause for maintenance.");
+
+      /* eslint-disable @typescript-eslint/no-explicit-any */
+      const dbAny = db as any;
+      const realTransaction = dbAny.transaction.bind(dbAny);
+      const spy = vi.spyOn(dbAny, "transaction").mockImplementationOnce((cb: any) =>
+        realTransaction(async (tx: any) => {
+          const realUpdate = tx.update.bind(tx);
+          vi.spyOn(tx, "update").mockImplementation((table: any) => {
+            const builder = realUpdate(table);
+            if (table === initiatives) {
+              const realSet = builder.set.bind(builder);
+              builder.set = (values: Record<string, unknown>) => {
+                const base = realSet(values);
+                if (values.state === "deployed") {
+                  const realWhere = base.where.bind(base);
+                  base.where = (cond: unknown) => {
+                    const afterWhere = realWhere(cond);
+                    const realReturning = afterWhere.returning.bind(afterWhere);
+                    afterWhere.returning = async (...args: unknown[]) => {
+                      // Simulated concurrent writer: flips the initiative's
+                      // state directly, inside the SAME transaction, between
+                      // resumeDeployment's own read (captured as
+                      // `initiative.state`) and its CAS update below.
+                      await realUpdate(initiatives)
+                        .set({ state: "retired" })
+                        .where(eq(initiatives.id, initiativeId));
+                      return realReturning(...args);
+                    };
+                    return afterWhere;
+                  };
+                }
+                return base;
+              };
+            }
+            return builder;
+          });
+          return cb(tx);
+        }),
+      );
+      /* eslint-enable @typescript-eslint/no-explicit-any */
+
+      let caught: unknown;
+      try {
+        await resumeDeployment(db, RAY_CHEN, initiativeId, "Maintenance complete.");
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(ConflictError);
+
+      spy.mockRestore();
+
+      // Whole transaction rolled back — the deployment stays paused (the
+      // state going into this call), not silently flipped to deployed.
+      const [init] = await db.select().from(initiatives).where(eq(initiatives.id, initiativeId));
+      expect(init!.state).toBe("paused");
+      const [dep] = await db.select().from(deploymentVersions).where(eq(deploymentVersions.initiativeId, initiativeId));
+      expect(dep!.status).toBe("paused");
     });
   });
 

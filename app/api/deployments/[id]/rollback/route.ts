@@ -27,6 +27,9 @@
  * 403:   { error: string }  (non-approver, non-admin actor — SoD)
  * 404:   { error: string }  (unknown initiative id or unknown target
  *        deployment version id)
+ * 409:   { error: string }  (compare-and-set conflict — the current-deployed
+ *        or target deployment version's status changed concurrently since
+ *        this request's read)
  */
 import { z } from "zod";
 import { getDb } from "@/lib/db/client";
@@ -35,6 +38,7 @@ import {
   ForbiddenError,
   NotFoundError,
   ValidationError,
+  ConflictError,
 } from "@/lib/services/promotion-service";
 import { runMutationGuard } from "@/lib/services/route-guard";
 
@@ -100,6 +104,9 @@ export async function POST(
     }
     if (err instanceof ValidationError) {
       return Response.json({ error: err.message, issues: err.issues }, { status: 400 });
+    }
+    if (err instanceof ConflictError) {
+      return Response.json({ error: err.message }, { status: 409 });
     }
     throw err;
   }

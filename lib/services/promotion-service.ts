@@ -597,15 +597,34 @@ export async function rollbackDeployment(
 
     const ts = Date.now();
 
-    await tx
+    // Compare-and-set (external-review finding P2-5b, mirroring
+    // promoteCheckpoint's CAS above): only retire the current-deployed row
+    // if its status is still what THIS transaction observed
+    // (`currentDeployed.status`, always 'deployed' per the filter above).
+    const retired = await tx
       .update(deploymentVersions)
       .set({ status: "retired", retiredAt: new Date(ts) })
-      .where(eq(deploymentVersions.id, currentDeployed.id));
+      .where(and(eq(deploymentVersions.id, currentDeployed.id), eq(deploymentVersions.status, currentDeployed.status)))
+      .returning();
+    if (retired.length === 0) {
+      throw new ConflictError(
+        `deployment version ${currentDeployed.id} changed concurrently (expected status '${currentDeployed.status}')`,
+      );
+    }
 
-    await tx
+    // Same CAS discipline for the redeploy target: only flip it if its
+    // status is still what THIS transaction observed (`target.status`,
+    // 'retired' or 'paused' per the validation above).
+    const redeployed = await tx
       .update(deploymentVersions)
       .set({ status: "deployed", deployedAt: new Date(ts), retiredAt: null, pausedAt: null })
-      .where(eq(deploymentVersions.id, target.id));
+      .where(and(eq(deploymentVersions.id, target.id), eq(deploymentVersions.status, target.status)))
+      .returning();
+    if (redeployed.length === 0) {
+      throw new ConflictError(
+        `deployment version ${target.id} changed concurrently (expected status '${target.status}')`,
+      );
+    }
 
     await insertAuditEvent(
       tx,

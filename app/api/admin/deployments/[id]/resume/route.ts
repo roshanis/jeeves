@@ -15,6 +15,8 @@
  *        a state violation, e.g. resuming an already-deployed deployment).
  * 403:   { error: string }  (non-admin actor)
  * 404:   { error: string }  (unknown initiative / no deployment)
+ * 409:   { error: string }  (compare-and-set conflict — the initiative's or
+ *        deployment's state changed concurrently since this request's read)
  */
 import { z } from "zod";
 import { getDb } from "@/lib/db/client";
@@ -24,6 +26,7 @@ import {
   IllegalTransitionError,
   NotFoundError,
   ValidationError,
+  ConflictError,
 } from "@/lib/services/admin-service";
 import { runMutationGuard } from "@/lib/services/route-guard";
 
@@ -77,6 +80,9 @@ export async function POST(
     }
     if (err instanceof IllegalTransitionError) {
       return Response.json({ error: err.message }, { status: 400 });
+    }
+    if (err instanceof ConflictError) {
+      return Response.json({ error: err.message }, { status: 409 });
     }
     throw err;
   }
