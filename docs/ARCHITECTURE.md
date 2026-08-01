@@ -626,15 +626,11 @@ switches within one browser:
   pooled `@neondatabase/serverless` WebSocket `Pool`, which supports real
   interactive `BEGIN`/`COMMIT`/`ROLLBACK` transactions (Codex,
   `agents-build-log.md` 2026-07-11T14:41Z, superseding the earlier
-  `neon-http` stub-transaction gap recorded in `docs/deploy.md` — that doc
-  is stale on this point). `docs/deploy.md`'s "Neon HTTP transactions are
-  not real transactions" caveat should be read as historical, not current.
-  **Note for reviewers:** the top-of-file comment in
-  `lib/services/initiative-service.ts` still describes the old
-  `drizzle-orm/neon-http` stub-transaction behavior verbatim — that comment
-  itself is now stale code-side documentation drift (not just a stale
-  standalone doc) and should be updated to reflect the `neon-serverless`
-  swap the next time that file is touched.
+  `neon-http` stub-transaction gap once recorded in `docs/deploy.md`).
+  Both former stale spots were corrected on 2026-08-01: `docs/deploy.md`'s
+  caveat (a) now records the swap as resolved, and the top-of-file comment
+  in `lib/services/initiative-service.ts` was rewritten to describe the
+  `neon-serverless` driver's real transactions.
 
 ---
 
@@ -728,8 +724,8 @@ candid on purpose:
    deployment.
 8. **`docs/deploy.md` and `docs/MORNING-REPORT.md` are snapshots, not
    living docs** — both were written mid-build and are stale on specifics
-   (e.g. `docs/deploy.md` still describes the pre-M2.5 `neon-http`
-   transaction gap and a 4-domain live loop; `docs/MORNING-REPORT.md`
+   (`docs/deploy.md`'s driver/session/budget caveats were corrected
+   2026-08-01, but it may still be stale elsewhere; `docs/MORNING-REPORT.md`
    predates M2.5 entirely). `agents-build-log.md`'s later entries and the
    current source are authoritative over both. *This document itself
    predates two later hardening passes — see the addendum below.*
@@ -745,9 +741,12 @@ and the current source win (per the note at the top of this doc).
 - **DB driver is `neon-serverless`, not `neon-http`** — §3/§6.7 already
   describe this correctly (`lib/db/client.ts` uses `drizzle-orm/neon-serverless`
   over a pooled `@neondatabase/serverless` WebSocket `Pool`, landed
-  2026-07-11); only `docs/deploy.md` and the top-of-file comment in
-  `lib/services/initiative-service.ts` still describe the older
-  `neon-http` stub-transaction behavior.
+  2026-07-11). The two places that still described the older `neon-http`
+  stub-transaction behavior — `docs/deploy.md` caveats (a)/(b) and the
+  top-of-file comment in `lib/services/initiative-service.ts` — were both
+  corrected on 2026-08-01 (deploy.md's caveat (b) also now reflects the
+  M2.5 DB-backed sessions + atomic budget; only rate limiting remains
+  per-instance, the accepted posture).
 - **Content-Security-Policy shipped 2026-07-13** (`next.config.ts`) — see
   the corrected §6.6 and §8.5 above.
 - **Control-exception workflow shipped 2026-07-13**

@@ -79,7 +79,7 @@ npm run start        # next start (after build)
 
    | Variable | Required | Notes |
    |---|---|---|
-   | `DATABASE_URL` | Yes | Neon Postgres connection string. Use the **pooled** connection string form (`...neon.tech/...?sslmode=require`), matching `.env.example`. Read by `lib/db/client.ts` via `@neondatabase/serverless` (`neon-http` driver) whenever it is set. |
+   | `DATABASE_URL` | Yes | Neon Postgres connection string. Use the **pooled** connection string form (`...neon.tech/...?sslmode=require`), matching `.env.example`. Read by `lib/db/client.ts` via `@neondatabase/serverless` (`neon-serverless` WebSocket `Pool` driver — real interactive transactions) whenever it is set. |
    | `DATA_PROVIDER` | Yes | Set to `db`. Without `DATABASE_URL` this would fall back to PGlite/mock — you want the Neon-backed provider in production. |
    | `DEMO_PASSCODE` | Yes | Gates the live/mutable demo workspace (`app/api/session/route.ts` reads it directly via `process.env.DEMO_PASSCODE`). Pick something you're comfortable pasting into a browser prompt in front of an audience — it is not a secret-grade credential, but treat it like one anyway (see §3). |
    | `OPENAI_API_KEY` | Optional | Only set this if you want **live** LLM-drafted reviews during the demo. Omit it and the app runs entirely on the keyless mock adapter — safe default for a public URL. |
@@ -131,40 +131,34 @@ npm run start        # next start (after build)
 This section is deliberately blunt. These are real limitations in the
 current code, not hypothetical ones.
 
-> **(a) Neon HTTP transactions are not real transactions.**
-> `lib/db/client.ts` uses `drizzle-orm/neon-http` (the `@neondatabase/serverless`
-> HTTP driver) whenever `DATABASE_URL` is set. That driver's `transaction()`
-> method does **not** wrap statements in `BEGIN`/`COMMIT`/`ROLLBACK` — see the
-> caveat documented in `lib/services/initiative-service.ts` (top-of-file
-> comment) and `node_modules/drizzle-orm/neon-http/session.d.ts`. Every
-> state-changing service call (`lib/services/initiative-service.ts`,
-> `monitor-service.ts`, `admin-service.ts`) calls `db.transaction(fn)`
-> uniformly, and that call **is** a real, rollback-on-throw transaction
-> under PGlite (all tests, and local/dev without `DATABASE_URL`) — but it is
-> **not** atomic under the Neon HTTP driver in production. A partial write
-> (e.g. initiative state changes but the paired `AuditEvent` insert fails)
-> is theoretically observable against real Neon today.
-> **Before any production Neon writes**, swap `lib/db/client.ts` to a
-> pooled/websocket Neon driver that supports real HTTP-safe transactions
-> (e.g. `drizzle-orm/neon-serverless` over `@neondatabase/serverless`'s
-> `Pool`, or another driver with genuine `BEGIN`/`COMMIT` support). The
-> call sites in the services layer are already written against the
-> `db.transaction(fn)` interface and should not need to change shape.
+> **(a) Neon transactions — RESOLVED (M2.5).** An earlier version of this
+> caveat warned that `lib/db/client.ts` used `drizzle-orm/neon-http`, whose
+> `transaction()` is a stub with no `BEGIN`/`COMMIT`/`ROLLBACK`. That swap
+> has since been made: `lib/db/client.ts` now uses
+> `drizzle-orm/neon-serverless` over a pooled `@neondatabase/serverless`
+> WebSocket `Pool` whenever `DATABASE_URL` is set, which supports real
+> interactive transactions. Every state-changing service call
+> (`lib/services/initiative-service.ts`, `monitor-service.ts`,
+> `admin-service.ts`, `promotion-service.ts`, `exception-service.ts`) goes
+> through `db.transaction(fn)`, and that is a genuine rollback-on-throw
+> transaction under both PGlite (tests, local dev) and pooled Neon
+> (production) — including the compare-and-set predicates those services
+> rely on.
 
-> **(b) Route-guard state (session, rate limit, budget) is in-memory, per
-> instance.**
-> `lib/security/session.ts`, `lib/security/rate-limit.ts` (`TokenBucketRateLimiter`),
-> and the `InMemoryBudgetStore` in `lib/security/budget.ts` all keep their
-> state in process memory (a `Map`), not in Postgres. This is fine for a
-> **single-instance** deployment — one Vercel serverless region/function
-> instance serving the demo. It is **not** fine for multi-region or
-> multi-instance deployment: a visitor could get a fresh rate-limit bucket
-> or a fresh daily budget just by landing on a different instance, and a
-> session token issued by one instance won't validate against another's
-> memory. If you ever scale this past a single instance, these three need a
-> shared backing store (the `BudgetStore` interface is already designed to
-> be swapped for a DB-backed `RunBudget` implementation per plan.md §5;
-> session/rate-limit would need the equivalent).
+> **(b) Rate limiting is in-memory, per instance (sessions and budget are
+> not — M2.5).**
+> Sessions and the daily token budget moved to Postgres in M2.5: sessions
+> live in the `sessions` table (`lib/services/route-guard.ts` inserts and
+> validates against the DB) and the budget uses `DbBudgetStore`'s atomic
+> `INSERT … ON CONFLICT` upsert (`lib/security/budget.ts`), both correct
+> across instances. The **rate limiters** (`TokenBucketRateLimiter` in
+> `lib/security/rate-limit.ts`, including the passcode brute-force bucket)
+> remain in process memory, per instance: on a serverless fan-out a visitor
+> can get a fresh rate-limit bucket by landing on a different instance, so
+> effective throttling and brute-force resistance are weaker than the
+> configured numbers suggest. This is the accepted demo posture (plan.md §13c); a shared store
+> (e.g. Postgres or a KV) for the rate-limit buckets is the fix if the
+> passcode is low-entropy or the deployment ever spans many instances.
 
 > **(c) Public URL cost exposure — mitigations already in place, and what
 > to verify before sharing the link.**
