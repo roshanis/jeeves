@@ -97,6 +97,51 @@ function portRecordingConcurrency(delayMs: number): {
   return { port, maxObservedConcurrent: () => maxActive };
 }
 
+/**
+ * Wraps the deterministic mock port so that, for the given domains,
+ * `draftReview` first performs an OUT-OF-BAND direct DB write that signs the
+ * `review_decisions` row (status 'signed', signedAt/reviewer set) — simulating
+ * a human reviewer signing the review while this in-flight `draftReview` call
+ * is still running — and only then resolves per `mode`:
+ *   - "succeed": delegates to the healthy mock (so the caller's persist step
+ *     races against an already-signed row).
+ *   - "fail": resolves as a `PortFailure` (so the failure-persist path races
+ *     against an already-signed row).
+ * Used to prove signature immutability: the persisted signature must survive
+ * regardless of what the in-flight draft/failure attempt tries to write.
+ */
+function portSigningMidFlight(
+  db: TestDb,
+  cycleId: string,
+  domains: string[],
+  mode: "succeed" | "fail",
+  signedBy = "out-of-band-reviewer",
+): AgentPort {
+  const base = createMockAgentPort();
+  return {
+    ...base,
+    async draftReview(input: DraftReviewInput): Promise<PortResult<DraftReviewOutput>> {
+      if (domains.includes(input.domain)) {
+        await db
+          .update(reviewDecisions)
+          .set({ status: "signed", reviewer: signedBy, signedAt: new Date(0) })
+          .where(and(eq(reviewDecisions.cycleId, cycleId), eq(reviewDecisions.domain, input.domain)));
+        if (mode === "fail") {
+          return {
+            ok: false,
+            error: {
+              kind: "provider",
+              message: `simulated failure for ${input.domain} after concurrent sign`,
+              retryable: true,
+            },
+          };
+        }
+      }
+      return base.draftReview(input);
+    },
+  };
+}
+
 describe("lib/workflow/review-run", () => {
   let db: TestDb;
 
@@ -418,6 +463,65 @@ describe("lib/workflow/review-run", () => {
       await expect(
         runSingleDomainDraft(db, "cycle-does-not-exist", "legal", createMockAgentPort()),
       ).rejects.toThrow(/no review cycle/i);
+    });
+  });
+
+  describe("signature immutability under concurrent sign (race condition fix)", () => {
+    it("startDraftRun: a draft that succeeds after the row was signed mid-flight does not overwrite the signature", async () => {
+      const { initiativeId, cycleId } = await setUpChampionInReview(db);
+      const domain = "legal";
+      const port = portSigningMidFlight(db, cycleId, [domain], "succeed");
+
+      const result = await startDraftRun(db, initiativeId, [domain], port);
+
+      const outcome = result.outcomes.find((o) => o.domain === domain);
+      expect(outcome?.status).toBe("skipped");
+
+      const rows = await db
+        .select()
+        .from(reviewDecisions)
+        .where(and(eq(reviewDecisions.cycleId, cycleId), eq(reviewDecisions.domain, domain)));
+      expect(rows[0]!.status).toBe("signed");
+      expect(rows[0]!.reviewer).toBe("out-of-band-reviewer");
+      expect(rows[0]!.signedAt).toBeTruthy();
+    });
+
+    it("startDraftRun: a draft that fails after the row was signed mid-flight does not overwrite the signature with a returnReason", async () => {
+      const { initiativeId, cycleId } = await setUpChampionInReview(db);
+      const domain = "legal";
+      const port = portSigningMidFlight(db, cycleId, [domain], "fail");
+
+      const result = await startDraftRun(db, initiativeId, [domain], port);
+
+      const outcome = result.outcomes.find((o) => o.domain === domain);
+      expect(outcome?.status).toBe("skipped");
+
+      const rows = await db
+        .select()
+        .from(reviewDecisions)
+        .where(and(eq(reviewDecisions.cycleId, cycleId), eq(reviewDecisions.domain, domain)));
+      expect(rows[0]!.status).toBe("signed");
+      expect(rows[0]!.reviewer).toBe("out-of-band-reviewer");
+      expect(rows[0]!.signedAt).toBeTruthy();
+      expect(rows[0]!.returnReason).toBeNull();
+    });
+
+    it("runSingleDomainDraft: throws cannot-re-draft-signed when the row is signed mid-flight, and preserves the signature", async () => {
+      const { cycleId } = await setUpChampionInReview(db);
+      const domain = "clinical-safety";
+      const port = portSigningMidFlight(db, cycleId, [domain], "succeed");
+
+      await expect(runSingleDomainDraft(db, cycleId, domain, port)).rejects.toThrow(
+        /cannot re-draft a signed review/i,
+      );
+
+      const rows = await db
+        .select()
+        .from(reviewDecisions)
+        .where(and(eq(reviewDecisions.cycleId, cycleId), eq(reviewDecisions.domain, domain)));
+      expect(rows[0]!.status).toBe("signed");
+      expect(rows[0]!.reviewer).toBe("out-of-band-reviewer");
+      expect(rows[0]!.signedAt).toBeTruthy();
     });
   });
 

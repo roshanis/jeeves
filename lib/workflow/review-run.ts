@@ -46,7 +46,7 @@
  * cancellation or a request that will provably fail the same way again.
  */
 import { randomUUID } from "node:crypto";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, ne } from "drizzle-orm";
 import type { Db } from "../db/client";
 import { auditEvents, intakeVersions, reviewCycles, reviewDecisions } from "../db/schema";
 import type { Domain } from "../domain/types";
@@ -256,10 +256,17 @@ export async function startDraftRun(
   const runResults = await runWithConcurrencyLimit(toRun, concurrency, async (domain) => {
     const result = await draftWithRetry(port, cycleId, domain, intake, maxAttempts);
     if (result.ok) {
-      await persistDraft(db, cycleId, domain, result.value);
+      // A signature is a human decision and always wins: if the row was
+      // signed by a reviewer while this domain's draftReview call was still
+      // in flight, `persistDraft` refuses to overwrite it (returns false),
+      // and the domain is reported the same way an already-done domain is
+      // (`skipped`), never as `drafted`.
+      const wrote = await persistDraft(db, cycleId, domain, result.value);
+      if (!wrote) return { domain, status: "skipped" as const };
       return { domain, status: "drafted" as const };
     }
-    await persistFailure(db, cycleId, domain, result.error);
+    const wrote = await persistFailure(db, cycleId, domain, result.error);
+    if (!wrote) return { domain, status: "skipped" as const };
     return { domain, status: "failed" as const, error: result.error };
   });
 
@@ -283,12 +290,27 @@ export async function startDraftRun(
   return { runId, cycleId, outcomes };
 }
 
+/**
+ * Persists a successful draft. Returns `true` if it wrote, `false` if it
+ * skipped because the row was signed by a human reviewer concurrently (the
+ * signature wins — see the module-level race-condition note above `and`
+ * `signReview` in lib/services/initiative-service.ts for the established
+ * compare-and-set pattern this mirrors). The UPDATE branch is therefore
+ * conditional at the DB level (`status <> 'signed'`), asserted via the
+ * `.returning()` rowcount rather than a separate read-then-write race
+ * window: the SELECT above is only used to decide insert-vs-update and to
+ * get `existing.id`, never trusted for the write's correctness.
+ *
+ * The insert branch (row absent) is never the race: a concurrent sign
+ * requires an existing row to sign, so a missing row always means insert is
+ * safe.
+ */
 async function persistDraft(
   db: Db,
   cycleId: string,
   domain: Domain,
   value: DraftReviewOutput,
-): Promise<void> {
+): Promise<boolean> {
   const rows = await db
     .select()
     .from(reviewDecisions)
@@ -297,10 +319,12 @@ async function persistDraft(
   const citations: string[] = [...value.missingEvidence];
 
   if (existing) {
-    await db
+    const updated = await db
       .update(reviewDecisions)
       .set({ status: "drafted", draftMd: value.draftMarkdown, citations, returnReason: null })
-      .where(eq(reviewDecisions.id, existing.id));
+      .where(and(eq(reviewDecisions.id, existing.id), ne(reviewDecisions.status, "signed")))
+      .returning();
+    return updated.length > 0;
   } else {
     await db.insert(reviewDecisions).values({
       id: `rd-${randomUUID()}`,
@@ -314,6 +338,7 @@ async function persistDraft(
       returnReason: null,
       createdAt: new Date(nowTs()),
     });
+    return true;
   }
 }
 
@@ -325,12 +350,20 @@ function describePortFailure(error: PortFailure): string {
   return error.message;
 }
 
+/**
+ * Persists a failed draft attempt. Returns `true` if it wrote, `false` if it
+ * skipped because the row was signed by a human reviewer concurrently (the
+ * signature wins — see `persistDraft`'s doc comment for the shared
+ * compare-and-set rationale). Same conditional-UPDATE / `.returning()`
+ * rowcount-assert shape as `persistDraft`; the insert branch is not the race
+ * for the same reason (a concurrent sign requires an existing row).
+ */
 async function persistFailure(
   db: Db,
   cycleId: string,
   domain: Domain,
   error: PortFailure,
-): Promise<void> {
+): Promise<boolean> {
   const rows = await db
     .select()
     .from(reviewDecisions)
@@ -344,10 +377,12 @@ async function persistFailure(
   const reasonText = `draft failed: ${describePortFailure(error)}`;
 
   if (existing) {
-    await db
+    const updated = await db
       .update(reviewDecisions)
       .set({ status: "pending", returnReason: reasonText })
-      .where(eq(reviewDecisions.id, existing.id));
+      .where(and(eq(reviewDecisions.id, existing.id), ne(reviewDecisions.status, "signed")))
+      .returning();
+    return updated.length > 0;
   } else {
     await db.insert(reviewDecisions).values({
       id: `rd-${randomUUID()}`,
@@ -361,6 +396,7 @@ async function persistFailure(
       returnReason: reasonText,
       createdAt: new Date(nowTs()),
     });
+    return true;
   }
 }
 
@@ -419,17 +455,29 @@ export async function runSingleDomainDraft(
     .from(reviewDecisions)
     .where(and(eq(reviewDecisions.cycleId, cycleId), eq(reviewDecisions.domain, domain)));
   if (existingRows[0]?.status === "signed") {
-    throw new Error(`runSingleDomainDraft: cannot re-draft a signed review (${cycleId}/${domain})`);
+    throw cannotRedraftSignedError(cycleId, domain);
   }
 
   const intake = await loadIntakeSnapshot(db, cycle.initiativeId);
   const result = await draftWithRetry(port, cycleId, domain, intake, maxAttempts);
   if (result.ok) {
-    await persistDraft(db, cycleId, domain, result.value);
+    // The pre-check above only guards against a signature that already
+    // existed when this call started. If a reviewer signs the row WHILE
+    // draftReview was in flight, `persistDraft`'s DB-level CAS refuses to
+    // overwrite it (returns false) — surface the same error the pre-check
+    // uses, so callers see one consistent contract either way.
+    const wrote = await persistDraft(db, cycleId, domain, result.value);
+    if (!wrote) throw cannotRedraftSignedError(cycleId, domain);
     return { cycleId, domain, status: "drafted", draftMd: result.value.draftMarkdown };
   }
-  await persistFailure(db, cycleId, domain, result.error);
+  const wrote = await persistFailure(db, cycleId, domain, result.error);
+  if (!wrote) throw cannotRedraftSignedError(cycleId, domain);
   return { cycleId, domain, status: "failed", error: describePortFailure(result.error) };
+}
+
+/** Shared error for both the pre-check and the post-write CAS-skip in `runSingleDomainDraft`. */
+function cannotRedraftSignedError(cycleId: string, domain: Domain): Error {
+  return new Error(`runSingleDomainDraft: cannot re-draft a signed review (${cycleId}/${domain})`);
 }
 
 /** UI polling endpoint support (task brief: `getRunProgress(cycleId)`). */
