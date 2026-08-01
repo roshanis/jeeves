@@ -50,7 +50,6 @@ export function RoleSwitcher() {
           if (value) setPersonaKey(value);
         }}
       >
-
         <SelectTrigger aria-label="Switch role" size="sm">
           <SelectValue />
         </SelectTrigger>

@@ -1,8 +1,10 @@
 // AppMobileNav (components/jeeves/app-mobile-nav.tsx) — the md:hidden nav
 // strip that replaces the (md-only) sidebar on small screens. Reuses
-// app-sidebar's NAV_ITEMS so the two never drift. Mocks next/navigation's
-// usePathname (no test in this repo mocks next/navigation yet, so this
-// establishes the pattern locally rather than reaching for a shared helper).
+// app-sidebar's NAV_SECTIONS/ADMIN_NAV_ITEM (built from NAV_ITEMS) so the two
+// never drift on hrefs/labels/icons or section ordering. Mocks
+// next/navigation's usePathname (no test in this repo mocks next/navigation
+// yet, so this establishes the pattern locally rather than reaching for a
+// shared helper).
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render } from "@testing-library/react";
 
@@ -19,15 +21,19 @@ vi.mock("next/navigation", () => ({
 
 import { AppMobileNav } from "@/components/jeeves/app-mobile-nav";
 
+// Order mirrors the sidebar's section grouping (Oversee / Operate / Govern /
+// Administration — see NAV_SECTIONS in app-sidebar.tsx), not raw NAV_ITEMS
+// declaration order: Promotions (Operate) now renders before Controls/Audit
+// (Govern).
 const EXPECTED_HREFS = [
   "/inbox",
   "/portfolio",
   "/reviews",
   "/agents",
   "/monitoring",
+  "/promotions",
   "/controls",
   "/audit",
-  "/promotions",
   "/admin",
 ];
 

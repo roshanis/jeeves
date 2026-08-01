@@ -19,6 +19,7 @@
  */
 import * as React from "react";
 import { toast } from "sonner";
+import { Lock } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -73,7 +74,15 @@ export function DemoModeChip() {
   if (session) {
     return (
       <span className="inline-flex items-center gap-1.5" data-slot="demo-mode-chip">
-        <Badge variant="secondary" title="Session workspace active — daily demo token budget and rate limits are enforced server-side.">
+        <Badge
+          variant="outline"
+          className="gap-1.5 border-primary/30 bg-primary/10 text-primary"
+          title="Session workspace active — daily demo token budget and rate limits are enforced server-side."
+        >
+          <span className="relative flex h-1.5 w-1.5" aria-hidden>
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-75" />
+            <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-primary" />
+          </span>
           Live demo (session workspace)
         </Badge>
         <span className="text-xs text-muted-foreground">{session.personaLabel}</span>
@@ -102,7 +111,10 @@ export function DemoModeChip() {
         className="cursor-pointer"
         onClick={() => setOpen(true)}
       >
-        <Badge variant="outline">Read-only (public)</Badge>
+        <Badge variant="outline" className="gap-1.5 text-muted-foreground">
+          <Lock className="h-3 w-3" aria-hidden />
+          Read-only (public)
+        </Badge>
       </button>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent>
