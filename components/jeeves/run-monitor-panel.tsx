@@ -134,7 +134,7 @@ export function RunMonitorPanel({
       />
 
       {result ? (
-        <p className="text-xs text-muted-foreground" data-slot="monitor-result">
+        <p className="text-xs tabular-nums text-muted-foreground" data-slot="monitor-result">
           Evaluated {result.evaluated} · breaches {result.breaches.length} ·
           incidents created {result.incidentsCreated} · already known{" "}
           {result.alreadyKnown}

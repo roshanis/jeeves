@@ -12,7 +12,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Badge } from "@/components/ui/badge";
+import { cn } from "@/lib/utils";
 
 export const DEPLOYMENT_STATUS_LABEL: Record<DeploymentRow["status"], string> = {
   deployed: "Deployed",
@@ -20,6 +20,33 @@ export const DEPLOYMENT_STATUS_LABEL: Record<DeploymentRow["status"], string> = 
   awaiting_promotion_signoff: "Awaiting promotion sign-off",
   retired: "Retired",
 };
+
+// Token-based status pill (data-color contract §status-*) — mirrors
+// deployment-history.tsx's tone mapping; DeploymentRow["status"] is not a
+// LifecycleState, so this rides the reserved status family directly rather
+// than importing a type-incompatible badge component.
+const STATUS_TONE: Record<DeploymentRow["status"], { bg: string; fg: string }> = {
+  deployed: { bg: "bg-status-good-bg", fg: "text-status-good-fg" },
+  paused: { bg: "bg-status-warning-bg", fg: "text-status-warning-fg" },
+  awaiting_promotion_signoff: { bg: "bg-status-warning-bg", fg: "text-status-warning-fg" },
+  retired: { bg: "bg-status-neutral-bg", fg: "text-status-neutral-fg" },
+};
+
+function StatusPill({ status }: { status: DeploymentRow["status"] }) {
+  const tone = STATUS_TONE[status];
+  return (
+    <span
+      className={cn(
+        "inline-flex h-5 w-fit shrink-0 items-center gap-1.5 rounded-full px-2 text-xs font-medium whitespace-nowrap",
+        tone.bg,
+        tone.fg,
+      )}
+    >
+      <span className="size-1.5 shrink-0 rounded-full bg-current" aria-hidden="true" />
+      {DEPLOYMENT_STATUS_LABEL[status]}
+    </span>
+  );
+}
 
 function shortDate(ts: string): string {
   return ts.slice(0, 10);
@@ -50,7 +77,7 @@ export function DeploymentsTab({ deployments }: { deployments: DeploymentRow[] }
                   <TableRow>
                     <TableHead>Version</TableHead>
                     <TableHead>Status</TableHead>
-                    <TableHead>Date</TableHead>
+                    <TableHead className="text-right">Date</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -58,17 +85,17 @@ export function DeploymentsTab({ deployments }: { deployments: DeploymentRow[] }
                     <TableRow key={d.version}>
                       <TableCell className="font-mono">{d.version}</TableCell>
                       <TableCell>
-                        <Badge variant={d.status === "deployed" ? "default" : "secondary"}>
-                          {DEPLOYMENT_STATUS_LABEL[d.status]}
-                        </Badge>
+                        <StatusPill status={d.status} />
                       </TableCell>
-                      <TableCell>{shortDate(d.at)}</TableCell>
+                      <TableCell className="text-right font-mono text-xs tabular-nums text-muted-foreground">
+                        {shortDate(d.at)}
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
               </Table>
               {awaitingSignoff ? (
-                <p className="mt-3 text-xs text-amber-600">
+                <p className="mt-3 text-xs text-status-warning-fg">
                   One or more versions await promotion sign-off — see the Evals
                   tab for the offline eval comparison.
                 </p>

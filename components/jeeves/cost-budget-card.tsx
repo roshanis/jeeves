@@ -11,11 +11,11 @@
 // series the provider already exposes, clearly labeled, and hardcodes the
 // 500,000 cap as a static synthetic reference (see DAILY_TOKEN_CAP in
 // lib/services/route-guard.ts — kept in sync by convention, not by import).
+import { LineChart as EmptySeriesIcon } from "lucide-react";
 import {
+  Area,
+  AreaChart,
   CartesianGrid,
-  Legend,
-  Line,
-  LineChart,
   ResponsiveContainer,
   Tooltip as RechartsTooltip,
   XAxis,
@@ -28,8 +28,71 @@ import { SyntheticDataLabel } from "@/components/jeeves/synthetic-data-label";
 // lib/services/route-guard.ts. Do not import that server module here.
 const DAILY_TOKEN_BUDGET_REFERENCE = 500_000;
 
-function shortDate(ts: string): string {
-  return ts.slice(5, 10);
+// Single-series chart -> categorical slot 1 (fixed data-color contract order).
+const SERIES_COLOR = "var(--chart-1)";
+const SERIES_NAME = "Portfolio cost/day (USD)";
+
+function formatShortDate(ts: string): string {
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return ts.slice(5, 10);
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+function formatUsd(value: number): string {
+  return `$${value.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+}
+
+function CostTooltip({
+  active,
+  payload,
+  label,
+}: {
+  active?: boolean;
+  payload?: { value: number; color: string }[];
+  label?: string;
+}) {
+  if (!active || !payload?.length) return null;
+  const entry = payload[0]!;
+  return (
+    <div className="rounded-md border border-border bg-popover px-3 py-2 text-xs shadow-raised">
+      <div className="mb-1 font-medium text-popover-foreground">{label}</div>
+      <div className="flex items-center gap-1.5">
+        <span className="size-2 shrink-0 rounded-full" style={{ background: entry.color }} />
+        <span className="text-muted-foreground">{SERIES_NAME}</span>
+        <span className="ml-3 font-mono tabular-nums text-popover-foreground">
+          {formatUsd(entry.value)}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// Sparse series (<8 points) get a permanent marker at every point; dense
+// series only get a marker + direct value label at the last point.
+function makeEndLabelDot(dataLength: number, sparse: boolean) {
+  return function EndLabelDot(props: {
+    cx?: number;
+    cy?: number;
+    index?: number;
+    payload?: { totalUsd: number };
+  }) {
+    const { cx, cy, index = -1, payload } = props;
+    if (cx == null || cy == null) return <g key={`dot-${index}`} />;
+    const isLast = index === dataLength - 1;
+    const show = sparse || isLast;
+    return (
+      <g key={`dot-${index}`}>
+        {show ? (
+          <circle cx={cx} cy={cy} r={4} fill={SERIES_COLOR} stroke="var(--card)" strokeWidth={1.5} />
+        ) : null}
+        {isLast && payload ? (
+          <text x={cx + 8} y={cy} dy={4} fontSize={11} fontWeight={500} fill="var(--foreground)">
+            {formatUsd(payload.totalUsd)}
+          </text>
+        ) : null}
+      </g>
+    );
+  };
 }
 
 export interface PortfolioCostPoint {
@@ -38,7 +101,9 @@ export interface PortfolioCostPoint {
 }
 
 export function CostBudgetCard({ points }: { points: PortfolioCostPoint[] }) {
-  const data = points.map((p) => ({ ts: shortDate(p.ts), totalUsd: p.totalUsd }));
+  const data = points.map((p) => ({ ts: formatShortDate(p.ts), totalUsd: p.totalUsd }));
+  const sparse = data.length > 0 && data.length < 8;
+  const tickInterval = data.length > 6 ? Math.ceil(data.length / 6) - 1 : 0;
 
   return (
     <Card data-slot="cost-budget-card">
@@ -55,25 +120,50 @@ export function CostBudgetCard({ points }: { points: PortfolioCostPoint[] }) {
             literal axis value.
           </p>
           {data.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No cost telemetry available.</p>
+            <div className="flex h-[200px] flex-col items-center justify-center gap-1.5 rounded-md border border-dashed border-border text-center">
+              <EmptySeriesIcon className="size-5 text-muted-foreground/60" aria-hidden="true" />
+              <p className="text-sm text-muted-foreground">No cost telemetry available.</p>
+              <p className="text-xs text-muted-foreground/70">
+                Cost series populate once a deployment starts serving.
+              </p>
+            </div>
           ) : (
-            <div className="h-56 w-full overflow-x-auto">
+            <div className="h-[200px] w-full">
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={data} margin={{ top: 8, right: 16, bottom: 0, left: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
-                  <XAxis dataKey="ts" tick={{ fontSize: 11 }} />
-                  <YAxis tick={{ fontSize: 11 }} domain={["auto", "auto"]} />
-                  <RechartsTooltip />
-                  <Legend />
-                  <Line
+                <AreaChart data={data} margin={{ top: 8, right: 52, bottom: 0, left: 0 }}>
+                  <CartesianGrid vertical={false} stroke="var(--chart-grid)" />
+                  <XAxis
+                    dataKey="ts"
+                    interval={tickInterval}
+                    tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
+                    axisLine={{ stroke: "var(--chart-axis)" }}
+                    tickLine={{ stroke: "var(--chart-axis)" }}
+                  />
+                  <YAxis
+                    tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
+                    axisLine={{ stroke: "var(--chart-axis)" }}
+                    tickLine={false}
+                    width={52}
+                    domain={[(min: number) => Math.floor(min * 0.9), (max: number) => Math.ceil(max * 1.15)]}
+                    tickFormatter={(v: number) => `$${v}`}
+                  />
+                  <RechartsTooltip
+                    content={<CostTooltip />}
+                    cursor={{ stroke: "var(--chart-axis)", strokeDasharray: "4 4" }}
+                  />
+                  <Area
                     type="monotone"
                     dataKey="totalUsd"
-                    name="Portfolio cost/day (USD)"
-                    stroke="var(--color-chart-3, #666)"
+                    name={SERIES_NAME}
+                    stroke={SERIES_COLOR}
                     strokeWidth={2}
-                    dot={false}
+                    fill={SERIES_COLOR}
+                    fillOpacity={0.12}
+                    dot={makeEndLabelDot(data.length, sparse)}
+                    activeDot={{ r: 5, fill: SERIES_COLOR, stroke: "var(--card)", strokeWidth: 1.5 }}
+                    isAnimationActive={false}
                   />
-                </LineChart>
+                </AreaChart>
               </ResponsiveContainer>
             </div>
           )}

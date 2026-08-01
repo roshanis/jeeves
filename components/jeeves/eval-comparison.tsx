@@ -15,9 +15,11 @@
  * today is candidate-vs-threshold using the same monitored series the
  * initiative is already gated on, not candidate-vs-predecessor-version.
  */
+import { Gauge } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { SyntheticDataLabel } from "@/components/jeeves/synthetic-data-label";
+import { cn } from "@/lib/utils";
 
 export interface EvalSeriesLike {
   kind: string;
@@ -78,9 +80,12 @@ export function EvalComparison({
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-sm text-muted-foreground">
-              No eval telemetry is recorded for this initiative.
-            </p>
+            <div className="flex h-24 flex-col items-center justify-center gap-1.5 rounded-md border border-dashed border-border text-center">
+              <Gauge className="size-5 text-muted-foreground/60" aria-hidden="true" />
+              <p className="text-sm text-muted-foreground">
+                No eval telemetry is recorded for this initiative.
+              </p>
+            </div>
           </CardContent>
         </Card>
       </SyntheticDataLabel>
@@ -110,7 +115,7 @@ export function EvalComparison({
             threshold this deployment is gated on.
           </p>
           <div className="flex flex-wrap items-center gap-3">
-            <span className="text-2xl font-semibold tabular-nums" data-slot="eval-comparison-latest">
+            <span className="stat-value text-2xl" data-slot="eval-comparison-latest">
               {latest.value.toFixed(4)}
             </span>
             {t ? (
@@ -123,7 +128,16 @@ export function EvalComparison({
               </span>
             ) : null}
             {threshold !== null ? (
-              <Badge variant={overThreshold ? "destructive" : "secondary"} data-slot="eval-comparison-threshold">
+              <Badge
+                variant="outline"
+                data-slot="eval-comparison-threshold"
+                className={cn(
+                  "border-transparent font-mono",
+                  overThreshold
+                    ? "bg-status-critical-bg text-status-critical-fg"
+                    : "bg-status-good-bg text-status-good-fg",
+                )}
+              >
                 threshold {threshold.toFixed(4)}
               </Badge>
             ) : (

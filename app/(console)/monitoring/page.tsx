@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { ShieldCheck } from "lucide-react";
 import { getAppProvider, getCurrentWorkspaceId } from "@/app/_lib/data-provider";
 import { getDb } from "@/lib/db/client";
 import { listIncidents, type IncidentListRow } from "@/lib/services/monitor-service";
@@ -117,7 +118,7 @@ export default async function MonitoringPage() {
 
       <TelemetryConnectorCard status={connectorStatus} traces={traces} />
 
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <CostBudgetCard points={portfolioCost} />
         {gpuInitiative && gpuSeries ? (
           <GpuQuotaCard
@@ -145,65 +146,71 @@ export default async function MonitoringPage() {
           <CardTitle className="text-sm">Deployments</CardTitle>
         </CardHeader>
         <CardContent className="p-0">
-          <SyntheticDataLabel>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Initiative</TableHead>
-                  <TableHead>Version</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Eval (hallucination)</TableHead>
-                  <TableHead>Cost / day</TableHead>
-                  <TableHead>GPU</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {operating.map((d) => {
-                  const evalSeries = d.telemetry.find((t) => t.kind === "eval_hallucination");
-                  const costSeries = d.telemetry.find((t) => t.kind === "cost_tokens_usd_day");
-                  const gpuSeries = d.telemetry.find((t) => t.kind === "gpu_util_pct");
-                  const evalVal = latest(evalSeries);
-                  const isBreach = breached(evalSeries);
-                  const dep = d.deployments[d.deployments.length - 1];
-                  return (
-                    <TableRow key={d.summary.slug}>
-                      <TableCell>
-                        <Link href={`/initiatives/${d.summary.slug}?tab=evals`} className="font-medium hover:text-primary hover:underline">
-                          {d.summary.title}
-                        </Link>
-                        <div className="text-xs text-muted-foreground">{d.summary.slug}</div>
-                      </TableCell>
-                      <TableCell className="font-mono text-xs">{dep?.version ?? "—"}</TableCell>
-                      <TableCell><LifecycleBadge state={d.summary.state} /></TableCell>
-                      <TableCell>
-                        {evalVal === null ? (
-                          <span className="text-xs text-muted-foreground">no eval series</span>
-                        ) : (
-                          <span
-                            className={`inline-flex items-center gap-1.5 text-sm tabular-nums ${
-                              isBreach ? "font-medium text-destructive" : "text-foreground"
-                            }`}
-                          >
-                            {evalVal.toFixed(3)}
-                            {isBreach ? (
-                              <span className="rounded-full bg-destructive/15 px-1.5 py-0.5 text-[11px] font-medium text-destructive">
-                                over floor
+          <SyntheticDataLabel className="p-4">
+            <div className="scroll-thin overflow-x-auto rounded-md border border-border">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Initiative</TableHead>
+                    <TableHead>Version</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead className="text-right">Eval (hallucination)</TableHead>
+                    <TableHead className="text-right">Cost / day</TableHead>
+                    <TableHead className="text-right">GPU</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {operating.map((d) => {
+                    const evalSeries = d.telemetry.find((t) => t.kind === "eval_hallucination");
+                    const costSeries = d.telemetry.find((t) => t.kind === "cost_tokens_usd_day");
+                    const gpuSeries = d.telemetry.find((t) => t.kind === "gpu_util_pct");
+                    const evalVal = latest(evalSeries);
+                    const isBreach = breached(evalSeries);
+                    const dep = d.deployments[d.deployments.length - 1];
+                    const costVal = latest(costSeries);
+                    const gpuVal = latest(gpuSeries);
+                    return (
+                      <TableRow key={d.summary.slug}>
+                        <TableCell>
+                          <Link href={`/initiatives/${d.summary.slug}?tab=evals`} className="font-medium hover:text-primary hover:underline">
+                            {d.summary.title}
+                          </Link>
+                          <div className="text-xs text-muted-foreground">{d.summary.slug}</div>
+                        </TableCell>
+                        <TableCell className="font-mono text-xs">{dep?.version ?? "—"}</TableCell>
+                        <TableCell><LifecycleBadge state={d.summary.state} /></TableCell>
+                        <TableCell className="text-right">
+                          {evalVal === null ? (
+                            <span className="text-xs text-muted-foreground">—</span>
+                          ) : (
+                            <span className="inline-flex items-center justify-end gap-1.5">
+                              <span
+                                className={`font-mono text-sm tabular-nums ${
+                                  isBreach ? "font-medium text-status-critical-fg" : "text-foreground"
+                                }`}
+                              >
+                                {evalVal.toFixed(3)}
                               </span>
-                            ) : null}
-                          </span>
-                        )}
-                      </TableCell>
-                      <TableCell className="tabular-nums text-sm">
-                        {latest(costSeries) !== null ? `$${latest(costSeries)!.toFixed(0)}` : "—"}
-                      </TableCell>
-                      <TableCell className="tabular-nums text-sm">
-                        {latest(gpuSeries) !== null ? `${latest(gpuSeries)!.toFixed(0)}%` : "—"}
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
+                              {isBreach ? (
+                                <span className="inline-flex items-center rounded-full bg-status-critical-bg px-1.5 py-0.5 text-[11px] font-medium text-status-critical-fg">
+                                  over floor
+                                </span>
+                              ) : null}
+                            </span>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-sm tabular-nums">
+                          {costVal !== null ? `$${costVal.toFixed(0)}` : "—"}
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-sm tabular-nums">
+                          {gpuVal !== null ? `${gpuVal.toFixed(0)}%` : "—"}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
           </SyntheticDataLabel>
         </CardContent>
       </Card>
@@ -216,10 +223,14 @@ export default async function MonitoringPage() {
         </CardHeader>
         <CardContent className="p-0">
           {incidents.length === 0 ? (
-            <p className="px-4 py-4 text-sm text-muted-foreground">
-              No incidents recorded. Run the monitor from Administration to
-              evaluate deployments against their eval-quality floor.
-            </p>
+            <div className="flex flex-col items-center justify-center gap-1.5 px-4 py-10 text-center">
+              <ShieldCheck className="size-5 text-muted-foreground/60" aria-hidden="true" />
+              <p className="text-sm text-muted-foreground">No incidents recorded.</p>
+              <p className="text-xs text-muted-foreground/70">
+                Run the monitor from Administration to evaluate deployments
+                against their eval-quality floor.
+              </p>
+            </div>
           ) : (
             <Table>
               <TableHeader>
@@ -234,11 +245,22 @@ export default async function MonitoringPage() {
               <TableBody>
                 {incidents.map((inc) => (
                   <TableRow key={inc.id}>
-                    <TableCell className="text-xs text-muted-foreground">{inc.detectedAt.slice(0, 10)}</TableCell>
+                    <TableCell className="text-xs tabular-nums text-muted-foreground">{inc.detectedAt.slice(0, 10)}</TableCell>
                     <TableCell className="font-mono text-xs">{inc.deploymentId}</TableCell>
-                    <TableCell>{inc.controlId}</TableCell>
+                    <TableCell className="text-xs">{inc.controlId}</TableCell>
                     <TableCell className="font-mono text-xs">{inc.reviewCycleId ?? "—"}</TableCell>
-                    <TableCell className="text-xs">{inc.resolvedAt ? "resolved" : "open"}</TableCell>
+                    <TableCell className="text-xs">
+                      <span
+                        className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                          inc.resolvedAt
+                            ? "bg-status-good-bg text-status-good-fg"
+                            : "bg-status-warning-bg text-status-warning-fg"
+                        }`}
+                      >
+                        <span className="size-1.5 shrink-0 rounded-full bg-current" aria-hidden="true" />
+                        {inc.resolvedAt ? "resolved" : "open"}
+                      </span>
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
