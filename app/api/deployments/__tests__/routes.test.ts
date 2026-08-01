@@ -6,12 +6,15 @@
  * createTestDb/closeTestDb/seedDatabase, vi.mock("@/lib/db/client"),
  * resetGuardStateForTests(), a real session issued via POST /api/session.
  */
+import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { createTestDb, closeTestDb, type TestDb } from "@/lib/db/test-client";
 import { resetGuardStateForTests } from "@/lib/services/route-guard";
 import { seedDatabase } from "@/scripts/seed";
 import { deploymentVersions, initiatives } from "@/lib/db/schema";
+import { createDraft } from "@/lib/services/initiative-service";
+import { CHAMPION_PREFILL_PAYLOAD } from "@/lib/intake/champion-prefill";
 
 let testDb: TestDb;
 
@@ -48,6 +51,66 @@ async function issueSessionFor(personaKey: string, ip: string): Promise<string> 
   expect(res.status).toBe(200);
   const json = (await res.json()) as { token: string };
   return json.token;
+}
+
+/** Like `issueSessionFor`, but also returns the session's (randomly derived)
+ * workspaceId — needed to build a workspace-tagged initiative that a
+ * SPECIFIC session is authorized to mutate. Mirrors
+ * app/api/exceptions/__tests__/routes.test.ts's identically-named helper. */
+async function issueSessionWithWorkspace(
+  personaKey: string,
+  ip: string,
+): Promise<{ token: string; workspaceId: string }> {
+  const { POST } = await import("../../session/route");
+  const res = await POST(
+    new Request("http://localhost/api/session", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-forwarded-for": ip },
+      body: JSON.stringify({ passcode: PASSCODE, personaKey }),
+    }),
+  );
+  const json = await res.json();
+  return { token: json.token as string, workspaceId: json.workspaceId as string };
+}
+
+/** A fresh initiative + two deployment_versions rows (one deployed, one
+ * awaiting_promotion_signoff), tagged with `workspaceId`. Mirrors
+ * lib/services/promotion-service.test.ts's identically-named helper. */
+async function initiativeWithPromotableCheckpointInWorkspace(
+  workspaceId: string,
+): Promise<{ initiativeId: string; awaitingId: string }> {
+  const draft = await createDraft(testDb, {
+    payload: CHAMPION_PREFILL_PAYLOAD,
+    requesterActor: { id: "priya-raman", role: "requester" },
+    requesterName: "Priya Raman",
+    workspaceId,
+  });
+  const awaitingId = `dep-awaiting-${randomUUID()}`;
+  await testDb.insert(deploymentVersions).values({
+    id: `dep-current-${randomUUID()}`,
+    initiativeId: draft.initiativeId,
+    version: "v1.0",
+    status: "deployed",
+    modelVersion: null,
+    selfHosted: false,
+    feedbackProvenanceSignedOff: false,
+    deployedAt: new Date(Date.now() - 100_000),
+    pausedAt: null,
+    retiredAt: null,
+  });
+  await testDb.insert(deploymentVersions).values({
+    id: awaitingId,
+    initiativeId: draft.initiativeId,
+    version: "v1.1",
+    status: "awaiting_promotion_signoff",
+    modelVersion: null,
+    selfHosted: false,
+    feedbackProvenanceSignedOff: false,
+    deployedAt: new Date(),
+    pausedAt: null,
+    retiredAt: null,
+  });
+  return { initiativeId: draft.initiativeId, awaitingId };
 }
 
 async function v21DeploymentId(): Promise<string> {
@@ -165,6 +228,102 @@ describe("POST /api/deployments/promotions/[id]/promote", () => {
       { params: Promise.resolve({ id: deploymentVersionId }) },
     );
     expect([400, 409]).toContain(res2.status);
+  });
+
+  /* ---------------------------------------------------------------------
+   * P1 fix — workspace authorization: promoteCheckpoint now receives the
+   * session workspace and rejects a cross-workspace promote with the same
+   * 404 shape as an unknown checkpoint id.
+   * -------------------------------------------------------------------- */
+  it("404s a promote of a checkpoint owned by a different workspace", async () => {
+    const owner = await issueSessionWithWorkspace("angela-torres", "40.0.0.6");
+    const { awaitingId } = await initiativeWithPromotableCheckpointInWorkspace(owner.workspaceId);
+
+    const intruder = await issueSessionWithWorkspace("angela-torres", "40.0.0.7");
+    const { POST } = await import("../promotions/[id]/promote/route");
+    const res = await POST(
+      new Request(`http://localhost/api/deployments/promotions/${awaitingId}/promote`, {
+        method: "POST",
+        headers: bearer(intruder.token, "40.0.0.7"),
+        body: JSON.stringify({ attestation: FULL_ATTESTATION, reason: "trying anyway" }),
+      }),
+      { params: Promise.resolve({ id: awaitingId }) },
+    );
+    expect(res.status).toBe(404);
+  });
+
+  /* ---------------------------------------------------------------------
+   * P1 fix — concurrency: the retire/promote updates are now
+   * compare-and-set (CAS); a lost-update race throws ConflictError, which
+   * this route maps to 409. True overlapping transactions aren't
+   * reproducible against PGlite (see
+   * lib/services/promotion-service.test.ts's identical rationale comment),
+   * so this test simulates the race deterministically by injecting a
+   * same-transaction write between the service's own read and its CAS
+   * update.
+   * -------------------------------------------------------------------- */
+  it("409s when the current-deployed row changes concurrently underneath the promote (ConflictError -> 409)", async () => {
+    const token = await issueSessionFor("angela-torres", "40.0.0.8");
+    const deploymentVersionId = await v21DeploymentId();
+    const [init] = await testDb.select().from(initiatives).where(eq(initiatives.slug, "pa-correspondence-model"));
+    const rows = await testDb.select().from(deploymentVersions).where(eq(deploymentVersions.initiativeId, init!.id));
+    const v20Id = rows.find((d) => d.version === "v2.0")!.id;
+
+    // Test-only same-transaction write injection — `any`-typed by design
+    // (the mock surface is a live Drizzle transaction-scoped query builder
+    // chain, not meaningfully typeable).
+    /* eslint-disable @typescript-eslint/no-explicit-any */
+    const dbAny = testDb as any;
+    const realTransaction = dbAny.transaction.bind(dbAny);
+    const spy = vi.spyOn(dbAny, "transaction").mockImplementationOnce((cb: any) =>
+      realTransaction(async (tx: any) => {
+        const realUpdate = tx.update.bind(tx);
+        vi.spyOn(tx, "update").mockImplementation((table: any) => {
+          const builder = realUpdate(table);
+          if (table === deploymentVersions) {
+            const realSet = builder.set.bind(builder);
+            builder.set = (values: Record<string, unknown>) => {
+              const base = realSet(values);
+              if (values.status === "retired") {
+                const realWhere = base.where.bind(base);
+                base.where = (cond: unknown) => {
+                  const afterWhere = realWhere(cond);
+                  const realReturning = afterWhere.returning.bind(afterWhere);
+                  afterWhere.returning = async (...args: unknown[]) => {
+                    // Simulated concurrent writer: flips the current-deployed
+                    // row's status directly, inside the SAME transaction,
+                    // between the service's own read and its CAS update.
+                    await realUpdate(deploymentVersions)
+                      .set({ status: "paused" })
+                      .where(eq(deploymentVersions.id, v20Id));
+                    return realReturning(...args);
+                  };
+                  return afterWhere;
+                };
+              }
+              return base;
+            };
+          }
+          return builder;
+        });
+        return cb(tx);
+      }),
+    );
+    /* eslint-enable @typescript-eslint/no-explicit-any */
+
+    const { POST } = await import("../promotions/[id]/promote/route");
+    const res = await POST(
+      new Request(`http://localhost/api/deployments/promotions/${deploymentVersionId}/promote`, {
+        method: "POST",
+        headers: bearer(token, "40.0.0.8"),
+        body: JSON.stringify({ attestation: FULL_ATTESTATION, reason: "Feedback-provenance reviewed." }),
+      }),
+      { params: Promise.resolve({ id: deploymentVersionId }) },
+    );
+
+    spy.mockRestore();
+
+    expect(res.status).toBe(409);
   });
 });
 
