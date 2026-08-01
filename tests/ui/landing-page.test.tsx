@@ -54,4 +54,11 @@ describe("LandingPage", () => {
     const { getByText } = render(<LandingPage />);
     expect(getByText("Synthetic data — demo")).toBeDefined();
   });
+
+  it("renders the governance loop schematic with an accessible title", () => {
+    const { getByRole } = render(<LandingPage />);
+    const diagram = getByRole("img", { name: /governance loop diagram/i });
+    expect(diagram).toBeDefined();
+    expect(diagram.tagName.toLowerCase()).toBe("svg");
+  });
 });
