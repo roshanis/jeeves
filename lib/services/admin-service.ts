@@ -18,6 +18,7 @@ import { auditEvents, controlDefinitions, deploymentVersions, effectiveControls,
 import type { Actor, LifecycleState, Tier } from "../domain/types";
 import { transition, IllegalTransitionError } from "../lifecycle/transitions";
 import { ConflictError } from "./initiative-service";
+import { workspaceMismatch } from "./workspace-guard";
 
 /**
  * Re-exported so route handlers can catch a compare-and-set race (external-
@@ -136,10 +137,23 @@ export interface SetEvalThresholdResult {
  * before/after `AuditEvent`, transactionally. A later `runMonitor` call
  * picks up the change automatically via `resolveThreshold` (project
  * override > tier default) — no separate wiring needed.
+ *
+ * `sessionWorkspaceId` (P1 fix — independent security review: this was one
+ * of the only three mutation services in the codebase that never received
+ * the session workspace, unlike every other mutation, e.g. `decide()`/
+ * `rollbackDeployment`): enforced only on the project/deployment-override
+ * branch below (`input.initiativeId !== null`), which is the only branch
+ * that touches a workspace-scoped row — the tier-default branch changes a
+ * global `control_definitions` row with no owning initiative, so there is
+ * nothing to authorize against. Checked AFTER loading the initiative but
+ * BEFORE any further business-logic lookups, same `NotFoundError` shape as
+ * an unknown initiative id (no existence leak), matching
+ * `promoteCheckpoint`'s and `rollbackDeployment`'s ordering.
  */
 export async function setEvalThreshold(
   db: Db,
   actor: Actor,
+  sessionWorkspaceId: string | null,
   input: SetEvalThresholdInput,
 ): Promise<SetEvalThresholdResult> {
   requireAdminWithReason(actor, input.reason);
@@ -189,6 +203,13 @@ export async function setEvalThreshold(
     const initiativeRows = await tx.select().from(initiatives).where(eq(initiatives.id, input.initiativeId));
     const initiative = initiativeRows[0];
     if (!initiative) throw new NotFoundError("initiative", input.initiativeId);
+    // Workspace authorization (P1 fix, see doc comment above) — BEFORE any
+    // further business-logic lookups, same NotFoundError shape as an
+    // unknown initiative id on mismatch (never leaks that the initiative
+    // exists in a different workspace).
+    if (workspaceMismatch(initiative.workspaceId, sessionWorkspaceId)) {
+      throw new NotFoundError("initiative", input.initiativeId);
+    }
 
     const depRows = await tx
       .select()
@@ -246,9 +267,22 @@ export interface PauseResumeResult {
   after: LifecycleState;
 }
 
+/**
+ * `sessionWorkspaceId` (P1 fix — independent security review: `pauseDeployment`/
+ * `resumeDeployment` never received the session workspace and never enforced
+ * it, unlike every other mutation service). This is the sole chokepoint both
+ * callers use to load their target initiative, so the workspace check lives
+ * here, right after the initiative is loaded and BEFORE the deployment
+ * lookup or any state/business validation — same `NotFoundError` shape as an
+ * unknown initiative id on mismatch (no existence leak), matching
+ * `promoteCheckpoint`'s and `rollbackDeployment`'s ordering. Only these two
+ * functions call this helper (no read-only or system/cron path does), so
+ * enforcing unconditionally here is safe.
+ */
 async function loadInitiativeAndDeploymentOrThrow(
   tx: Tx,
   initiativeId: string,
+  sessionWorkspaceId: string | null,
 ): Promise<{
   initiative: typeof initiatives.$inferSelect;
   deployment: typeof deploymentVersions.$inferSelect;
@@ -256,6 +290,9 @@ async function loadInitiativeAndDeploymentOrThrow(
   const initiativeRows = await tx.select().from(initiatives).where(eq(initiatives.id, initiativeId));
   const initiative = initiativeRows[0];
   if (!initiative) throw new NotFoundError("initiative", initiativeId);
+  if (workspaceMismatch(initiative.workspaceId, sessionWorkspaceId)) {
+    throw new NotFoundError("initiative", initiativeId);
+  }
 
   const depRows = await tx.select().from(deploymentVersions).where(eq(deploymentVersions.initiativeId, initiativeId));
   const deployment = depRows.slice().sort((a, b) => b.deployedAt.getTime() - a.deployedAt.getTime())[0];
@@ -274,13 +311,14 @@ async function loadInitiativeAndDeploymentOrThrow(
 export async function pauseDeployment(
   db: Db,
   actor: Actor,
+  sessionWorkspaceId: string | null,
   initiativeId: string,
   reason: string,
 ): Promise<PauseResumeResult> {
   requireAdminWithReason(actor, reason);
 
   return db.transaction(async (tx) => {
-    const { initiative, deployment } = await loadInitiativeAndDeploymentOrThrow(tx, initiativeId);
+    const { initiative, deployment } = await loadInitiativeAndDeploymentOrThrow(tx, initiativeId, sessionWorkspaceId);
     const ts = Date.now();
 
     const result = transition(initiative.state as LifecycleState, "pause", actor, { ts, reason });
@@ -338,13 +376,14 @@ export async function pauseDeployment(
 export async function resumeDeployment(
   db: Db,
   actor: Actor,
+  sessionWorkspaceId: string | null,
   initiativeId: string,
   reason: string,
 ): Promise<PauseResumeResult> {
   requireAdminWithReason(actor, reason);
 
   return db.transaction(async (tx) => {
-    const { initiative, deployment } = await loadInitiativeAndDeploymentOrThrow(tx, initiativeId);
+    const { initiative, deployment } = await loadInitiativeAndDeploymentOrThrow(tx, initiativeId, sessionWorkspaceId);
     const ts = Date.now();
 
     const result = transition(initiative.state as LifecycleState, "resume", actor, { ts, reason });

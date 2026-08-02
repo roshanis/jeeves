@@ -14,7 +14,9 @@
  * 401/429/400: as other mutating routes (400 also covers an empty reason and
  *        a state violation, e.g. resuming an already-deployed deployment).
  * 403:   { error: string }  (non-admin actor)
- * 404:   { error: string }  (unknown initiative / no deployment)
+ * 404:   { error: string }  (unknown initiative / no deployment / a
+ *        workspace-tagged initiative belonging to a DIFFERENT workspace than
+ *        this session's — same shape, no existence leak; P1 fix)
  * 409:   { error: string }  (compare-and-set conflict — the initiative's or
  *        deployment's state changed concurrently since this request's read)
  */
@@ -66,7 +68,7 @@ export async function POST(
   const db = getDb();
 
   try {
-    const result = await resumeDeployment(db, guard.actor, id, parsed.data.reason);
+    const result = await resumeDeployment(db, guard.actor, guard.workspaceId, id, parsed.data.reason);
     return Response.json(result, { status: 200 });
   } catch (err) {
     if (err instanceof ForbiddenError) {

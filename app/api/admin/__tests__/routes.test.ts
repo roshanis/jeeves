@@ -5,12 +5,15 @@
  * non-admin personas get 403. Mirrors app/api/__tests__/routes.test.ts's
  * guard-order conventions (401 -> 429 -> 400 -> 403).
  */
+import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { createTestDb, closeTestDb, type TestDb } from "@/lib/db/test-client";
 import { resetGuardStateForTests } from "@/lib/services/route-guard";
 import { seedDatabase } from "@/scripts/seed";
-import { initiatives } from "@/lib/db/schema";
+import { deploymentVersions, initiatives } from "@/lib/db/schema";
+import { createDraft } from "@/lib/services/initiative-service";
+import { CHAMPION_PREFILL_PAYLOAD } from "@/lib/intake/champion-prefill";
 
 let testDb: TestDb;
 
@@ -294,5 +297,103 @@ describe("POST /api/admin/deployments/[id]/resume", () => {
       { params: Promise.resolve({ id: initiativeId }) },
     );
     expect(res.status).toBe(400);
+  });
+});
+
+/* -----------------------------------------------------------------------
+ * P1 fix — independent security review: pauseDeployment/resumeDeployment/
+ * setEvalThreshold never received the session workspace, so an admin
+ * session in one workspace could mutate another workspace's live-created
+ * initiative by id. Mirrors "workspace isolation on mutation routes"
+ * (app/api/__tests__/routes.test.ts) — same NotFoundError-shaped 404, no
+ * existence leak.
+ * -------------------------------------------------------------------- */
+describe("workspace authorization on admin mutation routes (P1 fix)", () => {
+  async function issueSessionWithWorkspace(
+    personaKey: string,
+    ip: string,
+  ): Promise<{ token: string; workspaceId: string }> {
+    const { POST } = await import("../../session/route");
+    const res = await POST(
+      new Request("http://localhost/api/session", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-forwarded-for": ip },
+        body: JSON.stringify({ passcode: PASSCODE, personaKey }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { token: string; workspaceId: string };
+    return { token: json.token, workspaceId: json.workspaceId };
+  }
+
+  /** A fresh initiative + one deployed deployment_versions row, tagged with
+   * `workspaceId` — same direct-insert pattern as
+   * lib/services/admin-service.test.ts's workspace-authorization block. */
+  async function initiativeWithDeploymentInWorkspace(workspaceId: string): Promise<string> {
+    const draft = await createDraft(testDb, {
+      payload: CHAMPION_PREFILL_PAYLOAD,
+      requesterActor: { id: "priya-raman", role: "requester" },
+      requesterName: "Priya Raman",
+      workspaceId,
+    });
+    await testDb.update(initiatives).set({ state: "deployed" }).where(eq(initiatives.id, draft.initiativeId));
+    await testDb.insert(deploymentVersions).values({
+      id: `dep-${randomUUID()}`,
+      initiativeId: draft.initiativeId,
+      version: "v1.0",
+      status: "deployed",
+      modelVersion: null,
+      selfHosted: false,
+      feedbackProvenanceSignedOff: false,
+      deployedAt: new Date(Date.now() - 100_000),
+      pausedAt: null,
+      retiredAt: null,
+    });
+    return draft.initiativeId;
+  }
+
+  it("cross-workspace pause 404s with the SAME shape as an unknown initiative id (no existence leak)", async () => {
+    const owner = await issueSessionWithWorkspace("ray-chen", "33.0.0.1");
+    const stranger = await issueSessionWithWorkspace("ray-chen", "33.0.0.2");
+    // No shared jeeves_workspace cookie between these two logins -> distinct workspaces.
+    expect(stranger.workspaceId).not.toBe(owner.workspaceId);
+
+    const initiativeId = await initiativeWithDeploymentInWorkspace(owner.workspaceId);
+
+    const { POST: pausePost } = await import("../deployments/[id]/pause/route");
+    const res = await pausePost(
+      new Request(`http://localhost/api/admin/deployments/${initiativeId}/pause`, {
+        method: "POST",
+        headers: bearer(stranger.token, "33.0.0.2"),
+        body: JSON.stringify({ reason: "trying anyway" }),
+      }),
+      { params: Promise.resolve({ id: initiativeId }) },
+    );
+    expect(res.status).toBe(404);
+    const json = await res.json();
+    // Exactly the message NotFoundError("initiative", id) produces for a
+    // genuinely unknown id too — no existence leak.
+    expect(json.error).toBe(`initiative not found: ${initiativeId}`);
+
+    const [row] = await testDb.select().from(initiatives).where(eq(initiatives.id, initiativeId));
+    expect(row!.state).toBe("deployed"); // unchanged — no partial write
+  });
+
+  it("the owning workspace session succeeds (control case)", async () => {
+    const owner = await issueSessionWithWorkspace("ray-chen", "33.0.0.3");
+    const initiativeId = await initiativeWithDeploymentInWorkspace(owner.workspaceId);
+
+    const { POST: pausePost } = await import("../deployments/[id]/pause/route");
+    const res = await pausePost(
+      new Request(`http://localhost/api/admin/deployments/${initiativeId}/pause`, {
+        method: "POST",
+        headers: bearer(owner.token, "33.0.0.3"),
+        body: JSON.stringify({ reason: "Manual pause for maintenance." }),
+      }),
+      { params: Promise.resolve({ id: initiativeId }) },
+    );
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.after).toBe("paused");
   });
 });
