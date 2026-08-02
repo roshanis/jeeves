@@ -57,7 +57,7 @@ export function ThemeToggle() {
           // for this page view; the choice just won't persist.
         }
       }}
-      className="inline-flex size-8 shrink-0 items-center justify-center rounded-md border border-border bg-transparent text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+      className="inline-flex size-8 shrink-0 items-center justify-center rounded-md border border-border bg-transparent text-muted-foreground transition-colors duration-(--motion-base) ease-(--motion-ease) hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
     >
       {dark ? <Sun className="size-4" aria-hidden /> : <Moon className="size-4" aria-hidden />}
     </button>

@@ -62,13 +62,13 @@ export function AppTopBar() {
 
   return (
     <div className="sticky top-0 z-30 border-b bg-card/95 backdrop-blur">
-      <div className="bg-amber-100 px-4 py-1 text-center text-[11px] font-medium text-amber-900 dark:bg-amber-950/70 dark:text-amber-200">
+      <div className="bg-status-warning-bg px-4 py-1 text-center text-[11px] font-medium text-status-warning-fg">
         {DEMO_BANNER_TEXT}
       </div>
       <header className="flex h-14 items-center justify-between gap-4 px-4">
         <div className="flex min-w-0 items-center gap-4">
           <p
-            className="hidden shrink-0 truncate text-sm font-medium text-foreground/80 sm:block"
+            className="label-mono hidden shrink-0 truncate text-foreground/80 sm:block"
             data-slot="breadcrumb"
           >
             {breadcrumb}
@@ -89,10 +89,18 @@ export function AppTopBar() {
             </kbd>
           </label>
         </div>
-        <div className="flex shrink-0 items-center gap-2.5">
-          <ThemeToggle />
-          <DemoModeChip />
-          <RoleSwitcher />
+        {/* Status cluster: one grouped instrument reading (theme / demo state /
+            persona) separated by hairlines rather than three floating pills. */}
+        <div className="flex shrink-0 items-center divide-x divide-border">
+          <div className="pr-2.5">
+            <ThemeToggle />
+          </div>
+          <div className="px-2.5">
+            <DemoModeChip />
+          </div>
+          <div className="pl-2.5">
+            <RoleSwitcher />
+          </div>
         </div>
       </header>
     </div>

@@ -35,9 +35,9 @@ export function AppMobileNav() {
             key={item.href}
             href={item.href}
             aria-current={active ? "page" : undefined}
-            className={`flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-xs whitespace-nowrap transition-colors ${
+            className={`flex h-8 shrink-0 items-center gap-1.5 rounded-md px-3 text-xs whitespace-nowrap transition-colors duration-(--motion-base) ease-(--motion-ease) ${
               active
-                ? "bg-accent text-accent-foreground font-medium"
+                ? "bg-accent font-medium text-accent-foreground shadow-[inset_0_0_0_1px_var(--border)]"
                 : "text-muted-foreground hover:bg-muted"
             }`}
           >

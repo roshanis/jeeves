@@ -66,7 +66,7 @@ export function RoleSwitcher() {
           ))}
         </SelectContent>
       </Select>
-      <Badge variant="outline" className="hidden sm:inline-flex">
+      <Badge variant="outline" className="hidden font-mono text-[11px] tracking-wide sm:inline-flex">
         {persona.actorName}
       </Badge>
       {reviewerDomain ? (

@@ -20,7 +20,6 @@
 import * as React from "react";
 import { toast } from "sonner";
 import { Lock } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -71,20 +70,21 @@ export function DemoModeChip() {
     }
   }
 
+  // Both states read as a state LED (solid/pulsing dot) + a mono system
+  // label — a status readout rather than a floating pill.
   if (session) {
     return (
-      <span className="inline-flex items-center gap-1.5" data-slot="demo-mode-chip">
-        <Badge
-          variant="outline"
-          className="gap-1.5 border-primary/30 bg-primary/10 text-primary"
+      <span className="inline-flex items-center gap-2" data-slot="demo-mode-chip">
+        <span
+          className="inline-flex items-center gap-1.5 rounded-md border border-primary/30 bg-primary/10 px-2 py-1"
           title="Session workspace active — daily demo token budget and rate limits are enforced server-side."
         >
-          <span className="relative flex h-1.5 w-1.5" aria-hidden>
+          <span className="relative flex h-1.5 w-1.5 shrink-0" aria-hidden>
             <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-75" />
             <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-primary" />
           </span>
-          Live demo (session workspace)
-        </Badge>
+          <span className="label-mono text-primary">Live demo (session workspace)</span>
+        </span>
         <span className="text-xs text-muted-foreground">{session.personaLabel}</span>
         <Button
           type="button"
@@ -108,13 +108,12 @@ export function DemoModeChip() {
       <button
         type="button"
         data-slot="demo-mode-chip"
-        className="cursor-pointer"
+        className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-border px-2 py-1 transition-colors duration-(--motion-base) ease-(--motion-ease) hover:bg-accent"
         onClick={() => setOpen(true)}
       >
-        <Badge variant="outline" className="gap-1.5 text-muted-foreground">
-          <Lock className="h-3 w-3" aria-hidden />
-          Read-only (public)
-        </Badge>
+        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-muted-foreground" aria-hidden />
+        <Lock className="h-3 w-3 shrink-0 text-muted-foreground" aria-hidden />
+        <span className="label-mono text-muted-foreground">Read-only (public)</span>
       </button>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent>
