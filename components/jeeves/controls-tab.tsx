@@ -67,17 +67,17 @@ export function ControlsTab({ controls }: { controls: ControlRow[] }) {
   }
 
   return (
-    <div className="card-quiet overflow-hidden rounded-lg border">
+    <div className="panel card-quiet overflow-hidden">
       <Table data-slot="controls-tab">
         <TableHeader>
           <TableRow>
-            <TableHead>Control</TableHead>
-            <TableHead>Name</TableHead>
-            <TableHead>Domain</TableHead>
-            <TableHead>Status</TableHead>
-            <TableHead>Policy source</TableHead>
-            <TableHead>Threshold</TableHead>
-            <TableHead>Evidence</TableHead>
+            <TableHead className="kicker">Control</TableHead>
+            <TableHead className="kicker">Name</TableHead>
+            <TableHead className="kicker">Domain</TableHead>
+            <TableHead className="kicker">Status</TableHead>
+            <TableHead className="kicker">Policy source</TableHead>
+            <TableHead className="kicker">Threshold</TableHead>
+            <TableHead className="kicker">Evidence</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -91,10 +91,10 @@ export function ControlsTab({ controls }: { controls: ControlRow[] }) {
               <TableCell>
                 <ControlStatusChip status={control.status} />
               </TableCell>
-              <TableCell className="text-xs text-muted-foreground">
+              <TableCell className="font-mono text-xs text-muted-foreground">
                 {control.policySource ?? "—"}
               </TableCell>
-              <TableCell className="tabular-nums">
+              <TableCell className="font-mono tabular-nums">
                 {control.threshold ?? "—"}
               </TableCell>
               <TableCell className="max-w-64 truncate text-xs text-muted-foreground">

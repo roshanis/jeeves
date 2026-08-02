@@ -15,6 +15,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { cn } from "@/lib/utils";
 
 function formatSyntheticDuration(ms: number): string {
   return ms >= 1000 ? `${(ms / 1000).toFixed(2)}s` : `${ms}ms`;
@@ -37,7 +38,7 @@ export function TelemetryConnectorCard({
   return (
     <Card data-slot="telemetry-connector-card">
       <CardHeader className="border-b bg-muted/40 py-3">
-        <CardTitle className="flex flex-wrap items-center gap-2 text-sm">
+        <CardTitle className="kicker flex flex-wrap items-center gap-2">
           Telemetry connector
           {status.configured ? (
             <span
@@ -61,20 +62,29 @@ export function TelemetryConnectorCard({
       <CardContent className="space-y-3">
         <Badge variant="secondary">Synthetic data — demo</Badge>
 
-        {/* Compact definition row: provider / state / last-sync in one line. */}
+        {/* Compact definition row: provider / state / last-sync in one line,
+            state carrying its own LED so the connector's live/synthetic
+            reading is visible without parsing text. */}
         <dl className="grid grid-cols-1 gap-x-4 gap-y-2 rounded-md border border-border bg-muted/30 px-3 py-2 text-xs sm:grid-cols-3">
           <div className="flex items-baseline justify-between gap-2 sm:block">
-            <dt className="text-muted-foreground">Provider</dt>
-            <dd className="font-medium text-foreground">{status.provider}</dd>
+            <dt className="kicker">Provider</dt>
+            <dd className="font-mono font-medium text-foreground">{status.provider}</dd>
           </div>
           <div className="flex items-baseline justify-between gap-2 sm:block">
-            <dt className="text-muted-foreground">State</dt>
-            <dd className="font-medium text-foreground">
+            <dt className="kicker">State</dt>
+            <dd className="inline-flex items-center gap-1.5 font-mono font-medium text-foreground">
+              <span
+                className={cn(
+                  "size-1.5 shrink-0 rounded-full",
+                  status.configured ? "bg-status-good" : "bg-status-warning",
+                )}
+                aria-hidden="true"
+              />
               {status.configured ? "configured" : "not configured"}
             </dd>
           </div>
           <div className="flex items-baseline justify-between gap-2 sm:block">
-            <dt className="text-muted-foreground">Last sync</dt>
+            <dt className="kicker">Last sync</dt>
             <dd className="font-mono text-foreground">
               {status.lastSyncIso ? status.lastSyncIso.slice(0, 19).replace("T", " ") + " UTC" : "—"}
             </dd>
@@ -83,16 +93,14 @@ export function TelemetryConnectorCard({
         <p className="text-xs text-muted-foreground">{status.detail}</p>
 
         <div>
-          <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-            Synthetic OTel traces — demo
-          </h4>
+          <h4 className="kicker mb-2">Synthetic OTel traces — demo</h4>
           <div className="scroll-thin overflow-x-auto rounded-md border border-border">
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Trace id</TableHead>
-                  <TableHead>Span</TableHead>
-                  <TableHead className="text-right">Duration</TableHead>
+                  <TableHead className="kicker">Trace id</TableHead>
+                  <TableHead className="kicker">Span</TableHead>
+                  <TableHead className="kicker text-right">Duration</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>

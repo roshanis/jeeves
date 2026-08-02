@@ -45,7 +45,7 @@ export function DecisionsTab({
               <Badge variant={DECISION_VARIANT[decision.type]}>
                 {DECISION_LABEL[decision.type]}
               </Badge>
-              <span className="text-xs font-normal tabular-nums text-muted-foreground">
+              <span className="font-mono text-xs font-normal tabular-nums text-muted-foreground">
                 {decision.at.slice(0, 10)}
               </span>
             </CardTitle>

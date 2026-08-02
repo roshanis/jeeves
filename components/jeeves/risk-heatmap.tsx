@@ -85,9 +85,9 @@ export function RiskHeatmap({ initiatives }: { initiatives: InitiativeSummary[] 
         <Table className="border-separate [border-spacing:2px]">
           <TableHeader>
             <TableRow className="border-b-0 hover:bg-transparent">
-              <TableHead className="text-xs">Tier</TableHead>
+              <TableHead className="kicker">Tier</TableHead>
               {STATUSES.map((s) => (
-                <TableHead key={s} className="text-xs">
+                <TableHead key={s} className="kicker">
                   {s}
                 </TableHead>
               ))}
@@ -108,7 +108,7 @@ export function RiskHeatmap({ initiatives }: { initiatives: InitiativeSummary[] 
                         data-slot="risk-heatmap-cell"
                         data-bucket={bucket}
                         className={cn(
-                          "flex h-9 w-full min-w-12 items-center justify-center rounded-sm text-sm font-medium tabular-nums",
+                          "stat-value flex h-9 w-full min-w-12 items-center justify-center rounded-sm text-sm",
                           CELL_BG[bucket],
                           CELL_TEXT[bucket],
                         )}
@@ -124,7 +124,7 @@ export function RiskHeatmap({ initiatives }: { initiatives: InitiativeSummary[] 
         </Table>
       </div>
 
-      <div className="flex items-center gap-2 text-xs text-muted-foreground" data-slot="risk-heatmap-legend">
+      <div className="label-mono flex items-center gap-2" data-slot="risk-heatmap-legend">
         <span>0</span>
         <div className="flex h-2.5 w-24 overflow-hidden rounded-full" aria-hidden="true">
           <span className="flex-1 bg-seq-1" />

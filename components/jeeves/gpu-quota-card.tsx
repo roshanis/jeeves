@@ -130,7 +130,7 @@ export function GpuQuotaCard({
   return (
     <Card data-slot="gpu-quota-card" data-initiative-slug={slug}>
       <CardHeader className="border-b bg-muted/40 py-3">
-        <CardTitle className="flex flex-wrap items-center gap-2 text-sm">
+        <CardTitle className="kicker flex flex-wrap items-center gap-2">
           GPU utilization vs quota — {title}
           {overQuota ? (
             <span className="inline-flex items-center gap-1.5 rounded-full bg-status-critical-bg px-2 py-0.5 text-xs font-medium text-status-critical-fg">
@@ -143,7 +143,9 @@ export function GpuQuotaCard({
       <CardContent>
         <SyntheticDataLabel>
           {quota !== null ? (
-            <p className="text-xs text-muted-foreground">GPU quota: {quota}%</p>
+            <p className="font-mono text-xs tabular-nums text-muted-foreground">
+              GPU quota: {quota}%
+            </p>
           ) : null}
           <div className="h-[200px] w-full">
             <ResponsiveContainer width="100%" height="100%">

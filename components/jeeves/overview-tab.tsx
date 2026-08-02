@@ -132,41 +132,53 @@ export function OverviewTab({ detail }: { detail: InitiativeDetail }) {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="kicker">
-              Required domains — {summary.domainsSigned} of {summary.domainsRequired} signed
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-              {reviews.map((review) => {
-                const meta = DOMAIN_STATUS_META[review.status];
-                const Icon = meta.icon;
-                return (
-                  <div
-                    key={review.domain}
-                    data-slot="domain-status-cell"
-                    data-domain={review.domain}
-                    data-status={review.status}
-                    className="card-quiet flex items-center justify-between gap-2 rounded-lg border bg-card px-3 py-2 text-sm"
+        <div className="panel overflow-hidden">
+          <div className="flex items-center justify-between gap-2 border-b border-border px-4 py-2.5">
+            <span className="kicker">Required domains</span>
+            <span className="stat-value text-xs text-foreground">
+              {summary.domainsSigned}/{summary.domainsRequired} signed
+            </span>
+          </div>
+          {/* Status matrix: 2-column grid of cells, hairline-separated
+              rather than floating boxes — the grid reads as one instrument
+              surface. sm:grid-cols-2 pairs cells into rows, so each cell
+              gets its own right + bottom hairline except along the matrix's
+              own trailing edges (last column / last row). */}
+          <div className="grid grid-cols-1 sm:grid-cols-2">
+            {reviews.map((review, i) => {
+              const meta = DOMAIN_STATUS_META[review.status];
+              const Icon = meta.icon;
+              const isLastItem = i === reviews.length - 1;
+              const isLastRow = i >= reviews.length - (reviews.length % 2 === 0 ? 2 : 1);
+              const isLastCol = i % 2 === 1 || i === reviews.length - 1;
+              return (
+                <div
+                  key={review.domain}
+                  data-slot="domain-status-cell"
+                  data-domain={review.domain}
+                  data-status={review.status}
+                  className={cn(
+                    "flex items-center justify-between gap-2 border-border px-4 py-2.5 text-sm",
+                    !isLastItem && "border-b",
+                    !isLastRow ? "sm:border-b" : "sm:border-b-0",
+                    !isLastCol && "sm:border-r",
+                  )}
+                >
+                  <span className="font-medium">{DOMAIN_LABEL[review.domain]}</span>
+                  <span
+                    className={cn(
+                      "inline-flex h-5 w-fit items-center gap-1 rounded-full px-2 text-xs font-medium",
+                      meta.className,
+                    )}
                   >
-                    <span className="font-medium">{DOMAIN_LABEL[review.domain]}</span>
-                    <span
-                      className={cn(
-                        "inline-flex h-5 w-fit items-center gap-1 rounded-full px-2 text-xs font-medium",
-                        meta.className,
-                      )}
-                    >
-                      <Icon className="size-3" aria-hidden />
-                      {meta.label}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          </CardContent>
-        </Card>
+                    <Icon className="size-3" aria-hidden />
+                    {meta.label}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
       </div>
 
       <Card className="h-fit overflow-hidden">

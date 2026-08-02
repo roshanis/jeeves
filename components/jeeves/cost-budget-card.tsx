@@ -108,13 +108,16 @@ export function CostBudgetCard({ points }: { points: PortfolioCostPoint[] }) {
   return (
     <Card data-slot="cost-budget-card">
       <CardHeader className="border-b bg-muted/40 py-3">
-        <CardTitle className="text-sm">Cost &amp; daily token budget</CardTitle>
+        <CardTitle className="kicker">Cost &amp; daily token budget</CardTitle>
       </CardHeader>
       <CardContent>
         <SyntheticDataLabel>
           <p className="text-xs text-muted-foreground">
             Portfolio daily cost (sum of each deployment&apos;s cost_tokens_usd_day
-            series). Daily token budget reference: {DAILY_TOKEN_BUDGET_REFERENCE.toLocaleString()}{" "}
+            series). Daily token budget reference:{" "}
+            <span className="stat-value text-foreground">
+              {DAILY_TOKEN_BUDGET_REFERENCE.toLocaleString()}
+            </span>{" "}
             tokens/day (static demo cap) — this chart plots USD cost, not raw
             token counts, so the budget line is shown as an annotation, not a
             literal axis value.
@@ -167,7 +170,7 @@ export function CostBudgetCard({ points }: { points: PortfolioCostPoint[] }) {
               </ResponsiveContainer>
             </div>
           )}
-          <p className="text-[11px] text-muted-foreground">
+          <p className="font-mono text-[11px] tabular-nums text-muted-foreground">
             Daily token budget: {DAILY_TOKEN_BUDGET_REFERENCE.toLocaleString()} (synthetic demo cap
             — not read from a live budget store).
           </p>

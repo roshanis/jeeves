@@ -33,8 +33,11 @@ export function AuditTab({ events }: { events: AuditEventRow[] }) {
               <Badge variant="outline" className="font-mono text-[11px]">
                 {event.action}
               </Badge>
-              <span className="text-xs tabular-nums text-muted-foreground">
-                {event.ts.slice(0, 10)} · {event.actor} ({event.actorRole})
+              <span className="font-mono text-xs tabular-nums text-muted-foreground">
+                {event.ts.slice(0, 10)}
+              </span>
+              <span className="text-xs text-muted-foreground">
+                {event.actor} ({event.actorRole})
               </span>
             </div>
             <p className="text-sm text-muted-foreground">{event.detail}</p>

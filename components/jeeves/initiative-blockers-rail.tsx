@@ -6,8 +6,6 @@
 // client state.
 import type { ControlRow, InitiativeDetail } from "@/lib/data/dto";
 import { AlertOctagon, AlertTriangle } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { DOMAIN_LABEL } from "./domain-labels";
 
@@ -98,14 +96,19 @@ function groupEvidenceByPrefix(evidence: ControlRow[]): { prefix: string; label:
   return groups;
 }
 
+// Severity dots ride the reserved status family — colour alone never carries
+// the meaning: the icon still ships alongside the dot, and the row's own
+// text ("returned" vs "pending") repeats the distinction in words.
 const SEVERITY_META = {
   high: {
     icon: AlertOctagon,
-    className: "bg-status-critical-bg text-status-critical-fg",
+    dot: "bg-status-critical",
+    className: "text-status-critical-fg",
   },
   amber: {
     icon: AlertTriangle,
-    className: "bg-status-serious-bg text-status-serious-fg",
+    dot: "bg-status-serious",
+    className: "text-status-serious-fg",
   },
 } as const;
 
@@ -116,58 +119,47 @@ export function InitiativeBlockersRail({ detail }: { detail: InitiativeDetail })
 
   return (
     <div className="flex flex-col gap-4 lg:sticky lg:top-6 lg:self-start" data-slot="blockers-rail">
-      <Card className="overflow-hidden">
-        <CardHeader className="border-b py-2.5">
-          <CardTitle className="flex items-center gap-2">
-            <span className="kicker">Blockers</span>
-            {blockers.length > 0 ? (
-              <Badge variant="secondary" className="tabular-nums">
-                {blockers.length}
-              </Badge>
-            ) : null}
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="pt-4">
+      <div className="panel overflow-hidden">
+        <div className="flex items-center gap-2 border-b border-border px-4 py-2.5">
+          <span className="kicker">Blockers</span>
+          {blockers.length > 0 ? (
+            <span className="stat-value text-xs text-status-critical-fg">{blockers.length}</span>
+          ) : null}
+        </div>
+        <div className="p-4">
           {blockers.length === 0 ? (
             <p className="text-sm text-muted-foreground">
               No open blockers — all required reviews signed and controls met.
             </p>
           ) : (
-            <ul className="space-y-2">
+            <ul className="space-y-2.5">
               {blockers.map((b, i) => {
                 const meta = SEVERITY_META[b.severity];
                 const Icon = meta.icon;
                 return (
                   <li key={i} className="flex items-start gap-2">
                     <span
-                      className={cn(
-                        "mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full",
-                        meta.className,
-                      )}
-                    >
-                      <Icon className="size-2.5" aria-hidden />
-                    </span>
+                      className={cn("mt-1.5 size-1.5 shrink-0 rounded-full", meta.dot)}
+                      aria-hidden
+                    />
+                    <Icon className={cn("mt-0.5 size-3.5 shrink-0", meta.className)} aria-hidden />
                     <span className="text-sm">{b.label}</span>
                   </li>
                 );
               })}
             </ul>
           )}
-        </CardContent>
-      </Card>
+        </div>
+      </div>
 
-      <Card className="overflow-hidden">
-        <CardHeader className="border-b py-2.5">
-          <CardTitle className="flex items-center gap-2">
-            <span className="kicker">Required evidence</span>
-            {evidence.length > 0 ? (
-              <Badge variant="secondary" className="tabular-nums">
-                {evidence.length}
-              </Badge>
-            ) : null}
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="scroll-thin max-h-80 space-y-3 overflow-y-auto pt-4">
+      <div className="panel overflow-hidden">
+        <div className="flex items-center gap-2 border-b border-border px-4 py-2.5">
+          <span className="kicker">Required evidence</span>
+          {evidence.length > 0 ? (
+            <span className="stat-value text-xs text-foreground">{evidence.length}</span>
+          ) : null}
+        </div>
+        <div className="scroll-thin max-h-80 space-y-3 overflow-y-auto p-4">
           {evidence.length === 0 ? (
             <p className="text-sm text-muted-foreground">All required evidence on file.</p>
           ) : (
@@ -177,7 +169,7 @@ export function InitiativeBlockersRail({ detail }: { detail: InitiativeDetail })
                 <ul className="space-y-1.5">
                   {group.items.map((c) => (
                     <li key={c.id} className="flex items-baseline gap-2 text-sm">
-                      <span className="rounded border bg-muted px-1 py-0.5 font-mono text-[10px] text-muted-foreground">
+                      <span className="rounded border border-border bg-muted px-1 py-0.5 font-mono text-[10px] text-muted-foreground">
                         {c.id}
                       </span>
                       <span className="text-muted-foreground">{c.name}</span>
@@ -187,8 +179,8 @@ export function InitiativeBlockersRail({ detail }: { detail: InitiativeDetail })
               </div>
             ))
           )}
-        </CardContent>
-      </Card>
+        </div>
+      </div>
     </div>
   );
 }

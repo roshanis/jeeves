@@ -32,7 +32,7 @@ export function OverlayFlagChips({ flags }: { flags: OverlayFlags }) {
             data-slot="overlay-flag-chip"
             data-risky={isRisky}
             className={cn(
-              "inline-flex h-5 w-fit items-center gap-1 rounded-full border px-2 text-[11px] font-medium whitespace-nowrap",
+              "inline-flex h-5 w-fit items-center gap-1 rounded-full border px-2 font-mono text-[10px] font-semibold tracking-wide whitespace-nowrap uppercase",
               isRisky
                 ? "border-transparent bg-status-warning-bg text-status-warning-fg"
                 : "border-border bg-transparent text-muted-foreground",

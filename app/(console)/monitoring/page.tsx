@@ -104,9 +104,7 @@ export default async function MonitoringPage() {
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <p className="text-xs font-semibold uppercase tracking-wider text-primary">
-          Monitoring
-        </p>
+        <p className="kicker text-primary">Monitoring</p>
         <h1 className="mt-1 text-2xl font-semibold tracking-tight">
           Deployed models — operational health
         </h1>
@@ -129,7 +127,7 @@ export default async function MonitoringPage() {
         ) : (
           <Card data-slot="gpu-quota-card-missing">
             <CardHeader className="border-b bg-muted/40 py-3">
-              <CardTitle className="text-sm">GPU utilization vs quota</CardTitle>
+              <CardTitle className="kicker">GPU utilization vs quota</CardTitle>
             </CardHeader>
             <CardContent>
               <p className="text-sm text-muted-foreground">
@@ -143,7 +141,7 @@ export default async function MonitoringPage() {
 
       <Card className="overflow-hidden">
         <CardHeader className="border-b bg-muted/40 py-3">
-          <CardTitle className="text-sm">Deployments</CardTitle>
+          <CardTitle className="kicker">Deployments</CardTitle>
         </CardHeader>
         <CardContent className="p-0">
           <SyntheticDataLabel className="p-4">
@@ -151,12 +149,12 @@ export default async function MonitoringPage() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Initiative</TableHead>
-                    <TableHead>Version</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead className="text-right">Eval (hallucination)</TableHead>
-                    <TableHead className="text-right">Cost / day</TableHead>
-                    <TableHead className="text-right">GPU</TableHead>
+                    <TableHead className="kicker">Initiative</TableHead>
+                    <TableHead className="kicker">Version</TableHead>
+                    <TableHead className="kicker">Status</TableHead>
+                    <TableHead className="kicker text-right">Eval (hallucination)</TableHead>
+                    <TableHead className="kicker text-right">Cost / day</TableHead>
+                    <TableHead className="kicker text-right">GPU</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -175,7 +173,7 @@ export default async function MonitoringPage() {
                           <Link href={`/initiatives/${d.summary.slug}?tab=evals`} className="font-medium hover:text-primary hover:underline">
                             {d.summary.title}
                           </Link>
-                          <div className="text-xs text-muted-foreground">{d.summary.slug}</div>
+                          <div className="font-mono text-xs text-muted-foreground">{d.summary.slug}</div>
                         </TableCell>
                         <TableCell className="font-mono text-xs">{dep?.version ?? "—"}</TableCell>
                         <TableCell><LifecycleBadge state={d.summary.state} /></TableCell>
@@ -217,8 +215,11 @@ export default async function MonitoringPage() {
 
       <Card className="overflow-hidden">
         <CardHeader className="border-b bg-muted/40 py-3">
-          <CardTitle className="text-sm">
-            Incidents{incidents.length ? ` (${incidents.length})` : ""}
+          <CardTitle className="kicker flex items-center gap-2">
+            Incidents
+            {incidents.length ? (
+              <span className="stat-value text-xs text-foreground">{incidents.length}</span>
+            ) : null}
           </CardTitle>
         </CardHeader>
         <CardContent className="p-0">
@@ -235,19 +236,19 @@ export default async function MonitoringPage() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Detected</TableHead>
-                  <TableHead>Deployment</TableHead>
-                  <TableHead>Control</TableHead>
-                  <TableHead>Reassessment</TableHead>
-                  <TableHead>Status</TableHead>
+                  <TableHead className="kicker">Detected</TableHead>
+                  <TableHead className="kicker">Deployment</TableHead>
+                  <TableHead className="kicker">Control</TableHead>
+                  <TableHead className="kicker">Reassessment</TableHead>
+                  <TableHead className="kicker">Status</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {incidents.map((inc) => (
                   <TableRow key={inc.id}>
-                    <TableCell className="text-xs tabular-nums text-muted-foreground">{inc.detectedAt.slice(0, 10)}</TableCell>
+                    <TableCell className="font-mono text-xs tabular-nums text-muted-foreground">{inc.detectedAt.slice(0, 10)}</TableCell>
                     <TableCell className="font-mono text-xs">{inc.deploymentId}</TableCell>
-                    <TableCell className="text-xs">{inc.controlId}</TableCell>
+                    <TableCell className="font-mono text-xs">{inc.controlId}</TableCell>
                     <TableCell className="font-mono text-xs">{inc.reviewCycleId ?? "—"}</TableCell>
                     <TableCell className="text-xs">
                       <span

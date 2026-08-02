@@ -77,7 +77,7 @@ export function DeploymentHistory({
   return (
     <Card data-slot="deployment-history" className="overflow-hidden">
       <CardHeader className="border-b bg-muted/40 py-2.5">
-        <CardTitle className="text-xs uppercase tracking-wide text-muted-foreground">
+        <CardTitle className="kicker">
           Deployment-version history — {title}
         </CardTitle>
       </CardHeader>
@@ -111,7 +111,7 @@ export function DeploymentHistory({
                 ) : (
                   <span className="text-xs text-muted-foreground">—</span>
                 )}
-                <span className="text-xs tabular-nums text-muted-foreground">
+                <span className="font-mono text-xs tabular-nums text-muted-foreground">
                   deployed {shortDate(entry.deployedAt)}
                   {entry.pausedAt ? ` · paused ${shortDate(entry.pausedAt)}` : ""}
                   {entry.retiredAt ? ` · retired ${shortDate(entry.retiredAt)}` : ""}

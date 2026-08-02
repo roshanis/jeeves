@@ -42,7 +42,8 @@ function normalizeTab(tab: string | undefined): TabId {
     : "overview";
 }
 
-/** Compact segmented progress bar — one filled segment per signed review. */
+/** Segmented review-progress gauge — one filled tick per signed review, with
+ * a mono "0/8 signed" readout so the instrument reads at a glance. */
 function ReviewProgressBar({ signed, total }: { signed: number; total: number }) {
   if (total === 0) {
     return <span className="text-sm text-muted-foreground">No required domains</span>;
@@ -58,13 +59,13 @@ function ReviewProgressBar({ signed, total }: { signed: number; total: number })
           <span
             key={i}
             className={cn(
-              "h-1.5 w-4 rounded-full",
+              "h-2.5 w-1.5 rounded-[1px]",
               i < signed ? "bg-status-good" : "bg-status-neutral-bg",
             )}
           />
         ))}
       </div>
-      <span className="text-xs tabular-nums text-muted-foreground">
+      <span className="stat-value text-xs text-foreground">
         {signed}/{total} signed
       </span>
     </div>
@@ -103,44 +104,45 @@ export default async function InitiativeDetailPage({
 
   return (
     <div className="flex flex-col gap-6">
-      <header
-        className="card-quiet rounded-xl border bg-card p-5"
-        data-slot="case-file-header"
-      >
-        {/* Line 1 — title + tier/lifecycle badges (the h1's immediate parent
-            must contain the tier-badge: golden-path.spec.ts locates it via
-            h1's parent element). */}
-        <div className="flex flex-wrap items-center gap-3">
-          <h1 className="text-2xl font-semibold tracking-tight">{summary.title}</h1>
-          <TierBadge tier={summary.tier} />
-          <LifecycleBadge state={summary.state} />
-        </div>
+      <header className="panel card-quiet overflow-hidden" data-slot="case-file-header">
+        <div className="p-5">
+          {/* Line 1 — title + tier/lifecycle badges (the h1's immediate
+              parent must contain the tier-badge: golden-path.spec.ts locates
+              it via h1's parent element). */}
+          <div className="flex flex-wrap items-center gap-3">
+            <h1 className="text-2xl font-semibold tracking-tight">{summary.title}</h1>
+            <TierBadge tier={summary.tier} />
+            <LifecycleBadge state={summary.state} />
+          </div>
 
-        {/* Line 2 — mono slug chip + overlay-flag chips. */}
-        <div className="mt-2.5 flex flex-wrap items-center gap-2.5">
-          <span className="rounded-md border bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground">
-            {summary.slug}
-          </span>
-          <OverlayFlagChips flags={summary.flags} />
+          {/* Line 2 — mono slug chip + overlay-flag chips. */}
+          <div className="mt-2.5 flex flex-wrap items-center gap-2.5">
+            <span className="rounded-md border bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground">
+              {summary.slug}
+            </span>
+            <OverlayFlagChips flags={summary.flags} />
+          </div>
         </div>
 
         {/* Line 3 — meta grid: requester, accountable approver, review
-            progress, open blockers (+ latest deployment when present). */}
+            progress, open blockers (+ latest deployment when present). Every
+            label reads as a kicker; every value speaks the mono/tabular
+            instrument voice. */}
         <div
           data-slot="record-meta"
           className={cn(
-            "mt-4 grid grid-cols-2 gap-x-6 gap-y-3 border-t pt-4 sm:grid-cols-4",
+            "grid grid-cols-2 gap-x-6 gap-y-3 border-t border-border px-5 py-4 sm:grid-cols-4",
             latestDeployment ? "lg:grid-cols-5" : undefined,
           )}
         >
           <div className="flex flex-col gap-1">
             <span className="kicker">Requested by</span>
-            <span className="text-sm font-medium">{summary.requester}</span>
+            <span className="font-mono text-sm font-medium text-foreground">{summary.requester}</span>
           </div>
 
           <div className="flex flex-col gap-1">
             <span className="kicker">Accountable approver</span>
-            <AccountableApproverChip name={summary.accountableApprover} />
+            <AccountableApproverChip name={summary.accountableApprover} className="font-mono" />
           </div>
 
           <div className="flex flex-col gap-1.5">
@@ -163,16 +165,17 @@ export default async function InitiativeDetailPage({
               ) : (
                 <CheckCircle2 className="size-3" aria-hidden />
               )}
-              {openBlockers} open blocker{openBlockers === 1 ? "" : "s"}
+              <span className="stat-value">{openBlockers}</span> open blocker
+              {openBlockers === 1 ? "" : "s"}
             </span>
           </div>
 
           {latestDeployment ? (
             <div className="flex flex-col gap-1">
               <span className="kicker">Latest deployment</span>
-              <span className="text-sm font-medium tabular-nums">
+              <span className="font-mono text-sm font-medium tabular-nums text-foreground">
                 v{latestDeployment.version}{" "}
-                <span className="font-normal text-muted-foreground">
+                <span className="font-sans font-normal text-muted-foreground">
                   · {DEPLOYMENT_STATUS_LABEL[latestDeployment.status]}
                 </span>
               </span>
