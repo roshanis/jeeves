@@ -114,24 +114,30 @@
  *    (foreground/muted-foreground), never the series color.
  */
 :root {
-  --background: oklch(0.977 0.003 250);
-  --foreground: oklch(0.22 0.008 260);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.22 0.008 260);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.22 0.008 260);
-  --primary: oklch(0.55 0.095 197);
-  --primary-foreground: oklch(0.99 0.01 197);
-  --secondary: oklch(0.962 0.004 250);
-  --secondary-foreground: oklch(0.30 0.008 260);
-  --muted: oklch(0.962 0.004 250);
-  --muted-foreground: oklch(0.50 0.010 258);
-  --accent: oklch(0.95 0.022 197);
-  --accent-foreground: oklch(0.36 0.06 200);
+  /* ---- Instrument-deck neutrals (2026-08-02) --------------------------
+     Cool paper and petrol ink rather than a default grey: the neutral ramp
+     is hue-biased toward the teal signal so the ground reads as chosen, not
+     inherited. Every pair below was computed, not eyeballed (WCAG script in
+     the design pass): ink/paper 17.0, ink/panel 18.6, muted/paper 6.05,
+     muted/panel 6.63, accent/paper 5.66, white-on-accent 6.21. */
+  --background: #f2f5f6;
+  --foreground: #0b1418;
+  --card: #ffffff;
+  --card-foreground: #0b1418;
+  --popover: #ffffff;
+  --popover-foreground: #0b1418;
+  --primary: #0b6b77;
+  --primary-foreground: #ffffff;
+  --secondary: #e7edef;
+  --secondary-foreground: #16262d;
+  --muted: #e7edef;
+  --muted-foreground: #4a6069;
+  --accent: #dbeced;
+  --accent-foreground: #0b4f58;
   --destructive: oklch(0.55 0.20 25);
-  --border: oklch(0.910 0.005 255);
-  --input: oklch(0.910 0.005 255);
-  --ring: oklch(0.55 0.095 197);
+  --border: #d7e0e3;
+  --input: #d7e0e3;
+  --ring: #0b6b77;
   /* Categorical series (validated, light surface #fff) */
   --chart-1: #0891a5;
   --chart-2: #e26f2c;
@@ -180,41 +186,44 @@
   --shadow-card: 0 1px 2px oklch(0.22 0.008 260 / 0.05), 0 1px 1px oklch(0.22 0.008 260 / 0.03);
   --shadow-raised: 0 1px 2px oklch(0.22 0.008 260 / 0.06), 0 8px 24px -12px oklch(0.22 0.008 260 / 0.18);
   --radius: 0.5625rem;
-  --sidebar: oklch(0.235 0.008 258);
-  --sidebar-foreground: oklch(0.87 0.005 260);
+  --sidebar: #0b1418;
+  --sidebar-foreground: #e6f2f4;
   /* 2026-08-02 (WCAG 1.4.3 fix): dedicated muted-caption token for the
      sidebar/landing dark surfaces — replaces ad-hoc /40, /45, /50 opacity
      on --sidebar-foreground, all of which measured 2.9-3.8:1 against
      --sidebar (11px uppercase kickers and captions need 4.5:1). 65% alpha
      on --sidebar-foreground measures 5.52:1 here. */
-  --sidebar-foreground-muted: oklch(0.87 0.005 260 / 65%);
-  --sidebar-primary: oklch(0.62 0.10 197);
+  --sidebar-foreground-muted: #8fa6ae;
+  --sidebar-primary: #21d4c2;
   --sidebar-primary-foreground: oklch(0.99 0.01 197);
-  --sidebar-accent: oklch(0.30 0.010 258);
+  --sidebar-accent: #17272f;
   --sidebar-accent-foreground: oklch(0.97 0.003 260);
   --sidebar-border: oklch(1 0 0 / 8%);
-  --sidebar-ring: oklch(0.62 0.10 197);
+  --sidebar-ring: #21d4c2;
 }
 
 .dark {
-  --background: oklch(0.185 0.005 260);
-  --foreground: oklch(0.95 0.004 260);
-  --card: oklch(0.228 0.006 260);
-  --card-foreground: oklch(0.95 0.004 260);
-  --popover: oklch(0.228 0.006 260);
-  --popover-foreground: oklch(0.95 0.004 260);
-  --primary: oklch(0.68 0.10 197);
-  --primary-foreground: oklch(0.18 0.02 200);
-  --secondary: oklch(0.285 0.006 260);
-  --secondary-foreground: oklch(0.95 0.004 260);
-  --muted: oklch(0.285 0.006 260);
-  --muted-foreground: oklch(0.72 0.006 260);
-  --accent: oklch(0.32 0.03 200);
-  --accent-foreground: oklch(0.94 0.02 197);
+  /* ---- Instrument-deck neutrals, dark (2026-08-02) --------------------
+     Computed pairs: ink/ground 16.29, ink/panel 14.39, muted/ground 7.30,
+     muted/panel 6.45, signal/ground 9.99, ground-on-signal 9.99. */
+  --background: #0b1418;
+  --foreground: #e6f2f4;
+  --card: #12212a;
+  --card-foreground: #e6f2f4;
+  --popover: #12212a;
+  --popover-foreground: #e6f2f4;
+  --primary: #21d4c2;
+  --primary-foreground: #0b1418;
+  --secondary: #17272f;
+  --secondary-foreground: #e6f2f4;
+  --muted: #17272f;
+  --muted-foreground: #8fa6ae;
+  --accent: #17323a;
+  --accent-foreground: #7fe6da;
   --destructive: oklch(0.66 0.18 25);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 14%);
-  --ring: oklch(0.68 0.10 197);
+  --border: #1c3038;
+  --input: #223a43;
+  --ring: #21d4c2;
   /* Categorical series (validated, dark surface #1a1a19-class) */
   --chart-1: #17a0b5;
   --chart-2: #e06a33;
@@ -257,13 +266,13 @@
   --tier-critical-bg: var(--status-critical-bg);
   --shadow-card: 0 1px 2px oklch(0 0 0 / 0.35), 0 1px 1px oklch(0 0 0 / 0.25);
   --shadow-raised: 0 1px 2px oklch(0 0 0 / 0.4), 0 10px 28px -12px oklch(0 0 0 / 0.55);
-  --sidebar: oklch(0.165 0.005 260);
+  --sidebar: #081013;
   --sidebar-foreground: oklch(0.87 0.005 260);
   /* Same 65% alpha as light — measures 5.94:1 against this darker --sidebar. */
-  --sidebar-foreground-muted: oklch(0.87 0.005 260 / 65%);
+  --sidebar-foreground-muted: #8fa6ae;
   --sidebar-primary: oklch(0.68 0.10 197);
   --sidebar-primary-foreground: oklch(0.18 0.02 200);
-  --sidebar-accent: oklch(0.265 0.006 260);
+  --sidebar-accent: #17272f;
   --sidebar-accent-foreground: oklch(0.97 0.003 260);
   --sidebar-border: oklch(1 0 0 / 8%);
   --sidebar-ring: oklch(0.68 0.10 197);
@@ -293,18 +302,83 @@
     font-variant-numeric: tabular-nums;
   }
   ::selection {
-    background: oklch(0.55 0.095 197 / 22%);
+    background: color-mix(in oklab, var(--primary) 26%, transparent);
+  }
+
+  /*
+   * Motion: fast and mechanical, never decorative. One duration scale so
+   * hovers, focus rings and panel reveals feel like one machine.
+   */
+  :root {
+    --motion-fast: 90ms;
+    --motion-base: 160ms;
+    --motion-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+
+  /*
+   * Accessibility (WCAG 2.3.3 / audit finding): honour the OS
+   * reduced-motion preference GLOBALLY rather than per-component, so no
+   * future animation can ship without it. Covers the live-chip pulse, panel
+   * reveals, and every shadcn transition at once.
+   */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
   }
 }
 
 @layer components {
-  /* Uppercase section label — the console's smallest heading rank. */
+  /* Uppercase section label — the console's smallest heading rank.
+     Set in the MONO face (2026-08-02 instrument-deck pass): labels, IDs,
+     metrics and timestamps all speak in the technical voice so data reads
+     as data, and prose (Inter) is reserved for sentences. */
   .kicker {
+    font-family: var(--font-mono), ui-monospace, monospace;
     font-size: 0.6875rem;
     font-weight: 600;
-    letter-spacing: 0.08em;
+    letter-spacing: 0.10em;
     text-transform: uppercase;
     color: var(--muted-foreground);
+  }
+
+  /* Micro-label for instrument readouts: the kicker's quieter sibling, used
+     inline beside a value rather than above a section. */
+  .label-mono {
+    font-family: var(--font-mono), ui-monospace, monospace;
+    font-size: 0.6875rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted-foreground);
+  }
+
+  /* A control-surface panel. Panels butt against one another and are
+     separated by a shared hairline rather than floating as individual
+     rounded cards — the deck reads as one instrument, not a pile of tiles. */
+  .panel {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+  }
+
+  /* Hairline divider that inherits the panel rule colour. */
+  .rule {
+    border-color: var(--border);
+  }
+
+  /* Calibration ticks — a measured, instrument-like edge treatment. Purely
+     decorative, so it is aria-hidden at the call site. */
+  .ticks {
+    background-image: repeating-linear-gradient(
+      to bottom,
+      var(--border) 0 1px,
+      transparent 1px 7px
+    );
   }
   /* Big instrument-panel figure (stat tiles, hero numbers). */
   .stat-value {
