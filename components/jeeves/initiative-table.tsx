@@ -101,7 +101,7 @@ function Th({
     >
       <button
         onClick={() => onToggle(k)}
-        className={`inline-flex items-center gap-1 whitespace-nowrap transition-colors hover:text-foreground ${
+        className={`inline-flex items-center gap-1 whitespace-nowrap rounded-sm transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background ${
           align === "right" ? "flex-row-reverse" : ""
         } ${active ? "text-foreground" : "text-muted-foreground"}`}
       >

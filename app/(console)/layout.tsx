@@ -19,7 +19,10 @@ export default function ConsoleLayout({
       <div className="flex min-w-0 flex-1 flex-col">
         <AppTopBar />
         <AppMobileNav />
-        <main className="mx-auto w-full max-w-[88rem] flex-1 overflow-y-auto scroll-thin px-6 py-6">
+        <main
+          id="main-content"
+          className="mx-auto w-full max-w-[88rem] flex-1 overflow-y-auto scroll-thin px-6 py-6"
+        >
           {children}
         </main>
         <footer className="border-t px-6 py-4 text-center text-xs text-muted-foreground">

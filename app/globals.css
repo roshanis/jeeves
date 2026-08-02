@@ -69,6 +69,7 @@
   --color-status-critical-bg: var(--status-critical-bg);
   --color-status-neutral-fg: var(--status-neutral-fg);
   --color-status-neutral-bg: var(--status-neutral-bg);
+  --color-sidebar-foreground-muted: var(--sidebar-foreground-muted);
   --color-tier-low-fg: var(--tier-low-fg);
   --color-tier-low-bg: var(--tier-low-bg);
   --color-tier-medium-fg: var(--tier-medium-fg);
@@ -100,9 +101,17 @@
  *    icon + label, never color alone.
  *  - --tier-* map governance tiers onto the same reserved family.
  *  - --seq-1..5 is the sequential (magnitude) teal ramp, light→dark.
- *  - Chart chrome: --chart-grid hairline horizontal gridlines only,
- *    --chart-axis for baselines/tick ink. Text on charts wears text
- *    tokens (foreground/muted-foreground), never the series color.
+ *    seq-4 carries a numeric label directly on its fill (risk-heatmap
+ *    bucket 4) so its ink switches per theme like seq-5 already does —
+ *    text-white on light (4.68:1), dark:text-neutral-900 on dark (5.16:1).
+ *  - Chart chrome: --chart-grid hairline horizontal gridlines only
+ *    (decorative — WCAG 1.4.11 exempts purely decorative graphics, so it
+ *    keeps its ~1.1-1.4:1 contrast against card/background by design).
+ *    --chart-axis carries tick/baseline meaning (a graphical object, WCAG
+ *    1.4.11) and is tuned to ≥3:1 against BOTH --card and --background in
+ *    each theme (2026-08-02 a11y pass — see contrast numbers in the
+ *    per-token comments below). Text on charts wears text tokens
+ *    (foreground/muted-foreground), never the series color.
  */
 :root {
   --background: oklch(0.977 0.003 250);
@@ -130,13 +139,18 @@
   --chart-4: #c07f00;
   --chart-5: #64748b; /* overflow/"other" only — fold extra series, never invent hues */
   /* Chart chrome */
-  --chart-grid: oklch(0.93 0.003 255);
-  --chart-axis: oklch(0.80 0.006 255);
+  --chart-grid: oklch(0.93 0.003 255); /* decorative hairline — exempt, see contract note above */
+  /* 2026-08-02: darkened 0.80 -> 0.60 (WCAG 1.4.11 fix). Was 1.75:1 on
+     background / 1.87:1 on card — both fail 3:1. Now 3.69:1 / 3.94:1. */
+  --chart-axis: oklch(0.60 0.01 255);
   /* Sequential teal ramp (magnitude, light→dark) */
   --seq-1: #d4ecef;
   --seq-2: #9fd3da;
   --seq-3: #5bb2be;
-  --seq-4: #1d8a9c;
+  /* 2026-08-02: darkened 1d8a9c -> 1a7f90 so the bucket-4 numeric label
+     (text-white) clears 4.5:1 — was 4.06:1, now 4.68:1. Ramp stays
+     monotonic (seq-3 37.78% -> seq-4 17.41% -> seq-5 9.38% rel. luminance). */
+  --seq-4: #1a7f90;
   --seq-5: #0b5f6e;
   /* Reserved status family: fg on tinted bg passes WCAG text contrast */
   --status-good: oklch(0.55 0.14 150);
@@ -168,6 +182,12 @@
   --radius: 0.5625rem;
   --sidebar: oklch(0.235 0.008 258);
   --sidebar-foreground: oklch(0.87 0.005 260);
+  /* 2026-08-02 (WCAG 1.4.3 fix): dedicated muted-caption token for the
+     sidebar/landing dark surfaces — replaces ad-hoc /40, /45, /50 opacity
+     on --sidebar-foreground, all of which measured 2.9-3.8:1 against
+     --sidebar (11px uppercase kickers and captions need 4.5:1). 65% alpha
+     on --sidebar-foreground measures 5.52:1 here. */
+  --sidebar-foreground-muted: oklch(0.87 0.005 260 / 65%);
   --sidebar-primary: oklch(0.62 0.10 197);
   --sidebar-primary-foreground: oklch(0.99 0.01 197);
   --sidebar-accent: oklch(0.30 0.010 258);
@@ -201,11 +221,16 @@
   --chart-3: #9585e0;
   --chart-4: #bd8100;
   --chart-5: #7d8a99;
-  --chart-grid: oklch(0.30 0.005 260);
-  --chart-axis: oklch(0.42 0.006 260);
+  --chart-grid: oklch(0.30 0.005 260); /* decorative hairline — exempt, see contract note above */
+  /* 2026-08-02: lightened 0.42 -> 0.55 (WCAG 1.4.11 fix). Was 2.2:1 on
+     background / 1.99:1 on card — both fail 3:1. Now 3.84:1 / 3.50:1. */
+  --chart-axis: oklch(0.55 0.01 260);
   --seq-1: #123c44;
   --seq-2: #175560;
   --seq-3: #1d7386;
+  /* Unchanged in dark mode — bucket-4 ink switches to neutral-900 instead
+     (risk-heatmap.tsx), which already clears 4.5:1 (5.16:1) against this
+     value, so no token change was needed here. */
   --seq-4: #2496ad;
   --seq-5: #4fc3d8;
   --status-good: oklch(0.70 0.14 150);
@@ -234,6 +259,8 @@
   --shadow-raised: 0 1px 2px oklch(0 0 0 / 0.4), 0 10px 28px -12px oklch(0 0 0 / 0.55);
   --sidebar: oklch(0.165 0.005 260);
   --sidebar-foreground: oklch(0.87 0.005 260);
+  /* Same 65% alpha as light — measures 5.94:1 against this darker --sidebar. */
+  --sidebar-foreground-muted: oklch(0.87 0.005 260 / 65%);
   --sidebar-primary: oklch(0.68 0.10 197);
   --sidebar-primary-foreground: oklch(0.18 0.02 200);
   --sidebar-accent: oklch(0.265 0.006 260);

@@ -104,7 +104,7 @@ export function AppSidebar() {
       <nav className="flex flex-1 flex-col gap-0.5 overflow-y-auto p-3 scroll-thin">
         {NAV_SECTIONS.map((section) => (
           <div key={section.label} className="flex flex-col gap-0.5">
-            <p className="kicker px-3 pt-3 pb-1.5 text-sidebar-foreground/40 first:pt-1">
+            <p className="kicker px-3 pt-3 pb-1.5 text-sidebar-foreground-muted first:pt-1">
               {section.label}
             </p>
             {section.items.map((item) => (
@@ -123,7 +123,7 @@ export function AppSidebar() {
           <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-status-good" aria-hidden />
           Meridian Health
         </div>
-        <div className="pl-3 text-[10.5px] leading-snug text-sidebar-foreground/45">
+        <div className="pl-3 text-[10.5px] leading-snug text-sidebar-foreground-muted">
           Synthetic demo workspace
         </div>
       </div>

@@ -79,4 +79,21 @@ describe("ControlCatalog filters", () => {
     const rowsAfter = container.querySelectorAll('[data-slot="control-catalog-row"]');
     expect(rowsAfter).toHaveLength(expected);
   });
+
+  // WCAG 2.4.7 fix (2026-08-02): the selected chip's bg-primary fill
+  // previously swallowed the browser's default focus outline entirely.
+  it("every domain and status chip carries a visible focus-visible ring", async () => {
+    const controls = await getProvider().controlCatalog();
+    const { container } = renderWithProviders(<ControlCatalog controls={controls} />);
+
+    const chips = [
+      ...container.querySelectorAll('[data-slot="control-domain-filter"] button'),
+      ...container.querySelectorAll('[data-slot="control-status-filter"] button'),
+    ];
+    expect(chips.length).toBeGreaterThan(0);
+    for (const chip of chips) {
+      expect(chip.className).toContain("focus-visible:ring-2");
+      expect(chip.className).toContain("focus-visible:ring-offset-background");
+    }
+  });
 });

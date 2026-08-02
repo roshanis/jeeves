@@ -131,7 +131,7 @@ export function LandingPage() {
             <Stat value="8" label="review domains" />
             <Stat value="100%" label="decisions audited" />
           </div>
-          <p className="relative pb-6 text-center text-[11px] text-sidebar-foreground/50">
+          <p className="relative pb-6 text-center text-[11px] text-sidebar-foreground-muted">
             Synthetic data — demo
           </p>
         </div>
@@ -243,7 +243,7 @@ function Stat({ value, label }: { value: string; label: string }) {
       <div className="stat-value text-3xl text-sidebar-foreground md:text-4xl">
         {value}
       </div>
-      <div className="kicker mt-1.5 text-sidebar-foreground/55">{label}</div>
+      <div className="kicker mt-1.5 text-sidebar-foreground-muted">{label}</div>
     </div>
   );
 }

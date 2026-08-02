@@ -44,7 +44,7 @@ export function PortfolioView({ initiatives }: { initiatives: InitiativeSummary[
                 role="tab"
                 aria-selected={isActive}
                 onClick={() => setView(v.id)}
-                className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+                className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background ${
                   isActive
                     ? "bg-primary text-primary-foreground"
                     : "card-quiet border bg-card text-muted-foreground hover:text-foreground"

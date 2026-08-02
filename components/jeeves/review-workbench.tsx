@@ -142,7 +142,7 @@ export function ReviewWorkbench({ rows }: { rows: ReviewQueueRow[] }) {
               <button
                 type="button"
                 onClick={() => setOverride("all")}
-                className={`rounded-md px-3 py-1.5 text-sm transition-colors ${
+                className={`rounded-md px-3 py-1.5 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background ${
                   effectiveFilter === "all"
                     ? "bg-primary text-primary-foreground"
                     : "border bg-card text-muted-foreground hover:text-foreground"
@@ -168,7 +168,7 @@ export function ReviewWorkbench({ rows }: { rows: ReviewQueueRow[] }) {
                     key={domain}
                     type="button"
                     onClick={() => setOverride(domain)}
-                    className={`rounded-md px-3 py-1.5 text-sm transition-colors ${
+                    className={`rounded-md px-3 py-1.5 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background ${
                       isActive
                         ? "bg-primary text-primary-foreground"
                         : "border bg-card text-muted-foreground hover:text-foreground"

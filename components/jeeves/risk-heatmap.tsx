@@ -43,12 +43,17 @@ const CELL_BG: Record<Bucket, string> = {
 // Ink color per bucket, chosen for contrast against that bucket's fill in
 // each theme (the seq ramp's light<->dark direction inverts between light
 // and dark mode, so low/high buckets swap which ink reads best).
+// Bucket 4 (WCAG 1.4.3 fix, 2026-08-02): white-on-seq-4 measured 4.06:1
+// light / 3.48:1 dark against the numeric label (needs 4.5:1) — --seq-4
+// was darkened for light mode (see globals.css) so white now clears
+// 4.68:1 there, and dark mode switches ink to neutral-900 (5.16:1),
+// matching the bucket-5 pattern below.
 const CELL_TEXT: Record<Bucket, string> = {
   0: "text-muted-foreground",
   1: "text-foreground dark:text-white",
   2: "text-foreground dark:text-white",
   3: "text-foreground dark:text-white",
-  4: "text-white",
+  4: "text-white dark:text-neutral-900",
   5: "text-white dark:text-neutral-900",
 };
 
