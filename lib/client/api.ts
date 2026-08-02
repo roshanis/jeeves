@@ -189,6 +189,19 @@ export interface BreachDetail {
   isNew: boolean;
   incidentId: string;
   reviewCycleId: string | null;
+  /**
+   * Present (and `true`) only when the breach was DETECTED but its
+   * persistence transaction threw — `incidentId` is `""` and nothing was
+   * written. Mirrors monitor-service.ts#BreachDetail.
+   */
+  failed?: true;
+}
+
+/** Mirrors lib/services/monitor-service.ts#RunMonitorError. */
+export interface RunMonitorError {
+  initiativeId: string;
+  deploymentId: string;
+  message: string;
 }
 
 export interface RunMonitorResult {
@@ -196,6 +209,12 @@ export interface RunMonitorResult {
   breaches: BreachDetail[];
   incidentsCreated: number;
   alreadyKnown: number;
+  /**
+   * Per-candidate failures that did not abort the run. A run with a
+   * non-empty `errors` must never be presented as a clean pass — some
+   * breaches may have been detected but not recorded.
+   */
+  errors?: RunMonitorError[];
 }
 
 /** Row shape of GET /api/monitor/incidents (timestamps are ISO strings on the wire). */

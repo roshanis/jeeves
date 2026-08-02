@@ -96,6 +96,21 @@ export interface BreachDetail {
   isNew: boolean;
   incidentId: string;
   reviewCycleId: string | null;
+  /**
+   * Present (and always `true`) only when this breach was genuinely
+   * DETECTED by `evaluateControl` but its persistence transaction threw
+   * (CAS conflict, the missing-risk-assessment FK guard, a DB hiccup, a
+   * pre-flight pause-illegal skip, etc.) — the matching `RunMonitorError` in
+   * `RunMonitorResult.errors` carries the failure detail. `incidentId` is
+   * `""` and `reviewCycleId` is `null` in this case: nothing was actually
+   * written. Never counted in `RunMonitorResult.incidentsCreated`.
+   *
+   * Additive-only (external-review P1 fix — a failed detection pass must
+   * never render identically to a clean run): absent/`undefined` for every
+   * successfully persisted breach, so existing consumers that never check
+   * this field see no behavior change.
+   */
+  failed?: true;
 }
 
 /**
@@ -520,10 +535,34 @@ export async function runMonitor(
         reviewCycleId: outcome.reviewCycleId,
       });
     } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      // P1 fix (external-review — a failed detection pass rendered
+      // identically to a clean run): a real deployment must leave a trace
+      // in the server logs even when nothing else observes this run.
+      console.error(
+        `[monitor] breach detected but NOT persisted for initiative=${initiative.id} deployment=${deployment.id} identityKey=${evalResult.identityKey}: ${message}`,
+      );
       errors.push({
         initiativeId: initiative.id,
         deploymentId: deployment.id,
-        message: err instanceof Error ? err.message : String(err),
+        message,
+      });
+      // Make detection visible even though persistence failed: this breach
+      // WAS detected (evalResult.breached above) — record it in `breaches`
+      // with `failed: true` rather than silently dropping it. Not counted
+      // in `incidentsCreated` below, since nothing was actually persisted.
+      breaches.push({
+        initiativeId: initiative.id,
+        deploymentId: deployment.id,
+        controlId: RUNTIME_CONTROL_ID,
+        windowStartTs: evalResult.windowStartTs,
+        identityKey: evalResult.identityKey,
+        threshold,
+        breachingValues: evalResult.breachingObservations.map((o) => o.value),
+        isNew: false,
+        incidentId: "",
+        reviewCycleId: null,
+        failed: true,
       });
     }
   }

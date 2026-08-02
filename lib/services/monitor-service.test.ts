@@ -268,7 +268,16 @@ describe("lib/services/monitor-service", () => {
       const err = result.errors.find((e) => e.deploymentId === dep.id);
       expect(err).toBeTruthy();
       expect(err!.message).toContain("changed concurrently");
-      expect(result.breaches.find((b) => b.deploymentId === dep.id)).toBeUndefined();
+
+      // P1 fix (external-review): the breach WAS detected — it must not
+      // vanish from `breaches` just because persistence failed. It's
+      // represented with `failed: true` and excluded from
+      // `incidentsCreated` above.
+      const failedBreach = result.breaches.find((b) => b.deploymentId === dep.id);
+      expect(failedBreach).toBeTruthy();
+      expect(failedBreach!.failed).toBe(true);
+      expect(failedBreach!.isNew).toBe(false);
+      expect(failedBreach!.incidentId).toBe("");
 
       // Whole per-candidate transaction rolled back — including the
       // injected write — so the initiative/deployment are exactly as they
@@ -330,7 +339,13 @@ describe("lib/services/monitor-service", () => {
       expect(skip).toBeTruthy();
       expect(skip!.message).toContain("in_review");
       expect(skip!.message).toContain("pause");
-      expect(result.breaches.find((b) => b.deploymentId === fwaDep.id)).toBeUndefined();
+
+      // P1 fix (external-review): still a DETECTED breach — represented in
+      // `breaches` with `failed: true`, just never persisted/counted.
+      const failedBreach = result.breaches.find((b) => b.deploymentId === fwaDep.id);
+      expect(failedBreach).toBeTruthy();
+      expect(failedBreach!.failed).toBe(true);
+      expect(failedBreach!.isNew).toBe(false);
 
       // No incident/pause/reassessment for the skipped candidate.
       const fwaIncidents = await db.select().from(incidents).where(eq(incidents.deploymentId, fwaDep.id));
@@ -341,7 +356,7 @@ describe("lib/services/monitor-service", () => {
       expect(fwaDepAfter!.status).toBe("deployed");
     });
 
-    it("a deployed initiative with no risk assessment on file records a descriptive error instead of inserting an empty-string FK, with no partial (paused-but-no-cycle) write", async () => {
+    it("a deployed initiative with no risk assessment on file records a descriptive error (logged via console.error) instead of inserting an empty-string FK, while a genuinely-breaching healthy candidate (#4 member-chat-copilot) still gets its incident — P1 fix: the failed candidate stays visible in `breaches` (failed marker) and out of `incidentsCreated`", async () => {
       // Seeded initiatives all carry a risk assessment from their normal
       // triage() history, and it's FK-referenced by their initial
       // review_cycles row (can't just delete it out from under them). To get
@@ -350,6 +365,8 @@ describe("lib/services/monitor-service", () => {
       // (only triage() does, per initiative-service.ts) — flip it straight
       // to 'deployed' without ever calling triage(), and attach a synthetic
       // Q-01 breach fixture, exactly like the pause-illegal-state test above.
+      const { dep: chatDep } = await memberChatCopilot(db);
+      const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
       const draft = await createDraft(db, {
         payload: CHAMPION_PREFILL_PAYLOAD,
         requesterActor: { id: "priya-raman", role: "requester" },
@@ -391,11 +408,45 @@ describe("lib/services/monitor-service", () => {
 
       const result = await runMonitor(db, SYSTEM_ACTOR, PLUS_14D);
 
+      // The genuinely-breaching healthy candidate (#4 member-chat-copilot)
+      // still gets its incident, unaffected by the other candidate's
+      // failure.
+      const chatBreach = result.breaches.find((b) => b.deploymentId === chatDep.id);
+      expect(chatBreach).toBeTruthy();
+      expect(chatBreach!.isNew).toBe(true);
+      expect(chatBreach!.failed).toBeUndefined();
+
+      // Only the persisted (chat-copilot) breach counts toward
+      // incidentsCreated — the failed candidate does not, even though it
+      // was genuinely detected.
+      expect(result.incidentsCreated).toBe(1);
       expect(result.incidentsCreated).toBe(result.breaches.filter((b) => b.isNew).length);
+
       const err = result.errors.find((e) => e.deploymentId === depId);
       expect(err).toBeTruthy();
       expect(err!.message).toMatch(/risk assessment/i);
-      expect(result.breaches.find((b) => b.deploymentId === depId)).toBeUndefined();
+
+      // P1 fix (external-review): the failed candidate's breach was
+      // genuinely DETECTED — it must stay visible in `breaches` (marked
+      // `failed: true`), not silently vanish, so a failed persistence pass
+      // is never indistinguishable from "nothing breached".
+      const failedBreach = result.breaches.find((b) => b.deploymentId === depId);
+      expect(failedBreach).toBeTruthy();
+      expect(failedBreach!.failed).toBe(true);
+      expect(failedBreach!.isNew).toBe(false);
+      expect(failedBreach!.incidentId).toBe("");
+      expect(failedBreach!.reviewCycleId).toBeNull();
+
+      // The failure leaves a trace in the server logs (part 1 of the P1
+      // fix) — a real deployment must never fail silently with no record
+      // anywhere other than the additive `errors[]`.
+      expect(consoleErrorSpy).toHaveBeenCalled();
+      const loggedFailure = consoleErrorSpy.mock.calls.find((call) =>
+        String(call[0]).includes(depId),
+      );
+      expect(loggedFailure).toBeTruthy();
+      expect(String(loggedFailure![0])).toMatch(/risk assessment/i);
+      consoleErrorSpy.mockRestore();
 
       // Whole transaction rolled back — the initiative is never left
       // paused with no reassessment cycle to show for it.
