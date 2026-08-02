@@ -176,8 +176,41 @@ hosted demo.
 | Variable | Effect when set | When unset |
 | --- | --- | --- |
 | `OPENAI_API_KEY` | Agents draft live via OpenAI | Deterministic keyless mock adapter |
+| `JEEVES_AGENT_RUNTIME` | `agents-sdk` selects the OpenAI Agents SDK adapter; `ai-sdk` selects the Vercel AI SDK one | `ai-sdk` — the default runtime |
+| `OPENAI_LUNA_MODEL` / `OPENAI_TERRA_MODEL` | Override the two models the `agents-sdk` runtime routes between | `gpt-5.6-luna` / `gpt-5.6-terra` |
+| `OPENAI_REASONING_EFFORT` | Reasoning effort for the `agents-sdk` runtime | `low` — demo latency over depth |
+| `JEEVES_DEEP_REVIEW` | `1` makes `draftReview` a tool-using loop that reads the policy corpus first (`agents-sdk` runtime only) | Standard single-call drafting |
 | `PHOENIX_ENDPOINT` | Monitoring shows a configured telemetry connector | "Synthetic telemetry (demo)" — in-repo synthetic series |
 | `CRON_SECRET` | `GET /api/cron/monitor` runs scheduled monitoring (bearer-authenticated; wired to a 6-hourly Vercel cron in `vercel.json`) | The cron endpoint returns 503; the manual `POST /api/monitor/run` admin action still works |
+
+### Agent runtimes — two implementations, one port
+
+All LLM capability enters the app through a single app-owned interface,
+`AgentPort` (`lib/agents/ports.ts`). Three implementations sit behind it, and
+which one you get is decided in one place (`lib/agents/index.ts`):
+
+- **Mock** (no `OPENAI_API_KEY`) — deterministic, offline, keyless. This is
+  the default and what the test suite and the Playwright golden path run
+  against. A provider outage cannot break the demo.
+- **`ai-sdk`** (default when a key is present) — Vercel AI SDK, one
+  structured round trip per call.
+- **`agents-sdk`** (`JEEVES_AGENT_RUNTIME=agents-sdk`) — OpenAI Agents SDK,
+  with per-method model routing: **Luna** (`gpt-5.6-luna`) handles
+  completeness checks, intake turns, triage narration, and grounded audit
+  answers — high-volume, latency-sensitive work — while **Terra**
+  (`gpt-5.6-terra`) drafts domain reviews, where policy-grounded nuance
+  matters more than time-to-first-token.
+
+Setting `JEEVES_DEEP_REVIEW=1` on the `agents-sdk` runtime turns review
+drafting into a tool-using loop: the reviewer agent consults the governance
+policy corpus (`docs/policies/`, `agents/reviewer/`) through **read-only,
+sandboxed** tools before it drafts, and the Review Workbench shows which
+policies it read. The tools cannot write, and cannot escape the corpus. A
+deep draft costs many model calls, so the draft-run endpoint reserves a 10×
+budget multiplier when it is enabled — the daily cap stays honest.
+
+Whichever runtime is selected, the hard rule is unchanged: **agents draft,
+recommend, route, and flag missing evidence — they never approve.**
 
 **Demo reset ritual** — before a live walkthrough, run:
 

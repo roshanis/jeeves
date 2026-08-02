@@ -78,6 +78,35 @@ const bodySchema = z.object({
 /** Rough per-domain token estimate for the budget reserve — the mock adapter costs 0 for real, this only sizes the reservation. */
 const ESTIMATED_TOKENS_PER_DOMAIN = 1500;
 
+/**
+ * Deep-review budget multiplier (`JEEVES_DEEP_REVIEW=1`).
+ *
+ * A standard draft is ONE structured model call per domain, which is what
+ * `ESTIMATED_TOKENS_PER_DOMAIN` is sized for. A deep draft is an
+ * Agents-SDK tool loop: the reviewer agent reads policy files and searches
+ * the corpus, so a single domain becomes many model calls, each carrying a
+ * growing transcript (instructions + every prior tool call and its file
+ * contents). Reserving the standard amount for a deep run would make the
+ * atomic per-day RunBudget (plan.md §3) a fiction — the cap would be
+ * announced as 500k while real spend ran far past it.
+ *
+ * 10x is a deliberately conservative judgment call, not a measurement:
+ * the adapter caps a deep draft at ~15 turns, so 10x sits below the
+ * theoretical worst case while being far closer to reality than 1x. It is
+ * better for the demo to refuse a deep run it cannot afford than to
+ * under-reserve and overspend silently.
+ *
+ * This lives in the ROUTE, not the adapter: hard rule 4 — adapters return
+ * data and never touch authoritative state, and the budget is authoritative
+ * state (lib/security/budget.ts, reserved through runMutationGuard).
+ */
+const DEEP_REVIEW_BUDGET_MULTIPLIER = 10;
+
+/** True when the deep, tool-using reviewer path is enabled for this deployment. */
+function deepReviewEnabled(): boolean {
+  return process.env.JEEVES_DEEP_REVIEW === "1";
+}
+
 export async function POST(
   req: Request,
   context: { params: Promise<{ id: string }> },
@@ -92,7 +121,11 @@ export async function POST(
 
   const guard = await runMutationGuard(req, undefined, {
     requiresBudget: true,
-    estimatedTokens: parsed.success ? parsed.data.domains.length * ESTIMATED_TOKENS_PER_DOMAIN : 0,
+    estimatedTokens: parsed.success
+      ? parsed.data.domains.length *
+        ESTIMATED_TOKENS_PER_DOMAIN *
+        (deepReviewEnabled() ? DEEP_REVIEW_BUDGET_MULTIPLIER : 1)
+      : 0,
   });
   if (!guard.ok) {
     return Response.json({ error: guard.failure.message }, { status: guard.failure.status });

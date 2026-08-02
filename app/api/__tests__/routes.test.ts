@@ -464,6 +464,101 @@ describe("requester ownership authz on submit", () => {
   });
 });
 
+describe("deep-review budget multiplier on draft-run", () => {
+  // JEEVES_DEEP_REVIEW=1 makes each domain a tool-using Agents-SDK loop
+  // (many model calls), so the route reserves DEEP_REVIEW_BUDGET_MULTIPLIER
+  // (10x) the standard per-domain estimate. Proven by leaving exactly enough
+  // headroom for the standard reservation but not the deep one: same
+  // request, same domains, different outcome purely from the env flag.
+  //
+  // Runs BEFORE the exhaustion suite below on purpose — that one poisons the
+  // shared day bucket with 10M tokens and every later reservation would 429
+  // regardless of the multiplier, which would make this test pass vacuously.
+  const DAILY_TOKEN_CAP = 500_000;
+  const STANDARD_RESERVE = 8 * 1500; // 8 domains x ESTIMATED_TOKENS_PER_DOMAIN
+  const ALL_DOMAINS = [
+    "legal",
+    "procurement",
+    "tech-architecture",
+    "responsible-ai",
+    "security",
+    "privacy-hipaa",
+    "clinical-safety",
+    "data-governance",
+  ];
+
+  async function triagedInitiative(ip: string): Promise<{ id: string; token: string }> {
+    const token = await issueSessionFor("priya-raman");
+    const { POST: createInitiative } = await import("../initiatives/route");
+    const createRes = await createInitiative(
+      new Request("http://localhost/api/initiatives", {
+        method: "POST",
+        headers: bearer(token, ip),
+        body: JSON.stringify({ payload: CHAMPION_PAYLOAD }),
+      }),
+    );
+    const { initiativeId } = await createRes.json();
+    const { POST: submitPost } = await import("../initiatives/[id]/submit/route");
+    await submitPost(
+      new Request(`http://localhost/api/initiatives/${initiativeId}/submit`, {
+        method: "POST",
+        headers: bearer(token, ip),
+      }),
+      { params: Promise.resolve({ id: initiativeId }) },
+    );
+    const { POST: triagePost } = await import("../initiatives/[id]/triage/route");
+    await triagePost(
+      new Request(`http://localhost/api/initiatives/${initiativeId}/triage`, {
+        method: "POST",
+        headers: bearer(token, ip),
+      }),
+      { params: Promise.resolve({ id: initiativeId }) },
+    );
+    return { id: initiativeId, token };
+  }
+
+  /** Leaves `headroom` tokens of the daily cap unspent. */
+  async function leaveHeadroom(headroom: number): Promise<void> {
+    const { getBudgetStoreForTests } = await import("@/lib/services/route-guard");
+    const store = getBudgetStoreForTests();
+    const today = new Date().toISOString().slice(0, 10);
+    const used = await store.getUsed(today);
+    await store.addUsage(today, DAILY_TOKEN_CAP - headroom - used);
+  }
+
+  async function draftRun(id: string, token: string, ip: string): Promise<number> {
+    const { POST: draftRunPost } = await import("../initiatives/[id]/draft-run/route");
+    const res = await draftRunPost(
+      new Request(`http://localhost/api/initiatives/${id}/draft-run`, {
+        method: "POST",
+        headers: bearer(token, ip),
+        body: JSON.stringify({ domains: ALL_DOMAINS }),
+      }),
+      { params: Promise.resolve({ id }) },
+    );
+    return res.status;
+  }
+
+  afterEach(() => {
+    delete process.env.JEEVES_DEEP_REVIEW;
+  });
+
+  it("reserves the standard estimate when deep review is off", async () => {
+    delete process.env.JEEVES_DEEP_REVIEW;
+    // Headroom sits between the standard reserve and the 10x deep reserve.
+    await leaveHeadroom(STANDARD_RESERVE * 4);
+    const { id, token } = await triagedInitiative("11.5.0.1");
+    expect(await draftRun(id, token, "11.5.0.1")).not.toBe(429);
+  });
+
+  it("429s with the same request when JEEVES_DEEP_REVIEW=1 — the 10x reserve no longer fits", async () => {
+    process.env.JEEVES_DEEP_REVIEW = "1";
+    await leaveHeadroom(STANDARD_RESERVE * 4);
+    const { id, token } = await triagedInitiative("11.6.0.1");
+    expect(await draftRun(id, token, "11.6.0.1")).toBe(429);
+  });
+});
+
 describe("budget-exhaustion 429 on draft-run", () => {
   it("429s when the daily token budget is already exhausted", async () => {
     // Exhaust the shared budget store for "today" directly via the guard's
