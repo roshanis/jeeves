@@ -4,6 +4,7 @@ import { Search } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { RoleSwitcher } from "./role-switcher";
 import { DemoModeChip } from "./demo-mode-chip";
+import { ThemeToggle } from "./theme-toggle";
 import { NAV_ITEMS, isNavItemActive } from "./app-sidebar";
 import { DEMO_BANNER_TEXT } from "@/lib/demo-banner";
 
@@ -89,6 +90,7 @@ export function AppTopBar() {
           </label>
         </div>
         <div className="flex shrink-0 items-center gap-2.5">
+          <ThemeToggle />
           <DemoModeChip />
           <RoleSwitcher />
         </div>

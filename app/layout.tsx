@@ -56,7 +56,21 @@ export default function RootLayout({
     <html
       lang="en"
       className={`${fontSans.variable} ${fontHeading.variable} ${fontMono.variable} h-full antialiased`}
+      suppressHydrationWarning
     >
+      <head>
+        {/* Theme bootstrap: apply a persisted (or OS-preferred) dark theme
+            BEFORE first paint so a dark-mode visitor never sees a light
+            flash. Must stay inline (CSP already allows 'unsafe-inline'
+            scripts — documented tradeoff in next.config.ts). Key must match
+            THEME_STORAGE_KEY in components/jeeves/theme-toggle.tsx. */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html:
+              '(function(){try{var t=localStorage.getItem("jeeves-theme");var d=t==="dark"||(t===null&&window.matchMedia("(prefers-color-scheme: dark)").matches);if(d)document.documentElement.classList.add("dark");}catch(e){}})();',
+          }}
+        />
+      </head>
       <body className="min-h-full">
         <RoleProvider>
           <LiveSessionProvider>
