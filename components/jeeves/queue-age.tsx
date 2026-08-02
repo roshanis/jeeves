@@ -118,7 +118,9 @@ export function InitiativeAgeCell({
     return <span className="text-muted-foreground">—</span>;
   }
   if (nowMs === null) {
-    return <span className="text-muted-foreground tabular-nums">·</span>;
+    // Pre-hydration placeholder: a muted em-dash reads as "not loaded yet",
+    // not as a broken/empty cell (2026-08-02 design pass).
+    return <span className="font-mono text-muted-foreground tabular-nums">—</span>;
   }
   const ageMs = ageMsSince(updatedAt, nowMs);
   const settled = SETTLED_STATES.has(state);
@@ -126,7 +128,7 @@ export function InitiativeAgeCell({
   const cls = settled ? "bg-status-neutral-bg text-muted-foreground" : AGE_BUCKET_CLASSES[bucket];
   return (
     <span
-      className={`inline-flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-xs font-medium tabular-nums ${cls}`}
+      className={`inline-flex items-center gap-1.5 rounded-md px-1.5 py-0.5 font-mono text-xs font-medium tabular-nums ${cls}`}
       title={`In "${state}" since ${updatedAt.slice(0, 10)}`}
     >
       {settled ? (
@@ -153,13 +155,15 @@ export function QueueAgeCell({
     return <span className="text-muted-foreground">—</span>;
   }
   if (nowMs === null) {
-    return <span className="text-muted-foreground tabular-nums">·</span>;
+    // Pre-hydration placeholder: a muted em-dash, matching InitiativeAgeCell,
+    // so a mid-load frame never reads as broken.
+    return <span className="font-mono text-muted-foreground tabular-nums">—</span>;
   }
   const ageMs = ageMsSince(createdAt, nowMs);
   const bucket = ageBucket(ageMs);
   return (
     <span
-      className={`inline-flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-xs font-medium tabular-nums ${AGE_BUCKET_CLASSES[bucket]}`}
+      className={`inline-flex items-center gap-1.5 rounded-md px-1.5 py-0.5 font-mono text-xs font-medium tabular-nums ${AGE_BUCKET_CLASSES[bucket]}`}
       title={`In queue since ${createdAt.slice(0, 10)}`}
     >
       <AgeDot bucket={bucket} />

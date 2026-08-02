@@ -5,7 +5,7 @@
 // user, but this component renders a DIFFERENT saved view per selected role:
 // each persona gets its own eyebrow/heading/subhead, its own filtered
 // primary InitiativeTable, and its own side cards — reusing the identical
-// StatTile / decision-icon / alerts-list building blocks so the dashboards
+// StatusBand / decision-icon / alerts-list building blocks so the dashboards
 // stay visually consistent. Switching role (components/jeeves/role-context.tsx)
 // never re-fetches data; it only changes which of these views renders.
 //
@@ -92,39 +92,95 @@ export interface EvalBreachRow {
   state: LifecycleState;
 }
 
+/** `"6 of 12"` share text for a status-band segment's context line. */
+function shareText(value: number, total: number): string {
+  return `${value} of ${total}`;
+}
+
+/** 0..1 share-of-total for a status-band segment's proportion micro-bar. */
+function shareFraction(value: number, total: number): number | undefined {
+  if (total <= 0) return undefined;
+  return Math.min(1, Math.max(0, value / total));
+}
+
 /**
- * Instrument-panel stat tile: kicker label, mono stat-value figure, and a
- * small icon chip top-right that only picks up the semantic status color
- * when the metric is an actual problem count (tone !== "default" and
- * value > 0) — a zero-value "warn"/"alert" metric reads as neutral, since
- * zero of a bad thing is good news, not a warning.
+ * One instrument in the status band: a `.kicker` label, a `.stat-value`
+ * figure, and — the point of this redesign — context that makes the number
+ * mean something (a "6 of 12" proportion plus a share-of-total micro-bar).
+ * A segment only picks up the semantic severity treatment — tinted icon,
+ * tinted figure, and a 2px left stripe — when it is BOTH marked as a
+ * problem metric (tone !== "default") AND actually nonzero: zero of a bad
+ * thing is good news, not a warning, so it stays visually quiet like the
+ * benign segments.
  */
-function StatTile({
+function StatusSegment({
   icon: Icon,
   value,
   label,
   tone = "default",
+  context,
+  fraction,
 }: {
   icon: typeof ClipboardList;
   value: number;
   label: string;
   tone?: "default" | "warn" | "alert";
+  context?: string;
+  fraction?: number;
 }) {
   const isProblem = tone !== "default" && value > 0;
-  const chipClass = isProblem
-    ? tone === "alert"
-      ? "bg-status-critical-bg text-status-critical-fg"
-      : "bg-status-warning-bg text-status-warning-fg"
-    : "bg-status-neutral-bg text-muted-foreground";
+  const toneFg = tone === "alert" ? "text-status-critical-fg" : "text-status-warning-fg";
+  const toneStripe = tone === "alert" ? "bg-status-critical-fg" : "bg-status-warning-fg";
   return (
-    <div className="card-quiet flex flex-col gap-2.5 rounded-lg border bg-card px-4 py-3.5">
-      <div className="flex items-start justify-between gap-2">
+    <div
+      data-slot="status-segment"
+      data-severity={isProblem ? tone : "none"}
+      className="relative flex min-w-[9.5rem] flex-1 flex-col justify-center gap-1.5 px-4 py-3.5"
+    >
+      {isProblem ? (
+        <span aria-hidden className={`absolute inset-y-0 left-0 w-0.5 ${toneStripe}`} />
+      ) : null}
+      <div className="flex items-center gap-1.5">
+        <Icon className={`size-3.5 shrink-0 ${isProblem ? toneFg : "text-muted-foreground"}`} aria-hidden />
         <span className="kicker">{label}</span>
-        <span className={`grid size-6 shrink-0 place-items-center rounded-md ${chipClass}`}>
-          <Icon className="size-3.5" aria-hidden />
-        </span>
       </div>
-      <div className="stat-value text-2xl text-foreground">{value}</div>
+      <div className="flex items-baseline gap-2">
+        <span className={`stat-value text-[1.75rem] ${isProblem ? toneFg : "text-foreground"}`}>
+          {value}
+        </span>
+        {context ? <span className="label-mono normal-case text-muted-foreground">{context}</span> : null}
+      </div>
+      {fraction !== undefined ? (
+        <div className="h-1 w-full max-w-32 overflow-hidden rounded-full bg-muted" aria-hidden>
+          <div
+            className={`h-full rounded-full ${isProblem ? toneStripe : "bg-primary/45"}`}
+            style={{ width: `${Math.round(fraction * 100)}%` }}
+          />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+type StatusSegmentSpec = React.ComponentProps<typeof StatusSegment>;
+
+/**
+ * The status band: one horizontal instrument strip (a single `.panel`,
+ * hairline-divided) replacing the old grid of four separate stat tiles — the
+ * console should read as one instrument, not a pile of cards. Weight
+ * hierarchy comes entirely from each segment's own severity treatment (see
+ * StatusSegment), so an alarm reads louder than a zero without any of the
+ * segments individually competing for elevation.
+ */
+function StatusBand({ segments }: { segments: StatusSegmentSpec[] }) {
+  return (
+    <div
+      data-slot="status-band"
+      className="panel grid grid-cols-2 divide-y divide-border lg:grid-cols-4 lg:divide-x lg:divide-y-0"
+    >
+      {segments.map((s) => (
+        <StatusSegment key={s.label} {...s} />
+      ))}
     </div>
   );
 }
@@ -137,20 +193,35 @@ function CardSectionHeader({ title }: { title: string }) {
   );
 }
 
+/**
+ * Right-rail "Operational alerts" card. De-duplication decision (design
+ * review problem #4 — this card used to repeat rows already visible in the
+ * primary table): the caller pre-filters `alerts` down to initiatives NOT
+ * already shown in that view's table and passes the count it dropped as
+ * `dedupedCount`, so the card either lists only the alerts the table
+ * doesn't already surface, or — when every current alert is already on
+ * screen in the table — says so instead of silently going empty.
+ */
 function OperationalAlertsCard({
   alerts,
   hasIncidents,
+  dedupedCount = 0,
 }: {
   alerts: InitiativeSummary[];
   hasIncidents: boolean;
+  dedupedCount?: number;
 }) {
   return (
     <Card className="card-quiet">
       <CardSectionHeader title="Operational alerts" />
       <CardContent className="p-0">
-        {alerts.length === 0 && !hasIncidents ? (
+        {alerts.length === 0 && !hasIncidents && dedupedCount === 0 ? (
           <p className="px-4 py-4 text-sm text-muted-foreground">
             No active alerts. Run the monitor from Administration to evaluate deployments.
+          </p>
+        ) : alerts.length === 0 ? (
+          <p className="px-4 py-4 text-sm text-muted-foreground">
+            All {dedupedCount} operational alert{dedupedCount === 1 ? "" : "s"} {dedupedCount === 1 ? "is" : "are"} already listed in the table.
           </p>
         ) : (
           <ul className="divide-y">
@@ -184,6 +255,11 @@ function OperationalAlertsCard({
             ))}
           </ul>
         )}
+        {alerts.length > 0 && dedupedCount > 0 ? (
+          <p className="label-mono border-t px-4 py-2 normal-case text-muted-foreground">
+            +{dedupedCount} more already listed in the table
+          </p>
+        ) : null}
       </CardContent>
     </Card>
   );
@@ -424,6 +500,13 @@ function ProgramView({
   const attention = initiatives.filter(
     (i) => ATTENTION_STATES.has(i.state) || i.overdue,
   );
+  const total = initiatives.length;
+
+  // De-dup (design review problem #4): the right-rail alerts card used to
+  // repeat rows already visible in the "Needs attention" table below. Scope
+  // it to alerts NOT already shown there and report how many were dropped.
+  const attentionSlugs = new Set(attention.map((i) => i.slug));
+  const alertsNotInTable = alerts.filter((a) => !attentionSlugs.has(a.slug));
 
   return (
     <>
@@ -438,12 +521,41 @@ function ProgramView({
         }
       />
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <StatTile icon={ClipboardList} value={counts.inReview} label="In review" />
-        <StatTile icon={AlertTriangle} value={counts.slaBreaches} label="SLA breaches" tone="warn" />
-        <StatTile icon={PauseCircle} value={counts.reassessing} label="Paused / reassessing" tone="alert" />
-        <StatTile icon={ShieldAlert} value={alerts.length} label="Operational alerts" tone="alert" />
-      </div>
+      <StatusBand
+        segments={[
+          {
+            icon: ClipboardList,
+            value: counts.inReview,
+            label: "In review",
+            context: shareText(counts.inReview, total),
+            fraction: shareFraction(counts.inReview, total),
+          },
+          {
+            icon: AlertTriangle,
+            value: counts.slaBreaches,
+            label: "SLA breaches",
+            tone: "warn",
+            context: shareText(counts.slaBreaches, total),
+            fraction: shareFraction(counts.slaBreaches, total),
+          },
+          {
+            icon: PauseCircle,
+            value: counts.reassessing,
+            label: "Paused / reassessing",
+            tone: "alert",
+            context: shareText(counts.reassessing, total),
+            fraction: shareFraction(counts.reassessing, total),
+          },
+          {
+            icon: ShieldAlert,
+            value: alerts.length,
+            label: "Operational alerts",
+            tone: "alert",
+            context: shareText(alerts.length, total),
+            fraction: shareFraction(alerts.length, total),
+          },
+        ]}
+      />
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
         <section className="flex flex-col gap-3">
@@ -457,7 +569,11 @@ function ProgramView({
         </section>
 
         <div className="flex flex-col gap-6">
-          <OperationalAlertsCard alerts={alerts} hasIncidents={incidentCount > 0} />
+          <OperationalAlertsCard
+            alerts={alertsNotInTable}
+            hasIncidents={incidentCount > 0}
+            dedupedCount={alerts.length - alertsNotInTable.length}
+          />
           <RecentDecisionsCard recentDecisions={recentDecisions} />
         </div>
       </div>
@@ -497,12 +613,39 @@ function RequesterView({
         subheading="Initiatives you've submitted and what needs your input."
       />
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <StatTile icon={FilePlus2} value={drafts} label="Drafts" />
-        <StatTile icon={FileClock} value={inReview} label="In review" />
-        <StatTile icon={AlertTriangle} value={needsInput} label="Needs your input" tone="warn" />
-        <StatTile icon={CheckCircle2} value={deployedCount} label="Deployed" />
-      </div>
+      <StatusBand
+        segments={[
+          {
+            icon: FilePlus2,
+            value: drafts,
+            label: "Drafts",
+            context: shareText(drafts, mine.length),
+            fraction: shareFraction(drafts, mine.length),
+          },
+          {
+            icon: FileClock,
+            value: inReview,
+            label: "In review",
+            context: shareText(inReview, mine.length),
+            fraction: shareFraction(inReview, mine.length),
+          },
+          {
+            icon: AlertTriangle,
+            value: needsInput,
+            label: "Needs your input",
+            tone: "warn",
+            context: shareText(needsInput, mine.length),
+            fraction: shareFraction(needsInput, mine.length),
+          },
+          {
+            icon: CheckCircle2,
+            value: deployedCount,
+            label: "Deployed",
+            context: shareText(deployedCount, mine.length),
+            fraction: shareFraction(deployedCount, mine.length),
+          },
+        ]}
+      />
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
         <section className="flex flex-col gap-3">
@@ -563,7 +706,7 @@ function DomainReviewQueueTable({
     return (
       <div
         data-slot="initiative-table"
-        className="card-quiet rounded-lg border bg-card px-4 py-6 text-sm text-muted-foreground"
+        className="panel card-quiet px-4 py-6 text-sm text-muted-foreground"
       >
         Nothing awaiting your review right now.
       </div>
@@ -572,7 +715,7 @@ function DomainReviewQueueTable({
 
   return (
     <div
-      className="scroll-thin card-quiet overflow-x-auto rounded-lg border bg-card"
+      className="panel card-quiet scroll-thin overflow-x-auto"
       data-slot="initiative-table"
     >
       <table className="w-full min-w-[36rem] border-collapse text-sm">
@@ -593,27 +736,27 @@ function DomainReviewQueueTable({
               <tr
                 key={row.slug}
                 data-slot="initiative-row"
-                className="h-11 border-b last:border-0 hover:bg-muted/40"
+                className="h-10 border-b last:border-0 hover:bg-muted/40"
               >
-                <td className="px-3 py-2">
+                <td className="px-3 py-1.5">
                   <Link
                     href={`/initiatives/${row.slug}?tab=reviews`}
                     className="font-medium text-foreground hover:text-primary hover:underline"
                   >
                     {row.title}
                   </Link>
-                  <div className="font-mono text-[11px] text-muted-foreground">{row.slug}</div>
+                  <div className="label-mono truncate text-muted-foreground">{row.slug}</div>
                 </td>
-                <td className="px-3 py-2"><TierBadge tier={row.tier} /></td>
-                <td className="px-3 py-2">
+                <td className="px-3 py-1.5"><TierBadge tier={row.tier} /></td>
+                <td className="px-3 py-1.5">
                   {review ? <ReviewStatusBadge status={review.status} /> : null}
                 </td>
-                <td className="px-3 py-2 text-right">
+                <td className="px-3 py-1.5 text-right">
                   {review ? (
                     <QueueAgeCell createdAt={review.createdAt} status={review.status} nowMs={nowMs} />
                   ) : null}
                 </td>
-                <td className="px-3 py-2"><LifecycleBadge state={row.state} /></td>
+                <td className="px-3 py-1.5"><LifecycleBadge state={row.state} /></td>
               </tr>
             );
           })}
@@ -728,12 +871,39 @@ function ReviewerView({
           subheading="This demo isn't filtered to one reviewer's assignments — it shows every initiative awaiting a domain signature."
         />
 
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          <StatTile icon={ClipboardCheck} value={queue.length} label="Awaiting review" />
-          <StatTile icon={FileClock} value={inReviewCount} label="In review" />
-          <StatTile icon={AlertTriangle} value={returned} label="Returned / overdue" tone="warn" />
-          <StatTile icon={CheckCircle2} value={signedThrough} label="Signed-through" />
-        </div>
+        <StatusBand
+          segments={[
+            {
+              icon: ClipboardCheck,
+              value: queue.length,
+              label: "Awaiting review",
+              context: shareText(queue.length, initiatives.length),
+              fraction: shareFraction(queue.length, initiatives.length),
+            },
+            {
+              icon: FileClock,
+              value: inReviewCount,
+              label: "In review",
+              context: shareText(inReviewCount, initiatives.length),
+              fraction: shareFraction(inReviewCount, initiatives.length),
+            },
+            {
+              icon: AlertTriangle,
+              value: returned,
+              label: "Returned / overdue",
+              tone: "warn",
+              context: shareText(returned, initiatives.length),
+              fraction: shareFraction(returned, initiatives.length),
+            },
+            {
+              icon: CheckCircle2,
+              value: signedThrough,
+              label: "Signed-through",
+              context: shareText(signedThrough, initiatives.length),
+              fraction: shareFraction(signedThrough, initiatives.length),
+            },
+          ]}
+        />
 
         <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
           <section className="flex flex-col gap-3">
@@ -778,12 +948,39 @@ function ReviewerView({
         subheading={DOMAIN_FOCUS[reviewerDomain]}
       />
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <StatTile icon={ClipboardCheck} value={queue.length} label="Awaiting my review" />
-        <StatTile icon={FileClock} value={draftedCount} label="Drafted" />
-        <StatTile icon={AlertTriangle} value={returnedCount} label="Returned" tone="warn" />
-        <StatTile icon={ShieldCheck} value={myControlsCount} label="My domain controls" />
-      </div>
+      <StatusBand
+        segments={[
+          {
+            icon: ClipboardCheck,
+            value: queue.length,
+            label: "Awaiting my review",
+            context: shareText(queue.length, domainReviews.length),
+            fraction: shareFraction(queue.length, domainReviews.length),
+          },
+          {
+            icon: FileClock,
+            value: draftedCount,
+            label: "Drafted",
+            context: shareText(draftedCount, queue.length),
+            fraction: shareFraction(draftedCount, queue.length),
+          },
+          {
+            icon: AlertTriangle,
+            value: returnedCount,
+            label: "Returned",
+            tone: "warn",
+            context: shareText(returnedCount, queue.length),
+            fraction: shareFraction(returnedCount, queue.length),
+          },
+          {
+            icon: ShieldCheck,
+            value: myControlsCount,
+            label: "My domain controls",
+            context: shareText(myControlsCount, controls.length),
+            fraction: shareFraction(myControlsCount, controls.length),
+          },
+        ]}
+      />
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
         <section className="flex flex-col gap-3">
@@ -841,12 +1038,40 @@ function AuditView({
         subheading="Oversight of what's awaiting your decision and what's already been decided."
       />
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <StatTile icon={Gavel} value={awaitingDecision.length} label="Awaiting decision" tone="warn" />
-        <StatTile icon={CheckCircle2} value={approvedCount} label="Approved" />
-        <StatTile icon={FileCheck2} value={conditionalCount} label="Conditional" />
-        <StatTile icon={XCircle} value={rejectedCount} label="Rejected" tone="alert" />
-      </div>
+      <StatusBand
+        segments={[
+          {
+            icon: Gavel,
+            value: awaitingDecision.length,
+            label: "Awaiting decision",
+            tone: "warn",
+            context: shareText(awaitingDecision.length, initiatives.length),
+            fraction: shareFraction(awaitingDecision.length, initiatives.length),
+          },
+          {
+            icon: CheckCircle2,
+            value: approvedCount,
+            label: "Approved",
+            context: shareText(approvedCount, recentDecisions.length),
+            fraction: shareFraction(approvedCount, recentDecisions.length),
+          },
+          {
+            icon: FileCheck2,
+            value: conditionalCount,
+            label: "Conditional",
+            context: shareText(conditionalCount, recentDecisions.length),
+            fraction: shareFraction(conditionalCount, recentDecisions.length),
+          },
+          {
+            icon: XCircle,
+            value: rejectedCount,
+            label: "Rejected",
+            tone: "alert",
+            context: shareText(rejectedCount, recentDecisions.length),
+            fraction: shareFraction(rejectedCount, recentDecisions.length),
+          },
+        ]}
+      />
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
         <section className="flex flex-col gap-3">
@@ -883,6 +1108,12 @@ function AdminView({
   counts: { inReview: number; slaBreaches: number; reassessing: number; deployed: number };
 }) {
   const paused = initiatives.filter((i) => i.state === "paused" || i.state === "re_review");
+  const total = initiatives.length;
+
+  // De-dup (design review problem #4): scope the alerts card to items not
+  // already shown in the paused/reassessing table below.
+  const pausedSlugs = new Set(paused.map((i) => i.slug));
+  const alertsNotInTable = alerts.filter((a) => !pausedSlugs.has(a.slug));
 
   return (
     <>
@@ -892,12 +1123,40 @@ function AdminView({
         subheading="Runtime enforcement — paused deployments, open incidents, and SLA health."
       />
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <StatTile icon={PauseCircle} value={paused.length} label="Paused deployments" tone="alert" />
-        <StatTile icon={ShieldAlert} value={incidentCount} label="Open incidents" tone="alert" />
-        <StatTile icon={CheckCircle2} value={counts.deployed} label="Deployed models" />
-        <StatTile icon={AlertTriangle} value={counts.slaBreaches} label="SLA breaches" tone="warn" />
-      </div>
+      <StatusBand
+        segments={[
+          {
+            icon: PauseCircle,
+            value: paused.length,
+            label: "Paused deployments",
+            tone: "alert",
+            context: shareText(paused.length, total),
+            fraction: shareFraction(paused.length, total),
+          },
+          {
+            icon: ShieldAlert,
+            value: incidentCount,
+            label: "Open incidents",
+            tone: "alert",
+            context: incidentCount > 0 ? "requires triage" : "none open",
+          },
+          {
+            icon: CheckCircle2,
+            value: counts.deployed,
+            label: "Deployed models",
+            context: shareText(counts.deployed, total),
+            fraction: shareFraction(counts.deployed, total),
+          },
+          {
+            icon: AlertTriangle,
+            value: counts.slaBreaches,
+            label: "SLA breaches",
+            tone: "warn",
+            context: shareText(counts.slaBreaches, total),
+            fraction: shareFraction(counts.slaBreaches, total),
+          },
+        ]}
+      />
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
         <section className="flex flex-col gap-3">
@@ -911,7 +1170,11 @@ function AdminView({
         </section>
 
         <div className="flex flex-col gap-6">
-          <OperationalAlertsCard alerts={alerts} hasIncidents={incidentCount > 0} />
+          <OperationalAlertsCard
+            alerts={alertsNotInTable}
+            hasIncidents={incidentCount > 0}
+            dedupedCount={alerts.length - alertsNotInTable.length}
+          />
         </div>
       </div>
     </>

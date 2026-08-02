@@ -61,14 +61,18 @@ function initials(name: string): string {
     .join("");
 }
 
-/** Compact owner identity — initials avatar chip, full name on hover. */
+/** Compact owner identity — an initials-avatar chip only (full name on
+ * hover via the title attribute). Column-priority fix (design review
+ * problem #3): this used to reveal the full name inline once the viewport
+ * crossed `xl`, which is the exact width where the right-rail layout also
+ * engages — the two changes compounded into the measured clipping. Staying
+ * chip-only at every width removes that compounding column entirely. */
 function OwnerCell({ name }: { name: string }) {
   return (
-    <span className="inline-flex items-center gap-2" title={name}>
+    <span className="inline-flex items-center" title={name}>
       <Avatar size="sm">
         <AvatarFallback>{initials(name)}</AvatarFallback>
       </Avatar>
-      <span className="hidden truncate text-muted-foreground xl:inline">{name}</span>
     </span>
   );
 }
@@ -95,8 +99,14 @@ function Th({
 }) {
   const active = k === activeKey;
   const Icon = active ? (dir === 1 ? ArrowUp : ArrowDown) : ArrowUpDown;
+  const ariaSort: React.AriaAttributes["aria-sort"] = active
+    ? dir === 1
+      ? "ascending"
+      : "descending"
+    : "none";
   return (
     <th
+      aria-sort={ariaSort}
       className={`px-3 py-2 font-medium ${align === "right" ? "text-right" : "text-left"} ${className}`}
     >
       <button
@@ -109,6 +119,20 @@ function Th({
         <Icon className={`h-3 w-3 ${active ? "opacity-90" : "opacity-40"}`} aria-hidden />
       </button>
     </th>
+  );
+}
+
+/** Slim 2px severity-stripe cell — leading indicator column so SLA-breached
+ * or Critical-tier rows read as urgent at a glance without scanning the row.
+ * Decorative (aria-hidden); the badges elsewhere in the row still carry the
+ * same information as text/icon, so nothing is color-only. */
+function SeverityStripeCell({ severe }: { severe: boolean }) {
+  return (
+    <td className="w-0.5 min-w-0.5 p-0" aria-hidden>
+      <span
+        className={`block h-full w-full ${severe ? "bg-status-critical-fg" : "bg-transparent"}`}
+      />
+    </td>
   );
 }
 
@@ -146,73 +170,96 @@ export function InitiativeTable({
   }
 
   return (
+    // @container: column priority below is keyed to the TABLE'S OWN
+    // available width (container queries), not the page viewport. The old
+    // `lg:`/`xl:` viewport breakpoints hid columns based on window size, but
+    // this table sits in a grid column that shrinks a lot once the right
+    // rail appears (role-aware-inbox.tsx's `xl:grid-cols-[2fr_1fr]` split) —
+    // at exactly that same `xl` viewport width the old "Next action" column
+    // ALSO turned on, and the two changes compounded into the measured
+    // 21-32% clipping (design review problem #3). Container queries hide
+    // columns based on the space this table actually has, so the fix holds
+    // regardless of what else is on the page.
     <div
-      className="scroll-thin card-quiet overflow-x-auto rounded-lg border bg-card"
+      className="panel card-quiet scroll-thin @container overflow-x-auto"
       data-slot="initiative-table"
     >
-      <table className="w-full min-w-[46rem] border-collapse text-sm">
+      <table className="w-full min-w-[28rem] border-collapse text-sm">
         {caption ? <caption className="sr-only">{caption}</caption> : null}
         <thead className="border-b bg-muted/50 text-[11px] uppercase tracking-wide">
           <tr>
-            <Th k="title" activeKey={sort} dir={dir} onToggle={toggle} className="min-w-[13rem]">
+            <th className="w-0.5 min-w-0.5 p-0" aria-hidden />
+            <Th k="title" activeKey={sort} dir={dir} onToggle={toggle} className="min-w-[7rem]">
               Initiative
             </Th>
-            <th className="px-3 py-2 text-left font-medium text-muted-foreground">Owner</th>
+            <th className="px-2 py-2 text-left font-medium text-muted-foreground">Owner</th>
             <Th k="tier" activeKey={sort} dir={dir} onToggle={toggle}>Tier</Th>
             <Th k="state" activeKey={sort} dir={dir} onToggle={toggle}>State</Th>
             <Th k="age" activeKey={sort} dir={dir} onToggle={toggle} align="right">Age</Th>
-            <Th k="reviews" activeKey={sort} dir={dir} onToggle={toggle} align="right">
+            <Th k="sla" activeKey={sort} dir={dir} onToggle={toggle}>SLA</Th>
+            <Th
+              k="reviews"
+              activeKey={sort}
+              dir={dir}
+              onToggle={toggle}
+              align="right"
+              className="hidden @2xl:table-cell"
+            >
               Reviews
             </Th>
-            <Th k="sla" activeKey={sort} dir={dir} onToggle={toggle}>SLA</Th>
-            <th className="hidden px-3 py-2 text-left font-medium text-muted-foreground lg:table-cell">
+            <th className="hidden px-2 py-2 text-left font-medium text-muted-foreground @4xl:table-cell">
               Next action
             </th>
           </tr>
         </thead>
         <tbody>
-          {rows.map((i) => (
-            <tr
-              key={i.slug}
-              data-slot="initiative-row"
-              className="h-11 border-b last:border-0 hover:bg-muted/40"
-            >
-              <td className="px-3 py-2">
-                <Link
-                  href={`/initiatives/${i.slug}`}
-                  className="font-medium text-foreground hover:text-primary hover:underline"
-                >
-                  {i.title}
-                </Link>
-                <div className="font-mono text-[11px] text-muted-foreground">{i.slug}</div>
-              </td>
-              <td className="px-3 py-2">
-                <OwnerCell name={i.requester} />
-              </td>
-              <td className="px-3 py-2"><TierBadge tier={i.tier} /></td>
-              <td className="px-3 py-2"><LifecycleBadge state={i.state} /></td>
-              <td className="px-3 py-2 text-right">
-                <InitiativeAgeCell updatedAt={i.updatedAt} state={i.state} nowMs={nowMs} />
-              </td>
-              <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">
-                {i.domainsSigned}/{i.domainsRequired}
-              </td>
-              <td className="px-3 py-2">
-                {i.overdue ? (
-                  <span className="inline-flex items-center gap-1 text-xs font-medium text-status-serious-fg">
-                    <TriangleAlert className="h-3.5 w-3.5" aria-hidden /> Breached
-                  </span>
-                ) : (
-                  <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-                    <CircleCheck className="h-3.5 w-3.5" aria-hidden /> On track
-                  </span>
-                )}
-              </td>
-              <td className="hidden px-3 py-2 text-xs text-muted-foreground lg:table-cell">
-                {NEXT_ACTION[i.state]}
-              </td>
-            </tr>
-          ))}
+          {rows.map((i) => {
+            const severe = i.overdue || i.tier === "critical";
+            return (
+              <tr
+                key={i.slug}
+                data-slot="initiative-row"
+                data-severity={severe ? "true" : "false"}
+                className="h-10 border-b last:border-0 hover:bg-muted/40"
+              >
+                <SeverityStripeCell severe={severe} />
+                <td className="max-w-[7.5rem] px-2 py-1.5 @2xl:max-w-[12rem]">
+                  <Link
+                    href={`/initiatives/${i.slug}`}
+                    className="block truncate font-medium text-foreground hover:text-primary hover:underline"
+                  >
+                    {i.title}
+                  </Link>
+                  <div className="label-mono truncate text-muted-foreground">{i.slug}</div>
+                </td>
+                <td className="px-2 py-1.5">
+                  <OwnerCell name={i.requester} />
+                </td>
+                <td className="px-2 py-1.5"><TierBadge tier={i.tier} /></td>
+                <td className="px-2 py-1.5"><LifecycleBadge state={i.state} /></td>
+                <td className="px-2 py-1.5 text-right">
+                  <InitiativeAgeCell updatedAt={i.updatedAt} state={i.state} nowMs={nowMs} />
+                </td>
+                <td className="px-2 py-1.5">
+                  {i.overdue ? (
+                    <span className="inline-flex items-center gap-1 rounded-md bg-status-serious-bg px-1.5 py-0.5 font-mono text-[11px] font-medium text-status-serious-fg">
+                      <TriangleAlert className="h-3 w-3" aria-hidden /> Breach
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 font-mono text-[11px] text-muted-foreground">
+                      <CircleCheck className="h-3 w-3" aria-hidden /> OK
+                    </span>
+                  )}
+                </td>
+                <td className="hidden px-2 py-1.5 text-right font-mono tabular-nums text-muted-foreground @2xl:table-cell">
+                  {i.domainsSigned}/{i.domainsRequired}
+                </td>
+                <td className="hidden px-2 py-1.5 text-xs text-muted-foreground @4xl:table-cell">
+                  {NEXT_ACTION[i.state]}
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>

@@ -67,3 +67,29 @@ describe("Role-aware Inbox reviewer queue aging", () => {
     expect(oldest.length).toBeGreaterThanOrEqual(1);
   });
 });
+
+describe("Role-aware Inbox status band severity treatment", () => {
+  it("marks a problem-valued segment severe and leaves a zero-valued one quiet", () => {
+    // Default "program" role — no persona switch needed.
+    renderWithProviders(
+      <RoleAwareInbox
+        {...baseProps}
+        counts={{ inReview: 2, slaBreaches: 3, reassessing: 0, deployed: 5 }}
+      />,
+    );
+
+    // "SLA breaches" is a warn-toned metric with a nonzero value: it must
+    // carry the severity treatment.
+    const slaSegment = screen.getByText("SLA breaches").closest('[data-slot="status-segment"]');
+    expect(slaSegment).not.toBeNull();
+    expect(slaSegment?.getAttribute("data-severity")).toBe("warn");
+
+    // "Paused / reassessing" is an alert-toned metric but its value is 0 —
+    // zero of a bad thing is good news, so it must stay visually quiet.
+    const pausedSegment = screen
+      .getByText("Paused / reassessing")
+      .closest('[data-slot="status-segment"]');
+    expect(pausedSegment).not.toBeNull();
+    expect(pausedSegment?.getAttribute("data-severity")).toBe("none");
+  });
+});
