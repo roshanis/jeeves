@@ -189,7 +189,7 @@ export function InitiativeTable({
         <thead className="border-b bg-muted/50 text-[11px] uppercase tracking-wide">
           <tr>
             <th className="w-0.5 min-w-0.5 p-0" aria-hidden />
-            <Th k="title" activeKey={sort} dir={dir} onToggle={toggle} className="min-w-[7rem]">
+            <Th k="title" activeKey={sort} dir={dir} onToggle={toggle} className="w-full min-w-[11rem]">
               Initiative
             </Th>
             <th className="px-2 py-2 text-left font-medium text-muted-foreground">Owner</th>
@@ -223,7 +223,7 @@ export function InitiativeTable({
                 className="h-10 border-b last:border-0 hover:bg-muted/40"
               >
                 <SeverityStripeCell severe={severe} />
-                <td className="max-w-[7.5rem] px-2 py-1.5 @2xl:max-w-[12rem]">
+                <td className="max-w-[11rem] px-2 py-1.5 @2xl:max-w-[18rem] @4xl:max-w-[26rem]">
                   <Link
                     href={`/initiatives/${i.slug}`}
                     className="block truncate font-medium text-foreground hover:text-primary hover:underline"
