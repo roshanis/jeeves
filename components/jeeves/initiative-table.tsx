@@ -181,8 +181,11 @@ export function InitiativeTable({
     // columns based on the space this table actually has, so the fix holds
     // regardless of what else is on the page.
     <div
-      className="panel card-quiet scroll-thin @container overflow-x-auto"
+      className="panel card-quiet scroll-thin @container overflow-x-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       data-slot="initiative-table"
+      tabIndex={0}
+      role="region"
+      aria-label={caption ?? "Initiatives table"}
     >
       <table className="w-full min-w-[28rem] border-collapse text-sm">
         {caption ? <caption className="sr-only">{caption}</caption> : null}

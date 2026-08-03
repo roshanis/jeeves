@@ -7,7 +7,6 @@ import {
   ArrowRight,
 } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DEMO_BANNER_TEXT } from "@/lib/demo-banner";
 import { cn } from "@/lib/utils";
 
@@ -20,19 +19,44 @@ import { cn } from "@/lib/utils";
  * app/(console)/layout.tsx and app/(console)/inbox/page.tsx.
  *
  * Every link on this page points at a real console route (/inbox,
- * /portfolio, /reviews, /controls, /monitoring, /audit) — no fake
- * integrations, no dead links, no forms, no mutations.
+ * /portfolio, /reviews, /controls, /audit) — no fake integrations, no dead
+ * links, no forms, no mutations.
+ *
+ * Instrument-deck pass (2026-08-03): re-tuned onto the console's design
+ * language (app/globals.css — read that file first for the full rationale)
+ * so the front door reads as the same machine as the console rather than an
+ * older, generic marketing look:
+ *  - petrol-ink / cool-paper tokens throughout, never a raw hex or a stock
+ *    Tailwind color;
+ *  - the mono data voice (.kicker / .label-mono / .stat-value) for eyebrows,
+ *    labels and figures — Sora stays reserved for the two display headings,
+ *    Inter carries prose;
+ *  - the feature grid and how-it-works band are one hairline-divided panel
+ *    each (.panel), not floating rounded cards — matching
+ *    OutcomeMetricsStrip's "one instrument, not a pile of tiles" rule;
+ *  - the demo banner reuses the exact status-warning tokens the console's
+ *    own AppTopBar uses for the same string, instead of ad-hoc amber;
+ *  - the governance-loop schematic's connector strokes were re-measured and
+ *    raised off a 2.1-2.2:1 audit finding (see contrast table in the PR/
+ *    session notes) to clear the 3:1 bar for meaningful graphics, and its
+ *    node labels moved from the display face onto mono, and the
+ *    accent-highlighted "Decision" node moved off a solid-fill + reversed-
+ *    text treatment (which measured under 2:1 in the light theme's teal)
+ *    onto a tinted/outlined treatment that reads correctly in both themes.
  */
 export function LandingPage() {
   return (
     <div className="flex min-h-screen flex-col">
-      {/* a) Demo disclaimer strip — same visual language as the console's
-          app-topbar strip, rendering the shared DEMO_BANNER_TEXT constant. */}
-      <div className="bg-amber-100 px-4 py-1 text-center text-[11px] font-medium text-amber-900 dark:bg-amber-950/70 dark:text-amber-200">
+      {/* a) Demo disclaimer strip — identical treatment (and token pair) to
+          the console's own AppTopBar strip: reserved status-warning tokens,
+          never ad-hoc color. */}
+      <div className="bg-status-warning-bg px-4 py-1 text-center text-[11px] font-medium text-status-warning-fg">
         {DEMO_BANNER_TEXT}
       </div>
 
-      {/* b) + c): header row and hero, both on the dark charcoal surface. */}
+      {/* b) + c): header row and hero, both on the dark instrument-panel
+          surface (the sidebar tokens) — a deliberate fixed-dark band, same
+          choice the console makes for its own nav rail in either theme. */}
       <div className="relative overflow-hidden bg-sidebar text-sidebar-foreground">
         {/* Subtle decorative dot grid — quiet, no color, purely textural. */}
         <div
@@ -52,7 +76,7 @@ export function LandingPage() {
             </span>
             <span className="flex flex-col leading-tight">
               <span className="text-sm font-semibold">Jeeves</span>
-              <span className="text-[11px] text-sidebar-foreground/60">
+              <span className="label-mono text-sidebar-foreground-muted">
                 Governance Console
               </span>
             </span>
@@ -71,18 +95,22 @@ export function LandingPage() {
         <div className="relative mx-auto grid max-w-[72rem] gap-12 px-6 py-20 md:py-28 lg:grid-cols-[1.05fr_0.95fr] lg:items-center lg:gap-8">
           {/* Left: kicker, headline, subcopy, CTAs. */}
           <div>
-            <span className="inline-flex items-center rounded-full border border-sidebar-primary/40 px-3 py-1 text-xs font-medium text-sidebar-primary">
+            <p className="kicker flex items-center gap-2 text-sidebar-foreground-muted">
+              <span
+                className="h-1.5 w-1.5 shrink-0 rounded-full bg-sidebar-primary"
+                aria-hidden
+              />
               Meridian Health · AI Governance Gateway
-            </span>
+            </p>
 
-            <h1 className="mt-7 max-w-[18ch] text-5xl leading-[1.05] font-semibold tracking-tight md:text-6xl lg:text-[3.75rem]">
+            <h1 className="mt-6 max-w-[18ch] text-5xl leading-[1.05] font-semibold tracking-tight md:text-6xl lg:text-[3.75rem]">
               Every AI initiative.{" "}
               <span className="text-sidebar-primary">
                 Governed end to end.
               </span>
             </h1>
 
-            <p className="mt-6 max-w-[46ch] text-base leading-relaxed text-sidebar-foreground/70 md:text-lg">
+            <p className="mt-6 max-w-[64ch] text-base leading-relaxed text-sidebar-foreground-muted md:text-lg">
               Jeeves is the governance gateway for Meridian Health&rsquo;s AI
               portfolio — tiered intake, domain reviews with named
               accountable approvers, deployment controls, and an
@@ -96,7 +124,7 @@ export function LandingPage() {
               >
                 Open the console
                 <ArrowRight
-                  className="h-4 w-4 transition-transform duration-200 group-hover:translate-x-0.5"
+                  className="h-4 w-4 transition-transform duration-(--motion-base) ease-(--motion-ease) group-hover:translate-x-0.5"
                   aria-hidden
                 />
               </Link>
@@ -116,7 +144,11 @@ export function LandingPage() {
               one diagram. Hidden below lg so it never competes with the
               headline on narrow viewports. */}
           <div className="hidden lg:flex lg:items-center lg:justify-center">
-            <div className="w-full max-w-[420px] rounded-2xl border border-sidebar-border/70 bg-sidebar-accent/15 p-6">
+            <div className="relative w-full max-w-[420px] rounded-[var(--radius)] border border-sidebar-border bg-sidebar-accent/20 p-6">
+              <div
+                className="ticks pointer-events-none absolute inset-y-0 left-0 w-px"
+                aria-hidden
+              />
               <GovernanceLoopDiagram />
             </div>
           </div>
@@ -131,21 +163,25 @@ export function LandingPage() {
             <Stat value="8" label="review domains" />
             <Stat value="100%" label="decisions audited" />
           </div>
-          <p className="relative pb-6 text-center text-[11px] text-sidebar-foreground-muted">
+          <p className="label-mono relative pb-6 text-center text-sidebar-foreground-muted">
             Synthetic data — demo
           </p>
         </div>
       </div>
 
-      {/* e) Feature grid — light surface. */}
+      {/* e) Feature grid — light surface, one hairline-divided panel rather
+          than four floating rounded cards (same grammar as
+          OutcomeMetricsStrip on the console's Inbox). */}
       <section className="bg-background py-16 md:py-20">
         <div className="mx-auto max-w-[72rem] px-6">
-          <h2 className="text-2xl font-semibold tracking-tight md:text-3xl">
+          <p className="kicker text-primary">What&rsquo;s inside</p>
+          <h2 className="mt-1.5 text-2xl font-semibold tracking-tight md:text-3xl">
             One console for the whole governance loop
           </h2>
 
-          <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="panel card-quiet mt-8 grid grid-cols-1 divide-y divide-border sm:grid-cols-2 sm:divide-x sm:divide-y-0 lg:grid-cols-4">
             <FeatureCard
+              index="01"
               icon={Inbox}
               title="Intake & tiering"
               description="Structured intake with automatic risk tiering routes every initiative to the right review depth."
@@ -153,6 +189,7 @@ export function LandingPage() {
               linkLabel="View portfolio"
             />
             <FeatureCard
+              index="02"
               icon={ClipboardCheck}
               title="Domain reviews"
               description="Agents draft, named reviewers sign, and an accountable approver decides. Agents never approve."
@@ -160,6 +197,7 @@ export function LandingPage() {
               linkLabel="View reviews"
             />
             <FeatureCard
+              index="03"
               icon={ShieldCheck}
               title="Controls & exceptions"
               description="Effective controls generated per decision, with time-boxed, named exceptions."
@@ -167,6 +205,7 @@ export function LandingPage() {
               linkLabel="View controls"
             />
             <FeatureCard
+              index="04"
               icon={Activity}
               title="Monitoring & audit"
               description="Live telemetry against thresholds and an append-only audit trail of every event."
@@ -177,35 +216,32 @@ export function LandingPage() {
         </div>
       </section>
 
-      {/* f) How it works band. */}
+      {/* f) How it works band — same hairline-panel grammar as the feature
+          grid above, divided into three cells instead of a floating
+          connector line. */}
       <section className="border-t bg-muted/40 py-16">
         <div className="mx-auto max-w-[72rem] px-6">
-          <h2 className="text-2xl font-semibold tracking-tight md:text-3xl">
+          <p className="kicker text-primary">Sequence</p>
+          <h2 className="mt-1.5 text-2xl font-semibold tracking-tight md:text-3xl">
             How it works
           </h2>
 
-          <div className="relative mt-10">
-            <div
-              aria-hidden
-              className="pointer-events-none absolute inset-x-[16.6%] top-[18px] hidden h-px bg-border sm:block"
+          <div className="panel card-quiet mt-8 grid grid-cols-1 divide-y divide-border sm:grid-cols-3 sm:divide-x sm:divide-y-0">
+            <Step
+              number="01"
+              title="Intake"
+              description="Describe the initiative; Jeeves scores risk and assigns a tier."
             />
-            <div className="grid gap-8 sm:grid-cols-3">
-              <Step
-                number="01"
-                title="Intake"
-                description="Describe the initiative; Jeeves scores risk and assigns a tier."
-              />
-              <Step
-                number="02"
-                title="Review"
-                description="Required domains fan out; reviewers sign with full context."
-              />
-              <Step
-                number="03"
-                title="Operate"
-                description="Deploy with controls, monitor thresholds, audit everything."
-              />
-            </div>
+            <Step
+              number="02"
+              title="Review"
+              description="Required domains fan out; reviewers sign with full context."
+            />
+            <Step
+              number="03"
+              title="Operate"
+              description="Deploy with controls, monitor thresholds, audit everything."
+            />
           </div>
         </div>
       </section>
@@ -216,7 +252,7 @@ export function LandingPage() {
           <h2 className="text-2xl font-semibold tracking-tight md:text-3xl">
             Explore the demo
           </h2>
-          <p className="mt-3 text-sm text-sidebar-foreground/70">
+          <p className="mt-3 text-sm text-sidebar-foreground-muted">
             Public visitors are read-only. Live actions require the demo
             passcode.
           </p>
@@ -258,23 +294,23 @@ function Step({
   description: string;
 }) {
   return (
-    <div className="relative">
-      <div className="flex h-9 w-9 items-center justify-center rounded-full border border-border bg-background font-mono text-sm font-semibold text-foreground">
-        {number}
-      </div>
-      <h3 className="mt-4 text-base font-medium">{title}</h3>
-      <p className="mt-1.5 text-sm text-muted-foreground">{description}</p>
+    <div className="flex flex-col gap-1.5 p-6">
+      <div className="stat-value text-lg text-primary">{number}</div>
+      <h3 className="text-base font-medium">{title}</h3>
+      <p className="text-sm text-muted-foreground">{description}</p>
     </div>
   );
 }
 
 function FeatureCard({
+  index,
   icon: Icon,
   title,
   description,
   href,
   linkLabel,
 }: {
+  index: string;
   icon: React.ComponentType<{ className?: string; "aria-hidden"?: boolean }>;
   title: string;
   description: string;
@@ -282,29 +318,28 @@ function FeatureCard({
   linkLabel: string;
 }) {
   return (
-    <Card className="group/feature shadow-card transition-shadow duration-200 hover:shadow-raised">
-      <CardHeader>
-        <span className="grid h-10 w-10 place-items-center rounded-lg bg-accent text-accent-foreground transition-transform duration-200 group-hover/feature:scale-105">
+    <div className="group/feature flex flex-col gap-2 p-6">
+      <div className="flex items-center justify-between">
+        <span className="grid h-9 w-9 place-items-center rounded-md bg-accent text-accent-foreground transition-transform duration-(--motion-base) ease-(--motion-ease) group-hover/feature:scale-105">
           <Icon className="h-4.5 w-4.5" aria-hidden />
         </span>
-        <CardTitle className="mt-2">{title}</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <p className="text-sm text-muted-foreground">{description}</p>
-        <Link
-          href={href}
-          className="mt-3 inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline"
+        <span className="label-mono text-muted-foreground">{index}</span>
+      </div>
+      <h3 className="mt-1 font-heading text-base font-medium">{title}</h3>
+      <p className="text-sm text-muted-foreground">{description}</p>
+      <Link
+        href={href}
+        className="mt-1 inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline"
+      >
+        {linkLabel}
+        <span
+          aria-hidden
+          className="transition-transform duration-(--motion-base) ease-(--motion-ease) group-hover/feature:translate-x-1"
         >
-          {linkLabel}
-          <span
-            aria-hidden
-            className="transition-transform duration-200 group-hover/feature:translate-x-1"
-          >
-            →
-          </span>
-        </Link>
-      </CardContent>
-    </Card>
+          →
+        </span>
+      </Link>
+    </div>
   );
 }
 
@@ -335,6 +370,13 @@ const NODE_H = 24;
  * Effective controls → Monitor, with a dashed breach path looping back to
  * Reassess and a return path back into Decision. This is the product
  * story, not decoration — every node name is a real step in the app.
+ *
+ * Instrument-deck pass: connector strokes were re-measured against the dark
+ * hero ground and raised off a 2.1-2.2:1 audit finding — main connectors now
+ * sit at sidebar-foreground/55 (5.54:1) and the return path at /50 (4.79:1),
+ * both clearing the 3:1 bar for meaningful graphics. Node labels moved from
+ * the display face (Sora) onto the mono data voice, matching every other
+ * label/ID in the console.
  */
 function GovernanceLoopDiagram() {
   return (
@@ -355,7 +397,7 @@ function GovernanceLoopDiagram() {
           markerHeight="6"
           orient="auto-start-reverse"
         >
-          <path d="M0,0 L8,4 L0,8 Z" className="fill-sidebar-foreground/45" />
+          <path d="M0,0 L8,4 L0,8 Z" className="fill-sidebar-foreground/55" />
         </marker>
         <marker
           id="gl-arrow-warning"
@@ -373,7 +415,7 @@ function GovernanceLoopDiagram() {
       {/* Connectors — drawn first so nodes sit on top. */}
       <g
         fill="none"
-        className="stroke-sidebar-foreground/30"
+        className="stroke-sidebar-foreground/55"
         strokeWidth="1.5"
       >
         {/* Intake -> Triage */}
@@ -419,7 +461,7 @@ function GovernanceLoopDiagram() {
       <path
         d="M40,388 C6,388 6,221 130,221"
         fill="none"
-        className="stroke-sidebar-foreground/25"
+        className="stroke-sidebar-foreground/50"
         strokeWidth="1.25"
         markerEnd="url(#gl-arrow)"
       />
@@ -491,22 +533,29 @@ function SchematicNode({
 }) {
   const cx = x + w / 2;
   const cy = y + h / 2;
+  // Accent ("Decision") reads as a tinted/outlined instrument highlight
+  // rather than a solid-fill block with reversed text: sidebar-primary
+  // paired with sidebar-primary-foreground measures under 2:1 in the light
+  // theme (bright teal + near-white text), so the emphasis node instead
+  // keeps the same dark ground as every other node and draws its text
+  // directly in sidebar-primary — 8.23:1 (light) / 5.56:1 (dark) against
+  // the sidebar-accent node fill, both themes.
   const rectClass =
     variant === "accent"
-      ? "fill-sidebar-primary stroke-sidebar-primary"
+      ? "fill-sidebar-primary/12 stroke-sidebar-primary"
       : variant === "warning"
         ? "fill-sidebar-accent stroke-status-warning/50"
         : "fill-sidebar-accent stroke-sidebar-border";
   const titleClass =
     variant === "accent"
-      ? "fill-sidebar-primary-foreground font-heading font-medium"
+      ? "fill-sidebar-primary font-mono font-semibold"
       : small
-        ? "fill-sidebar-foreground/85"
-        : "fill-sidebar-foreground font-heading font-medium";
+        ? "fill-sidebar-foreground/85 font-mono"
+        : "fill-sidebar-foreground font-mono font-medium";
   const subtitleClass =
     variant === "accent"
-      ? "fill-sidebar-primary-foreground/80"
-      : "fill-sidebar-foreground/60";
+      ? "fill-sidebar-primary/80 font-mono"
+      : "fill-sidebar-foreground/60 font-mono";
 
   return (
     <g>
@@ -517,7 +566,7 @@ function SchematicNode({
         height={h}
         rx={small ? 5 : 7}
         className={rectClass}
-        strokeWidth="1.5"
+        strokeWidth={variant === "accent" ? "2" : "1.5"}
       />
       {subtitle ? (
         <>

@@ -3,6 +3,20 @@ import { ControlCatalog } from "@/components/jeeves/control-catalog";
 import { getProvider } from "@/lib/data";
 import { renderWithProviders } from "./helpers";
 
+describe("ControlCatalog scroll region (WCAG SHOULD-FIX #2, 2026-08-03)", () => {
+  it("exposes a keyboard-focusable, named region for the horizontal-scroll wrapper", async () => {
+    const controls = await getProvider().controlCatalog();
+    const { container } = renderWithProviders(<ControlCatalog controls={controls} />);
+
+    const region = container.querySelector('[role="region"]');
+    expect(region).not.toBeNull();
+    expect(region?.getAttribute("tabindex")).toBe("0");
+    expect(region?.getAttribute("aria-label")).toBeTruthy();
+    expect(region?.className).toContain("focus-visible:ring-2");
+    expect(region?.className).toContain("focus-visible:ring-ring");
+  });
+});
+
 describe("ControlCatalog", () => {
   it("renders all 17 controls (16 domain controls + Q-01)", async () => {
     const controls = await getProvider().controlCatalog();

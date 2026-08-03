@@ -318,7 +318,12 @@ export function ControlCatalog({ controls }: { controls: ControlRow[] }) {
           ))}
         </div>
       </div>
-      <div className="overflow-x-auto">
+      <div
+        className="overflow-x-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        tabIndex={0}
+        role="region"
+        aria-label="Control catalog, grouped by domain"
+      >
         <div className="flex min-w-full flex-col gap-6">
           {DOMAIN_ORDER.map((group) => {
             const rows = byDomain.get(group) ?? [];

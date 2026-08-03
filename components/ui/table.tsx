@@ -4,11 +4,26 @@ import * as React from "react"
 
 import { cn } from "@/lib/utils"
 
-function Table({ className, ...props }: React.ComponentProps<"table">) {
+/**
+ * `containerLabel` names the horizontally-scrollable container for assistive
+ * tech. A11y audit finding: this wrapper is the element that actually
+ * scrolls, so it needs `tabIndex`/`role`/an accessible name — a keyboard-only
+ * user otherwise cannot scroll a table that overflows. It also needs a
+ * visible focus ring, since it becomes a tab stop. Defaults to a generic
+ * name; pass something specific wherever the table's subject is known.
+ */
+function Table({
+  className,
+  containerLabel = "Table, scrollable horizontally",
+  ...props
+}: React.ComponentProps<"table"> & { containerLabel?: string }) {
   return (
     <div
       data-slot="table-container"
-      className="relative w-full overflow-x-auto"
+      role="region"
+      aria-label={containerLabel}
+      tabIndex={0}
+      className="relative w-full overflow-x-auto focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
     >
       <table
         data-slot="table"

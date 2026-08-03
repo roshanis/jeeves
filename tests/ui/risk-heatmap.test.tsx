@@ -36,6 +36,20 @@ function summary(slug: string, tier: Tier, state: LifecycleState): InitiativeSum
   };
 }
 
+describe("RiskHeatmap scroll region (WCAG SHOULD-FIX #2, 2026-08-03)", () => {
+  it("exposes a keyboard-focusable, named region for the horizontal-scroll wrapper", () => {
+    const rows = [summary("a", "high", "deployed")];
+    const { container } = renderWithProviders(<RiskHeatmap initiatives={rows} />);
+
+    const region = container.querySelector('[role="region"]');
+    expect(region).not.toBeNull();
+    expect(region?.getAttribute("tabindex")).toBe("0");
+    expect(region?.getAttribute("aria-label")).toBeTruthy();
+    expect(region?.className).toContain("focus-visible:ring-2");
+    expect(region?.className).toContain("focus-visible:ring-ring");
+  });
+});
+
 describe("RiskHeatmap bucket ink", () => {
   it("a bucket-4 cell switches ink per theme (text-white dark:text-neutral-900), matching bucket 5", () => {
     // 5 "critical / All signed" rows -> bucket 5 (the grid's max cell);

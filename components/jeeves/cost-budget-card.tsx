@@ -42,6 +42,21 @@ function formatUsd(value: number): string {
   return `$${value.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
 }
 
+// Accessible summary for the chart (WCAG SHOULD-FIX #3) — derived from the
+// exact same `points` the chart plots, so it can never drift from what's
+// rendered. This chart plots USD cost, not raw token counts, so (per the
+// honesty note above) it does not claim a cost-vs-token-budget "breach" the
+// way GpuQuotaCard does for a like-for-like quota line — it states the
+// latest cost figure the chart actually draws.
+function describeCostChart(points: PortfolioCostPoint[]): string {
+  if (points.length === 0) {
+    return "Line chart of portfolio daily cost. No cost telemetry available.";
+  }
+  const latest = points[points.length - 1]!;
+  const day = formatShortDate(latest.ts);
+  return `Line chart of portfolio daily cost over ${points.length} day${points.length === 1 ? "" : "s"}. Latest: ${formatUsd(latest.totalUsd)} on ${day}.`;
+}
+
 function CostTooltip({
   active,
   payload,
@@ -131,7 +146,11 @@ export function CostBudgetCard({ points }: { points: PortfolioCostPoint[] }) {
               </p>
             </div>
           ) : (
-            <div className="h-[200px] w-full">
+            <div
+              className="h-[200px] w-full"
+              role="img"
+              aria-label={describeCostChart(points)}
+            >
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={data} margin={{ top: 8, right: 52, bottom: 0, left: 0 }}>
                   <CartesianGrid vertical={false} stroke="var(--chart-grid)" />

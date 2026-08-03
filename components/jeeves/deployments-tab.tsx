@@ -72,7 +72,7 @@ export function DeploymentsTab({ deployments }: { deployments: DeploymentRow[] }
             </p>
           ) : (
             <>
-              <Table>
+              <Table containerLabel="Deployment versions, scrollable horizontally">
                 <TableHeader>
                   <TableRow>
                     <TableHead>Version</TableHead>

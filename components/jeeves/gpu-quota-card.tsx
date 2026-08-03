@@ -29,6 +29,24 @@ function formatShortDate(ts: string): string {
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
+// Accessible summary for the chart (WCAG SHOULD-FIX #3) — derived from the
+// exact same `data`/`quota`/`overQuota` values the chart plots, so it can
+// never drift from what's rendered.
+function describeGpuChart(
+  title: string,
+  data: { ts: string; value: number }[],
+  quota: number | null,
+  overQuota: boolean,
+): string {
+  if (data.length === 0) {
+    return `Area chart of GPU utilization vs quota for ${title}. No telemetry available.`;
+  }
+  const latest = data[data.length - 1]!;
+  const quotaText = quota !== null ? ` Quota: ${quota}%.` : " No quota set.";
+  const statusText = quota !== null ? (overQuota ? " Currently over quota." : " Within quota.") : "";
+  return `Area chart of GPU utilization vs quota for ${title}. Latest: ${latest.value.toFixed(0)}%.${quotaText}${statusText}`;
+}
+
 function GpuTooltip({
   active,
   payload,
@@ -147,7 +165,11 @@ export function GpuQuotaCard({
               GPU quota: {quota}%
             </p>
           ) : null}
-          <div className="h-[200px] w-full">
+          <div
+            className="h-[200px] w-full"
+            role="img"
+            aria-label={describeGpuChart(title, data, quota, overQuota)}
+          >
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={data} margin={{ top: 18, right: 40, bottom: 0, left: 0 }}>
                 <CartesianGrid vertical={false} stroke="var(--chart-grid)" />

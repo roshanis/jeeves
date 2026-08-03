@@ -68,7 +68,7 @@ export function ControlsTab({ controls }: { controls: ControlRow[] }) {
 
   return (
     <div className="panel card-quiet overflow-hidden">
-      <Table data-slot="controls-tab">
+      <Table data-slot="controls-tab" containerLabel="Effective controls, scrollable horizontally">
         <TableHeader>
           <TableRow>
             <TableHead className="kicker">Control</TableHead>

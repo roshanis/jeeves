@@ -66,7 +66,7 @@ export function IntakeTab({ intake }: { intake: InitiativeDetail["intake"] }) {
       ) : null}
 
       <div className="card-quiet overflow-hidden rounded-lg border">
-        <Table>
+        <Table containerLabel="Intake answers, scrollable horizontally">
           <TableHeader>
             <TableRow>
               <TableHead>Field</TableHead>

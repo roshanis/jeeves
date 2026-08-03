@@ -86,7 +86,7 @@ export function AuditConsole({
                 No records match this query — try broadening filters.
               </p>
             ) : (
-              <Table data-slot="audit-results">
+              <Table data-slot="audit-results" containerLabel="Audit query results, scrollable horizontally">
                 <TableHeader>
                   <TableRow>
                     <TableHead>Initiative / record</TableHead>

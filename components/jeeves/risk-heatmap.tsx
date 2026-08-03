@@ -81,7 +81,12 @@ export function RiskHeatmap({ initiatives }: { initiatives: InitiativeSummary[] 
 
   return (
     <div className="flex flex-col gap-4" data-slot="risk-heatmap">
-      <div className="overflow-x-auto">
+      <div
+        className="overflow-x-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        tabIndex={0}
+        role="region"
+        aria-label="Risk heatmap — tier by domain status"
+      >
         <Table className="border-separate [border-spacing:2px]">
           <TableHeader>
             <TableRow className="border-b-0 hover:bg-transparent">
