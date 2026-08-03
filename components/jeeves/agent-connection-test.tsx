@@ -62,11 +62,11 @@ export function AgentConnectionTest() {
           data-slot="test-connection-result"
         >
           {result.reachable ? (
-            <CircleCheck className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" aria-hidden />
+            <CircleCheck className="mt-0.5 h-4 w-4 shrink-0 text-status-good-fg" aria-hidden />
           ) : result.configured ? (
             <CircleX className="mt-0.5 h-4 w-4 shrink-0 text-destructive" aria-hidden />
           ) : (
-            <PlugZap className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" aria-hidden />
+            <PlugZap className="mt-0.5 h-4 w-4 shrink-0 text-status-warning-fg" aria-hidden />
           )}
           <span className="text-muted-foreground">{result.detail}</span>
         </div>

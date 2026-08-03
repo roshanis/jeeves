@@ -122,9 +122,9 @@ export default function AgentsPage() {
         className="flex items-start gap-2.5 rounded-lg border bg-card px-4 py-3 text-sm"
       >
         {status.connected ? (
-          <CircleCheck className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" aria-hidden />
+          <CircleCheck className="mt-0.5 h-4 w-4 shrink-0 text-status-good-fg" aria-hidden />
         ) : (
-          <CircleDashed className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" aria-hidden />
+          <CircleDashed className="mt-0.5 h-4 w-4 shrink-0 text-status-warning-fg" aria-hidden />
         )}
         <div>
           <p className="font-medium">
