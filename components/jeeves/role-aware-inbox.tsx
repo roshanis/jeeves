@@ -188,7 +188,7 @@ function StatusBand({ segments }: { segments: StatusSegmentSpec[] }) {
 function CardSectionHeader({ title }: { title: string }) {
   return (
     <CardHeader className="border-b py-2.5">
-      <p className="kicker">{title}</p>
+      <h2 className="kicker">{title}</h2>
     </CardHeader>
   );
 }
@@ -219,9 +219,35 @@ function OperationalAlertsCard({
           <p className="px-4 py-4 text-sm text-muted-foreground">
             No active alerts. Run the monitor from Administration to evaluate deployments.
           </p>
+        ) : alerts.length === 0 && dedupedCount > 0 ? (
+          // Every current alert is already visible in the primary table — the
+          // de-dup did its job. Rather than a lonely placeholder sentence,
+          // surface the figure the card would otherwise be hiding: a mono
+          // readout of how many alerts are represented, pointing at where
+          // they actually live. This must never read as "no alerts" —
+          // dedupedCount is always > 0 here.
+          <div data-slot="operational-alerts-summary" className="flex items-start gap-3 px-4 py-4">
+            <ShieldAlert className="mt-0.5 size-4 shrink-0 text-status-critical-fg" aria-hidden />
+            <div className="min-w-0 flex-1">
+              <div className="flex items-baseline gap-2">
+                <span className="stat-value text-lg text-status-critical-fg tabular-nums">
+                  {dedupedCount}
+                </span>
+                <span className="label-mono text-muted-foreground">
+                  operational alert{dedupedCount === 1 ? "" : "s"} in the table
+                </span>
+              </div>
+              <p className="mt-1 text-sm text-muted-foreground">
+                None hidden here — {dedupedCount === 1 ? "it's" : "they're all"} already listed in
+                the table on the left.
+              </p>
+            </div>
+          </div>
         ) : alerts.length === 0 ? (
+          // Remaining edge case: no de-duped alerts, but hasIncidents is true
+          // (an open incident exists independent of the alerts list).
           <p className="px-4 py-4 text-sm text-muted-foreground">
-            All {dedupedCount} operational alert{dedupedCount === 1 ? "" : "s"} {dedupedCount === 1 ? "is" : "are"} already listed in the table.
+            No operational alerts are currently tracked.
           </p>
         ) : (
           <ul className="divide-y">
@@ -237,7 +263,7 @@ function OperationalAlertsCard({
                       {i.title}
                     </Link>
                     {i.updatedAt ? (
-                      <span className="shrink-0 font-mono text-[11px] text-muted-foreground">
+                      <span className="shrink-0 font-mono text-[11px] tabular-nums text-muted-foreground">
                         {i.updatedAt.slice(0, 10)}
                       </span>
                     ) : null}
@@ -296,7 +322,7 @@ function RecentDecisionsCard({
                       >
                         {initTitle}
                       </Link>
-                      <span className="shrink-0 font-mono text-[11px] text-muted-foreground">
+                      <span className="shrink-0 font-mono text-[11px] tabular-nums text-muted-foreground">
                         {dec.at.slice(0, 10)}
                       </span>
                     </div>
