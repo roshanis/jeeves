@@ -11,7 +11,11 @@
  * 401/429/400: as other mutating routes (400 also covers an empty reason and
  *        a state violation, e.g. pausing an already-paused deployment).
  * 403:   { error: string }  (non-admin actor)
- * 404:   { error: string }  (unknown initiative / no deployment)
+ * 404:   { error: string }  (unknown initiative / no deployment / a
+ *        workspace-tagged initiative belonging to a DIFFERENT workspace than
+ *        this session's — same shape, no existence leak; P1 fix)
+ * 409:   { error: string }  (compare-and-set conflict — the initiative's or
+ *        deployment's state changed concurrently since this request's read)
  */
 import { z } from "zod";
 import { getDb } from "@/lib/db/client";
@@ -21,6 +25,7 @@ import {
   IllegalTransitionError,
   NotFoundError,
   ValidationError,
+  ConflictError,
 } from "@/lib/services/admin-service";
 import { runMutationGuard } from "@/lib/services/route-guard";
 
@@ -60,13 +65,7 @@ export async function POST(
   const db = getDb();
 
   try {
-    const result = await pauseDeployment(
-      db,
-      guard.actor,
-      id,
-      parsed.data.reason,
-      guard.workspaceId,
-    );
+    const result = await pauseDeployment(db, guard.actor, guard.workspaceId, id, parsed.data.reason);
     return Response.json(result, { status: 200 });
   } catch (err) {
     if (err instanceof ForbiddenError) {
@@ -82,6 +81,9 @@ export async function POST(
       // Role is already gated by ForbiddenError above; a state violation here
       // means e.g. "already paused" — a bad-request, not an auth failure.
       return Response.json({ error: err.message }, { status: 400 });
+    }
+    if (err instanceof ConflictError) {
+      return Response.json({ error: err.message }, { status: 409 });
     }
     throw err;
   }

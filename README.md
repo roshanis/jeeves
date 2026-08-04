@@ -91,9 +91,10 @@ governance, end to end:
 
 ## Personas
 
-Nine fictional actors (`lib/services/actors.ts`, mirrored client-side in
+Thirteen fictional actors (`lib/services/actors.ts`, mirrored client-side in
 `lib/client/personas.ts`; see `docs/seed-spec.md` §1) drive every storyline.
-Reviewers are **domain-scoped** — each owns exactly one governance domain.
+Reviewers are **domain-scoped** — each of the eight owns exactly one
+governance domain, covering all 8 required review domains.
 
 | Persona | Role | Domain / notes |
 |---|---|---|
@@ -103,6 +104,10 @@ Reviewers are **domain-scoped** — each owns exactly one governance domain.
 | Marcus Webb | Reviewer | Privacy / HIPAA |
 | Sofia Grant | Reviewer | Responsible AI — owns eval-quality & fairness |
 | James Liu | Reviewer | Legal |
+| Devon Clarke | Reviewer | Security |
+| Wei Zhang | Reviewer | Tech Architecture |
+| Grace Kim | Reviewer | Data Governance |
+| Tom Brennan | Reviewer | Procurement |
 | Angela Torres | Approver | VP, AI Governance — the accountable approver named on every approval, including fast-lane |
 | Ray Chen | Admin | Platform — the two live admin actions only; cannot approve or sign (separation of duties) |
 | Nia Okafor | Program office | Portfolio/SLA/pipeline-wide view |
@@ -144,8 +149,10 @@ npm run db:seed   # seeds a persistent local PGlite store at ./.pglite
 npm run dev       # http://localhost:3000
 ```
 
-This gives you the read-only portfolio board of 12 seeded initiatives with
-no further configuration.
+`http://localhost:3000` (`/`) is the public marketing landing page; click
+through (or go straight to `/inbox`) for the governance operations
+console — a read-only portfolio board of 12 seeded initiatives with no
+further configuration.
 
 ### Live mode (passcode-gated, mutable)
 
@@ -169,8 +176,41 @@ hosted demo.
 | Variable | Effect when set | When unset |
 | --- | --- | --- |
 | `OPENAI_API_KEY` | Agents draft live via OpenAI | Deterministic keyless mock adapter |
+| `JEEVES_AGENT_RUNTIME` | `agents-sdk` selects the OpenAI Agents SDK adapter; `ai-sdk` selects the Vercel AI SDK one | `ai-sdk` — the default runtime |
+| `OPENAI_LUNA_MODEL` / `OPENAI_TERRA_MODEL` | Override the two models the `agents-sdk` runtime routes between | `gpt-5.6-luna` / `gpt-5.6-terra` |
+| `OPENAI_REASONING_EFFORT` | Reasoning effort for the `agents-sdk` runtime | `low` — demo latency over depth |
+| `JEEVES_DEEP_REVIEW` | `1` makes `draftReview` a tool-using loop that reads the policy corpus first (`agents-sdk` runtime only) | Standard single-call drafting |
 | `PHOENIX_ENDPOINT` | Monitoring shows a configured telemetry connector | "Synthetic telemetry (demo)" — in-repo synthetic series |
 | `CRON_SECRET` | `GET /api/cron/monitor` runs scheduled monitoring (bearer-authenticated; wired to a 6-hourly Vercel cron in `vercel.json`) | The cron endpoint returns 503; the manual `POST /api/monitor/run` admin action still works |
+
+### Agent runtimes — two implementations, one port
+
+All LLM capability enters the app through a single app-owned interface,
+`AgentPort` (`lib/agents/ports.ts`). Three implementations sit behind it, and
+which one you get is decided in one place (`lib/agents/index.ts`):
+
+- **Mock** (no `OPENAI_API_KEY`) — deterministic, offline, keyless. This is
+  the default and what the test suite and the Playwright golden path run
+  against. A provider outage cannot break the demo.
+- **`ai-sdk`** (default when a key is present) — Vercel AI SDK, one
+  structured round trip per call.
+- **`agents-sdk`** (`JEEVES_AGENT_RUNTIME=agents-sdk`) — OpenAI Agents SDK,
+  with per-method model routing: **Luna** (`gpt-5.6-luna`) handles
+  completeness checks, intake turns, triage narration, and grounded audit
+  answers — high-volume, latency-sensitive work — while **Terra**
+  (`gpt-5.6-terra`) drafts domain reviews, where policy-grounded nuance
+  matters more than time-to-first-token.
+
+Setting `JEEVES_DEEP_REVIEW=1` on the `agents-sdk` runtime turns review
+drafting into a tool-using loop: the reviewer agent consults the governance
+policy corpus (`docs/policies/`, `agents/reviewer/`) through **read-only,
+sandboxed** tools before it drafts, and the Review Workbench shows which
+policies it read. The tools cannot write, and cannot escape the corpus. A
+deep draft costs many model calls, so the draft-run endpoint reserves a 10×
+budget multiplier when it is enabled — the daily cap stays honest.
+
+Whichever runtime is selected, the hard rule is unchanged: **agents draft,
+recommend, route, and flag missing evidence — they never approve.**
 
 **Demo reset ritual** — before a live walkthrough, run:
 
@@ -197,7 +237,7 @@ npm run typecheck     # tsc --noEmit
 ```
 
 The full suite runs several hundred Vitest unit/integration tests (targeting
->80% coverage on `lib/`) plus 7 Playwright end-to-end tests. The Playwright
+>80% coverage on `lib/`) plus 8 Playwright end-to-end tests. The Playwright
 suite is the **required golden path**: it walks the read-only portfolio and
 audit views, then a full live loop across requester, reviewer, and approver
 personas — intake, triage, an all-8-domain drafted review, sign-off, and
@@ -275,7 +315,7 @@ map — and `agents-build-log.md` is the chronological record of everything
 built, including architecture decisions and review findings.
 
 To restate the disclaimer at the top of this file: **Jeeves is a fictional
-demo.** "Meridian Health," all nine personas, all seeded initiatives,
+demo.** "Meridian Health," all thirteen personas, all seeded initiatives,
 approvals, controls, and telemetry are synthetic and generated by a
 deterministic seed script. Nothing in this repository represents a real
 organization, a real patient, or real PHI/PII, and no real integration

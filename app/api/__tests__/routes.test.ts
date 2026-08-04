@@ -10,7 +10,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTestDb, closeTestDb, type TestDb } from "@/lib/db/test-client";
 import { resetGuardStateForTests } from "@/lib/services/route-guard";
-import { controlDefinitions } from "@/lib/db/schema";
+import { controlDefinitions, initiatives } from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
 import { CONTROL_SEEDS } from "@/scripts/seed";
 
 let testDb: TestDb;
@@ -416,6 +417,13 @@ describe("full champion route chain: submit -> triage -> draft-run -> sign -> de
 
 describe("requester ownership authz on submit", () => {
   it("a requester who does not own the initiative gets 403 on submit; owner can still submit after", async () => {
+    // Same-browser logins (issueSessionInWorkspace): submitIntake() now ALSO
+    // enforces workspace authorization (external-review finding P2-4), so
+    // both requesters must share the SAME session workspace here for this
+    // test to isolate the OWNERSHIP check (403) from the workspace check
+    // (404) — a cross-workspace, non-owning requester would 404 first (see
+    // "workspace isolation on submit/triage routes" below), which is a
+    // different, already-covered scenario.
     const owner = await issueSessionInWorkspace("priya-raman");
     const otherRequester = await issueSessionInWorkspace(
       "dan-kowalski",
@@ -456,6 +464,101 @@ describe("requester ownership authz on submit", () => {
     expect(ownerRes.status).toBe(200);
     const ownerJson = await ownerRes.json();
     expect(ownerJson.submitted).toBe(true);
+  });
+});
+
+describe("deep-review budget multiplier on draft-run", () => {
+  // JEEVES_DEEP_REVIEW=1 makes each domain a tool-using Agents-SDK loop
+  // (many model calls), so the route reserves DEEP_REVIEW_BUDGET_MULTIPLIER
+  // (10x) the standard per-domain estimate. Proven by leaving exactly enough
+  // headroom for the standard reservation but not the deep one: same
+  // request, same domains, different outcome purely from the env flag.
+  //
+  // Runs BEFORE the exhaustion suite below on purpose — that one poisons the
+  // shared day bucket with 10M tokens and every later reservation would 429
+  // regardless of the multiplier, which would make this test pass vacuously.
+  const DAILY_TOKEN_CAP = 500_000;
+  const STANDARD_RESERVE = 8 * 1500; // 8 domains x ESTIMATED_TOKENS_PER_DOMAIN
+  const ALL_DOMAINS = [
+    "legal",
+    "procurement",
+    "tech-architecture",
+    "responsible-ai",
+    "security",
+    "privacy-hipaa",
+    "clinical-safety",
+    "data-governance",
+  ];
+
+  async function triagedInitiative(ip: string): Promise<{ id: string; token: string }> {
+    const token = await issueSessionFor("priya-raman");
+    const { POST: createInitiative } = await import("../initiatives/route");
+    const createRes = await createInitiative(
+      new Request("http://localhost/api/initiatives", {
+        method: "POST",
+        headers: bearer(token, ip),
+        body: JSON.stringify({ payload: CHAMPION_PAYLOAD }),
+      }),
+    );
+    const { initiativeId } = await createRes.json();
+    const { POST: submitPost } = await import("../initiatives/[id]/submit/route");
+    await submitPost(
+      new Request(`http://localhost/api/initiatives/${initiativeId}/submit`, {
+        method: "POST",
+        headers: bearer(token, ip),
+      }),
+      { params: Promise.resolve({ id: initiativeId }) },
+    );
+    const { POST: triagePost } = await import("../initiatives/[id]/triage/route");
+    await triagePost(
+      new Request(`http://localhost/api/initiatives/${initiativeId}/triage`, {
+        method: "POST",
+        headers: bearer(token, ip),
+      }),
+      { params: Promise.resolve({ id: initiativeId }) },
+    );
+    return { id: initiativeId, token };
+  }
+
+  /** Leaves `headroom` tokens of the daily cap unspent. */
+  async function leaveHeadroom(headroom: number): Promise<void> {
+    const { getBudgetStoreForTests } = await import("@/lib/services/route-guard");
+    const store = getBudgetStoreForTests();
+    const today = new Date().toISOString().slice(0, 10);
+    const used = await store.getUsed(today);
+    await store.addUsage(today, DAILY_TOKEN_CAP - headroom - used);
+  }
+
+  async function draftRun(id: string, token: string, ip: string): Promise<number> {
+    const { POST: draftRunPost } = await import("../initiatives/[id]/draft-run/route");
+    const res = await draftRunPost(
+      new Request(`http://localhost/api/initiatives/${id}/draft-run`, {
+        method: "POST",
+        headers: bearer(token, ip),
+        body: JSON.stringify({ domains: ALL_DOMAINS }),
+      }),
+      { params: Promise.resolve({ id }) },
+    );
+    return res.status;
+  }
+
+  afterEach(() => {
+    delete process.env.JEEVES_DEEP_REVIEW;
+  });
+
+  it("reserves the standard estimate when deep review is off", async () => {
+    delete process.env.JEEVES_DEEP_REVIEW;
+    // Headroom sits between the standard reserve and the 10x deep reserve.
+    await leaveHeadroom(STANDARD_RESERVE * 4);
+    const { id, token } = await triagedInitiative("11.5.0.1");
+    expect(await draftRun(id, token, "11.5.0.1")).not.toBe(429);
+  });
+
+  it("429s with the same request when JEEVES_DEEP_REVIEW=1 — the 10x reserve no longer fits", async () => {
+    process.env.JEEVES_DEEP_REVIEW = "1";
+    await leaveHeadroom(STANDARD_RESERVE * 4);
+    const { id, token } = await triagedInitiative("11.6.0.1");
+    expect(await draftRun(id, token, "11.6.0.1")).toBe(429);
   });
 });
 
@@ -726,6 +829,202 @@ describe("workspace isolation on mutation routes (external-review finding #1)", 
     );
     expect(ownerRes.status).toBe(200);
     expect((await ownerRes.json()).type).toBe("rejected");
+  });
+});
+
+/* ---------------------------------------------------------------------------
+ * Security-hardening pass — external-review finding P2-4: submitIntake()/
+ * triage() never received the session workspace, unlike decide() above.
+ * Route-level coverage (per-service coverage lives in
+ * lib/services/initiative-service.test.ts).
+ * ------------------------------------------------------------------------ */
+describe("workspace isolation on submit/triage routes (external-review finding P2-4)", () => {
+  it("submit route: a stranger's session gets 404; the owning session gets 200", async () => {
+    const { token: ownerToken } = await issueSessionInWorkspace("priya-raman");
+    const { POST: createInitiative } = await import("../initiatives/route");
+    const createRes = await createInitiative(
+      new Request("http://localhost/api/initiatives", {
+        method: "POST",
+        headers: bearer(ownerToken, "52.0.0.1"),
+        body: JSON.stringify({ payload: CHAMPION_PAYLOAD }),
+      }),
+    );
+    const { initiativeId } = await createRes.json();
+
+    const { POST: submitPost } = await import("../initiatives/[id]/submit/route");
+
+    // A different browser — no shared jeeves_workspace cookie — gets its own
+    // fresh workspace and cannot see/submit this live-created initiative.
+    // dan-kowalski is also not the owning requester, but the workspace check
+    // must 404 before requester-ownership is ever evaluated.
+    const { token: strangerToken } = await issueSessionInWorkspace("dan-kowalski");
+    const strangerRes = await submitPost(
+      new Request(`http://localhost/api/initiatives/${initiativeId}/submit`, {
+        method: "POST",
+        headers: bearer(strangerToken, "52.0.0.2"),
+      }),
+      { params: Promise.resolve({ id: initiativeId }) },
+    );
+    expect(strangerRes.status).toBe(404);
+
+    const ownerRes = await submitPost(
+      new Request(`http://localhost/api/initiatives/${initiativeId}/submit`, {
+        method: "POST",
+        headers: bearer(ownerToken, "52.0.0.3"),
+      }),
+      { params: Promise.resolve({ id: initiativeId }) },
+    );
+    expect(ownerRes.status).toBe(200);
+    expect((await ownerRes.json()).submitted).toBe(true);
+  });
+
+  it("triage route: a stranger's session gets 404; the owning session gets 200", async () => {
+    const { token: ownerToken } = await issueSessionInWorkspace("priya-raman");
+    const { POST: createInitiative } = await import("../initiatives/route");
+    const createRes = await createInitiative(
+      new Request("http://localhost/api/initiatives", {
+        method: "POST",
+        headers: bearer(ownerToken, "53.0.0.1"),
+        body: JSON.stringify({ payload: CHAMPION_PAYLOAD }),
+      }),
+    );
+    const { initiativeId } = await createRes.json();
+    const { POST: submitPost } = await import("../initiatives/[id]/submit/route");
+    await submitPost(
+      new Request(`http://localhost/api/initiatives/${initiativeId}/submit`, {
+        method: "POST",
+        headers: bearer(ownerToken, "53.0.0.1"),
+      }),
+      { params: Promise.resolve({ id: initiativeId }) },
+    );
+
+    const { POST: triagePost } = await import("../initiatives/[id]/triage/route");
+    const { token: strangerToken } = await issueSessionInWorkspace("angela-torres");
+    const strangerRes = await triagePost(
+      new Request(`http://localhost/api/initiatives/${initiativeId}/triage`, {
+        method: "POST",
+        headers: bearer(strangerToken, "53.0.0.2"),
+      }),
+      { params: Promise.resolve({ id: initiativeId }) },
+    );
+    expect(strangerRes.status).toBe(404);
+
+    const ownerRes = await triagePost(
+      new Request(`http://localhost/api/initiatives/${initiativeId}/triage`, {
+        method: "POST",
+        headers: bearer(ownerToken, "53.0.0.3"),
+      }),
+      { params: Promise.resolve({ id: initiativeId }) },
+    );
+    expect(ownerRes.status).toBe(200);
+    expect((await ownerRes.json()).tier).toBeTruthy();
+  });
+});
+
+/* ---------------------------------------------------------------------------
+ * Security-hardening pass — external-review finding P2-5a: updateInitiativeState()
+ * was a plain `where(eq(id))` update, allowing concurrent submitIntake()/
+ * triage() calls to duplicate work. Route-level mapping to 409 (per-service
+ * CAS coverage lives in lib/services/initiative-service.test.ts).
+ * ------------------------------------------------------------------------ */
+describe("409 conflict mapping on submit/triage routes (external-review finding P2-5a)", () => {
+  /** Injects a same-transaction concurrent write on the `initiatives` table's
+   * FIRST update, reproducing the DB-visible effect of a genuinely concurrent
+   * committed write landing between the route's read and its CAS update —
+   * same technique as the service-layer CAS tests. */
+  function injectConcurrentInitiativeWrite(initiativeId: string, injectedState: string): () => void {
+    /* eslint-disable @typescript-eslint/no-explicit-any */
+    const dbAny = testDb as any;
+    const realTransaction = dbAny.transaction.bind(dbAny);
+    const spy = vi.spyOn(dbAny, "transaction").mockImplementationOnce((cb: any) =>
+      realTransaction(async (tx: any) => {
+        const realUpdate = tx.update.bind(tx);
+        let injected = false;
+        vi.spyOn(tx, "update").mockImplementation((table: any) => {
+          const builder = realUpdate(table);
+          if (table === initiatives && !injected) {
+            injected = true;
+            const realSet = builder.set.bind(builder);
+            builder.set = (values: Record<string, unknown>) => {
+              const base = realSet(values);
+              const realWhere = base.where.bind(base);
+              base.where = (cond: unknown) => {
+                const afterWhere = realWhere(cond);
+                const realReturning = afterWhere.returning.bind(afterWhere);
+                afterWhere.returning = async (...args: unknown[]) => {
+                  await realUpdate(initiatives).set({ state: injectedState }).where(eq(initiatives.id, initiativeId));
+                  return realReturning(...args);
+                };
+                return afterWhere;
+              };
+              return base;
+            };
+          }
+          return builder;
+        });
+        return cb(tx);
+      }),
+    );
+    /* eslint-enable @typescript-eslint/no-explicit-any */
+    return () => spy.mockRestore();
+  }
+
+  it("submit route maps ConflictError to 409", async () => {
+    const { token } = await issueSessionInWorkspace("priya-raman");
+    const { POST: createInitiative } = await import("../initiatives/route");
+    const createRes = await createInitiative(
+      new Request("http://localhost/api/initiatives", {
+        method: "POST",
+        headers: bearer(token, "54.0.0.1"),
+        body: JSON.stringify({ payload: CHAMPION_PAYLOAD }),
+      }),
+    );
+    const { initiativeId } = await createRes.json();
+
+    const restore = injectConcurrentInitiativeWrite(initiativeId, "triaged");
+    const { POST: submitPost } = await import("../initiatives/[id]/submit/route");
+    const res = await submitPost(
+      new Request(`http://localhost/api/initiatives/${initiativeId}/submit`, {
+        method: "POST",
+        headers: bearer(token, "54.0.0.2"),
+      }),
+      { params: Promise.resolve({ id: initiativeId }) },
+    );
+    expect(res.status).toBe(409);
+    restore();
+  });
+
+  it("triage route maps ConflictError to 409", async () => {
+    const { token } = await issueSessionInWorkspace("priya-raman");
+    const { POST: createInitiative } = await import("../initiatives/route");
+    const createRes = await createInitiative(
+      new Request("http://localhost/api/initiatives", {
+        method: "POST",
+        headers: bearer(token, "55.0.0.1"),
+        body: JSON.stringify({ payload: CHAMPION_PAYLOAD }),
+      }),
+    );
+    const { initiativeId } = await createRes.json();
+    const { POST: submitPost } = await import("../initiatives/[id]/submit/route");
+    await submitPost(
+      new Request(`http://localhost/api/initiatives/${initiativeId}/submit`, {
+        method: "POST",
+        headers: bearer(token, "55.0.0.1"),
+      }),
+      { params: Promise.resolve({ id: initiativeId }) },
+    );
+
+    const restore = injectConcurrentInitiativeWrite(initiativeId, "triaged");
+    const { POST: triagePost } = await import("../initiatives/[id]/triage/route");
+    const res = await triagePost(
+      new Request(`http://localhost/api/initiatives/${initiativeId}/triage`, {
+        method: "POST",
+        headers: bearer(token, "55.0.0.2"),
+      }),
+      { params: Promise.resolve({ id: initiativeId }) },
+    );
+    expect(res.status).toBe(409);
+    restore();
   });
 });
 

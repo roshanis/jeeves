@@ -54,17 +54,21 @@ const STATUS_LABEL: Record<ControlRow["status"], string> = {
   exception_requested: "Exception pending",
 };
 
+// Reserved status-family tokens (not raw Tailwind color utilities — the
+// data-color contract in app/globals.css). Monitor rides the neutral slot,
+// Gate the warning slot; Block already renders via the destructive Badge
+// variant below.
 const ENFORCEMENT_META: Record<
   NonNullable<ControlRow["enforcementMode"]>,
   { label: string; className: string }
 > = {
   monitor: {
     label: "Monitor",
-    className: "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300",
+    className: "bg-status-neutral-bg text-status-neutral-fg",
   },
   gate: {
     label: "Gate",
-    className: "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300",
+    className: "bg-status-warning-bg text-status-warning-fg",
   },
   block: {
     label: "Block",
@@ -117,18 +121,20 @@ function evidenceFreshness(evidenceAt: string | null | undefined, nowMs: number)
   return nowMs - at > STALE_AFTER_MS ? "stale" : "fresh";
 }
 
+// Reserved status-family tokens: fresh=good, stale=critical (evidence past
+// its 90-day window is a genuine gap, not a soft warning), unknown=neutral.
 const FRESHNESS_META: Record<Freshness, { label: string; className: string }> = {
   fresh: {
     label: "Fresh",
-    className: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300",
+    className: "bg-status-good-bg text-status-good-fg",
   },
   stale: {
     label: "Stale",
-    className: "bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300",
+    className: "bg-status-critical-bg text-status-critical-fg",
   },
   unknown: {
     label: "—",
-    className: "bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400",
+    className: "bg-status-neutral-bg text-status-neutral-fg",
   },
 };
 
@@ -190,8 +196,13 @@ function ControlRowCard({ control, nowMs }: { control: ControlRow; nowMs: number
             <EnforcementModeBadge mode={control.enforcementMode} />
           </div>
           <p className="text-xs text-muted-foreground">
-            Policy source: {control.policySource ?? "—"}
-            {control.threshold !== null ? ` · Threshold: ${control.threshold}` : ""}
+            Policy source: <span className="font-mono">{control.policySource ?? "—"}</span>
+            {control.threshold !== null ? (
+              <>
+                {" "}
+                · Threshold: <span className="font-mono tabular-nums">{control.threshold}</span>
+              </>
+            ) : null}
           </p>
           <p className="text-xs text-muted-foreground">
             Owner: {control.owner ?? "—"} · Cadence: {control.cadence ?? "—"} ·
@@ -208,7 +219,7 @@ function ControlRowCard({ control, nowMs }: { control: ControlRow; nowMs: number
           {nowMs !== null ? (
             <EvidenceFreshnessBadge evidenceAt={control.evidenceAt} nowMs={nowMs} />
           ) : (
-            <span className="inline-flex h-5 w-fit items-center rounded-full bg-zinc-100 px-2 text-xs font-medium text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+            <span className="inline-flex h-5 w-fit items-center rounded-full bg-status-neutral-bg px-2 text-xs font-medium text-status-neutral-fg">
               —
             </span>
           )}
@@ -247,12 +258,12 @@ export function ControlCatalog({ controls }: { controls: ControlRow[] }) {
     <div data-slot="control-catalog" className="flex flex-col gap-6">
       <div className="flex flex-col gap-3" data-slot="control-catalog-filters">
         <div className="flex flex-wrap items-center gap-1.5" data-slot="control-domain-filter">
-          <span className="mr-1 text-xs font-medium text-muted-foreground">Domain</span>
+          <span className="kicker mr-1">Domain</span>
           <button
             type="button"
             onClick={() => setDomainFilter("all")}
             className={cn(
-              "rounded-md px-3 py-1.5 text-sm transition-colors",
+              "touch-min rounded-md px-3 py-1.5 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
               domainFilter === "all"
                 ? "bg-primary text-primary-foreground"
                 : "border bg-card text-muted-foreground hover:text-foreground",
@@ -266,7 +277,7 @@ export function ControlCatalog({ controls }: { controls: ControlRow[] }) {
               type="button"
               onClick={() => setDomainFilter(domain)}
               className={cn(
-                "rounded-md px-3 py-1.5 text-sm transition-colors",
+                "touch-min rounded-md px-3 py-1.5 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
                 domainFilter === domain
                   ? "bg-primary text-primary-foreground"
                   : "border bg-card text-muted-foreground hover:text-foreground",
@@ -277,12 +288,12 @@ export function ControlCatalog({ controls }: { controls: ControlRow[] }) {
           ))}
         </div>
         <div className="flex flex-wrap items-center gap-1.5" data-slot="control-status-filter">
-          <span className="mr-1 text-xs font-medium text-muted-foreground">Status</span>
+          <span className="kicker mr-1">Status</span>
           <button
             type="button"
             onClick={() => setStatusFilter("all")}
             className={cn(
-              "rounded-md px-3 py-1.5 text-sm transition-colors",
+              "touch-min rounded-md px-3 py-1.5 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
               statusFilter === "all"
                 ? "bg-primary text-primary-foreground"
                 : "border bg-card text-muted-foreground hover:text-foreground",
@@ -296,7 +307,7 @@ export function ControlCatalog({ controls }: { controls: ControlRow[] }) {
               type="button"
               onClick={() => setStatusFilter(status)}
               className={cn(
-                "rounded-md px-3 py-1.5 text-sm transition-colors",
+                "touch-min rounded-md px-3 py-1.5 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
                 statusFilter === status
                   ? "bg-primary text-primary-foreground"
                   : "border bg-card text-muted-foreground hover:text-foreground",
@@ -307,7 +318,12 @@ export function ControlCatalog({ controls }: { controls: ControlRow[] }) {
           ))}
         </div>
       </div>
-      <div className="overflow-x-auto">
+      <div
+        className="scroll-x-pane overflow-x-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        tabIndex={0}
+        role="region"
+        aria-label="Control catalog, grouped by domain"
+      >
         <div className="flex min-w-full flex-col gap-6">
           {DOMAIN_ORDER.map((group) => {
             const rows = byDomain.get(group) ?? [];
@@ -317,7 +333,9 @@ export function ControlCatalog({ controls }: { controls: ControlRow[] }) {
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2 text-base">
                     {GROUP_LABEL[group]}
-                    <Badge variant="secondary">{rows.length}</Badge>
+                    <Badge variant="secondary" className="stat-value text-xs">
+                      {rows.length}
+                    </Badge>
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="flex flex-col gap-2">

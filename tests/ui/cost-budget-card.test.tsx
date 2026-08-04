@@ -26,4 +26,21 @@ describe("CostBudgetCard", () => {
     renderWithProviders(<CostBudgetCard points={[]} />);
     expect(screen.getByText("No cost telemetry available.")).toBeDefined();
   });
+
+  it("exposes an accessible chart summary with the latest headline value (WCAG SHOULD-FIX #3, 2026-08-03)", () => {
+    const { container } = renderWithProviders(
+      <CostBudgetCard
+        points={[
+          { ts: "2026-07-01T00:00:00.000Z", totalUsd: 100 },
+          { ts: "2026-07-02T00:00:00.000Z", totalUsd: 120 },
+        ]}
+      />,
+    );
+
+    const chart = container.querySelector('[role="img"]');
+    expect(chart).not.toBeNull();
+    const label = chart?.getAttribute("aria-label") ?? "";
+    expect(label).toContain("$120");
+    expect(label).toMatch(/portfolio daily cost/i);
+  });
 });

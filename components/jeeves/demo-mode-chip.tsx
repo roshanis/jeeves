@@ -19,7 +19,7 @@
  */
 import * as React from "react";
 import { toast } from "sonner";
-import { Badge } from "@/components/ui/badge";
+import { Lock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -70,13 +70,43 @@ export function DemoModeChip() {
     }
   }
 
+  // Both states read as a state LED (solid/pulsing dot) + a mono system
+  // label — a status readout rather than a floating pill.
   if (session) {
     return (
-      <span className="inline-flex items-center gap-1.5" data-slot="demo-mode-chip">
-        <Badge variant="secondary" title="Session workspace active — daily demo token budget and rate limits are enforced server-side.">
-          Live demo (session workspace)
-        </Badge>
-        <span className="text-xs text-muted-foreground">{session.personaLabel}</span>
+      <span className="inline-flex items-center gap-2" data-slot="demo-mode-chip">
+        <span
+          className="inline-flex items-center gap-1.5 rounded-md border border-primary/30 bg-primary/10 px-2 py-1"
+          title="Session workspace active — daily demo token budget and rate limits are enforced server-side."
+        >
+          <span className="relative flex h-1.5 w-1.5 shrink-0" aria-hidden>
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-75" />
+            <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-primary" />
+          </span>
+          {/* Phones show just "Live" — the qualifier is ~120px of a 375px
+              viewport, and live mode is already unmistakable from the pulsing
+              LED and primary tint. `sr-only` (not `hidden`) on the remainder
+              keeps the full phrase in the accessibility tree and in
+              textContent at every width, so screen-reader users and the
+              tests that assert on "Live demo (session workspace)" both still
+              see the whole label. */}
+          <span className="label-mono whitespace-nowrap text-primary">
+            {/* Two spans rather than one split label, deliberately. The
+                phone-sized abbreviation is aria-hidden and the full phrase is
+                sr-only until `sm`, so the accessibility tree reads exactly
+                one complete label at every width — and the full phrase stays
+                a single text node, which is what queries that match on an
+                element's own text (Testing Library's getByText, and the e2e
+                assertion on this chip) actually look for. */}
+            <span className="sm:hidden" aria-hidden>
+              Live
+            </span>
+            <span className="sr-only sm:not-sr-only sm:inline">Live demo (session workspace)</span>
+          </span>
+        </span>
+        <span className="hidden text-xs text-muted-foreground sm:inline">
+          {session.personaLabel}
+        </span>
         <Button
           type="button"
           variant="ghost"
@@ -88,7 +118,16 @@ export function DemoModeChip() {
             toast.info("Back to read-only mode.");
           }}
         >
-          Reset to read-only
+          {/* Same two-span pattern as the live label above. A single split
+              label ("Reset" + a nested " to read-only") does NOT work here:
+              accessible-name computation trims each node before joining, so
+              the leading space is dropped and the button ends up named
+              "Resetto read-only". Two complete strings, with the phone-sized
+              one aria-hidden, keep the name exactly "Reset to read-only". */}
+          <span className="sm:hidden" aria-hidden>
+            Reset
+          </span>
+          <span className="sr-only sm:not-sr-only sm:inline">Reset to read-only</span>
         </Button>
       </span>
     );
@@ -99,10 +138,22 @@ export function DemoModeChip() {
       <button
         type="button"
         data-slot="demo-mode-chip"
-        className="cursor-pointer"
+        className="touch-target inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-border px-2 py-1 transition-colors duration-(--motion-base) ease-(--motion-ease) hover:bg-accent"
         onClick={() => setOpen(true)}
       >
-        <Badge variant="outline">Read-only (public)</Badge>
+        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-muted-foreground" aria-hidden />
+        <Lock className="h-3 w-3 shrink-0 text-muted-foreground" aria-hidden />
+        {/* Screen-reader-only on phones, visible from `sm` up. The padlock
+            and the grey LED already carry this state visually, and the ~110px
+            of label was the difference between the status cluster fitting a
+            375px bar and squeezing its neighbours. `sr-only` rather than
+            `hidden` deliberately: the text stays in the accessibility tree at
+            every width, so the icon-only state keeps its accessible name
+            without resorting to an aria-label that would shadow the visible
+            text on desktop. */}
+        <span className="label-mono sr-only whitespace-nowrap text-muted-foreground sm:not-sr-only sm:inline">
+          Read-only (public)
+        </span>
       </button>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent>

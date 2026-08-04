@@ -25,7 +25,7 @@ export function AuditTab({ events }: { events: AuditEventRow[] }) {
           key={`${event.ts}-${event.action}-${i}`}
           className="relative flex gap-3 border-l pb-4 pl-4 last:pb-0"
         >
-          <Avatar size="sm" className="mt-0.5 shrink-0">
+          <Avatar size="sm" className="mt-0.5 shrink-0 ring-1 ring-border">
             <AvatarFallback>{initials(event.actor)}</AvatarFallback>
           </Avatar>
           <div className="min-w-0 space-y-0.5">
@@ -33,8 +33,11 @@ export function AuditTab({ events }: { events: AuditEventRow[] }) {
               <Badge variant="outline" className="font-mono text-[11px]">
                 {event.action}
               </Badge>
+              <span className="font-mono text-xs tabular-nums text-muted-foreground">
+                {event.ts.slice(0, 10)}
+              </span>
               <span className="text-xs text-muted-foreground">
-                {event.ts.slice(0, 10)} · {event.actor} ({event.actorRole})
+                {event.actor} ({event.actorRole})
               </span>
             </div>
             <p className="text-sm text-muted-foreground">{event.detail}</p>

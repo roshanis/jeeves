@@ -43,4 +43,24 @@ describe("GpuQuotaCard", () => {
 
     expect(screen.getByText("Over quota")).toBeDefined();
   });
+
+  it("exposes an accessible chart summary with the latest value, quota, and breach state (WCAG SHOULD-FIX #3, 2026-08-03)", async () => {
+    const detail = await getProvider().getInitiativeDetail("claims-ocr-coder");
+    const gpuSeries = detail!.telemetry.find((t) => t.kind === "gpu_util_pct")!;
+    const overQuotaSeries = {
+      ...gpuSeries,
+      points: [...gpuSeries.points, { ts: "2026-07-31T00:00:00.000Z", value: 95 }],
+    };
+
+    const { container } = renderWithProviders(
+      <GpuQuotaCard slug={detail!.summary.slug} title={detail!.summary.title} series={overQuotaSeries} />,
+    );
+
+    const chart = container.querySelector('[role="img"]');
+    expect(chart).not.toBeNull();
+    const label = chart?.getAttribute("aria-label") ?? "";
+    expect(label).toContain("95%");
+    expect(label).toContain("Quota: 80%");
+    expect(label).toMatch(/over quota/i);
+  });
 });

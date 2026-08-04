@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { TriangleAlert } from "lucide-react";
 import type { InitiativeSummary } from "@/lib/data/dto";
 import type { LifecycleState } from "@/lib/domain/types";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -37,7 +38,7 @@ export function PipelineBoard({ initiatives }: { initiatives: InitiativeSummary[
   return (
     <div
       data-slot="pipeline-board"
-      className="grid grid-flow-col auto-cols-[minmax(220px,1fr)] gap-3 overflow-x-auto pb-2"
+      className="scroll-thin scroll-x-pane grid grid-flow-col auto-cols-[minmax(230px,1fr)] gap-3 overflow-x-auto pb-2"
     >
       {COLUMNS.map((state) => {
         const items = byState.get(state) ?? [];
@@ -45,11 +46,11 @@ export function PipelineBoard({ initiatives }: { initiatives: InitiativeSummary[
           <div
             key={state}
             data-column={state}
-            className="flex min-w-[220px] flex-col gap-2 rounded-lg bg-muted/40 p-2"
+            className="flex min-w-[230px] flex-col gap-2 rounded-lg bg-muted/40 p-2"
           >
-            <div className="flex items-center justify-between px-1">
-              <span className="text-sm font-medium">{LIFECYCLE_LABEL[state]}</span>
-              <span className="text-xs text-muted-foreground">{items.length}</span>
+            <div className="flex items-center justify-between px-1 py-0.5">
+              <span className="kicker">{LIFECYCLE_LABEL[state]}</span>
+              <span className="stat-value text-xs text-muted-foreground">{items.length}</span>
             </div>
             {items.length === 0 ? (
               <p className="px-1 text-xs text-muted-foreground">
@@ -61,20 +62,21 @@ export function PipelineBoard({ initiatives }: { initiatives: InitiativeSummary[
                   <Card
                     data-slot="pipeline-card"
                     className={
-                      init.state === "paused"
-                        ? "border-l-4 border-l-amber-500"
-                        : undefined
+                      "card-quiet transition-shadow hover:shadow-md" +
+                      (init.state === "paused" ? " border-l-4 border-l-status-serious-fg" : "")
                     }
                   >
                     <CardHeader className="gap-1 pb-0">
                       <div className="flex items-center justify-between gap-2">
                         <TierBadge tier={init.tier} />
                         {init.overdue ? (
-                          <span className="text-xs font-medium text-red-600">overdue</span>
+                          <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-status-critical-fg">
+                            <TriangleAlert className="size-3" aria-hidden /> Overdue
+                          </span>
                         ) : null}
                       </div>
                       <p className="text-sm font-medium leading-snug">{init.title}</p>
-                      <p className="text-xs text-muted-foreground">{init.slug}</p>
+                      <p className="font-mono text-[11px] text-muted-foreground">{init.slug}</p>
                     </CardHeader>
                     <CardContent className="flex items-center justify-between gap-2 pt-2">
                       <AccountableApproverChip name={init.accountableApprover} />

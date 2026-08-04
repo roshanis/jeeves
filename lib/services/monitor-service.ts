@@ -60,12 +60,22 @@ import {
 } from "../db/schema";
 import type { Actor, LifecycleState, Observation, Tier } from "../domain/types";
 import { evaluateControl, resolveThreshold, type EffectiveControl } from "../controls/evaluate";
-import { transition, type AuditEventPayload } from "../lifecycle/transitions";
+import { transition, IllegalTransitionError, type AuditEventPayload } from "../lifecycle/transitions";
 import { getAgentPort } from "../agents";
 import { generateMockIncidentSummary } from "../agents/mock-adapter";
 import type { GovernanceDomain } from "../agents/ports";
 import { SYSTEM_ACTOR } from "./actors";
 import { workspaceMismatch } from "./workspace-guard";
+import { ConflictError } from "./initiative-service";
+
+/**
+ * Re-exported so route handlers/callers can catch a compare-and-set race on
+ * the automated breach-pause flip (external-review finding P2-5b) the same
+ * way `admin-service.ts`'s pauseDeployment/resumeDeployment and
+ * `promotion-service.ts`'s promoteCheckpoint already do. Same class, reused
+ * (not duplicated).
+ */
+export { ConflictError };
 
 type Tx = PgDatabase<PgQueryResultHKT, typeof schema>;
 
@@ -94,6 +104,36 @@ export interface BreachDetail {
   isNew: boolean;
   incidentId: string;
   reviewCycleId: string | null;
+  /**
+   * Present (and always `true`) only when this breach was genuinely
+   * DETECTED by `evaluateControl` but its persistence transaction threw
+   * (CAS conflict, the missing-risk-assessment FK guard, a DB hiccup, a
+   * pre-flight pause-illegal skip, etc.) — the matching `RunMonitorError` in
+   * `RunMonitorResult.errors` carries the failure detail. `incidentId` is
+   * `""` and `reviewCycleId` is `null` in this case: nothing was actually
+   * written. Never counted in `RunMonitorResult.incidentsCreated`.
+   *
+   * Additive-only (external-review P1 fix — a failed detection pass must
+   * never render identically to a clean run): absent/`undefined` for every
+   * successfully persisted breach, so existing consumers that never check
+   * this field see no behavior change.
+   */
+  failed?: true;
+}
+
+/**
+ * One per-candidate failure recorded instead of aborting the whole run
+ * (external-review finding P2-7: "one bad candidate — e.g. a pause-illegal
+ * lifecycle state throwing IllegalTransitionError — aborts the entire
+ * monitor run for all deployments"). Covers both an explicit pre-flight skip
+ * (candidate's `initiative.state` doesn't permit `system` to `pause`) and any
+ * error thrown while handling a genuine breach for that candidate (e.g. the
+ * CAS conflict in `ConflictError` above, or the FK-hazard guard below).
+ */
+export interface RunMonitorError {
+  initiativeId: string;
+  deploymentId: string;
+  message: string;
 }
 
 export interface RunMonitorResult {
@@ -102,6 +142,34 @@ export interface RunMonitorResult {
   breaches: BreachDetail[];
   incidentsCreated: number;
   alreadyKnown: number;
+  /**
+   * Per-candidate failures/skips that did NOT abort the run (additive field
+   * — existing callers that only read `evaluated`/`breaches`/
+   * `incidentsCreated`/`alreadyKnown` are unaffected). Empty when every
+   * evaluated candidate completed cleanly.
+   */
+  errors: RunMonitorError[];
+}
+
+/**
+ * Pre-flight legality check (external-review finding P2-7b): consults
+ * `lib/lifecycle/transitions.ts`'s own transition table — via a real (but
+ * discarded) `transition()` call rather than duplicating its declarative
+ * rules here — to decide whether `system` may `pause` FROM this initiative's
+ * current state, without opening a transaction or throwing. Used to skip a
+ * breaching candidate whose `initiative.state` has drifted out of `deployed`
+ * (e.g. it was already manually paused/retired/re-reviewed out of band)
+ * BEFORE attempting the real pause transition inside that candidate's own
+ * transaction.
+ */
+function isPauseLegalForSystem(state: LifecycleState): boolean {
+  try {
+    transition(state, "pause", SYSTEM_ACTOR, { ts: 0, reason: "pause-legality probe (not persisted)" });
+    return true;
+  } catch (err) {
+    if (err instanceof IllegalTransitionError) return false;
+    throw err;
+  }
 }
 
 /* -------------------------------------------------------------------------
@@ -213,6 +281,7 @@ export async function runMonitor(
   );
 
   const breaches: BreachDetail[] = [];
+  const errors: RunMonitorError[] = [];
   let evaluated = 0;
   let incidentsCreated = 0;
   let alreadyKnown = 0;
@@ -270,173 +339,255 @@ export async function runMonitor(
       continue;
     }
 
-    // Idempotent per-deployment handling, transactional: check-then-act
-    // inside the SAME transaction that would insert, so a breach detected
-    // twice in the same run (impossible today — one control per deployment
-    // per run — but kept for safety) or across repeated `runMonitor` calls
-    // never creates a second incident/transition pair.
-    const outcome = await db.transaction(async (tx) => {
-      const existing = await tx
-        .select()
-        .from(incidents)
-        .where(eq(incidents.identityKey, evalResult.identityKey!));
-      if (existing.length > 0) {
-        const row = existing[0]!;
-        return {
-          isNew: false,
-          incidentId: row.id,
-          reviewCycleId: row.reviewCycleId,
-        };
-      }
+    // Error isolation (external-review finding P2-7a): one bad candidate
+    // must never abort the whole run — everything from the pre-flight
+    // legality check through this candidate's transaction is wrapped so any
+    // failure (a skipped pre-flight check below, a CAS conflict, a missing
+    // risk assessment, or anything else) is recorded against THIS candidate
+    // in `errors` and the loop moves on to the next one.
+    try {
+      // Idempotent per-deployment handling, transactional: check-then-act
+      // inside the SAME transaction that would insert, so a breach detected
+      // twice in the same run (impossible today — one control per deployment
+      // per run — but kept for safety) or across repeated `runMonitor` calls
+      // never creates a second incident/transition pair.
+      const outcome = await db.transaction(async (tx) => {
+        const existing = await tx
+          .select()
+          .from(incidents)
+          .where(eq(incidents.identityKey, evalResult.identityKey!));
+        if (existing.length > 0) {
+          const row = existing[0]!;
+          return {
+            isNew: false,
+            incidentId: row.id,
+            reviewCycleId: row.reviewCycleId,
+          };
+        }
 
-      const detectedAt = new Date(nowTs);
-      const windowStart = new Date(evalResult.windowStartTs!);
+        // Pre-flight legality check (external-review finding P2-7b): only
+        // reached for a GENUINELY NEW incident (an idempotent re-run of an
+        // already-known breach returns above and never re-attempts the pause
+        // transition at all — matching this function's pre-existing
+        // idempotency contract). Skip — never even attempt — a breaching
+        // candidate whose initiative.state no longer permits `system` to
+        // `pause` (e.g. it was already manually paused/retired/opened for
+        // re-review out of band since the candidate scan above ran).
+        // Nothing has been written yet at this point, so throwing here is
+        // equivalent to a clean skip: the transaction rolls back with no
+        // side effects, and the per-candidate try/catch below records it in
+        // `errors` instead of aborting the whole run.
+        if (!isPauseLegalForSystem(initiative.state as LifecycleState)) {
+          throw new Error(
+            `initiative ${initiative.id} is in state '${initiative.state}', which does not permit 'system' to pause; skipping this breach candidate (identityKey ${evalResult.identityKey}).`,
+          );
+        }
 
-      // 1. Pause the deployment + initiative. `transition()` only permits
-      // 'admin' or 'system' to pause/open_reassessment (lifecycle/transitions.ts),
-      // but `runMonitor` itself can be triggered by any session role (task
-      // brief: "POST /api/monitor/run — session, any role"). The lifecycle
-      // authority is always the automated monitor (`system`), matching
-      // initiative-service.ts's established pattern (e.g. `triage()`
-      // defaults to SYSTEM_ACTOR for its own system-authority sub-steps);
-      // the *triggering* `actor` passed into `runMonitor` is preserved in
-      // the incident's audit metadata below for traceability, never used to
-      // satisfy the transition's role check.
-      const reason = `Q-01 eval-quality breach: ${def.observationKind ?? "eval_hallucination"} exceeded threshold ${threshold} for ${control.sustainedWindow} consecutive observations starting ${windowStart.toISOString()}.`;
+        const detectedAt = new Date(nowTs);
+        const windowStart = new Date(evalResult.windowStartTs!);
 
-      const depPauseResult = transition(
-        initiative.state as LifecycleState,
-        "pause",
-        SYSTEM_ACTOR,
-        { ts: nowTs, reason },
-      );
-      await tx
-        .update(initiatives)
-        .set({ state: depPauseResult.after, updatedAt: new Date(nowTs) })
-        .where(eq(initiatives.id, initiative.id));
-      await insertAuditEvent(
-        tx,
-        initiative.id,
-        depPauseResult.auditEvent,
-        `Deployment ${deployment.id} paused automatically: ${reason}`,
-        {
+        // 1. Pause the deployment + initiative. `transition()` only permits
+        // 'admin' or 'system' to pause/open_reassessment (lifecycle/transitions.ts),
+        // but `runMonitor` itself can be triggered by any session role (task
+        // brief: "POST /api/monitor/run — session, any role"). The lifecycle
+        // authority is always the automated monitor (`system`), matching
+        // initiative-service.ts's established pattern (e.g. `triage()`
+        // defaults to SYSTEM_ACTOR for its own system-authority sub-steps);
+        // the *triggering* `actor` passed into `runMonitor` is preserved in
+        // the incident's audit metadata below for traceability, never used to
+        // satisfy the transition's role check.
+        const reason = `Q-01 eval-quality breach: ${def.observationKind ?? "eval_hallucination"} exceeded threshold ${threshold} for ${control.sustainedWindow} consecutive observations starting ${windowStart.toISOString()}.`;
+
+        const depPauseResult = transition(
+          initiative.state as LifecycleState,
+          "pause",
+          SYSTEM_ACTOR,
+          { ts: nowTs, reason },
+        );
+        // Compare-and-set (external-review finding P2-5b): only advance the
+        // initiative's state if it is STILL the state this candidate's scan
+        // observed (`initiative.state`) — mirrors initiative-service.ts's
+        // decide()/signReview() and admin-service.ts's pauseDeployment. On a
+        // 0-row result, the initiative changed concurrently since the
+        // candidate scan; treat it as THIS candidate's failure (caught below,
+        // recorded in `errors`) rather than corrupting/aborting the run.
+        const pausedInitiative = await tx
+          .update(initiatives)
+          .set({ state: depPauseResult.after, updatedAt: new Date(nowTs) })
+          .where(and(eq(initiatives.id, initiative.id), eq(initiatives.state, initiative.state)))
+          .returning();
+        if (pausedInitiative.length === 0) {
+          throw new ConflictError(
+            `initiative ${initiative.id} changed concurrently (expected state '${initiative.state}')`,
+          );
+        }
+        await insertAuditEvent(
+          tx,
+          initiative.id,
+          depPauseResult.auditEvent,
+          `Deployment ${deployment.id} paused automatically: ${reason}`,
+          {
+            deploymentId: deployment.id,
+            controlId: RUNTIME_CONTROL_ID,
+            identityKey: evalResult.identityKey,
+            triggeredBy: { id: actor.id, role: actor.role },
+          },
+        );
+        await tx
+          .update(deploymentVersions)
+          .set({ status: "paused", pausedAt: new Date(nowTs) })
+          .where(eq(deploymentVersions.id, deployment.id));
+
+        // 2. Open reassessment review cycle (paused -> re_review).
+        const reassessResult = transition(
+          depPauseResult.after,
+          "open_reassessment",
+          SYSTEM_ACTOR,
+          { ts: nowTs },
+        );
+        await tx
+          .update(initiatives)
+          .set({ state: reassessResult.after, updatedAt: new Date(nowTs) })
+          .where(eq(initiatives.id, initiative.id));
+
+        const raRows = await tx
+          .select()
+          .from(riskAssessments)
+          .where(eq(riskAssessments.initiativeId, initiative.id));
+        const latestRa = raRows.slice().sort((a, b) => b.version - a.version)[0];
+
+        // FK hazard guard (external-review finding P2-9): review_cycles.risk_assessment_id
+        // is NOT NULL FK'd to risk_assessments.id — a deployed initiative with
+        // no risk assessment row (should not happen in practice, but is not
+        // structurally prevented) must never silently insert "" and fail with
+        // an opaque FK violation mid-transaction. Fail loudly with a
+        // descriptive error instead; caught by the per-candidate try/catch
+        // above and recorded in `errors`, so the rest of the run proceeds.
+        if (!latestRa) {
+          throw new Error(
+            `initiative ${initiative.id} (deployment ${deployment.id}) has a Q-01 breach but no risk assessment on file; cannot open a reassessment review cycle`,
+          );
+        }
+
+        const reviewCycleId = `cycle-${randomUUID()}`;
+        await tx.insert(reviewCycles).values({
+          id: reviewCycleId,
+          initiativeId: initiative.id,
+          kind: "reassessment",
+          riskAssessmentId: latestRa.id,
+          openedAt: new Date(nowTs),
+          closedAt: null,
+          incidentId: null, // set below once the incident id is known
+        });
+        await insertAuditEvent(
+          tx,
+          initiative.id,
+          reassessResult.auditEvent,
+          `Reassessment review cycle ${reviewCycleId} opened for control ${RUNTIME_CONTROL_ID} breach.`,
+          { reviewCycleId, controlId: RUNTIME_CONTROL_ID },
+        );
+
+        // 3. Incident summary narration (deterministic detection already
+        // decided above; the agent only narrates it).
+        const domain = (def.domain === "runtime" ? "responsible-ai" : def.domain) as GovernanceDomain;
+        const incidentSummaryMd = await generateIncidentSummary({
+          controlId: RUNTIME_CONTROL_ID,
+          initiativeId: initiative.id,
+          domain,
+        });
+
+        // 4. Incident row (idempotency anchor).
+        const incidentId = `incident-${randomUUID()}`;
+        await tx.insert(incidents).values({
+          id: incidentId,
           deploymentId: deployment.id,
           controlId: RUNTIME_CONTROL_ID,
-          identityKey: evalResult.identityKey,
-          triggeredBy: { id: actor.id, role: actor.role },
-        },
-      );
-      await tx
-        .update(deploymentVersions)
-        .set({ status: "paused", pausedAt: new Date(nowTs) })
-        .where(eq(deploymentVersions.id, deployment.id));
+          windowStart,
+          identityKey: evalResult.identityKey!,
+          detectedAt,
+          reviewCycleId,
+          resolvedAt: null,
+        });
+        await tx
+          .update(reviewCycles)
+          .set({ incidentId })
+          .where(eq(reviewCycles.id, reviewCycleId));
+        await tx
+          .update(effectiveControls)
+          .set({ status: "breached" })
+          .where(eq(effectiveControls.id, ec.id));
 
-      // 2. Open reassessment review cycle (paused -> re_review).
-      const reassessResult = transition(
-        depPauseResult.after,
-        "open_reassessment",
-        SYSTEM_ACTOR,
-        { ts: nowTs },
-      );
-      await tx
-        .update(initiatives)
-        .set({ state: reassessResult.after, updatedAt: new Date(nowTs) })
-        .where(eq(initiatives.id, initiative.id));
+        await tx.insert(auditEvents).values({
+          id: `evt-${randomUUID()}`,
+          initiativeId: initiative.id,
+          ts: detectedAt,
+          actor: actor.id,
+          actorRole: actor.role,
+          action: "incident_recorded",
+          detail: incidentSummaryMd,
+          before: null,
+          after: null,
+          metadata: {
+            incidentId,
+            deploymentId: deployment.id,
+            controlId: RUNTIME_CONTROL_ID,
+            identityKey: evalResult.identityKey,
+            windowStartTs: evalResult.windowStartTs,
+          },
+        });
 
-      const raRows = await tx
-        .select()
-        .from(riskAssessments)
-        .where(eq(riskAssessments.initiativeId, initiative.id));
-      const latestRa = raRows.slice().sort((a, b) => b.version - a.version)[0];
-
-      const reviewCycleId = `cycle-${randomUUID()}`;
-      await tx.insert(reviewCycles).values({
-        id: reviewCycleId,
-        initiativeId: initiative.id,
-        kind: "reassessment",
-        riskAssessmentId: latestRa?.id ?? "",
-        openedAt: new Date(nowTs),
-        closedAt: null,
-        incidentId: null, // set below once the incident id is known
-      });
-      await insertAuditEvent(
-        tx,
-        initiative.id,
-        reassessResult.auditEvent,
-        `Reassessment review cycle ${reviewCycleId} opened for control ${RUNTIME_CONTROL_ID} breach.`,
-        { reviewCycleId, controlId: RUNTIME_CONTROL_ID },
-      );
-
-      // 3. Incident summary narration (deterministic detection already
-      // decided above; the agent only narrates it).
-      const domain = (def.domain === "runtime" ? "responsible-ai" : def.domain) as GovernanceDomain;
-      const incidentSummaryMd = await generateIncidentSummary({
-        controlId: RUNTIME_CONTROL_ID,
-        initiativeId: initiative.id,
-        domain,
+        return { isNew: true, incidentId, reviewCycleId };
       });
 
-      // 4. Incident row (idempotency anchor).
-      const incidentId = `incident-${randomUUID()}`;
-      await tx.insert(incidents).values({
-        id: incidentId,
+      if (outcome.isNew) incidentsCreated += 1;
+      else alreadyKnown += 1;
+
+      breaches.push({
+        initiativeId: initiative.id,
         deploymentId: deployment.id,
         controlId: RUNTIME_CONTROL_ID,
-        windowStart,
-        identityKey: evalResult.identityKey!,
-        detectedAt,
-        reviewCycleId,
-        resolvedAt: null,
+        windowStartTs: evalResult.windowStartTs,
+        identityKey: evalResult.identityKey,
+        threshold,
+        breachingValues: evalResult.breachingObservations.map((o) => o.value),
+        isNew: outcome.isNew,
+        incidentId: outcome.incidentId,
+        reviewCycleId: outcome.reviewCycleId,
       });
-      await tx
-        .update(reviewCycles)
-        .set({ incidentId })
-        .where(eq(reviewCycles.id, reviewCycleId));
-      await tx
-        .update(effectiveControls)
-        .set({ status: "breached" })
-        .where(eq(effectiveControls.id, ec.id));
-
-      await tx.insert(auditEvents).values({
-        id: `evt-${randomUUID()}`,
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      // P1 fix (external-review — a failed detection pass rendered
+      // identically to a clean run): a real deployment must leave a trace
+      // in the server logs even when nothing else observes this run.
+      console.error(
+        `[monitor] breach detected but NOT persisted for initiative=${initiative.id} deployment=${deployment.id} identityKey=${evalResult.identityKey}: ${message}`,
+      );
+      errors.push({
         initiativeId: initiative.id,
-        ts: detectedAt,
-        actor: actor.id,
-        actorRole: actor.role,
-        action: "incident_recorded",
-        detail: incidentSummaryMd,
-        before: null,
-        after: null,
-        metadata: {
-          incidentId,
-          deploymentId: deployment.id,
-          controlId: RUNTIME_CONTROL_ID,
-          identityKey: evalResult.identityKey,
-          windowStartTs: evalResult.windowStartTs,
-        },
+        deploymentId: deployment.id,
+        message,
       });
-
-      return { isNew: true, incidentId, reviewCycleId };
-    });
-
-    if (outcome.isNew) incidentsCreated += 1;
-    else alreadyKnown += 1;
-
-    breaches.push({
-      initiativeId: initiative.id,
-      deploymentId: deployment.id,
-      controlId: RUNTIME_CONTROL_ID,
-      windowStartTs: evalResult.windowStartTs,
-      identityKey: evalResult.identityKey,
-      threshold,
-      breachingValues: evalResult.breachingObservations.map((o) => o.value),
-      isNew: outcome.isNew,
-      incidentId: outcome.incidentId,
-      reviewCycleId: outcome.reviewCycleId,
-    });
+      // Make detection visible even though persistence failed: this breach
+      // WAS detected (evalResult.breached above) — record it in `breaches`
+      // with `failed: true` rather than silently dropping it. Not counted
+      // in `incidentsCreated` below, since nothing was actually persisted.
+      breaches.push({
+        initiativeId: initiative.id,
+        deploymentId: deployment.id,
+        controlId: RUNTIME_CONTROL_ID,
+        windowStartTs: evalResult.windowStartTs,
+        identityKey: evalResult.identityKey,
+        threshold,
+        breachingValues: evalResult.breachingObservations.map((o) => o.value),
+        isNew: false,
+        incidentId: "",
+        reviewCycleId: null,
+        failed: true,
+      });
+    }
   }
 
-  return { evaluated, breaches, incidentsCreated, alreadyKnown };
+  return { evaluated, breaches, incidentsCreated, alreadyKnown, errors };
 }
 
 /* -------------------------------------------------------------------------

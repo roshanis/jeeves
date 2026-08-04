@@ -1,4 +1,4 @@
-import { Badge } from "@/components/ui/badge";
+import { FlaskConical, Plug } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 /**
@@ -19,8 +19,14 @@ export function SyntheticDataLabel({
   return (
     <div className={cn("space-y-2", className)}>
       <div className="flex flex-wrap items-center gap-2">
-        <Badge variant="secondary">Synthetic data — demo</Badge>
-        <Badge variant="outline">Arize: not connected</Badge>
+        <span className="inline-flex h-5 items-center gap-1.5 rounded-md border border-dashed border-border px-2 text-[11px] font-medium text-muted-foreground">
+          <FlaskConical className="size-3 shrink-0" aria-hidden />
+          Synthetic data — demo
+        </span>
+        <span className="inline-flex h-5 items-center gap-1.5 rounded-md border border-dashed border-border px-2 text-[11px] font-medium text-muted-foreground">
+          <Plug className="size-3 shrink-0" aria-hidden />
+          Arize: not connected
+        </span>
       </div>
       {children}
     </div>

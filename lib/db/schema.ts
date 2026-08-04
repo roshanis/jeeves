@@ -348,6 +348,11 @@ export const sessions = pgTable("sessions", {
  * partial unique indexes (migration 0007) are the DB-level backstop for the
  * app-layer active-exception check: at most one 'requested' AND at most one
  * 'approved' row per effective_control_id at a time.
+ *
+ * Review finding P2-8 (status-integrity): `status_at_request` (migration
+ * 0008) snapshots the linked effective control's status when the exception
+ * was requested, so a terminal transition that leaves no other active
+ * exception can restore that prior status instead of hardcoding 'overdue'.
  * ---------------------------------------------------------------------- */
 export const controlExceptions = pgTable(
   "control_exceptions",
@@ -358,6 +363,14 @@ export const controlExceptions = pgTable(
     initiativeId: text("initiative_id"),
     // 'requested' | 'approved' | 'rejected' | 'revoked' | 'expired' | 'superseded'
     status: text("status").notNull(),
+    // Snapshot of the linked effective control's status at the moment this
+    // exception was requested (P2-8 fix, migration 0008). Nullable: rows
+    // written before this column existed have no recorded value.
+    // `recomputeControlStatus` uses it to RESTORE the control's prior status
+    // on a terminal transition that leaves no other active exception, instead
+    // of unconditionally forcing 'overdue' — see
+    // lib/services/exception-service.ts.
+    statusAtRequest: text("status_at_request"),
     reason: text("reason").notNull(),
     requestedBy: text("requested_by").notNull(),
     requestedAt: timestamp("requested_at", { withTimezone: true }).notNull(),

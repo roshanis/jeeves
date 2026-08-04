@@ -2375,6 +2375,11 @@ export async function seedDatabase(db: Db): Promise<RowCounts> {
       decisionReason: null,
       expiresAt: null,
       supersedesId: null,
+      // The R-01 gate control was 'overdue' (semi-annual bias-audit cadence
+      // lapsed) immediately before this exception was requested — the only
+      // status `requestException`'s P2-8 gate would have allowed (migration
+      // 0008 / lib/services/exception-service.ts).
+      statusAtRequest: "overdue",
       createdAt: dateAt(-30),
     });
     // No telemetry for #11 — not in seed-spec §4's series enumeration.

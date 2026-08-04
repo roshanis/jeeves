@@ -39,24 +39,22 @@ export function DecisionsTab({
   return (
     <div className="space-y-3" data-slot="decisions-tab">
       {decisions.map((decision, i) => (
-        <Card key={i}>
-          <CardHeader className="flex-row items-center justify-between gap-2">
+        <Card key={i} className="card-quiet overflow-hidden">
+          <CardHeader className="flex-row items-center justify-between gap-2 border-b py-2.5">
             <CardTitle className="flex items-center gap-2 text-sm">
               <Badge variant={DECISION_VARIANT[decision.type]}>
                 {DECISION_LABEL[decision.type]}
               </Badge>
-              <span className="text-xs font-normal text-muted-foreground">
+              <span className="font-mono text-xs font-normal tabular-nums text-muted-foreground">
                 {decision.at.slice(0, 10)}
               </span>
             </CardTitle>
             <AccountableApproverChip name={decision.approver} />
           </CardHeader>
-          <CardContent className="space-y-3">
+          <CardContent className="space-y-3 pt-4">
             {decision.conditions.length > 0 ? (
               <div className="space-y-1.5">
-                <p className="text-xs font-medium uppercase text-muted-foreground">
-                  Conditions
-                </p>
+                <p className="kicker">Conditions</p>
                 <ul className="space-y-1">
                   {decision.conditions.map((c) => (
                     <li key={c.controlId} className="flex items-baseline gap-2 text-sm">
@@ -71,12 +69,10 @@ export function DecisionsTab({
             ) : null}
             {decision.citations.length > 0 ? (
               <div className="space-y-1.5">
-                <p className="text-xs font-medium uppercase text-muted-foreground">
-                  Policy citations
-                </p>
+                <p className="kicker">Policy citations</p>
                 <div className="flex flex-wrap gap-1.5">
                   {decision.citations.map((c) => (
-                    <Badge key={c} variant="outline">
+                    <Badge key={c} variant="outline" className="font-mono text-[11px]">
                       {c}
                     </Badge>
                   ))}

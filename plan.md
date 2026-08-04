@@ -98,6 +98,8 @@ Codex: P1 domain model/seed, P2 loop, P3 controls engine. Sonnet: UI pages/chart
 
 Conversational intake chat · free-form ask-the-auditor NL chat · real Arize Phoenix/AX integration via OTel · interactive RL training panels · GPU quota controls · cron-scheduled monitoring · ServiceNow/Ariba integration stubs · real auth/RBAC. (All 8 domains live — delivered, M2; no longer deferred.)
 
+⚠ **Amendment (2026-08-01):** add **draft-run workflow cancellation** to this backlog — the M2 durable fan-out (§13c) never implemented it; `WorkflowPort.cancel` remains a type-level stub in `tests/ports.test.ts` only, with no cancel endpoint or UI action.
+
 ## 12. Owner decisions needed at GO
 
 1. **Confirm the three-day cut** (this plan) — or keep v1's full breadth and extend the budget to ~1–2 weeks.
@@ -135,6 +137,7 @@ Owner nuance (Claude judgement): this is a **synthetic-data, read-only-public / 
 ### 13c. Status snapshot (2026-07-13, "complete M2–M5" pass)
 
 - **M2 — DONE.** Console, case-file record + workbench, all-8 durable fan-out, both chats hardened, all-8 honesty (golden path). *Open:* one live-provider smoke (manual — unblocked by adding `OPENAI_API_KEY`).
+  - ⚠ **Amendment (2026-08-01):** "durable fan-out" here is **durable-lite**, not the full 13b bullet — delivered are per-domain state persisted in `review_decisions` (resumable/idempotent by re-invocation), per-domain retry and failure visibility, and atomic budget reservation. **Cancellation was never implemented** — no cancel endpoint, no UI action; `WorkflowPort.cancel` exists only as a type-level stub in `tests/ports.test.ts`. Moved to §11's deferred backlog below.
 - **M2.5 — DONE (core) + hardened.** Pooled driver, DB sessions + atomic budget, per-browser workspace isolation, ownership + reviewer-domain authz, **required-review completeness gate** (`approved`⇒all signed / `conditionally_approved`⇒all drafted), 8 accountable reviewers, security headers **+ CSP**, guarded seeding. *Open:* durable/shared rate limiting (accepted per-instance demo posture); the isolated Vercel-preview two-session verification (needs a human deploy).
 - **M3 — DONE.** Authenticated idempotent **scheduled monitoring** (`/api/cron/monitor` + vercel.json), honest env-gated **telemetry connector** (health/last-sync) + **synthetic OTel traces**, **cost/token-budget** + **GPU-quota** panels, **promotion view extensions** (history / eval comparison / rollback).
 - **M4 — DONE (core).** Full **control-catalog** fields + filtering, **control-exception workflow** (request/approve/reject/revoke/renew/expire) with SoD + audit + UI, **demo reset ritual** (`npm run reset:demo`). *Open:* a formal security-reviewer + accessibility/browser pass; **human-approved production promotion** (by design — a human gates prod).

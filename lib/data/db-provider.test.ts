@@ -502,13 +502,13 @@ describe("lib/data/db-provider", () => {
       await setEvalThreshold(
         db,
         { id: "ray-chen", role: "admin" },
+        WS_A,
         {
           controlId: "Q-01",
           initiativeId: "init-ws-alpha",
           newValue: 0.061,
           reason: "workspace-alpha-private-threshold",
         },
-        WS_A,
       );
     });
 

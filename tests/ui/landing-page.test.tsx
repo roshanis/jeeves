@@ -59,4 +59,27 @@ describe("LandingPage", () => {
     const { getByText } = render(<LandingPage />);
     expect(getByText("Synthetic data — demo")).toBeDefined();
   });
+
+  // WCAG 1.4.3 fix (2026-08-02): this caption and the stat-tile kickers
+  // used text-sidebar-foreground/50 and /55 — both measured under 4.5:1
+  // against --sidebar. Both now use the dedicated --sidebar-foreground-muted
+  // token (5.52:1 light / 5.94:1 dark) — see app/globals.css.
+  it("uses the muted-foreground token (not a low-contrast alpha) for the synthetic-data caption and stat kickers", () => {
+    const { getByText, getAllByText } = render(<LandingPage />);
+
+    const caption = getByText("Synthetic data — demo");
+    expect(caption.className).toContain("text-sidebar-foreground-muted");
+    expect(caption.className).not.toContain("text-sidebar-foreground/50");
+
+    const kicker = getAllByText("seeded initiatives")[0];
+    expect(kicker.className).toContain("text-sidebar-foreground-muted");
+    expect(kicker.className).not.toContain("text-sidebar-foreground/55");
+  });
+
+  it("renders the governance loop schematic with an accessible title", () => {
+    const { getByRole } = render(<LandingPage />);
+    const diagram = getByRole("img", { name: /governance loop diagram/i });
+    expect(diagram).toBeDefined();
+    expect(diagram.tagName.toLowerCase()).toBe("svg");
+  });
 });

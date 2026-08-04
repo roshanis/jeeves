@@ -15,7 +15,10 @@
  * 200:   SetEvalThresholdResult
  * 401/429/400: as other mutating routes.
  * 403:   { error: string }  (non-admin actor)
- * 404:   { error: string }  (unknown control/initiative/deployment/effective control)
+ * 404:   { error: string }  (unknown control/initiative/deployment/effective
+ *        control; also a project-override targeting a workspace-tagged
+ *        initiative belonging to a DIFFERENT workspace than this session's —
+ *        same shape, no existence leak; P1 fix)
  */
 import { z } from "zod";
 import { getDb } from "@/lib/db/client";
@@ -63,18 +66,13 @@ export async function POST(req: Request): Promise<Response> {
   const db = getDb();
 
   try {
-    const result = await setEvalThreshold(
-      db,
-      guard.actor,
-      {
-        controlId: parsed.data.controlId,
-        initiativeId: parsed.data.initiativeId ?? null,
-        tier: parsed.data.tier,
-        newValue: parsed.data.value,
-        reason: parsed.data.reason,
-      },
-      guard.workspaceId,
-    );
+    const result = await setEvalThreshold(db, guard.actor, guard.workspaceId, {
+      controlId: parsed.data.controlId,
+      initiativeId: parsed.data.initiativeId ?? null,
+      tier: parsed.data.tier,
+      newValue: parsed.data.value,
+      reason: parsed.data.reason,
+    });
     return Response.json(result, { status: 200 });
   } catch (err) {
     if (err instanceof ForbiddenError) {

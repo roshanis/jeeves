@@ -531,9 +531,12 @@ exists for pure unit tests; production/dev-with-Postgres always uses
 ### 6.4 Requester ownership + reviewer-domain authorization
 
 `lib/services/actors.ts` holds the server-side actor directory and a
-`REVIEWER_DOMAIN` map (each of the four reviewer personas owns exactly one
-domain: Elena Vasquez → clinical-safety, Marcus Webb → privacy-hipaa, Sofia
-Grant → responsible-ai, James Liu → legal). `reviewerDomainFor(actorId)`
+`REVIEWER_DOMAIN` map (each of the **eight** reviewer personas owns exactly
+one domain: Elena Vasquez → clinical-safety, Marcus Webb → privacy-hipaa,
+Sofia Grant → responsible-ai, James Liu → legal, Devon Clarke → security,
+Wei Zhang → tech-architecture, Grace Kim → data-governance, Tom Brennan →
+procurement — the last four landed with the all-8-domain M2 breadth work;
+see the 2026-08-01 addendum at the end of this doc). `reviewerDomainFor(actorId)`
 backs a check in the sign/return routes that rejects (403) a reviewer
 attempting to act on a domain that isn't theirs. Similarly,
 `POST /api/initiatives/[id]/submit` checks the acting actor's directory
@@ -578,9 +581,15 @@ switches within one browser:
   `X-Content-Type-Options: nosniff`, `Referrer-Policy:
   strict-origin-when-cross-origin`, `Strict-Transport-Security` (2yr,
   includeSubDomains, preload), `Permissions-Policy` (camera/mic/geo all
-  denied), `X-DNS-Prefetch-Control: off`. Deliberately **no CSP yet** —
-  documented as a follow-up requiring a careful nonce/hash rollout so it
-  doesn't break Recharts or Next's inline styles/scripts.
+  denied), `X-DNS-Prefetch-Control: off`, and — shipped 2026-07-13 — a
+  **Content-Security-Policy** pinning every fetchable resource to
+  same-origin (blocks external script/style/font/img/connect, framing,
+  object/embed, base-uri hijack, cross-origin form posts). `script-src`/
+  `style-src` retain `'unsafe-inline'` as a documented pragmatic tradeoff:
+  Next's hydration bootstrap and Recharts inject inline scripts/styles
+  without a nonce, and there's no nonce/hash rollout in this demo, so a
+  fully strict-dynamic CSP remains a follow-up — but the external-injection
+  surface a missing CSP would leave open is closed.
 - **Passcode verification** (`lib/security/passcode.ts`) uses
   `node:crypto.timingSafeEqual` over length-normalized buffers so response
   timing doesn't leak how close a guess's length is to correct; an empty
@@ -617,15 +626,11 @@ switches within one browser:
   pooled `@neondatabase/serverless` WebSocket `Pool`, which supports real
   interactive `BEGIN`/`COMMIT`/`ROLLBACK` transactions (Codex,
   `agents-build-log.md` 2026-07-11T14:41Z, superseding the earlier
-  `neon-http` stub-transaction gap recorded in `docs/deploy.md` — that doc
-  is stale on this point). `docs/deploy.md`'s "Neon HTTP transactions are
-  not real transactions" caveat should be read as historical, not current.
-  **Note for reviewers:** the top-of-file comment in
-  `lib/services/initiative-service.ts` still describes the old
-  `drizzle-orm/neon-http` stub-transaction behavior verbatim — that comment
-  itself is now stale code-side documentation drift (not just a stale
-  standalone doc) and should be updated to reflect the `neon-serverless`
-  swap the next time that file is touched.
+  `neon-http` stub-transaction gap once recorded in `docs/deploy.md`).
+  Both former stale spots were corrected on 2026-08-01: `docs/deploy.md`'s
+  caveat (a) now records the swap as resolved, and the top-of-file comment
+  in `lib/services/initiative-service.ts` was rewritten to describe the
+  `neon-serverless` driver's real transactions.
 
 ---
 
@@ -699,12 +704,18 @@ candid on purpose:
 4. **`lib/data/index.ts`'s lazy `require()` is Turbopack-incompatible** —
    worked around in `app/_lib/data-provider.ts` (§4.3) rather than fixed at
    the source; the upstream cleanup is still pending.
-5. **No Content-Security-Policy** — deliberately deferred pending a
-   nonce/hash rollout that won't break Recharts/Next inline scripts (§6.6).
-6. **M4 hardening is only partly done** — the control-catalog page exists,
-   but exception request/approve/expire/renew/reject/revoke workflows and a
-   final full security/accessibility sweep remain open per the plan.md §13b
-   milestone map.
+5. **CSP ships, but without a nonce/hash rollout** — a Content-Security-
+   Policy has been live since 2026-07-13 (§6.6), but `script-src`/`style-src`
+   still carry `'unsafe-inline'` because Next's hydration bootstrap and
+   Recharts inject inline scripts/styles without a nonce; a strict-dynamic
+   CSP with nonces remains the follow-up.
+6. **M4 hardening's control-exception workflow shipped** — the
+   control-catalog page and the full request/approve/expire/renew/reject/
+   revoke exception workflow (with SoD + audit linkage) both landed
+   2026-07-13. What remains open per plan.md §13c is a *formal*
+   security-reviewer + accessibility/browser sweep (distinct from the ad hoc
+   security passes already recorded in this doc and the build log) and
+   human-approved production promotion.
 7. **Workspace isolation is a foundation, not a hard boundary** — `NULL`
    `workspace_id` rows (all seeded data) remain visible to every visitor by
    design; the isolation added in M2.5 inc.2a/2b scopes *live-created* rows
@@ -713,7 +724,63 @@ candid on purpose:
    deployment.
 8. **`docs/deploy.md` and `docs/MORNING-REPORT.md` are snapshots, not
    living docs** — both were written mid-build and are stale on specifics
-   (e.g. `docs/deploy.md` still describes the pre-M2.5 `neon-http`
-   transaction gap and a 4-domain live loop; `docs/MORNING-REPORT.md`
+   (`docs/deploy.md`'s driver/session/budget caveats were corrected
+   2026-08-01, but it may still be stale elsewhere; `docs/MORNING-REPORT.md`
    predates M2.5 entirely). `agents-build-log.md`'s later entries and the
-   current source are authoritative over both.
+   current source are authoritative over both. *This document itself
+   predates two later hardening passes — see the addendum below.*
+
+---
+
+## Addendum — 2026-08-01 status
+
+This section records what changed after this document's body was written,
+without rewriting the sections above. Where the two disagree, this addendum
+and the current source win (per the note at the top of this doc).
+
+- **DB driver is `neon-serverless`, not `neon-http`** — §3/§6.7 already
+  describe this correctly (`lib/db/client.ts` uses `drizzle-orm/neon-serverless`
+  over a pooled `@neondatabase/serverless` WebSocket `Pool`, landed
+  2026-07-11). The two places that still described the older `neon-http`
+  stub-transaction behavior — `docs/deploy.md` caveats (a)/(b) and the
+  top-of-file comment in `lib/services/initiative-service.ts` — were both
+  corrected on 2026-08-01 (deploy.md's caveat (b) also now reflects the
+  M2.5 DB-backed sessions + atomic budget; only rate limiting remains
+  per-instance, the accepted posture).
+- **Content-Security-Policy shipped 2026-07-13** (`next.config.ts`) — see
+  the corrected §6.6 and §8.5 above.
+- **Control-exception workflow shipped 2026-07-13**
+  (`lib/services/exception-service.ts`) — a six-transition lifecycle
+  (`request → approve | reject`; `approved → revoke | renew | (auto)
+  expire`) enforcing separation of duties (only an `approver`/`admin` may
+  decide or revoke, never the requester of that exception) with an
+  `audit_events` row on every transition, plus DB-level partial unique
+  indexes (migration `0007`) backstopping at-most-one-active-exception per
+  control. See the corrected §8.6 above.
+- **2026-07-25 security-hardening pass** (commit `ea4de31`, responding to a
+  Codex "NOT READY for public writable deployment" review): mutations now
+  enforce the initiative's `workspace_id` match **inside the transaction**
+  (a mismatch 404s rather than leaking existence); the `jeeves_workspace`
+  cookie is now HMAC-signed (`lib/security/workspace-cookie.ts`) and never
+  trusted unsigned — this tightens §6.5's description of the cookie as a
+  pure "read-scoping hint," since a session's `workspaceId` now also gates
+  mutations, not just reads; `decide`/`sign`/`return` are now
+  compare-and-set, raising `ConflictError` → HTTP 409 on a stale write
+  instead of silently overwriting a concurrent transition; and reads
+  (metrics/controls/audit/incidents/promotions/draft-run progress/
+  exceptions, all server pages, and the auditor-chat grounding) now scope to
+  the viewer — anonymous visitors see seeded-only data, a session sees
+  seeded + its own workspace.
+- **2026-08-01 P1 fixes** (commits `6fe98da`, `f5d54f5`, `a2842c3`, from the
+  ultraplan-review "REQUEST REVISIONS" pass): draft-run persistence is now
+  compare-and-set so a retried/resumed draft can no longer overwrite a
+  reviewer's concurrent signature; `promoteCheckpoint` now enforces
+  workspace authorization + compare-and-set the same way other mutations
+  do; the intake chat's `partialPayload` now has a size cap, and its token
+  budget reservation now scales with actual input size instead of a flat
+  estimate.
+- **Persona count is 13, not 9** — `lib/services/actors.ts` defines 2
+  requesters, 8 domain reviewers (adds Devon Clarke/Security, Wei
+  Zhang/Tech Architecture, Grace Kim/Data Governance, Tom Brennan/
+  Procurement to the original 4), 1 approver, 1 admin, and 1 program-office
+  persona. See the corrected §6.4 above and `README.md`'s persona table.

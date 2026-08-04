@@ -46,8 +46,13 @@ async function issueSessionFor(personaKey: string, ip = "40.40.40.1"): Promise<s
 }
 
 async function anEffectiveControlId(): Promise<string> {
+  // Must be a control the P2-8 eligibility gate accepts: requestException
+  // rejects controls that aren't 'overdue' or 'breached' (see
+  // lib/services/exception-service.ts ELIGIBLE_EXCEPTION_REQUEST_STATUSES),
+  // so grabbing whatever seeded row happens to sort first is not enough.
   const rows = await testDb.select().from(effectiveControls);
-  return rows[0]!.id;
+  const eligible = rows.find((r) => r.status === "overdue" || r.status === "breached");
+  return (eligible ?? rows[0]!).id;
 }
 
 async function request(token: string, effectiveControlId: string, ip: string) {

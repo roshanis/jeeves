@@ -59,13 +59,26 @@
  * retired, matching `operationalDeployment`'s ordering.
  */
 import { randomUUID } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { Db } from "../db/client";
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import type * as schema from "../db/schema";
 import { auditEvents, deploymentVersions, initiatives } from "../db/schema";
 import type { Actor } from "../domain/types";
 import { workspaceMismatch } from "./workspace-guard";
+import { ConflictError } from "./initiative-service";
+
+// Re-exported so route handlers can import every promotion-service error
+// (ForbiddenError/ValidationError/NotFoundError/ConflictError) from this one
+// module, matching this file's existing import surface — see JUDGMENT CALL 2
+// above for why ForbiddenError/ValidationError/NotFoundError are defined
+// fresh here rather than imported; ConflictError is the one exception
+// (security-hardening pass, external-review finding: "promoteCheckpoint
+// lacks workspace authz and CAS"): it is the SAME class initiative-
+// service.ts's decide()/signReview() and exception-service.ts throw, reused
+// (not duplicated) so a single `instanceof ConflictError` works uniformly
+// across every CAS-guarded mutation in the codebase.
+export { ConflictError };
 
 /**
  * requireApproverOrAdminWithReason — SoD guard for `rollbackDeployment` (M3
@@ -265,33 +278,54 @@ export interface PromoteCheckpointResult {
  *     `.consentBasis`, `.reviewedBy`, and `reason` must all be non-empty
  *     (after `.trim()`). Missing/empty fields throw `ValidationError` naming
  *     which field(s) are missing (via its `issues: string[]`).
- *  3. Target existence + state: the `deployment_versions` row named by
- *     `deploymentVersionId` must exist (`NotFoundError` if not) and must
- *     currently have `status === "awaiting_promotion_signoff"`
- *     (`ValidationError` otherwise — covers the idempotent double-promote
- *     case; see file-level "JUDGMENT CALL 3").
- *  4. Supersede: the initiative's current `status === "deployed"` row (if
+ *  3. Target existence: the `deployment_versions` row named by
+ *     `deploymentVersionId` must exist (`NotFoundError` if not).
+ *  4. Workspace authorization (external-review finding: "promoteCheckpoint
+ *     lacks workspace authz and CAS" — unlike `rollbackDeployment`, this
+ *     never received the session workspace, so any authenticated session
+ *     that learned a checkpoint id could promote another workspace's
+ *     checkpoint): the target's owning initiative must be workspace-
+ *     accessible to `sessionWorkspaceId` (`workspaceMismatch`, same rule
+ *     `rollbackDeployment` applies to initiatives). On mismatch, throws the
+ *     SAME `NotFoundError("deploymentVersion", deploymentVersionId)` shape
+ *     as an unknown checkpoint id — never leaks that the checkpoint exists
+ *     in a different workspace. Checked BEFORE the state check below,
+ *     matching `rollbackDeployment`'s "authorization before business-logic
+ *     validation" ordering.
+ *  5. State: the target row must currently have `status ===
+ *     "awaiting_promotion_signoff"` (`ValidationError` otherwise — covers
+ *     the idempotent double-promote case; see file-level "JUDGMENT CALL 3").
+ *  6. Supersede: the initiative's current `status === "deployed"` row (if
  *     any; see file-level "JUDGMENT CALL 4") is flipped to `"retired"` with
- *     `retiredAt` stamped.
- *  5. Promote: the target row is flipped to `status: "deployed"`,
+ *     `retiredAt` stamped — compare-and-set on `status === "deployed"`
+ *     (external-review finding above: the retire/promote updates carried no
+ *     status predicate/rowcount assert, so two concurrent promotes of
+ *     different checkpoints of one initiative could both retire the same
+ *     row and leave TWO `"deployed"` rows). If the CAS update affects 0
+ *     rows — the row changed concurrently since this transaction's read —
+ *     throws `ConflictError` (mapped to HTTP 409 by route handlers), same
+ *     pattern as `initiative-service.ts`'s `decide()`/`signReview()`.
+ *  7. Promote: the target row is flipped to `status: "deployed"`,
  *     `feedbackProvenanceSignedOff: true`, and `deployedAt` re-stamped to
  *     now (keeps `db-provider.ts`'s `operationalDeployment` latest-by-
- *     `deployedAt` ordering correct going forward).
- *  6. Audit, transactionally: two `audit_events` rows are inserted in the
+ *     `deployedAt` ordering correct going forward) — also compare-and-set,
+ *     on `status === "awaiting_promotion_signoff"`, throwing `ConflictError`
+ *     on a 0-row result for the same reason as step 6.
+ *  8. Audit, transactionally: two `audit_events` rows are inserted in the
  *     SAME `db.transaction()` as the status flips — one for the retirement
  *     of the superseded version (`action: "deployment_version_retired"`),
  *     one for the promotion itself (`action: "checkpoint_promoted"`,
  *     `metadata` carrying the full attestation + reason + promoted/
  *     superseded version strings).
- *  7. Returns a `PromoteCheckpointResult`.
+ *  9. Returns a `PromoteCheckpointResult`.
  */
 export async function promoteCheckpoint(
   db: Db,
   deploymentVersionId: string,
   actor: Actor,
+  sessionWorkspaceId: string | null,
   provenanceAttestation: ProvenanceAttestation,
   reason: string,
-  sessionWorkspaceId: string | null = null,
 ): Promise<PromoteCheckpointResult> {
   requireApproverWithAttestation(actor, provenanceAttestation, reason);
 
@@ -303,15 +337,18 @@ export async function promoteCheckpoint(
     const target = targetRows[0];
     if (!target) throw new NotFoundError("deploymentVersion", deploymentVersionId);
 
+    // Workspace authorization (external-review finding: "promoteCheckpoint
+    // lacks workspace authz and CAS") — BEFORE any business-logic
+    // validation, same NotFoundError shape as an unknown checkpoint id on
+    // mismatch (never leaks that the checkpoint exists in a different
+    // workspace). Uses deploymentVersionId (not initiativeId) since that's
+    // the id the caller passed in.
     const initiativeRows = await tx
       .select()
       .from(initiatives)
       .where(eq(initiatives.id, target.initiativeId));
-    const initiative = initiativeRows[0];
-    if (
-      !initiative ||
-      workspaceMismatch(initiative.workspaceId, sessionWorkspaceId)
-    ) {
+    const owningInitiative = initiativeRows[0];
+    if (!owningInitiative || workspaceMismatch(owningInitiative.workspaceId, sessionWorkspaceId)) {
       throw new NotFoundError("deploymentVersion", deploymentVersionId);
     }
 
@@ -332,10 +369,18 @@ export async function promoteCheckpoint(
       .sort((a, b) => b.deployedAt.getTime() - a.deployedAt.getTime())[0];
 
     if (currentDeployed) {
-      await tx
+      // Compare-and-set (external-review finding above): only retire if the
+      // row's status is still what THIS transaction observed it to be.
+      const retired = await tx
         .update(deploymentVersions)
         .set({ status: "retired", retiredAt: new Date(ts) })
-        .where(eq(deploymentVersions.id, currentDeployed.id));
+        .where(and(eq(deploymentVersions.id, currentDeployed.id), eq(deploymentVersions.status, "deployed")))
+        .returning();
+      if (retired.length === 0) {
+        throw new ConflictError(
+          `deployment version ${currentDeployed.id} changed concurrently (expected status 'deployed')`,
+        );
+      }
 
       await insertAuditEvent(
         tx,
@@ -350,10 +395,20 @@ export async function promoteCheckpoint(
       );
     }
 
-    await tx
+    // Compare-and-set (external-review finding above): only promote if the
+    // row's status is still what THIS transaction observed it to be.
+    const promoted = await tx
       .update(deploymentVersions)
       .set({ status: "deployed", feedbackProvenanceSignedOff: true, deployedAt: new Date(ts) })
-      .where(eq(deploymentVersions.id, target.id));
+      .where(
+        and(eq(deploymentVersions.id, target.id), eq(deploymentVersions.status, "awaiting_promotion_signoff")),
+      )
+      .returning();
+    if (promoted.length === 0) {
+      throw new ConflictError(
+        `deployment version ${target.id} changed concurrently (expected status 'awaiting_promotion_signoff')`,
+      );
+    }
 
     await insertAuditEvent(
       tx,
@@ -542,15 +597,34 @@ export async function rollbackDeployment(
 
     const ts = Date.now();
 
-    await tx
+    // Compare-and-set (external-review finding P2-5b, mirroring
+    // promoteCheckpoint's CAS above): only retire the current-deployed row
+    // if its status is still what THIS transaction observed
+    // (`currentDeployed.status`, always 'deployed' per the filter above).
+    const retired = await tx
       .update(deploymentVersions)
       .set({ status: "retired", retiredAt: new Date(ts) })
-      .where(eq(deploymentVersions.id, currentDeployed.id));
+      .where(and(eq(deploymentVersions.id, currentDeployed.id), eq(deploymentVersions.status, currentDeployed.status)))
+      .returning();
+    if (retired.length === 0) {
+      throw new ConflictError(
+        `deployment version ${currentDeployed.id} changed concurrently (expected status '${currentDeployed.status}')`,
+      );
+    }
 
-    await tx
+    // Same CAS discipline for the redeploy target: only flip it if its
+    // status is still what THIS transaction observed (`target.status`,
+    // 'retired' or 'paused' per the validation above).
+    const redeployed = await tx
       .update(deploymentVersions)
       .set({ status: "deployed", deployedAt: new Date(ts), retiredAt: null, pausedAt: null })
-      .where(eq(deploymentVersions.id, target.id));
+      .where(and(eq(deploymentVersions.id, target.id), eq(deploymentVersions.status, target.status)))
+      .returning();
+    if (redeployed.length === 0) {
+      throw new ConflictError(
+        `deployment version ${target.id} changed concurrently (expected status '${target.status}')`,
+      );
+    }
 
     await insertAuditEvent(
       tx,

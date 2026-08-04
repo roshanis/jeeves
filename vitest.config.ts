@@ -16,6 +16,22 @@ export default defineConfig({
   },
   test: {
     environment: "jsdom",
+    // Node >= 25 ships a non-functional `localStorage` global that blocks
+    // jsdom's implementation — see tests/setup/web-storage.ts.
+    setupFiles: ["tests/setup/web-storage.ts"],
+    // Run test FILES sequentially. Most suites spin up their own in-memory
+    // PGlite database in beforeEach; running many files at once puts dozens
+    // of WASM Postgres instances on the same cores, and the setup hooks
+    // start timing out — the suite has repeatedly shown 1-4 spurious
+    // `beforeEach` failures under default parallelism while every affected
+    // file passes in isolation. That made `npm test` unreliable by default
+    // and left `--no-file-parallelism` as tribal knowledge in the build log.
+    // Encode it here so a plain `npm test` (and CI) is deterministic.
+    fileParallelism: false,
+    // PGlite's first-run WASM boot is slow on a cold/loaded machine; the
+    // 10s default hook timeout is the thing that actually trips. Tests
+    // themselves keep the default timeout.
+    hookTimeout: 30_000,
     include: [
       "tests/**/*.test.ts",
       "tests/**/*.test.tsx",

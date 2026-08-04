@@ -31,6 +31,12 @@ import { runMutationGuard } from "@/lib/services/route-guard";
 
 const MAX_MESSAGES = 50;
 const MAX_MESSAGE_CHARS = 4000;
+// Generous cap: the real IntakePayload (lib/intake/types.ts) serializes to
+// ~2-3k chars once fully filled in. 20k leaves ample headroom for an
+// in-progress conversational fill without letting an authenticated
+// requester smuggle a multi-megabyte payload past every other input cap
+// straight into the LLM prompt (JSON.stringify'd by the agent adapter).
+const MAX_PARTIAL_PAYLOAD_CHARS = 20_000;
 
 const messageSchema = z.object({
   role: z.enum(["user", "assistant"]),
@@ -42,8 +48,6 @@ const bodySchema = z.object({
   partialPayload: z.record(z.string(), z.unknown()),
 });
 
-/** Rough token estimate for one intake-interview turn — sizes the budget reservation only. */
-const ESTIMATED_TOKENS = 600;
 const AGENT_TIMEOUT_MS = 10_000;
 
 function statusForFailure(error: PortFailure): number {
@@ -147,13 +151,40 @@ export async function POST(req: Request): Promise<Response> {
         .join("\n")
     : "";
 
-  const bodyText: Record<string, string> = { conversation: flattenedConversation };
+  // `partialPayload` (a `z.record` — see bodySchema below) is otherwise
+  // unbounded and gets JSON.stringify'd straight into the LLM prompt by the
+  // agent adapter, so it's flattened into the guard's bodyText map alongside
+  // `conversation` the same way — mirrors this route's existing
+  // flatten-for-the-guard pattern (see comment above) so an oversized
+  // partialPayload fails the same 400 input-cap check as an oversized
+  // conversation.
+  const partialPayloadRaw = (json as { partialPayload?: unknown })?.partialPayload;
+  const serializedPartialPayload = JSON.stringify(
+    partialPayloadRaw && typeof partialPayloadRaw === "object" ? partialPayloadRaw : {},
+  );
+
+  const bodyText: Record<string, string> = {
+    conversation: flattenedConversation,
+    partialPayload: serializedPartialPayload,
+  };
+
+  // Budget reservation must scale with what we actually send to the
+  // provider: system prompt + completion overhead (600 tokens of headroom)
+  // plus the real conversation/partialPayload text, at the standard ~4
+  // chars-per-token heuristic. A flat estimate would let large-but-legal
+  // inputs (e.g. a full 50-message conversation) blow past the atomic daily
+  // budget's intended bound on real LLM spend.
+  const estimatedTokens =
+    600 + Math.ceil((flattenedConversation.length + serializedPartialPayload.length) / 4);
 
   const guard = await runMutationGuard(req, bodyText, {
-    inputLimits: [{ field: "conversation", maxChars: MAX_MESSAGES * MAX_MESSAGE_CHARS }],
-    inputTotalCap: MAX_MESSAGES * MAX_MESSAGE_CHARS,
+    inputLimits: [
+      { field: "conversation", maxChars: MAX_MESSAGES * MAX_MESSAGE_CHARS },
+      { field: "partialPayload", maxChars: MAX_PARTIAL_PAYLOAD_CHARS },
+    ],
+    inputTotalCap: MAX_MESSAGES * MAX_MESSAGE_CHARS + MAX_PARTIAL_PAYLOAD_CHARS,
     requiresBudget: true,
-    estimatedTokens: ESTIMATED_TOKENS,
+    estimatedTokens,
   });
   if (!guard.ok) {
     return Response.json({ error: guard.failure.message }, { status: guard.failure.status });

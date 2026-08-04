@@ -178,7 +178,7 @@ Each row links to approver decision, control status, and audit events.
 "Jeeves turns AI governance from a once-per-year gate review into a continuous closed-loop: intake → triage (deterministic) → multi-domain review (agent-drafted, human-signed) → conditional approval (named accountable approver) → deployment (versioned, pinned controls) → live monitoring (continuous breach detection) → incident → reassessment. Speed: a Low-tier model approves in hours. Rigor: a Critical model requires eight domain sign-offs and continues under monitoring. Accountability: every decision, every approver, every control status is logged and auditable. We're not replacing your governance; we're making it fast, visible, and defensible."
 
 **Next milestone callout:**
-"The roadmap is ambitious. All eight domains are already drafted live, as you just saw — M2 adds conversational intake on top of that breadth. M3 (following 3 days) brings real Arize/Phoenix feeds and interactive RL promotion. M4 (final hardening) adds the full control catalog UI, exception workflows, and a security-reviewer pass. All synthetic data in this demo — if you move to production, you'd wire your real member data and model systems. But the governance design you see here is the production template."
+"The roadmap has already landed. All eight domains draft live, as you just saw, alongside a conversational intake assistant. The control catalog has a full UI with filtering, and the exception workflow — request, approve, reject, revoke, renew, expire, with separation of duties and full audit linkage — is live too, along with scheduled monitoring and telemetry-connector status panels. What's left is the stuff that stays open by design in any real deployment: real Arize/Phoenix and ServiceNow/Ariba integrations (this demo intentionally never fakes a third-party connection), and a human-approved production promotion. All synthetic data in this demo — if you move to production, you'd wire your real member data and model systems. But the governance design you see here is the production template."
 
 **Anticipated final question:** *"Is this real member data?"*
 
@@ -203,7 +203,7 @@ Each row links to approver decision, control status, and audit events.
 | **Who's accountable?** | Named accountable approver on every approval (Angela Torres in this demo). Audit trail logs every action and actor. |
 | **Can users exploit the fast-lane?** | Only if the policy is wrong. Triage rules are hardcoded and non-negotiable; policies are business-owned and tunable. |
 | **How do you handle continuous redeployment?** | Every model version pins to a governance decision and control manifest. New version = new review cycle. Versioned, locked. |
-| **What's the post-demo roadmap?** | All 8 domains already drafted live today. M2: conversational intake. M3: real LLM observability feeds. M4: full control catalog + hardening. |
+| **What's the post-demo roadmap?** | All 8 domains draft live today, with conversational intake, a full control catalog, and the exception workflow already shipped. What's left is deliberately out of scope for a synthetic demo: real Arize/Phoenix/ServiceNow/Ariba integrations and human-approved production promotion. |
 | **Is the audit query really that simple?** | Yes. Structured query, no SQL, deterministic results, evidence links. Auditors see what they need in seconds. |
 | **Who prevents an admin from loosening controls?** | Audit trail + separation of duties. Admin actions are logged and attributable. Loosening without justification is a compliance finding. |
 

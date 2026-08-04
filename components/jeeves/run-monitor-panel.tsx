@@ -55,6 +55,8 @@ export function RunMonitorPanel({
   const [customTs, setCustomTs] = React.useState("");
   const [pending, setPending] = React.useState(false);
   const [result, setResult] = React.useState<RunMonitorResult | null>(null);
+  const errorCount = result?.errors?.length ?? 0;
+  const hasErrors = errorCount > 0;
 
   const customMs = Date.parse(customTs);
   const customValid = mode !== "custom" || Number.isFinite(customMs);
@@ -67,12 +69,26 @@ export function RunMonitorPanel({
     }
     setPending(true);
     try {
-      const runResult = await runMonitor(
+      const runResult: RunMonitorResult = await runMonitor(
         session.token,
         mode === "custom" ? customMs : undefined,
       );
       setResult(runResult);
-      if (runResult.incidentsCreated > 0) {
+      const failureCount = runResult.errors?.length ?? 0;
+      if (failureCount > 0) {
+        // P1 fix (external-review): a run with per-candidate failures must
+        // never read as a clean pass, even in the toast — some breaches may
+        // have been genuinely DETECTED but not persisted.
+        toast.error(
+          `${failureCount} monitor candidate${failureCount === 1 ? "" : "s"} FAILED to record` +
+            (runResult.incidentsCreated > 0
+              ? ` (${runResult.incidentsCreated} other breach${
+                  runResult.incidentsCreated === 1 ? "" : "es"
+                } still recorded)`
+              : "") +
+            " — see the run summary below and server logs.",
+        );
+      } else if (runResult.incidentsCreated > 0) {
         const breach = runResult.breaches.find((b) => b.isNew);
         toast.success(
           `Breach detected${breach ? ` on ${breach.initiativeId}` : ""} — deployment paused, incident ${
@@ -134,11 +150,42 @@ export function RunMonitorPanel({
       />
 
       {result ? (
-        <p className="text-xs text-muted-foreground" data-slot="monitor-result">
-          Evaluated {result.evaluated} · breaches {result.breaches.length} ·
-          incidents created {result.incidentsCreated} · already known{" "}
-          {result.alreadyKnown}
-        </p>
+        <div className="space-y-2">
+          <p
+            className={
+              hasErrors
+                ? "text-xs tabular-nums font-medium text-status-warning-fg"
+                : "text-xs tabular-nums text-muted-foreground"
+            }
+            data-slot="monitor-result"
+          >
+            Evaluated {result.evaluated} · breaches {result.breaches.length} ·
+            incidents created {result.incidentsCreated} · already known{" "}
+            {result.alreadyKnown}
+            {hasErrors
+              ? ` · ${errorCount} candidate${errorCount === 1 ? "" : "s"} FAILED — not a clean run`
+              : " — all candidates evaluated cleanly"}
+          </p>
+          {hasErrors ? (
+            <div
+              className="space-y-1 rounded-lg border border-status-warning-fg/20 bg-status-warning-bg px-3 py-2 text-xs text-status-warning-fg"
+              data-slot="monitor-errors"
+            >
+              <p className="font-medium">
+                {errorCount} candidate{errorCount === 1 ? "" : "s"} failed to
+                record — a breach may have been detected but not persisted.
+                Check server logs.
+              </p>
+              <ul className="list-disc space-y-0.5 pl-4">
+                {(result.errors ?? []).map((e, i) => (
+                  <li key={`${e.deploymentId}-${i}`}>
+                    {e.initiativeId} ({e.deploymentId}): {e.message}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+        </div>
       ) : null}
     </div>
   );

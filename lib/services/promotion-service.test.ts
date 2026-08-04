@@ -8,7 +8,7 @@
  * lib/services/admin-service.test.ts's direct-DB, no-HTTP test convention.
  */
 import { randomUUID } from "node:crypto";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { createTestDb, closeTestDb, type TestDb } from "../db/test-client";
 import { seedDatabase } from "../../scripts/seed";
@@ -23,6 +23,7 @@ import {
   ForbiddenError,
   ValidationError,
   NotFoundError,
+  ConflictError,
   type ProvenanceAttestation,
 } from "./promotion-service";
 
@@ -87,6 +88,7 @@ describe("lib/services/promotion-service", () => {
         db,
         v21Id,
         APPROVER,
+        null,
         FULL_ATTESTATION,
         "Feedback-provenance reviewed and consent basis confirmed for Q2 2026 batch.",
       );
@@ -125,6 +127,7 @@ describe("lib/services/promotion-service", () => {
           db,
           v21Id,
           APPROVER,
+          null,
           { ...FULL_ATTESTATION, feedbackDataSource: "  " },
           "some reason",
         ),
@@ -135,12 +138,14 @@ describe("lib/services/promotion-service", () => {
       const initiativeId = await paCorrespondenceModelId(db);
       const v21Id = await v21DeploymentId(db, initiativeId);
 
-      await expect(promoteCheckpoint(db, v21Id, APPROVER, FULL_ATTESTATION, "")).rejects.toThrow(ValidationError);
+      await expect(promoteCheckpoint(db, v21Id, APPROVER, null, FULL_ATTESTATION, "")).rejects.toThrow(
+        ValidationError,
+      );
     });
 
     it("throws NotFoundError for an unknown deployment version id", async () => {
       await expect(
-        promoteCheckpoint(db, "dep-does-not-exist", APPROVER, FULL_ATTESTATION, "reason"),
+        promoteCheckpoint(db, "dep-does-not-exist", APPROVER, null, FULL_ATTESTATION, "reason"),
       ).rejects.toThrow(NotFoundError);
     });
   });
@@ -155,13 +160,13 @@ describe("lib/services/promotion-service", () => {
         .where(eq(initiatives.id, initiativeId));
 
       await expect(
-        promoteCheckpoint(db, v21Id, APPROVER, FULL_ATTESTATION, "foreign attempt", "ws-B"),
+        promoteCheckpoint(db, v21Id, APPROVER, "ws-B", FULL_ATTESTATION, "foreign attempt"),
       ).rejects.toThrow(NotFoundError);
       await expect(
-        promoteCheckpoint(db, v21Id, APPROVER, FULL_ATTESTATION, "foreign attempt", "ws-B"),
+        promoteCheckpoint(db, v21Id, APPROVER, "ws-B", FULL_ATTESTATION, "foreign attempt"),
       ).rejects.toThrow(`deploymentVersion not found: ${v21Id}`);
       await expect(
-        promoteCheckpoint(db, v21Id, APPROVER, FULL_ATTESTATION, "owner promotion", "ws-A"),
+        promoteCheckpoint(db, v21Id, APPROVER, "ws-A", FULL_ATTESTATION, "owner promotion"),
       ).resolves.toMatchObject({ promotedDeploymentVersionId: v21Id });
     });
 
@@ -170,7 +175,7 @@ describe("lib/services/promotion-service", () => {
       const v21Id = await v21DeploymentId(db, initiativeId);
 
       await expect(
-        promoteCheckpoint(db, v21Id, APPROVER, FULL_ATTESTATION, "shared checkpoint", "ws-any"),
+        promoteCheckpoint(db, v21Id, APPROVER, "ws-any", FULL_ATTESTATION, "shared checkpoint"),
       ).resolves.toMatchObject({ promotedDeploymentVersionId: v21Id });
     });
   });
@@ -180,14 +185,16 @@ describe("lib/services/promotion-service", () => {
       const initiativeId = await paCorrespondenceModelId(db);
       const v21Id = await v21DeploymentId(db, initiativeId);
 
-      await expect(promoteCheckpoint(db, v21Id, ADMIN, FULL_ATTESTATION, "reason")).rejects.toThrow(ForbiddenError);
+      await expect(promoteCheckpoint(db, v21Id, ADMIN, null, FULL_ATTESTATION, "reason")).rejects.toThrow(
+        ForbiddenError,
+      );
     });
 
     it("rejects a reviewer actor with ForbiddenError", async () => {
       const initiativeId = await paCorrespondenceModelId(db);
       const v21Id = await v21DeploymentId(db, initiativeId);
 
-      await expect(promoteCheckpoint(db, v21Id, REVIEWER, FULL_ATTESTATION, "reason")).rejects.toThrow(
+      await expect(promoteCheckpoint(db, v21Id, REVIEWER, null, FULL_ATTESTATION, "reason")).rejects.toThrow(
         ForbiddenError,
       );
     });
@@ -198,16 +205,248 @@ describe("lib/services/promotion-service", () => {
       const initiativeId = await paCorrespondenceModelId(db);
       const v21Id = await v21DeploymentId(db, initiativeId);
 
-      await promoteCheckpoint(db, v21Id, APPROVER, FULL_ATTESTATION, "First promotion.");
+      await promoteCheckpoint(db, v21Id, APPROVER, null, FULL_ATTESTATION, "First promotion.");
 
       await expect(
-        promoteCheckpoint(db, v21Id, APPROVER, FULL_ATTESTATION, "Second attempt should fail."),
+        promoteCheckpoint(db, v21Id, APPROVER, null, FULL_ATTESTATION, "Second attempt should fail."),
       ).rejects.toThrow();
 
       // Must not silently no-op or throw a raw/opaque DB error — still deployed once.
       const rows = await db.select().from(deploymentVersions).where(eq(deploymentVersions.initiativeId, initiativeId));
       const v21 = rows.find((d) => d.version === "v2.1")!;
       expect(v21.status).toBe("deployed");
+    });
+  });
+
+  /* -----------------------------------------------------------------------
+   * P1 fix — external-review finding: promoteCheckpoint never received the
+   * session workspace, so any authenticated session that learned a
+   * checkpoint id could promote another workspace's checkpoint. Mirrors
+   * rollbackDeployment's "workspace authorization" test block below
+   * (same helper shape, same NotFoundError-on-mismatch semantics).
+   * -------------------------------------------------------------------- */
+  describe("promoteCheckpoint — workspace authorization", () => {
+    /** A fresh initiative + two deployment_versions rows (one deployed, one
+     * awaiting_promotion_signoff), tagged with `workspaceId`. */
+    async function initiativeWithPromotableCheckpointInWorkspace(
+      workspaceId: string | null,
+    ): Promise<{ initiativeId: string; deployedId: string; awaitingId: string }> {
+      const draft = await createDraft(db, {
+        payload: CHAMPION_PREFILL_PAYLOAD,
+        requesterActor: { id: "priya-raman", role: "requester" },
+        requesterName: "Priya Raman",
+        workspaceId,
+      });
+      const deployedId = `dep-current-${randomUUID()}`;
+      const awaitingId = `dep-awaiting-${randomUUID()}`;
+      await db.insert(deploymentVersions).values({
+        id: deployedId,
+        initiativeId: draft.initiativeId,
+        version: "v1.0",
+        status: "deployed",
+        modelVersion: null,
+        selfHosted: false,
+        feedbackProvenanceSignedOff: false,
+        deployedAt: new Date(Date.now() - 100_000),
+        pausedAt: null,
+        retiredAt: null,
+      });
+      await db.insert(deploymentVersions).values({
+        id: awaitingId,
+        initiativeId: draft.initiativeId,
+        version: "v1.1",
+        status: "awaiting_promotion_signoff",
+        modelVersion: null,
+        selfHosted: false,
+        feedbackProvenanceSignedOff: false,
+        deployedAt: new Date(),
+        pausedAt: null,
+        retiredAt: null,
+      });
+      return { initiativeId: draft.initiativeId, deployedId, awaitingId };
+    }
+
+    it("a mismatched workspace session gets NotFoundError (same shape as unknown checkpoint id)", async () => {
+      const { awaitingId } = await initiativeWithPromotableCheckpointInWorkspace("ws-A");
+      await expect(
+        promoteCheckpoint(db, awaitingId, APPROVER, "ws-B", FULL_ATTESTATION, "reason"),
+      ).rejects.toThrow(NotFoundError);
+      await expect(
+        promoteCheckpoint(db, awaitingId, APPROVER, "ws-B", FULL_ATTESTATION, "reason"),
+      ).rejects.toThrow(`deploymentVersion not found: ${awaitingId}`);
+    });
+
+    it("the owning workspace session succeeds", async () => {
+      const { awaitingId } = await initiativeWithPromotableCheckpointInWorkspace("ws-A");
+      const result = await promoteCheckpoint(db, awaitingId, APPROVER, "ws-A", FULL_ATTESTATION, "reason");
+      expect(result.status).toBe("deployed");
+    });
+
+    it("a null-workspace session cannot promote a workspace-tagged initiative's checkpoint", async () => {
+      const { awaitingId } = await initiativeWithPromotableCheckpointInWorkspace("ws-A");
+      await expect(
+        promoteCheckpoint(db, awaitingId, APPROVER, null, FULL_ATTESTATION, "reason"),
+      ).rejects.toThrow(NotFoundError);
+    });
+
+    it("a seeded (null-workspace) initiative's checkpoint is promotable from ANY session workspace", async () => {
+      const { awaitingId } = await initiativeWithPromotableCheckpointInWorkspace(null);
+      const result = await promoteCheckpoint(db, awaitingId, APPROVER, "ws-anything", FULL_ATTESTATION, "reason");
+      expect(result.status).toBe("deployed");
+    });
+
+    it("no partial write happens on a workspace-mismatch rejection", async () => {
+      const { initiativeId, deployedId, awaitingId } = await initiativeWithPromotableCheckpointInWorkspace("ws-A");
+      await expect(
+        promoteCheckpoint(db, awaitingId, APPROVER, "ws-B", FULL_ATTESTATION, "reason"),
+      ).rejects.toThrow(NotFoundError);
+      const rows = await db.select().from(deploymentVersions).where(eq(deploymentVersions.initiativeId, initiativeId));
+      expect(rows.find((d) => d.id === deployedId)!.status).toBe("deployed"); // unchanged
+      expect(rows.find((d) => d.id === awaitingId)!.status).toBe("awaiting_promotion_signoff"); // unchanged
+    });
+  });
+
+  /* -----------------------------------------------------------------------
+   * P1 fix — external-review finding: the retire update and the promote
+   * update carried no status predicate/rowcount assert, so two concurrent
+   * promotes of different checkpoints of one initiative could both retire
+   * the same row and leave TWO 'deployed' rows. Both updates are now
+   * compare-and-set (CAS). True overlapping transactions aren't
+   * reproducible against PGlite (see lib/services/initiative-service.test.ts's
+   * identical rationale comment), so these tests simulate the race
+   * deterministically by injecting a same-transaction write (via `tx`)
+   * between promoteCheckpoint's own read and its CAS update — this
+   * reproduces the exact DB-visible effect a genuinely concurrent committed
+   * write would have (the predicate no longer matches).
+   * -------------------------------------------------------------------- */
+  describe("promoteCheckpoint — concurrency (compare-and-set)", () => {
+    it("retire CAS: a concurrent write that changes the current-deployed row's status before the retire update throws ConflictError, and the whole transaction rolls back", async () => {
+      const initiativeId = await paCorrespondenceModelId(db);
+      const v21Id = await v21DeploymentId(db, initiativeId);
+      const rows = await db.select().from(deploymentVersions).where(eq(deploymentVersions.initiativeId, initiativeId));
+      const v20Id = rows.find((d) => d.version === "v2.0")!.id;
+
+      // Test-only same-transaction write injection — `any`-typed by design
+      // (the mock surface is a live Drizzle transaction-scoped query builder
+      // chain, not meaningfully typeable).
+      /* eslint-disable @typescript-eslint/no-explicit-any */
+      const dbAny = db as any;
+      const realTransaction = dbAny.transaction.bind(dbAny);
+      const spy = vi.spyOn(dbAny, "transaction").mockImplementationOnce((cb: any) =>
+        realTransaction(async (tx: any) => {
+          const realUpdate = tx.update.bind(tx);
+          vi.spyOn(tx, "update").mockImplementation((table: any) => {
+            const builder = realUpdate(table);
+            if (table === deploymentVersions) {
+              const realSet = builder.set.bind(builder);
+              builder.set = (values: Record<string, unknown>) => {
+                const base = realSet(values);
+                if (values.status === "retired") {
+                  const realWhere = base.where.bind(base);
+                  base.where = (cond: unknown) => {
+                    const afterWhere = realWhere(cond);
+                    const realReturning = afterWhere.returning.bind(afterWhere);
+                    afterWhere.returning = async (...args: unknown[]) => {
+                      // Simulated concurrent writer: flips the current-deployed
+                      // row's status directly, inside the SAME transaction,
+                      // between promoteCheckpoint's own read (captured as
+                      // `currentDeployed.status`) and its CAS update below.
+                      await realUpdate(deploymentVersions)
+                        .set({ status: "paused" })
+                        .where(eq(deploymentVersions.id, v20Id));
+                      return realReturning(...args);
+                    };
+                    return afterWhere;
+                  };
+                }
+                return base;
+              };
+            }
+            return builder;
+          });
+          return cb(tx);
+        }),
+      );
+      /* eslint-enable @typescript-eslint/no-explicit-any */
+
+      let caught: unknown;
+      try {
+        await promoteCheckpoint(db, v21Id, APPROVER, null, FULL_ATTESTATION, "reason");
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(ConflictError);
+
+      spy.mockRestore();
+
+      // Whole transaction rolled back — including the injected write.
+      const after = await db.select().from(deploymentVersions).where(eq(deploymentVersions.initiativeId, initiativeId));
+      expect(after.find((d) => d.id === v20Id)!.status).toBe("deployed");
+      expect(after.find((d) => d.id === v21Id)!.status).toBe("awaiting_promotion_signoff");
+      // No second 'deployed' row.
+      expect(after.filter((d) => d.status === "deployed")).toHaveLength(1);
+    });
+
+    it("promote CAS: a concurrent write that changes the target checkpoint's status before the promote update throws ConflictError, and the whole transaction rolls back", async () => {
+      const initiativeId = await paCorrespondenceModelId(db);
+      const v21Id = await v21DeploymentId(db, initiativeId);
+
+      /* eslint-disable @typescript-eslint/no-explicit-any */
+      const dbAny = db as any;
+      const realTransaction = dbAny.transaction.bind(dbAny);
+      const spy = vi.spyOn(dbAny, "transaction").mockImplementationOnce((cb: any) =>
+        realTransaction(async (tx: any) => {
+          const realUpdate = tx.update.bind(tx);
+          vi.spyOn(tx, "update").mockImplementation((table: any) => {
+            const builder = realUpdate(table);
+            if (table === deploymentVersions) {
+              const realSet = builder.set.bind(builder);
+              builder.set = (values: Record<string, unknown>) => {
+                const base = realSet(values);
+                if (values.status === "deployed") {
+                  const realWhere = base.where.bind(base);
+                  base.where = (cond: unknown) => {
+                    const afterWhere = realWhere(cond);
+                    const realReturning = afterWhere.returning.bind(afterWhere);
+                    afterWhere.returning = async (...args: unknown[]) => {
+                      // Simulated concurrent writer: flips the target
+                      // checkpoint's status directly, inside the SAME
+                      // transaction, between promoteCheckpoint's own read
+                      // (captured as `target.status`) and its CAS update below.
+                      await realUpdate(deploymentVersions)
+                        .set({ status: "retired" })
+                        .where(eq(deploymentVersions.id, v21Id));
+                      return realReturning(...args);
+                    };
+                    return afterWhere;
+                  };
+                }
+                return base;
+              };
+            }
+            return builder;
+          });
+          return cb(tx);
+        }),
+      );
+      /* eslint-enable @typescript-eslint/no-explicit-any */
+
+      let caught: unknown;
+      try {
+        await promoteCheckpoint(db, v21Id, APPROVER, null, FULL_ATTESTATION, "reason");
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(ConflictError);
+
+      spy.mockRestore();
+
+      // Whole transaction rolled back — including the injected write and the
+      // retire update that would otherwise have preceded it.
+      const after = await db.select().from(deploymentVersions).where(eq(deploymentVersions.initiativeId, initiativeId));
+      expect(after.find((d) => d.version === "v2.0")!.status).toBe("deployed");
+      expect(after.find((d) => d.version === "v2.1")!.status).toBe("awaiting_promotion_signoff");
+      expect(after.filter((d) => d.status === "deployed")).toHaveLength(1);
     });
   });
 
@@ -353,6 +592,161 @@ describe("lib/services/promotion-service", () => {
       await expect(
         rollbackDeployment(db, initiativeId, APPROVER, null, "dep-does-not-exist", "reason"),
       ).rejects.toThrow(NotFoundError);
+    });
+  });
+
+  /* -----------------------------------------------------------------------
+   * P1 fix — external-review finding P2-5b: the retire-current and
+   * redeploy-target updates carried no status predicate/rowcount assert,
+   * mirroring the exact hazard promoteCheckpoint had before its own CAS fix
+   * above (see that describe block's file-level comment). Both updates are
+   * now compare-and-set (CAS), same pattern, same test technique: true
+   * overlapping transactions aren't reproducible against PGlite, so these
+   * tests simulate the race deterministically by injecting a
+   * same-transaction write (via `tx`) between rollbackDeployment's own read
+   * and its CAS update.
+   * -------------------------------------------------------------------- */
+  describe("rollbackDeployment — concurrency (compare-and-set)", () => {
+    async function seedPriorRetiredVersion(initiativeId: string): Promise<string> {
+      const rows = await db
+        .select()
+        .from(deploymentVersions)
+        .where(eq(deploymentVersions.initiativeId, initiativeId));
+      const v19 = rows.find((d) => d.version === "v1.9" && d.status === "retired")!;
+      return v19.id;
+    }
+
+    it("retire-current CAS: a concurrent write that changes the current-deployed row's status before the retire update throws ConflictError, and the whole transaction rolls back", async () => {
+      const initiativeId = await paCorrespondenceModelId(db);
+      const priorId = await seedPriorRetiredVersion(initiativeId);
+      const rows = await db.select().from(deploymentVersions).where(eq(deploymentVersions.initiativeId, initiativeId));
+      const v20Id = rows.find((d) => d.version === "v2.0")!.id;
+
+      /* eslint-disable @typescript-eslint/no-explicit-any */
+      const dbAny = db as any;
+      const realTransaction = dbAny.transaction.bind(dbAny);
+      const spy = vi.spyOn(dbAny, "transaction").mockImplementationOnce((cb: any) =>
+        realTransaction(async (tx: any) => {
+          const realUpdate = tx.update.bind(tx);
+          vi.spyOn(tx, "update").mockImplementation((table: any) => {
+            const builder = realUpdate(table);
+            if (table === deploymentVersions) {
+              const realSet = builder.set.bind(builder);
+              builder.set = (values: Record<string, unknown>) => {
+                const base = realSet(values);
+                if (values.status === "retired") {
+                  const realWhere = base.where.bind(base);
+                  base.where = (cond: unknown) => {
+                    const afterWhere = realWhere(cond);
+                    const realReturning = afterWhere.returning.bind(afterWhere);
+                    afterWhere.returning = async (...args: unknown[]) => {
+                      // Simulated concurrent writer: flips the current-deployed
+                      // row's status directly, inside the SAME transaction,
+                      // between rollbackDeployment's own read (captured as
+                      // `currentDeployed.status`) and its CAS update below.
+                      await realUpdate(deploymentVersions)
+                        .set({ status: "paused" })
+                        .where(eq(deploymentVersions.id, v20Id));
+                      return realReturning(...args);
+                    };
+                    return afterWhere;
+                  };
+                }
+                return base;
+              };
+            }
+            return builder;
+          });
+          return cb(tx);
+        }),
+      );
+      /* eslint-enable @typescript-eslint/no-explicit-any */
+
+      let caught: unknown;
+      try {
+        await rollbackDeployment(db, initiativeId, APPROVER, null, priorId, "reason");
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(ConflictError);
+
+      spy.mockRestore();
+
+      // Whole transaction rolled back — including the injected write, which
+      // never committed. State is exactly as it was before this call.
+      const after = await db.select().from(deploymentVersions).where(eq(deploymentVersions.initiativeId, initiativeId));
+      expect(after.find((d) => d.id === v20Id)!.status).toBe("deployed");
+      expect(after.find((d) => d.id === priorId)!.status).toBe("retired");
+      expect(after.filter((d) => d.status === "deployed")).toHaveLength(1);
+    });
+
+    it("redeploy-target CAS: a concurrent write that changes the target version's status before the redeploy update throws ConflictError, and the whole transaction rolls back", async () => {
+      const initiativeId = await paCorrespondenceModelId(db);
+      const priorId = await seedPriorRetiredVersion(initiativeId);
+      const rows = await db.select().from(deploymentVersions).where(eq(deploymentVersions.initiativeId, initiativeId));
+      const v20Id = rows.find((d) => d.version === "v2.0")!.id;
+
+      /* eslint-disable @typescript-eslint/no-explicit-any */
+      const dbAny = db as any;
+      const realTransaction = dbAny.transaction.bind(dbAny);
+      const spy = vi.spyOn(dbAny, "transaction").mockImplementationOnce((cb: any) =>
+        realTransaction(async (tx: any) => {
+          const realUpdate = tx.update.bind(tx);
+          vi.spyOn(tx, "update").mockImplementation((table: any) => {
+            const builder = realUpdate(table);
+            if (table === deploymentVersions) {
+              const realSet = builder.set.bind(builder);
+              builder.set = (values: Record<string, unknown>) => {
+                const base = realSet(values);
+                if (values.status === "deployed") {
+                  const realWhere = base.where.bind(base);
+                  base.where = (cond: unknown) => {
+                    const afterWhere = realWhere(cond);
+                    const realReturning = afterWhere.returning.bind(afterWhere);
+                    afterWhere.returning = async (...args: unknown[]) => {
+                      // Simulated concurrent writer: flips the target
+                      // (rollback-to) row's status directly, inside the SAME
+                      // transaction, between rollbackDeployment's own read
+                      // (captured as `target.status`) and its CAS update.
+                      await realUpdate(deploymentVersions)
+                        .set({ status: "deployed" })
+                        .where(eq(deploymentVersions.id, priorId));
+                      return realReturning(...args);
+                    };
+                    return afterWhere;
+                  };
+                }
+                return base;
+              };
+            }
+            return builder;
+          });
+          return cb(tx);
+        }),
+      );
+      /* eslint-enable @typescript-eslint/no-explicit-any */
+
+      let caught: unknown;
+      try {
+        await rollbackDeployment(db, initiativeId, APPROVER, null, priorId, "reason");
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(ConflictError);
+
+      spy.mockRestore();
+
+      // Whole transaction rolled back — including the injected write and the
+      // retire-current update that preceded it (both undone). State is
+      // exactly as it was before this call: v20 still deployed, v1.9 still
+      // retired. The pre-fix hazard this CAS prevents is exactly this
+      // in-flight moment (v20 retired + priorId force-set to "deployed" by
+      // the concurrent writer) being allowed to COMMIT as two 'deployed'
+      // rows — the CAS guarantees it never does.
+      const after = await db.select().from(deploymentVersions).where(eq(deploymentVersions.initiativeId, initiativeId));
+      expect(after.find((d) => d.id === v20Id)!.status).toBe("deployed");
+      expect(after.find((d) => d.id === priorId)!.status).toBe("retired");
+      expect(after.filter((d) => d.status === "deployed")).toHaveLength(1);
     });
   });
 

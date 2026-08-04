@@ -13,6 +13,7 @@
  */
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { cn } from "@/lib/utils";
 
 export interface DeploymentHistoryEntryLike {
   id: string;
@@ -25,12 +26,41 @@ export interface DeploymentHistoryEntryLike {
   isCurrent: boolean;
 }
 
-const STATUS_LABEL: Record<DeploymentHistoryEntryLike["status"], string> = {
-  deployed: "Deployed",
-  paused: "Paused",
-  awaiting_promotion_signoff: "Awaiting sign-off",
-  retired: "Retired",
+// Token-based status pill (data-color contract §status-*) — deployment
+// status is not a LifecycleState (awaiting_promotion_signoff has no
+// lifecycle-state equivalent), so this rides the same reserved status
+// family lifecycle-badge/tier-badge use rather than importing a
+// type-incompatible component.
+const STATUS_TONE: Record<
+  DeploymentHistoryEntryLike["status"],
+  { bg: string; fg: string; label: string }
+> = {
+  deployed: { bg: "bg-status-good-bg", fg: "text-status-good-fg", label: "Deployed" },
+  paused: { bg: "bg-status-warning-bg", fg: "text-status-warning-fg", label: "Paused" },
+  awaiting_promotion_signoff: {
+    bg: "bg-status-warning-bg",
+    fg: "text-status-warning-fg",
+    label: "Awaiting sign-off",
+  },
+  retired: { bg: "bg-status-neutral-bg", fg: "text-status-neutral-fg", label: "Retired" },
 };
+
+function StatusPill({ status }: { status: DeploymentHistoryEntryLike["status"] }) {
+  const tone = STATUS_TONE[status];
+  return (
+    <span
+      data-slot="deployment-history-status"
+      className={cn(
+        "inline-flex h-5 w-fit shrink-0 items-center gap-1.5 rounded-full px-2 text-xs font-medium whitespace-nowrap",
+        tone.bg,
+        tone.fg,
+      )}
+    >
+      <span className="size-1.5 shrink-0 rounded-full bg-current" aria-hidden="true" />
+      {tone.label}
+    </span>
+  );
+}
 
 function shortDate(iso: string): string {
   return iso.slice(0, 10);
@@ -47,7 +77,7 @@ export function DeploymentHistory({
   return (
     <Card data-slot="deployment-history" className="overflow-hidden">
       <CardHeader className="border-b bg-muted/40 py-2.5">
-        <CardTitle className="text-xs uppercase tracking-wide text-muted-foreground">
+        <CardTitle className="kicker">
           Deployment-version history — {title}
         </CardTitle>
       </CardHeader>
@@ -62,12 +92,13 @@ export function DeploymentHistory({
               <li
                 key={entry.id}
                 data-slot="deployment-history-entry"
-                className="flex flex-wrap items-center gap-x-3 gap-y-1 border-l-2 border-muted pl-3"
+                className={cn(
+                  "flex flex-wrap items-center gap-x-3 gap-y-1 border-l-2 pl-3",
+                  entry.isCurrent ? "border-primary" : "border-muted",
+                )}
               >
-                <span className="font-mono text-sm font-medium">{entry.version}</span>
-                <Badge variant={entry.isCurrent ? "default" : "secondary"}>
-                  {STATUS_LABEL[entry.status]}
-                </Badge>
+                <span className="font-mono text-sm font-medium tabular-nums">{entry.version}</span>
+                <StatusPill status={entry.status} />
                 {entry.isCurrent ? (
                   <Badge variant="outline" data-slot="deployment-history-current-badge">
                     Current
@@ -77,8 +108,10 @@ export function DeploymentHistory({
                   <span className="font-mono text-xs text-muted-foreground">
                     {entry.modelVersion}
                   </span>
-                ) : null}
-                <span className="text-xs text-muted-foreground">
+                ) : (
+                  <span className="text-xs text-muted-foreground">—</span>
+                )}
+                <span className="font-mono text-xs tabular-nums text-muted-foreground">
                   deployed {shortDate(entry.deployedAt)}
                   {entry.pausedAt ? ` · paused ${shortDate(entry.pausedAt)}` : ""}
                   {entry.retiredAt ? ` · retired ${shortDate(entry.retiredAt)}` : ""}

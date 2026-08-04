@@ -32,6 +32,16 @@
  * per control) is enforced at the DB level by two partial unique indexes
  * (migration 0007) as a backstop to the app-layer check in
  * `requestException`/`renewException`.
+ *
+ * Review finding P2-8 (status-integrity bug): `requestException` now gates
+ * on the target control's status (`ELIGIBLE_EXCEPTION_REQUEST_STATUSES` —
+ * 'overdue' or 'breached' only), and every exception row records the
+ * control's status at request time (`statusAtRequest`, migration 0008). A
+ * terminal transition (reject/revoke/expire, or renewal-supersession) that
+ * leaves a control with no remaining active exception restores that recorded
+ * status instead of `recomputeControlStatus` unconditionally forcing
+ * 'overdue' — which previously lost the control's real prior status,
+ * recoverable only by reading audit rows.
  */
 import { randomUUID } from "node:crypto";
 import { and, eq, inArray, lte } from "drizzle-orm";
@@ -48,6 +58,22 @@ type Tx = PgDatabase<PgQueryResultHKT, typeof schema>;
 /** Default validity window for an approved exception when none is supplied. */
 const DEFAULT_EXCEPTION_DAYS = 90;
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Review finding P2-8 (status-integrity bug): `requestException` had no
+ * precondition on the target control's status, so an exception could be
+ * requested against an already-healthy ('met') or not-yet-due ('pending')
+ * control. Combined with `recomputeControlStatus` forcing 'overdue' once no
+ * active exceptions remain, request-then-reject (or revoke/expire of the
+ * last active exception) against such a control silently corrupted its
+ * status. An exception only makes sense against a control that currently
+ * cannot be met: 'overdue' (evidence lapsed) or 'breached' (evidence failed
+ * a threshold) — not 'met' (already satisfied) or 'pending' (not yet due).
+ * 'exception_requested' is deliberately excluded too: that status only ever
+ * reflects an exception already active for the control, which the
+ * active-exception check below independently rejects.
+ */
+const ELIGIBLE_EXCEPTION_REQUEST_STATUSES: ReadonlySet<string> = new Set(["overdue", "breached"]);
 
 export type ExceptionStatus = "requested" | "approved" | "rejected" | "revoked" | "expired" | "superseded";
 
@@ -144,12 +170,27 @@ async function initiativeWorkspaceIds(db: Db, initiativeIds: string[]): Promise<
  * a second requested exception. Rejecting the renewal or later expiring the
  * old exception unconditionally marks the control overdue, even if another
  * approved exception exists."). Any 'requested' or 'approved' exception for
- * the control keeps it under `exception_requested`; otherwise it reverts to
- * `overdue`. Call this — instead of writing `effectiveControls.status`
- * directly — after every exception-state transition that could change which
- * exceptions are active for a control.
+ * the control keeps it under `exception_requested`. Call this — instead of
+ * writing `effectiveControls.status` directly — after every exception-state
+ * transition that could change which exceptions are active for a control.
+ *
+ * Review finding P2-8 (status-integrity bug): when NO active exception
+ * remains, this used to unconditionally force 'overdue' — losing whatever
+ * status the control actually had before the (now-terminated) exception was
+ * requested (e.g. 'breached', or, pre the `requestException` status gate
+ * above, 'met'/'pending'). `terminatedStatusAtRequest` — the terminated
+ * exception's own `statusAtRequest` (migration 0008) — is restored instead.
+ * Omit it (or pass a row with no recorded value — pre-migration rows) to
+ * fall back to the historical 'overdue' behavior; callers that AREN'T
+ * terminating the control's last active exception (e.g. `requestException`
+ * inserting a new active row) can omit it freely since the "active exists"
+ * branch is taken regardless.
  */
-async function recomputeControlStatus(tx: Tx, effectiveControlId: string): Promise<void> {
+async function recomputeControlStatus(
+  tx: Tx,
+  effectiveControlId: string,
+  terminatedStatusAtRequest?: string | null,
+): Promise<void> {
   const active = await tx
     .select({ id: controlExceptions.id })
     .from(controlExceptions)
@@ -160,9 +201,10 @@ async function recomputeControlStatus(tx: Tx, effectiveControlId: string): Promi
       ),
     )
     .limit(1);
+  const restoredStatus = terminatedStatusAtRequest ?? "overdue";
   await tx
     .update(effectiveControls)
-    .set({ status: active.length > 0 ? "exception_requested" : "overdue" })
+    .set({ status: active.length > 0 ? "exception_requested" : restoredStatus })
     .where(eq(effectiveControls.id, effectiveControlId));
 }
 
@@ -192,9 +234,13 @@ async function audit(
 
 /**
  * Request a time-boxed exception for an effective control. Any authenticated
- * actor may request (route-gated by session). Rejects if the control already
- * has an active (requested/approved) exception. Moves the effective control to
- * `exception_requested`.
+ * actor may request (route-gated by session). Requires the control to
+ * currently be 'overdue' or 'breached' (review finding P2-8 — see
+ * `ELIGIBLE_EXCEPTION_REQUEST_STATUSES`); rejects if the control already
+ * has an active (requested/approved) exception. Moves the effective control
+ * to `exception_requested`, recording its pre-request status on the new row
+ * (`statusAtRequest`, migration 0008) so a later terminal transition can
+ * restore it instead of hardcoding 'overdue'.
  */
 export async function requestException(
   db: Db,
@@ -218,6 +264,12 @@ export async function requestException(
       "effectiveControl",
       effectiveControlId,
     );
+
+    if (!ELIGIBLE_EXCEPTION_REQUEST_STATUSES.has(ec.status)) {
+      throw new ValidationError(
+        `control ${ec.controlId} is '${ec.status}'; an exception may only be requested against a control that is 'overdue' or 'breached'`,
+      );
+    }
 
     const active = await tx
       .select()
@@ -250,6 +302,7 @@ export async function requestException(
       decisionReason: null,
       expiresAt: null,
       supersedesId: null,
+      statusAtRequest: ec.status,
       createdAt: new Date(nowTs()),
     });
     await recomputeControlStatus(tx, effectiveControlId);
@@ -362,8 +415,12 @@ export async function decideException(
 
     // Derive the control's status from ALL of its exceptions now that this
     // one (and, on approval of a renewal, the superseded original) has
-    // moved — never a hardcoded overdue/exception_requested write.
-    await recomputeControlStatus(tx, exc.effectiveControlId);
+    // moved — never a hardcoded overdue/exception_requested write. On
+    // rejection this exception (`exc`) is the one being terminated, so its
+    // `statusAtRequest` is the restore target if no other exception is
+    // active (P2-8); on approval the row just written is itself active, so
+    // the "active exists" branch is taken regardless of this argument.
+    await recomputeControlStatus(tx, exc.effectiveControlId, exc.statusAtRequest);
 
     await audit(
       tx,
@@ -414,7 +471,9 @@ export async function revokeException(
     if (revoked.length === 0) {
       throw new ConflictError(`exception ${exceptionId} changed concurrently (expected status 'approved')`);
     }
-    await recomputeControlStatus(tx, exc.effectiveControlId);
+    // P2-8: restore to this (now-terminated) exception's statusAtRequest if
+    // no other exception is left active, instead of hardcoding 'overdue'.
+    await recomputeControlStatus(tx, exc.effectiveControlId, exc.statusAtRequest);
     await audit(
       tx,
       exc.initiativeId,
@@ -433,7 +492,13 @@ export async function revokeException(
  * Renew an approved (typically near-expiry) exception: opens a NEW `requested`
  * exception that supersedes it, to be approved through `decideException`. The
  * old exception is left as-is until the new one is approved. Any authenticated
- * actor may renew (route-gated).
+ * actor may renew (route-gated). The new row's `statusAtRequest` (P2-8)
+ * PROPAGATES from the exception being renewed rather than reading the
+ * control's current status (which is 'exception_requested' while the
+ * original it renews is still active) — this way a chain of renewals keeps
+ * pointing back to the control's real pre-exception status through however
+ * many renewals occur, so an eventual terminal transition restores the true
+ * origin status rather than the meaningless 'exception_requested'.
  */
 export async function renewException(
   db: Db,
@@ -473,6 +538,7 @@ export async function renewException(
       decisionReason: null,
       expiresAt: null,
       supersedesId: exceptionId,
+      statusAtRequest: exc.statusAtRequest,
       createdAt: new Date(nowTs()),
     });
     await audit(
@@ -518,7 +584,9 @@ export async function expireDueExceptions(
         .returning();
       if (updated.length === 0) return;
 
-      await recomputeControlStatus(tx, exc.effectiveControlId);
+      // P2-8: restore to this (now-terminated) exception's statusAtRequest
+      // if no other exception is left active, instead of hardcoding 'overdue'.
+      await recomputeControlStatus(tx, exc.effectiveControlId, exc.statusAtRequest);
       await audit(
         tx,
         exc.initiativeId,

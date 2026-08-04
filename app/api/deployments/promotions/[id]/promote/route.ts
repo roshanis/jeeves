@@ -26,12 +26,19 @@
  * 400:   { error: string }  (malformed body; missing/empty attestation field
  *        or reason; OR the checkpoint is not currently awaiting sign-off,
  *        e.g. a double-promote attempt — see promotion-service.ts's
- *        "JUDGMENT CALL 3": no existing route in this codebase uses 409
- *        anywhere, so this reuses the same `ValidationError` -> 400 mapping
+ *        "JUDGMENT CALL 3": reuses the same `ValidationError` -> 400 mapping
  *        every other service-error-to-HTTP mapping here already uses,
  *        rather than introducing a novel status code for a single case.)
  * 403:   { error: string }  (non-approver actor — admin/reviewer/etc.)
- * 404:   { error: string }  (unknown deployment version id)
+ * 404:   { error: string }  (unknown deployment version id, OR the checkpoint
+ *        belongs to a different workspace than the caller's session — same
+ *        shape as unknown, no existence leak.)
+ * 409:   { error: string }  (compare-and-set conflict — the checkpoint's or
+ *        its superseded version's status changed concurrently since this
+ *        request's read; several routes in this codebase already map
+ *        `ConflictError` to 409, e.g.
+ *        app/api/initiatives/[id]/decide/route.ts and
+ *        app/api/exceptions/[id]/decide/route.ts.)
  */
 import { z } from "zod";
 import { getDb } from "@/lib/db/client";
@@ -40,6 +47,7 @@ import {
   ForbiddenError,
   NotFoundError,
   ValidationError,
+  ConflictError,
 } from "@/lib/services/promotion-service";
 import { runMutationGuard } from "@/lib/services/route-guard";
 
@@ -103,9 +111,9 @@ export async function POST(
       db,
       id,
       guard.actor,
+      guard.workspaceId,
       parsed.data.attestation,
       parsed.data.reason,
-      guard.workspaceId,
     );
     return Response.json(result, { status: 200 });
   } catch (err) {
@@ -117,6 +125,9 @@ export async function POST(
     }
     if (err instanceof ValidationError) {
       return Response.json({ error: err.message, issues: err.issues }, { status: 400 });
+    }
+    if (err instanceof ConflictError) {
+      return Response.json({ error: err.message }, { status: 409 });
     }
     throw err;
   }

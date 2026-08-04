@@ -1,8 +1,12 @@
 "use client";
 
-import { Search } from "lucide-react";
+import { Search, ShieldCheck } from "lucide-react";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { RoleSwitcher } from "./role-switcher";
 import { DemoModeChip } from "./demo-mode-chip";
+import { ThemeToggle } from "./theme-toggle";
+import { NAV_ITEMS, isNavItemActive } from "./app-sidebar";
 import { DEMO_BANNER_TEXT } from "@/lib/demo-banner";
 
 // Re-exported so existing importers of DEMO_BANNER_TEXT from this module
@@ -11,30 +15,136 @@ import { DEMO_BANNER_TEXT } from "@/lib/demo-banner";
 // disclaimer strip without importing a "use client" console component.
 export { DEMO_BANNER_TEXT };
 
+function titleCaseSlug(slug: string): string {
+  return slug
+    .split("-")
+    .filter(Boolean)
+    .map((word) => word[0]!.toUpperCase() + word.slice(1))
+    .join(" ");
+}
+
 /**
- * Operations-console top bar: a slim demo-disclaimer strip above a working
- * header with global search, workspace status (demo-mode chip), and the
- * persona switcher. Restrained charcoal-on-white; no gradients.
+ * Derives a lightweight page-context breadcrumb from the current pathname.
+ * Prefix-matches against NAV_ITEMS (same rule the sidebar/mobile nav use for
+ * their active state) to find the owning section, then — if the path goes
+ * deeper than the section route itself (e.g. a detail page) — appends the
+ * first extra segment, title-cased (e.g. "Portfolio / Prior Auth Clinical
+ * Summarizer"). Routes with no NAV_ITEMS entry at all (e.g.
+ * /initiatives/[slug], reached from Portfolio but not itself a nav item)
+ * fall back to title-casing the raw path segments. Exported for tests; kept
+ * intentionally simple (design pass 2026-08-01 explicitly allows "just the
+ * section name" when a nicer label isn't trivially available).
+ */
+export function deriveBreadcrumb(pathname: string): string {
+  const path = pathname || "/";
+  const item = NAV_ITEMS.find((i) => isNavItemActive(i, path));
+  if (item) {
+    const rest = path.slice(item.href.length).replace(/^\/+/, "");
+    if (!rest) return item.label;
+    return `${item.label} / ${titleCaseSlug(rest.split("/")[0]!)}`;
+  }
+
+  const segments = path.split("/").filter(Boolean);
+  if (segments.length === 0) return "Console";
+  const [first, second] = segments;
+  const section = titleCaseSlug(first!);
+  return second ? `${section} / ${titleCaseSlug(second)}` : section;
+}
+
+/**
+ * Operations-console top bar: a slim demo-disclaimer strip above a tight
+ * 56px working header with page-context breadcrumb, global search, workspace
+ * status (demo-mode chip), and the persona switcher. Restrained
+ * charcoal-on-white; no gradients.
  */
 export function AppTopBar() {
+  const pathname = usePathname();
+  const breadcrumb = deriveBreadcrumb(pathname ?? "");
+
   return (
-    <div className="sticky top-0 z-30 border-b bg-card/95 backdrop-blur">
-      <div className="bg-amber-100 px-4 py-1 text-center text-[11px] font-medium text-amber-900 dark:bg-amber-950/70 dark:text-amber-200">
+    <div className="pad-safe-x sticky top-0 z-30 border-b bg-card/95 backdrop-blur">
+      <div className="bg-status-warning-bg px-4 py-1 text-center text-[11px] font-medium text-status-warning-fg">
         {DEMO_BANNER_TEXT}
       </div>
-      <header className="flex items-center justify-between gap-4 px-4 py-2.5">
-        <label className="relative flex w-full max-w-md items-center">
-          <Search className="pointer-events-none absolute left-2.5 h-4 w-4 text-muted-foreground" aria-hidden />
-          <input
-            type="search"
-            placeholder="Search initiatives, controls, decisions…"
-            aria-label="Global search"
-            className="h-9 w-full rounded-md border bg-background pl-8 pr-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
-          />
-        </label>
-        <div className="flex shrink-0 items-center gap-2">
-          <DemoModeChip />
-          <RoleSwitcher />
+      <header className="flex h-14 items-center justify-between gap-2 px-4 sm:gap-4">
+        {/* overflow-x-clip: backstop for the pathological width where even a
+            fully-ellipsized breadcrumb cannot absorb the squeeze — clip the
+            left group at its own edge instead of letting the search input
+            paint over (and steal pointer events from) the status cluster. */}
+        <div className="flex min-w-0 flex-1 items-center gap-4 overflow-x-clip">
+          {/* Compact brand lockup, phones only. The sidebar carries the
+              Jeeves identity on desktop but is `hidden` below `md`, which
+              left small screens with no app name anywhere on the page — and
+              an empty left half of the top bar. This fills both gaps and,
+              like the sidebar's lockup, links home to /inbox. */}
+          <Link
+            href="/inbox"
+            className="touch-min flex shrink-0 items-center gap-2 md:hidden"
+            data-slot="mobile-brand"
+          >
+            <span className="grid size-7 shrink-0 place-items-center rounded-md bg-primary text-primary-foreground">
+              <ShieldCheck className="size-4" aria-hidden />
+            </span>
+            {/* Mark-only on phones, wordmark from `sm`. In live mode the
+                status cluster grows (LED label + Reset control) and the two
+                together overflowed a 375px bar by 16px; the shield alone
+                still reads as identity and as the way home. sr-only keeps
+                "Jeeves" as the link's accessible name. */}
+            <span className="text-sm font-semibold sr-only sm:not-sr-only">Jeeves</span>
+          </Link>
+          {/* min-w-0 (not shrink-0): on a deep detail route in live mode the
+              breadcrumb + the search's min-w floor + the grown status cluster
+              exceed the row; the breadcrumb must ellipsize (truncate) rather
+              than force the search label to overflow ON TOP of the status
+              cluster, where its input swallowed the Reset control's clicks. */}
+          <p
+            className="label-mono hidden min-w-0 truncate text-foreground/80 sm:block"
+            data-slot="breadcrumb"
+          >
+            {breadcrumb}
+          </p>
+          {/* Global search is hidden below `lg`. Three reasons, all measured:
+              it is the single widest incompressible item in this bar (the
+              status cluster + a search input could not fit under 404px, so
+              every console route overflowed an iPhone horizontally); at
+              `md` the SIDEBAR also engages and eats 224px, which squashed
+              the input to ~0 width on an iPad in portrait so its absolutely
+              positioned icon and ⌘K hint overlapped the breadcrumb; and it
+              is not yet wired to a search backend, so on a small screen it
+              was spending the viewport on a control that does nothing. The
+              `min-w` floor is a belt-and-braces guard: rather than collapse
+              into an overlap again at some future width, the input keeps a
+              usable size and the flex row gives ground elsewhere. */}
+          <label className="relative hidden w-full max-w-sm min-w-[10rem] items-center lg:flex">
+            <Search
+              className="pointer-events-none absolute left-2.5 h-4 w-4 text-muted-foreground"
+              aria-hidden
+            />
+            <input
+              type="search"
+              placeholder="Search initiatives, controls, decisions…"
+              aria-label="Global search"
+              className="h-8 w-full rounded-md border bg-background pl-8 pr-14 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
+            />
+            <kbd className="pointer-events-none absolute right-2 hidden items-center gap-0.5 rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[10px] font-medium text-muted-foreground sm:inline-flex">
+              &#8984;K
+            </kbd>
+          </label>
+        </div>
+        {/* Status cluster: one grouped instrument reading (theme / demo state /
+            persona) separated by hairlines rather than three floating pills.
+            Hairline gutters tighten on phones so the three readouts still fit
+            a 375px viewport without the cluster forcing a horizontal scroll. */}
+        <div className="flex min-w-0 shrink items-center divide-x divide-border">
+          <div className="pr-1.5 sm:pr-2.5">
+            <ThemeToggle />
+          </div>
+          <div className="min-w-0 px-1.5 sm:px-2.5">
+            <DemoModeChip />
+          </div>
+          <div className="min-w-0 pl-1.5 sm:pl-2.5">
+            <RoleSwitcher />
+          </div>
         </div>
       </header>
     </div>

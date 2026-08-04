@@ -1,0 +1,22 @@
+-- Hand-written migration (not drizzle-kit generated — drizzle.config.ts
+-- requires DATABASE_URL, unavailable in this environment).
+--
+-- Review finding P2-8 (status-integrity bug): `requestException` had no
+-- precondition on the target control's status, and `recomputeControlStatus`
+-- unconditionally forces a control with no remaining active exceptions to
+-- 'overdue'. request-then-reject (or revoke/expire of the last active
+-- exception) against a control that was NOT 'overdue' when the exception was
+-- requested (e.g. it was 'breached', or — pre app-layer gate — 'met'/
+-- 'pending') silently corrupted its status to 'overdue', recoverable only by
+-- reading audit rows.
+--
+-- Fix, part 2 of 2 (part 1 is the app-layer status gate in
+-- lib/services/exception-service.ts's `requestException`): capture the
+-- control's status at the moment the exception is requested so a terminal
+-- transition (reject/revoke/expire, or renewal-supersession) that leaves the
+-- control with no other active exception can RESTORE that prior status
+-- instead of hardcoding 'overdue'. Nullable — pre-existing rows (seeded or
+-- from before this migration) have no recorded value, and
+-- `recomputeControlStatus` falls back to the pre-fix 'overdue' behavior for
+-- those, matching what it always did.
+ALTER TABLE "control_exceptions" ADD COLUMN "status_at_request" text;

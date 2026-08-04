@@ -1,4 +1,12 @@
 import { describe, expect, it } from "vitest";
+// Type-only imports of the REAL adapter factories: erased at runtime (no SDK
+// is loaded, no network, no cost), but they make every adapter part of this
+// file's compile-time tripwire. If `AgentPort` gains, drops, or reshapes a
+// method, `tsc` fails HERE for all three implementations at once, rather than
+// one adapter silently drifting out of sync with the port.
+import type { createMockAgentPort } from "@/lib/agents/mock-adapter";
+import type { createOpenAIAgentPort } from "@/lib/agents/openai-adapter";
+import type { createOpenAiAgentsAdapter } from "@/lib/agents/openai-agents-adapter";
 import type {
   AgentPort,
   AuditorAnswerOutput,
@@ -54,6 +62,25 @@ const intakeInterviewOutput: IntakeInterviewOutput = {
   gaps: [{ ruleId: "BLK-05", field: "overlay.touchesPHI", level: "BLOCKING" }],
   followUpQuestions: ["Does it access PHI?"],
 };
+
+/**
+ * Compile-time assertion that every real adapter factory still produces a
+ * complete `AgentPort`. `Assignable` resolves to `never` when a factory's
+ * return type stops satisfying the port, and assigning `never` to a `true`
+ * fails the build — so a port change cannot land while any adapter lags.
+ * Purely a type-level check: nothing here runs.
+ */
+type Assignable<TFactory extends () => unknown> =
+  ReturnType<TFactory> extends AgentPort ? true : never;
+
+const _mockAdapterSatisfiesPort: Assignable<typeof createMockAgentPort> = true;
+const _aiSdkAdapterSatisfiesPort: Assignable<typeof createOpenAIAgentPort> = true;
+const _agentsSdkAdapterSatisfiesPort: Assignable<
+  typeof createOpenAiAgentsAdapter
+> = true;
+void _mockAdapterSatisfiesPort;
+void _aiSdkAdapterSatisfiesPort;
+void _agentsSdkAdapterSatisfiesPort;
 
 const stubAgentPort: AgentPort = {
   async draftReview() {

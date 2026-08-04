@@ -46,79 +46,233 @@
   --radius-2xl: calc(var(--radius) * 1.8);
   --radius-3xl: calc(var(--radius) * 2.2);
   --radius-4xl: calc(var(--radius) * 2.6);
+  /* Data-color contract exposed as Tailwind color utilities
+     (bg-status-good-bg, text-tier-critical-fg, stroke-chart-grid, …) */
+  --color-chart-grid: var(--chart-grid);
+  --color-chart-axis: var(--chart-axis);
+  --color-seq-1: var(--seq-1);
+  --color-seq-2: var(--seq-2);
+  --color-seq-3: var(--seq-3);
+  --color-seq-4: var(--seq-4);
+  --color-seq-5: var(--seq-5);
+  --color-status-good: var(--status-good);
+  --color-status-good-fg: var(--status-good-fg);
+  --color-status-good-bg: var(--status-good-bg);
+  --color-status-warning: var(--status-warning);
+  --color-status-warning-fg: var(--status-warning-fg);
+  --color-status-warning-bg: var(--status-warning-bg);
+  --color-status-serious: var(--status-serious);
+  --color-status-serious-fg: var(--status-serious-fg);
+  --color-status-serious-bg: var(--status-serious-bg);
+  --color-status-critical: var(--status-critical);
+  --color-status-critical-fg: var(--status-critical-fg);
+  --color-status-critical-bg: var(--status-critical-bg);
+  --color-status-neutral-fg: var(--status-neutral-fg);
+  --color-status-neutral-bg: var(--status-neutral-bg);
+  --color-sidebar-foreground-muted: var(--sidebar-foreground-muted);
+  --color-tier-low-fg: var(--tier-low-fg);
+  --color-tier-low-bg: var(--tier-low-bg);
+  --color-tier-medium-fg: var(--tier-medium-fg);
+  --color-tier-medium-bg: var(--tier-medium-bg);
+  --color-tier-high-fg: var(--tier-high-fg);
+  --color-tier-high-bg: var(--tier-high-bg);
+  --color-tier-critical-fg: var(--tier-critical-fg);
+  --color-tier-critical-bg: var(--tier-critical-bg);
+  --shadow-card: var(--shadow-card);
+  --shadow-raised: var(--shadow-raised);
 }
 
 /*
- * Jeeves — Governance Operations Console theme (per Codex design review).
+ * Jeeves — Governance Operations Console theme (per Codex design review;
+ * elevated in the 2026-08-01 design pass).
  * Restrained enterprise-ops language: white/soft-gray surfaces, CHARCOAL
  * navigation, TEAL for actions, AMBER for warnings, RED for incidents.
- * No gradients, minimal shadows, 8px corners. Cascades to every shadcn
- * component. Tier/status accents live in their own badge components.
+ * No gradients on data surfaces, two-layer soft shadows, 8-10px corners.
+ * Cascades to every shadcn component.
+ *
+ * DATA COLOR CONTRACT (dataviz-skill validated 2026-08-01, six-check
+ * validator, per mode against its chart surface):
+ *  - --chart-1..4 are the CATEGORICAL series slots, assigned in fixed
+ *    order (1 teal, 2 orange, 3 violet, 4 ochre), never cycled, never
+ *    reused for status. Slot 4 (light) sits below 3:1 contrast, so any
+ *    series drawn with it MUST carry a direct label or table view.
+ *  - --status-* are RESERVED state colors (good/warning/serious/critical)
+ *    for badges/alerts/thresholds — never used as series colors. Ship with
+ *    icon + label, never color alone.
+ *  - --tier-* map governance tiers onto the same reserved family.
+ *  - --seq-1..5 is the sequential (magnitude) teal ramp, light→dark.
+ *    seq-4 carries a numeric label directly on its fill (risk-heatmap
+ *    bucket 4) so its ink switches per theme like seq-5 already does —
+ *    text-white on light (4.68:1), dark:text-neutral-900 on dark (5.16:1).
+ *  - Chart chrome: --chart-grid hairline horizontal gridlines only
+ *    (decorative — WCAG 1.4.11 exempts purely decorative graphics, so it
+ *    keeps its ~1.1-1.4:1 contrast against card/background by design).
+ *    --chart-axis carries tick/baseline meaning (a graphical object, WCAG
+ *    1.4.11) and is tuned to ≥3:1 against BOTH --card and --background in
+ *    each theme (2026-08-02 a11y pass — see contrast numbers in the
+ *    per-token comments below). Text on charts wears text tokens
+ *    (foreground/muted-foreground), never the series color.
  */
 :root {
-  --background: oklch(0.984 0.002 250);
-  --foreground: oklch(0.25 0.006 260);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.25 0.006 260);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.25 0.006 260);
-  --primary: oklch(0.55 0.095 197);
-  --primary-foreground: oklch(0.99 0.01 197);
-  --secondary: oklch(0.965 0.003 250);
-  --secondary-foreground: oklch(0.30 0.008 260);
-  --muted: oklch(0.965 0.003 250);
-  --muted-foreground: oklch(0.52 0.008 260);
-  --accent: oklch(0.95 0.022 197);
-  --accent-foreground: oklch(0.36 0.06 200);
+  /* ---- Instrument-deck neutrals (2026-08-02) --------------------------
+     Cool paper and petrol ink rather than a default grey: the neutral ramp
+     is hue-biased toward the teal signal so the ground reads as chosen, not
+     inherited. Every pair below was computed, not eyeballed (WCAG script in
+     the design pass): ink/paper 17.0, ink/panel 18.6, muted/paper 6.05,
+     muted/panel 6.63, accent/paper 5.66, white-on-accent 6.21. */
+  --background: #f2f5f6;
+  --foreground: #0b1418;
+  --card: #ffffff;
+  --card-foreground: #0b1418;
+  --popover: #ffffff;
+  --popover-foreground: #0b1418;
+  --primary: #0b6b77;
+  --primary-foreground: #ffffff;
+  --secondary: #e7edef;
+  --secondary-foreground: #16262d;
+  --muted: #e7edef;
+  --muted-foreground: #4a6069;
+  --accent: #dbeced;
+  --accent-foreground: #0b4f58;
   --destructive: oklch(0.55 0.20 25);
-  --border: oklch(0.918 0.004 255);
-  --input: oklch(0.918 0.004 255);
-  --ring: oklch(0.55 0.095 197);
-  --chart-1: oklch(0.56 0.095 197);
-  --chart-2: oklch(0.53 0.11 250);
-  --chart-3: oklch(0.72 0.13 68);
-  --chart-4: oklch(0.60 0.12 150);
-  --chart-5: oklch(0.57 0.19 25);
-  --radius: 0.5rem;
-  --sidebar: oklch(0.245 0.006 260);
-  --sidebar-foreground: oklch(0.90 0.004 260);
-  --sidebar-primary: oklch(0.62 0.10 197);
+  --border: #d7e0e3;
+  --input: #d7e0e3;
+  --ring: #0b6b77;
+  /* Categorical series (validated, light surface #fff) */
+  --chart-1: #0891a5;
+  --chart-2: #e26f2c;
+  --chart-3: #7c5cd6;
+  --chart-4: #c07f00;
+  --chart-5: #64748b; /* overflow/"other" only — fold extra series, never invent hues */
+  /* Chart chrome */
+  --chart-grid: oklch(0.93 0.003 255); /* decorative hairline — exempt, see contract note above */
+  /* 2026-08-02: darkened 0.80 -> 0.60 (WCAG 1.4.11 fix). Was 1.75:1 on
+     background / 1.87:1 on card — both fail 3:1. Now 3.69:1 / 3.94:1. */
+  --chart-axis: oklch(0.60 0.01 255);
+  /* Sequential teal ramp (magnitude, light→dark) */
+  --seq-1: #d4ecef;
+  --seq-2: #9fd3da;
+  --seq-3: #5bb2be;
+  /* 2026-08-02: darkened 1d8a9c -> 1a7f90 so the bucket-4 numeric label
+     (text-white) clears 4.5:1 — was 4.06:1, now 4.68:1. Ramp stays
+     monotonic (seq-3 37.78% -> seq-4 17.41% -> seq-5 9.38% rel. luminance). */
+  --seq-4: #1a7f90;
+  --seq-5: #0b5f6e;
+  /* Reserved status family: fg on tinted bg passes WCAG text contrast */
+  --status-good: oklch(0.55 0.14 150);
+  --status-good-fg: oklch(0.38 0.10 150);
+  --status-good-bg: oklch(0.95 0.035 150);
+  --status-warning: oklch(0.68 0.13 70);
+  --status-warning-fg: oklch(0.44 0.10 60);
+  --status-warning-bg: oklch(0.96 0.045 85);
+  --status-serious: oklch(0.62 0.15 45);
+  --status-serious-fg: oklch(0.45 0.13 40);
+  --status-serious-bg: oklch(0.955 0.030 45);
+  --status-critical: oklch(0.55 0.20 25);
+  --status-critical-fg: oklch(0.44 0.17 25);
+  --status-critical-bg: oklch(0.955 0.025 20);
+  --status-neutral-fg: oklch(0.45 0.010 258);
+  --status-neutral-bg: oklch(0.955 0.004 250);
+  /* Governance tiers ride the reserved family */
+  --tier-low-fg: var(--status-neutral-fg);
+  --tier-low-bg: var(--status-neutral-bg);
+  --tier-medium-fg: oklch(0.42 0.09 250);
+  --tier-medium-bg: oklch(0.95 0.025 250);
+  --tier-high-fg: var(--status-warning-fg);
+  --tier-high-bg: var(--status-warning-bg);
+  --tier-critical-fg: var(--status-critical-fg);
+  --tier-critical-bg: var(--status-critical-bg);
+  /* Elevation: two soft layers, no hard edges */
+  --shadow-card: 0 1px 2px oklch(0.22 0.008 260 / 0.05), 0 1px 1px oklch(0.22 0.008 260 / 0.03);
+  --shadow-raised: 0 1px 2px oklch(0.22 0.008 260 / 0.06), 0 8px 24px -12px oklch(0.22 0.008 260 / 0.18);
+  --radius: 0.5625rem;
+  --sidebar: #0b1418;
+  --sidebar-foreground: #e6f2f4;
+  /* 2026-08-02 (WCAG 1.4.3 fix): dedicated muted-caption token for the
+     sidebar/landing dark surfaces — replaces ad-hoc /40, /45, /50 opacity
+     on --sidebar-foreground, all of which measured 2.9-3.8:1 against
+     --sidebar (11px uppercase kickers and captions need 4.5:1). 65% alpha
+     on --sidebar-foreground measures 5.52:1 here. */
+  --sidebar-foreground-muted: #8fa6ae;
+  --sidebar-primary: #21d4c2;
   --sidebar-primary-foreground: oklch(0.99 0.01 197);
-  --sidebar-accent: oklch(0.31 0.008 260);
+  --sidebar-accent: #17272f;
   --sidebar-accent-foreground: oklch(0.97 0.003 260);
   --sidebar-border: oklch(1 0 0 / 8%);
-  --sidebar-ring: oklch(0.62 0.10 197);
+  --sidebar-ring: #21d4c2;
 }
 
 .dark {
-  --background: oklch(0.19 0.004 260);
-  --foreground: oklch(0.95 0.004 260);
-  --card: oklch(0.235 0.005 260);
-  --card-foreground: oklch(0.95 0.004 260);
-  --popover: oklch(0.235 0.005 260);
-  --popover-foreground: oklch(0.95 0.004 260);
-  --primary: oklch(0.68 0.10 197);
-  --primary-foreground: oklch(0.18 0.02 200);
-  --secondary: oklch(0.29 0.006 260);
-  --secondary-foreground: oklch(0.95 0.004 260);
-  --muted: oklch(0.29 0.006 260);
-  --muted-foreground: oklch(0.72 0.006 260);
-  --accent: oklch(0.32 0.03 200);
-  --accent-foreground: oklch(0.94 0.02 197);
+  /* ---- Instrument-deck neutrals, dark (2026-08-02) --------------------
+     Computed pairs: ink/ground 16.29, ink/panel 14.39, muted/ground 7.30,
+     muted/panel 6.45, signal/ground 9.99, ground-on-signal 9.99. */
+  --background: #0b1418;
+  --foreground: #e6f2f4;
+  --card: #12212a;
+  --card-foreground: #e6f2f4;
+  --popover: #12212a;
+  --popover-foreground: #e6f2f4;
+  --primary: #21d4c2;
+  --primary-foreground: #0b1418;
+  --secondary: #17272f;
+  --secondary-foreground: #e6f2f4;
+  --muted: #17272f;
+  --muted-foreground: #8fa6ae;
+  --accent: #17323a;
+  --accent-foreground: #7fe6da;
   --destructive: oklch(0.66 0.18 25);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 14%);
-  --ring: oklch(0.68 0.10 197);
-  --chart-1: oklch(0.68 0.10 197);
-  --chart-2: oklch(0.66 0.11 250);
-  --chart-3: oklch(0.78 0.13 70);
-  --chart-4: oklch(0.70 0.12 150);
-  --chart-5: oklch(0.66 0.17 25);
-  --sidebar: oklch(0.17 0.004 260);
-  --sidebar-foreground: oklch(0.90 0.004 260);
+  --border: #1c3038;
+  --input: #223a43;
+  --ring: #21d4c2;
+  /* Categorical series (validated, dark surface #1a1a19-class) */
+  --chart-1: #17a0b5;
+  --chart-2: #e06a33;
+  --chart-3: #9585e0;
+  --chart-4: #bd8100;
+  --chart-5: #7d8a99;
+  --chart-grid: oklch(0.30 0.005 260); /* decorative hairline — exempt, see contract note above */
+  /* 2026-08-02: lightened 0.42 -> 0.55 (WCAG 1.4.11 fix). Was 2.2:1 on
+     background / 1.99:1 on card — both fail 3:1. Now 3.84:1 / 3.50:1. */
+  --chart-axis: oklch(0.55 0.01 260);
+  --seq-1: #123c44;
+  --seq-2: #175560;
+  --seq-3: #1d7386;
+  /* Unchanged in dark mode — bucket-4 ink switches to neutral-900 instead
+     (risk-heatmap.tsx), which already clears 4.5:1 (5.16:1) against this
+     value, so no token change was needed here. */
+  --seq-4: #2496ad;
+  --seq-5: #4fc3d8;
+  --status-good: oklch(0.70 0.14 150);
+  --status-good-fg: oklch(0.80 0.13 150);
+  --status-good-bg: oklch(0.70 0.14 150 / 14%);
+  --status-warning: oklch(0.76 0.13 75);
+  --status-warning-fg: oklch(0.83 0.12 80);
+  --status-warning-bg: oklch(0.76 0.13 75 / 14%);
+  --status-serious: oklch(0.70 0.14 45);
+  --status-serious-fg: oklch(0.79 0.12 45);
+  --status-serious-bg: oklch(0.70 0.14 45 / 14%);
+  --status-critical: oklch(0.66 0.18 25);
+  --status-critical-fg: oklch(0.78 0.13 25);
+  --status-critical-bg: oklch(0.66 0.18 25 / 15%);
+  --status-neutral-fg: oklch(0.78 0.006 260);
+  --status-neutral-bg: oklch(1 0 0 / 8%);
+  --tier-low-fg: var(--status-neutral-fg);
+  --tier-low-bg: var(--status-neutral-bg);
+  --tier-medium-fg: oklch(0.78 0.09 250);
+  --tier-medium-bg: oklch(0.66 0.11 250 / 15%);
+  --tier-high-fg: var(--status-warning-fg);
+  --tier-high-bg: var(--status-warning-bg);
+  --tier-critical-fg: var(--status-critical-fg);
+  --tier-critical-bg: var(--status-critical-bg);
+  --shadow-card: 0 1px 2px oklch(0 0 0 / 0.35), 0 1px 1px oklch(0 0 0 / 0.25);
+  --shadow-raised: 0 1px 2px oklch(0 0 0 / 0.4), 0 10px 28px -12px oklch(0 0 0 / 0.55);
+  --sidebar: #081013;
+  --sidebar-foreground: oklch(0.87 0.005 260);
+  /* Same 65% alpha as light — measures 5.94:1 against this darker --sidebar. */
+  --sidebar-foreground-muted: #8fa6ae;
   --sidebar-primary: oklch(0.68 0.10 197);
   --sidebar-primary-foreground: oklch(0.18 0.02 200);
-  --sidebar-accent: oklch(0.27 0.006 260);
+  --sidebar-accent: #17272f;
   --sidebar-accent-foreground: oklch(0.97 0.003 260);
   --sidebar-border: oklch(1 0 0 / 8%);
   --sidebar-ring: oklch(0.68 0.10 197);
@@ -141,5 +295,288 @@
   h1, h2, h3, h4, h5, h6 {
     font-family: var(--font-heading), var(--font-sans), ui-sans-serif, system-ui, sans-serif;
     letter-spacing: -0.014em;
+    text-wrap: balance;
+  }
+  /* Numbers line up everywhere data is compared. */
+  table, thead, tbody {
+    font-variant-numeric: tabular-nums;
+  }
+  ::selection {
+    background: color-mix(in oklab, var(--primary) 26%, transparent);
+  }
+
+  /*
+   * Motion: fast and mechanical, never decorative. One duration scale so
+   * hovers, focus rings and panel reveals feel like one machine.
+   */
+  :root {
+    --motion-fast: 90ms;
+    --motion-base: 160ms;
+    --motion-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+
+  /*
+   * Accessibility (WCAG 2.3.3 / audit finding): honour the OS
+   * reduced-motion preference GLOBALLY rather than per-component, so no
+   * future animation can ship without it. Covers the live-chip pulse, panel
+   * reveals, and every shadcn transition at once.
+   */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+
+  /*
+   * ---- iOS / iPadOS behaviour (mobile-readiness pass 2026-08-04) ----
+   *
+   * These are browser-behaviour corrections, not styling choices, so they
+   * live in base rather than being re-applied per component.
+   */
+  html {
+    /* Safari inflates text when an iPhone rotates to landscape unless the
+       page opts out. "100%" keeps user pinch-zoom working (never use
+       `none`, which disables zoom entirely — WCAG 1.4.4). */
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+  body {
+    /* Kill the grey flash iOS paints over any tapped element; every
+       interactive surface here already has its own :active/:focus state. */
+    -webkit-tap-highlight-color: transparent;
+    /* Stop the whole-page rubber-band on iOS while leaving inner panes
+       (which set their own overscroll-behavior) free to scroll. */
+    overscroll-behavior-y: none;
+  }
+
+}
+
+@layer components {
+  /* Uppercase section label — the console's smallest heading rank.
+     Set in the MONO face (2026-08-02 instrument-deck pass): labels, IDs,
+     metrics and timestamps all speak in the technical voice so data reads
+     as data, and prose (Inter) is reserved for sentences. */
+  .kicker {
+    font-family: var(--font-mono), ui-monospace, monospace;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.10em;
+    text-transform: uppercase;
+    color: var(--muted-foreground);
+  }
+
+  /* Micro-label for instrument readouts: the kicker's quieter sibling, used
+     inline beside a value rather than above a section. */
+  .label-mono {
+    font-family: var(--font-mono), ui-monospace, monospace;
+    font-size: 0.6875rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted-foreground);
+  }
+
+  /* A control-surface panel. Panels butt against one another and are
+     separated by a shared hairline rather than floating as individual
+     rounded cards — the deck reads as one instrument, not a pile of tiles. */
+  .panel {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+  }
+
+  /* Hairline divider that inherits the panel rule colour. */
+  .rule {
+    border-color: var(--border);
+  }
+
+  /* Calibration ticks — a measured, instrument-like edge treatment. Purely
+     decorative, so it is aria-hidden at the call site. */
+  .ticks {
+    background-image: repeating-linear-gradient(
+      to bottom,
+      var(--border) 0 1px,
+      transparent 1px 7px
+    );
+  }
+  /* Big instrument-panel figure (stat tiles, hero numbers). */
+  .stat-value {
+    font-family: var(--font-mono), ui-monospace, monospace;
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    line-height: 1;
+  }
+  /* Card elevation rhythm: default flat card, .card-raised for emphasis. */
+  .card-quiet {
+    box-shadow: var(--shadow-card);
+  }
+  .card-raised {
+    box-shadow: var(--shadow-raised);
+  }
+  /* Thin, unobtrusive scrollbars inside data panes. */
+  .scroll-thin {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+  }
+
+  /* ---- Touch readiness (mobile pass 2026-08-04) ---- */
+
+  /*
+   * Horizontally-scrolling pane. On iOS a horizontal swipe that reaches the
+   * end of a scroller chains to the browser's back/forward gesture — so
+   * flicking through a wide table would navigate away from the page instead
+   * of scrolling it. `contain` keeps the gesture inside the pane.
+   */
+  .scroll-x-pane {
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /*
+   * Expands a control's TOUCH area without changing its visual size or
+   * disturbing layout, via a transparent absolutely-positioned overlay.
+   *
+   * The console is deliberately dense — 32px controls and 16px table sort
+   * buttons are right for a mouse at desk distance but well under Apple's
+   * 44pt minimum for a fingertip. Growing them for real would inflate every
+   * toolbar and destroy the instrument-deck rhythm on desktop, so instead
+   * the hit area grows only on coarse pointers, and only outward.
+   *
+   * Requires the element to establish a containing block; `position:
+   * relative` is set here so call sites need only add the class. The parent
+   * must not clip (no `overflow:hidden`) for the overlay to be reachable.
+   */
+  .touch-target {
+    position: relative;
+  }
+  @media (pointer: coarse) {
+    .touch-target::after {
+      content: "";
+      position: absolute;
+      /* Centres a 44px-minimum box on the control: half the shortfall on
+         each side, clamped at 0 so already-large controls are untouched. */
+      top: 50%;
+      left: 50%;
+      translate: -50% -50%;
+      width: max(100%, 44px);
+      height: max(100%, 44px);
+      /* Sits above the control's own background but below any popover. */
+      z-index: 1;
+    }
+  }
+
+  /*
+   * Safe-area insets: iPhones with a Dynamic Island / notch and every iPad
+   * running a full-screen web app reserve edge space that content must not
+   * sit under — most visibly the home-indicator strip at the bottom and, in
+   * landscape, the rounded corners at left/right. `env()` resolves to 0 on
+   * hardware without insets, so these are inert on desktop.
+   */
+  .pad-safe-x {
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+  }
+  .pad-safe-b {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}
+
+/* ===========================================================================
+ * Touch-pointer overrides (iPhone / iPad readiness pass, 2026-08-04)
+ *
+ * DELIBERATELY UNLAYERED. Everything above lives in @layer base/components,
+ * and Tailwind's utilities layer outranks both — so a `text-sm` or `h-8`
+ * utility on a call site would win against these rules if they were layered,
+ * which is exactly the bug the first cut of this pass shipped: `min-height`
+ * applied (no utility competes for it) while `font-size` was silently
+ * overridden by `text-sm` and iOS kept zooming. Unlayered CSS beats every
+ * layer, so these corrections hold wherever they are needed.
+ *
+ * All of it is gated on `(pointer: coarse)`, so the console's mouse-density
+ * layout is bit-for-bit unchanged on desktop.
+ * ======================================================================== */
+@media (pointer: coarse) {
+  /*
+   * iOS Safari zooms the viewport whenever a focused form control computes a
+   * font-size under 16px, with no way back except a manual pinch — measured
+   * here at 66 controls (search, filters, selects) sitting at 14px. `max()`
+   * raises only what is too small and still honours a deliberately larger
+   * font. `select` is included: iOS zooms when the picker opens too.
+   */
+  input:not([type="checkbox"]):not([type="radio"]):not([aria-hidden="true"]),
+  select:not([aria-hidden="true"]),
+  textarea:not([aria-hidden="true"]) {
+    font-size: max(16px, 1em);
+    /* Controls are sized h-8 (32px) for mouse density; a fingertip needs 44,
+       and a 16px font in a 32px box is cramped besides. */
+    min-height: 44px;
+  }
+  /* `:not([aria-hidden="true"])` above is load-bearing, not defensive. Base
+     UI's Select renders a 1x1 clipped proxy <input> to carry the value for
+     form submission; without the guard, min-height inflated that invisible
+     proxy to 44px inside the persona switcher's flex row. It is aria-hidden
+     and tabindex="-1" — not a control anyone can touch — so it must not be
+     sized like one. */
+
+  /* Checkboxes and radios keep their small visual box — growing the box
+     itself would look wrong — but take the WCAG 2.5.8 minimum hit area. */
+  input[type="checkbox"],
+  input[type="radio"] {
+    min-width: 24px;
+    min-height: 24px;
+  }
+
+  /*
+   * Buttons are h-8/h-7/h-6 by variant. On touch they take the 44px minimum
+   * for real (not via an overlay): a button is a primary control, and on a
+   * phone the extra height reads as correct rather than bloated.
+   *
+   * Matched on the `group/button` marker class rather than
+   * `[data-slot="button"]`, because the data-slot attribute misses two whole
+   * categories (both measured failing before this selector was changed):
+   *   1. `buttonVariants({...})` applied to a <Link>/<a> — every landing-page
+   *      CTA — emits the classes but never the data-slot attribute.
+   *   2. <Button data-slot="auditor-submit"> — Button spreads {...props}
+   *      AFTER its own data-slot, so any call site passing a custom slot
+   *      silently overrides `button`.
+   * The marker class is the first token of the cva base string, so it is
+   * present on every button-shaped element in the app and on nothing else.
+   */
+  [class~="group/button"],
+  [data-slot="select-trigger"] {
+    min-height: 44px;
+  }
+
+  /*
+   * Real 44px minimum, for controls that CAN grow. Use this rather than
+   * .touch-target wherever the control sits in a wrapped row or a table
+   * header: an overlay would either be clipped by a scroll container or
+   * overlap its neighbours (measured — chips in a `flex-wrap gap-1.5` row
+   * only reached 3 of 4 probe edges because adjacent chips' overlays won
+   * the tap). Growing for real is honest and looks right on a phone.
+   */
+  .touch-min {
+    min-height: 44px;
+    /* Narrow controls need the horizontal minimum too: a "Tier" column
+       header measured 37px wide, so a fingertip landing a few px either
+       side of centre fell into the neighbouring header instead. */
+    min-width: 44px;
+  }
+
+  /* Table rows carry the console's densest controls. Roomier cells lift row
+     height toward the 44px target, which is what makes the single link
+     inside a cell comfortable to hit without overlaying its neighbours.
+     Covers both the shadcn primitive and the hand-rolled data tables
+     (initiative-table et al) that use bare <td>/<th>. */
+  [data-slot="table-cell"],
+  [data-slot="table-head"],
+  table :is(td, th):not([aria-hidden="true"]) {
+    padding-top: 0.625rem;
+    padding-bottom: 0.625rem;
   }
 }

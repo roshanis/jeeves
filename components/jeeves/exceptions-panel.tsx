@@ -111,7 +111,7 @@ export function ExceptionsPanel({ exceptions }: { exceptions: ExceptionRow[] }) 
         {exceptions.length === 0 ? (
           <p className="px-4 py-4 text-sm text-muted-foreground">No control exceptions on file.</p>
         ) : (
-          <div className="overflow-x-auto">
+          <div className="scroll-x-pane overflow-x-auto">
             <table className="w-full min-w-[44rem] border-collapse text-sm">
               <caption className="sr-only">Control exceptions and their status</caption>
               <thead className="border-b bg-muted/50 text-xs uppercase tracking-wide">

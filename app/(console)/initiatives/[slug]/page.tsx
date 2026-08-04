@@ -1,6 +1,8 @@
 import { notFound } from "next/navigation";
 import { getInitiativeDetailCoherent } from "@/app/_lib/data-provider";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { AlertOctagon, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { TierBadge } from "@/components/jeeves/tier-badge";
 import { LifecycleBadge } from "@/components/jeeves/lifecycle-badge";
 import { AccountableApproverChip } from "@/components/jeeves/accountable-approver-chip";
@@ -40,6 +42,36 @@ function normalizeTab(tab: string | undefined): TabId {
     : "overview";
 }
 
+/** Segmented review-progress gauge — one filled tick per signed review, with
+ * a mono "0/8 signed" readout so the instrument reads at a glance. */
+function ReviewProgressBar({ signed, total }: { signed: number; total: number }) {
+  if (total === 0) {
+    return <span className="text-sm text-muted-foreground">No required domains</span>;
+  }
+  return (
+    <div className="flex items-center gap-2">
+      <div
+        className="flex gap-0.5"
+        role="img"
+        aria-label={`${signed} of ${total} reviews signed`}
+      >
+        {Array.from({ length: total }).map((_, i) => (
+          <span
+            key={i}
+            className={cn(
+              "h-2.5 w-1.5 rounded-[1px]",
+              i < signed ? "bg-status-good" : "bg-status-neutral-bg",
+            )}
+          />
+        ))}
+      </div>
+      <span className="stat-value text-xs text-foreground">
+        {signed}/{total} signed
+      </span>
+    </div>
+  );
+}
+
 export default async function InitiativeDetailPage({
   params,
   searchParams,
@@ -72,34 +104,82 @@ export default async function InitiativeDetailPage({
 
   return (
     <div className="flex flex-col gap-6">
-      <header className="space-y-3">
-        <div className="flex flex-wrap items-center gap-3">
-          <h1 className="text-2xl font-semibold tracking-tight">{summary.title}</h1>
-          <TierBadge tier={summary.tier} />
-          <LifecycleBadge state={summary.state} />
+      <header className="panel card-quiet overflow-hidden" data-slot="case-file-header">
+        <div className="p-5">
+          {/* Line 1 — title + tier/lifecycle badges (the h1's immediate
+              parent must contain the tier-badge: golden-path.spec.ts locates
+              it via h1's parent element). */}
+          <div className="flex flex-wrap items-center gap-3">
+            <h1 className="text-2xl font-semibold tracking-tight">{summary.title}</h1>
+            <TierBadge tier={summary.tier} />
+            <LifecycleBadge state={summary.state} />
+          </div>
+
+          {/* Line 2 — mono slug chip + overlay-flag chips. */}
+          <div className="mt-2.5 flex flex-wrap items-center gap-2.5">
+            <span className="rounded-md border bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground">
+              {summary.slug}
+            </span>
+            <OverlayFlagChips flags={summary.flags} />
+          </div>
         </div>
-        <p className="text-sm text-muted-foreground">{summary.slug}</p>
-        <div className="flex flex-wrap items-center gap-4">
-          <AccountableApproverChip name={summary.accountableApprover} />
-          <OverlayFlagChips flags={summary.flags} />
-        </div>
+
+        {/* Line 3 — meta grid: requester, accountable approver, review
+            progress, open blockers (+ latest deployment when present). Every
+            label reads as a kicker; every value speaks the mono/tabular
+            instrument voice. */}
         <div
           data-slot="record-meta"
-          className="flex flex-wrap items-center gap-4 text-xs tabular-nums text-muted-foreground"
+          className={cn(
+            "grid grid-cols-2 gap-x-6 gap-y-3 border-t border-border px-5 py-4 sm:grid-cols-4",
+            latestDeployment ? "lg:grid-cols-5" : undefined,
+          )}
         >
-          <span>
-            Reviews {signedReviews}/{detail.reviews.length} signed
-          </span>
-          <span>
-            <span className={openBlockers > 0 ? "text-destructive" : undefined}>
-              {openBlockers}
-            </span>{" "}
-            open blocker{openBlockers === 1 ? "" : "s"}
-          </span>
-          {latestDeployment ? (
-            <span>
-              v{latestDeployment.version} · {DEPLOYMENT_STATUS_LABEL[latestDeployment.status]}
+          <div className="flex flex-col gap-1">
+            <span className="kicker">Requested by</span>
+            <span className="font-mono text-sm font-medium text-foreground">{summary.requester}</span>
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <span className="kicker">Accountable approver</span>
+            <AccountableApproverChip name={summary.accountableApprover} className="font-mono" />
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <span className="kicker">Reviews</span>
+            <ReviewProgressBar signed={signedReviews} total={detail.reviews.length} />
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <span className="kicker">Blockers</span>
+            <span
+              className={cn(
+                "inline-flex w-fit items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium",
+                openBlockers > 0
+                  ? "bg-status-serious-bg text-status-serious-fg"
+                  : "bg-status-good-bg text-status-good-fg",
+              )}
+            >
+              {openBlockers > 0 ? (
+                <AlertTriangle className="size-3" aria-hidden />
+              ) : (
+                <CheckCircle2 className="size-3" aria-hidden />
+              )}
+              <span className="stat-value">{openBlockers}</span> open blocker
+              {openBlockers === 1 ? "" : "s"}
             </span>
+          </div>
+
+          {latestDeployment ? (
+            <div className="flex flex-col gap-1">
+              <span className="kicker">Latest deployment</span>
+              <span className="font-mono text-sm font-medium tabular-nums text-foreground">
+                v{latestDeployment.version}{" "}
+                <span className="font-sans font-normal text-muted-foreground">
+                  · {DEPLOYMENT_STATUS_LABEL[latestDeployment.status]}
+                </span>
+              </span>
+            </div>
           ) : null}
         </div>
       </header>
@@ -108,12 +188,15 @@ export default async function InitiativeDetailPage({
         <div
           role="alert"
           data-slot="incident-banner"
-          className="rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive"
+          className="flex items-start gap-2.5 rounded-lg border border-status-critical-fg/25 bg-status-critical-bg px-4 py-3 text-sm text-status-critical-fg"
         >
-          <strong className="font-semibold">Eval-quality breach.</strong>{" "}
-          The Q-01 hallucination-rate floor was exceeded on a sustained window;
-          this deployment is paused and a reassessment review cycle is open. See
-          the Evals and Audit tabs for the incident record.
+          <AlertOctagon className="mt-0.5 size-4 shrink-0" aria-hidden />
+          <p>
+            <strong className="font-semibold">Eval-quality breach.</strong>{" "}
+            The Q-01 hallucination-rate floor was exceeded on a sustained window;
+            this deployment is paused and a reassessment review cycle is open. See
+            the Evals and Audit tabs for the incident record.
+          </p>
         </div>
       ) : null}
 

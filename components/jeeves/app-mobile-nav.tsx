@@ -2,44 +2,49 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { NAV_ITEMS } from "./app-sidebar";
+import { NAV_SECTIONS, ADMIN_NAV_ITEM, isNavItemActive, type NavItem } from "./app-sidebar";
 
 /**
  * Mobile nav strip — the console's AppSidebar is `hidden` below `md` (see
  * components/jeeves/app-sidebar.tsx), which left small screens with no way
  * to reach any route but the one currently loaded. This renders the same
- * NAV_ITEMS as a horizontally scrollable strip of pill links directly under
- * the top bar, `md:hidden` so it disappears once the sidebar takes over.
+ * nav items (grouped in the same Oversee/Operate/Govern/Administration order
+ * as the sidebar) as a horizontally scrollable strip of pill links directly
+ * under the top bar, `md:hidden` so it disappears once the sidebar takes
+ * over.
  *
- * Active-item logic mirrors AppSidebar exactly (exact match for Inbox,
- * prefix match for everything else) so the two never disagree about which
- * route is "current."
+ * Active-item logic mirrors AppSidebar exactly (isNavItemActive: exact match
+ * for Inbox, prefix match for everything else) so the two never disagree
+ * about which route is "current."
  */
+const FLAT_ITEMS: NavItem[] = [...NAV_SECTIONS.flatMap((section) => section.items), ADMIN_NAV_ITEM];
+
 export function AppMobileNav() {
   const pathname = usePathname();
 
   return (
     <nav
       aria-label="Primary"
-      className="flex gap-1.5 overflow-x-auto border-b bg-card px-3 py-2 md:hidden"
+      className="pad-safe-x scroll-thin scroll-x-pane flex gap-1.5 overflow-x-auto border-b bg-card px-3 py-2 md:hidden"
     >
-      {NAV_ITEMS.map((item) => {
-        const active = item.exact
-          ? pathname === item.href
-          : pathname === item.href || pathname.startsWith(item.href + "/");
+      {FLAT_ITEMS.map((item) => {
+        const active = isNavItemActive(item, pathname);
         const Icon = item.icon;
         return (
           <Link
             key={item.href}
             href={item.href}
             aria-current={active ? "page" : undefined}
-            className={`flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-xs whitespace-nowrap transition-colors ${
+            /* h-11 = 44px, Apple's minimum touch target. This strip is
+               `md:hidden`, so it only ever renders on touch-sized viewports
+               and the taller pill costs desktop nothing. */
+            className={`flex h-11 shrink-0 items-center gap-1.5 rounded-md px-3.5 text-sm whitespace-nowrap transition-colors duration-(--motion-base) ease-(--motion-ease) ${
               active
-                ? "bg-accent text-accent-foreground font-medium"
+                ? "bg-accent font-medium text-accent-foreground shadow-[inset_0_0_0_1px_var(--border)]"
                 : "text-muted-foreground hover:bg-muted"
             }`}
           >
-            <Icon className="h-3.5 w-3.5 shrink-0" aria-hidden />
+            <Icon className="h-4 w-4 shrink-0" aria-hidden />
             {item.label}
           </Link>
         );

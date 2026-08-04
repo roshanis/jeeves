@@ -17,7 +17,20 @@ import type * as schema from "../db/schema";
 import { auditEvents, controlDefinitions, deploymentVersions, effectiveControls, initiatives } from "../db/schema";
 import type { Actor, LifecycleState, Tier } from "../domain/types";
 import { transition, IllegalTransitionError } from "../lifecycle/transitions";
+import { ConflictError } from "./initiative-service";
 import { workspaceMismatch } from "./workspace-guard";
+
+/**
+ * Re-exported so route handlers can catch a compare-and-set race (external-
+ * review finding P2-5b: "pause/resume flip initiative/deployment state with
+ * a plain `where(eq(id))` update, no observed-state predicate — a concurrent
+ * change is silently clobbered") the same way `initiative-service.ts`'s
+ * `decide()`/`signReview()` and `promotion-service.ts`'s `promoteCheckpoint`
+ * already do. This is the SAME class (reused, not duplicated), so a single
+ * `instanceof ConflictError` works uniformly across every CAS-guarded
+ * mutation in the codebase.
+ */
+export { ConflictError };
 
 /**
  * Re-exported so route handlers can catch a STATE violation (e.g. pausing an
@@ -124,12 +137,24 @@ export interface SetEvalThresholdResult {
  * before/after `AuditEvent`, transactionally. A later `runMonitor` call
  * picks up the change automatically via `resolveThreshold` (project
  * override > tier default) — no separate wiring needed.
+ *
+ * `sessionWorkspaceId` (P1 fix — independent security review: this was one
+ * of the only three mutation services in the codebase that never received
+ * the session workspace, unlike every other mutation, e.g. `decide()`/
+ * `rollbackDeployment`): enforced only on the project/deployment-override
+ * branch below (`input.initiativeId !== null`), which is the only branch
+ * that touches a workspace-scoped row — the tier-default branch changes a
+ * global `control_definitions` row with no owning initiative, so there is
+ * nothing to authorize against. Checked AFTER loading the initiative but
+ * BEFORE any further business-logic lookups, same `NotFoundError` shape as
+ * an unknown initiative id (no existence leak), matching
+ * `promoteCheckpoint`'s and `rollbackDeployment`'s ordering.
  */
 export async function setEvalThreshold(
   db: Db,
   actor: Actor,
+  sessionWorkspaceId: string | null,
   input: SetEvalThresholdInput,
-  sessionWorkspaceId: string | null = null,
 ): Promise<SetEvalThresholdResult> {
   requireAdminWithReason(actor, input.reason);
 
@@ -178,6 +203,10 @@ export async function setEvalThreshold(
     const initiativeRows = await tx.select().from(initiatives).where(eq(initiatives.id, input.initiativeId));
     const initiative = initiativeRows[0];
     if (!initiative) throw new NotFoundError("initiative", input.initiativeId);
+    // Workspace authorization (P1 fix, see doc comment above) — BEFORE any
+    // further business-logic lookups, same NotFoundError shape as an
+    // unknown initiative id on mismatch (never leaks that the initiative
+    // exists in a different workspace).
     if (workspaceMismatch(initiative.workspaceId, sessionWorkspaceId)) {
       throw new NotFoundError("initiative", input.initiativeId);
     }
@@ -238,6 +267,18 @@ export interface PauseResumeResult {
   after: LifecycleState;
 }
 
+/**
+ * `sessionWorkspaceId` (P1 fix — independent security review: `pauseDeployment`/
+ * `resumeDeployment` never received the session workspace and never enforced
+ * it, unlike every other mutation service). This is the sole chokepoint both
+ * callers use to load their target initiative, so the workspace check lives
+ * here, right after the initiative is loaded and BEFORE the deployment
+ * lookup or any state/business validation — same `NotFoundError` shape as an
+ * unknown initiative id on mismatch (no existence leak), matching
+ * `promoteCheckpoint`'s and `rollbackDeployment`'s ordering. Only these two
+ * functions call this helper (no read-only or system/cron path does), so
+ * enforcing unconditionally here is safe.
+ */
 async function loadInitiativeAndDeploymentOrThrow(
   tx: Tx,
   initiativeId: string,
@@ -270,9 +311,9 @@ async function loadInitiativeAndDeploymentOrThrow(
 export async function pauseDeployment(
   db: Db,
   actor: Actor,
+  sessionWorkspaceId: string | null,
   initiativeId: string,
   reason: string,
-  sessionWorkspaceId: string | null = null,
 ): Promise<PauseResumeResult> {
   requireAdminWithReason(actor, reason);
 
@@ -286,14 +327,33 @@ export async function pauseDeployment(
 
     const result = transition(initiative.state as LifecycleState, "pause", actor, { ts, reason });
 
-    await tx
+    // Compare-and-set (external-review finding P2-5b): only advance the
+    // initiative's state if it is STILL the state this transaction read at
+    // the top (`initiative.state`) — mirrors initiative-service.ts's
+    // decide()/signReview() and promotion-service.ts's promoteCheckpoint.
+    const updatedInitiative = await tx
       .update(initiatives)
       .set({ state: result.after, updatedAt: new Date(ts) })
-      .where(eq(initiatives.id, initiativeId));
-    await tx
+      .where(and(eq(initiatives.id, initiativeId), eq(initiatives.state, initiative.state)))
+      .returning();
+    if (updatedInitiative.length === 0) {
+      throw new ConflictError(
+        `initiative ${initiativeId} changed concurrently (expected state '${initiative.state}')`,
+      );
+    }
+
+    // Same CAS discipline for the deployment-version row: only flip it if
+    // its status is still what this transaction observed.
+    const updatedDeployment = await tx
       .update(deploymentVersions)
       .set({ status: "paused", pausedAt: new Date(ts) })
-      .where(eq(deploymentVersions.id, deployment.id));
+      .where(and(eq(deploymentVersions.id, deployment.id), eq(deploymentVersions.status, deployment.status)))
+      .returning();
+    if (updatedDeployment.length === 0) {
+      throw new ConflictError(
+        `deployment version ${deployment.id} changed concurrently (expected status '${deployment.status}')`,
+      );
+    }
 
     await insertAuditEvent(
       tx,
@@ -320,9 +380,9 @@ export async function pauseDeployment(
 export async function resumeDeployment(
   db: Db,
   actor: Actor,
+  sessionWorkspaceId: string | null,
   initiativeId: string,
   reason: string,
-  sessionWorkspaceId: string | null = null,
 ): Promise<PauseResumeResult> {
   requireAdminWithReason(actor, reason);
 
@@ -336,14 +396,29 @@ export async function resumeDeployment(
 
     const result = transition(initiative.state as LifecycleState, "resume", actor, { ts, reason });
 
-    await tx
+    // Compare-and-set (external-review finding P2-5b): same discipline as
+    // pauseDeployment above.
+    const updatedInitiative = await tx
       .update(initiatives)
       .set({ state: result.after, updatedAt: new Date(ts) })
-      .where(eq(initiatives.id, initiativeId));
-    await tx
+      .where(and(eq(initiatives.id, initiativeId), eq(initiatives.state, initiative.state)))
+      .returning();
+    if (updatedInitiative.length === 0) {
+      throw new ConflictError(
+        `initiative ${initiativeId} changed concurrently (expected state '${initiative.state}')`,
+      );
+    }
+
+    const updatedDeployment = await tx
       .update(deploymentVersions)
       .set({ status: "deployed", pausedAt: null })
-      .where(eq(deploymentVersions.id, deployment.id));
+      .where(and(eq(deploymentVersions.id, deployment.id), eq(deploymentVersions.status, deployment.status)))
+      .returning();
+    if (updatedDeployment.length === 0) {
+      throw new ConflictError(
+        `deployment version ${deployment.id} changed concurrently (expected status '${deployment.status}')`,
+      );
+    }
 
     await insertAuditEvent(
       tx,

@@ -1,0 +1,99 @@
+# Continuous integration for Jeeves.
+#
+# Until now nothing ran the test suite automatically — 890+ Vitest tests, a
+# required Playwright golden path, and coverage thresholds all existed but
+# were only ever run by hand. This workflow makes the gate in CLAUDE.md §5
+# ("run full test suite, fix regressions") actually enforceable on a PR.
+#
+# Two jobs so a lint/type/unit failure reports without waiting on the e2e
+# build:
+#   verify — typecheck, lint, unit tests WITH coverage (vitest.config.ts's
+#            thresholds fail the run on regression).
+#   e2e    — the Playwright golden path. playwright.config.ts owns its own
+#            webServer (db:seed && build && start on port 3117), so this job
+#            only installs the browser and runs the suite.
+#
+# DEMO_PASSCODE is set for the e2e job on purpose: the live-loop spec
+# (create -> triage -> draft run -> sign -> decide) self-skips unless the
+# RUNNER's env has it, so without this line CI would silently run 7 of 8
+# specs and skip the one that exercises every mutation path. The value is a
+# throwaway that matches playwright.config.ts's own webServer env — it is
+# not a secret and gates nothing outside this ephemeral runner.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A new push to the same branch cancels the previous run — these jobs build
+# the app twice over, so queueing stale runs wastes a lot of runner minutes.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Typecheck, lint, unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+        env:
+          # Chromium is only needed by the e2e job; skip the ~150MB download
+          # during this job's postinstall.
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      # Coverage thresholds live in vitest.config.ts and fail the run on
+      # regression. File parallelism is disabled in that config (PGlite
+      # instances contend and time out the beforeEach hooks otherwise).
+      - name: Unit tests + coverage
+        run: npx vitest run --coverage
+
+  e2e:
+    name: Playwright golden path
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run e2e suite
+        run: npm run test:e2e
+        env:
+          # See the note at the top of this file — includes the live-loop
+          # spec instead of letting it self-skip.
+          DEMO_PASSCODE: e2e-test-pass
+
+      - name: Upload Playwright report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7

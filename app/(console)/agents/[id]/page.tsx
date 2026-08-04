@@ -190,7 +190,7 @@ function PromptBody({
     );
   }
   return (
-    <div className="max-h-[32rem] overflow-y-auto overflow-x-auto rounded-md border bg-muted/30">
+    <div className="scroll-x-pane max-h-[32rem] overflow-y-auto overflow-x-auto rounded-md border bg-muted/30">
       <pre className="whitespace-pre-wrap break-words p-3 font-mono text-xs text-foreground">
         {content}
       </pre>

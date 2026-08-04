@@ -10,6 +10,7 @@ import { vi } from "vitest";
 import { createTestDb, closeTestDb, type TestDb } from "@/lib/db/test-client";
 import { resetGuardStateForTests } from "@/lib/services/route-guard";
 import { seedDatabase } from "@/scripts/seed";
+import * as agentsModule from "@/lib/agents";
 
 let testDb: TestDb;
 
@@ -291,6 +292,85 @@ describe("POST /api/chat/intake", () => {
       );
     }
     expect(last!.status).toBe(429);
+  });
+
+  /* -----------------------------------------------------------------------
+   * P1 cost-abuse fix: `partialPayload` was an unbounded z.record bypassing
+   * every input cap, and the budget reservation was a flat constant
+   * regardless of actual input size. These tests pin both fixes in place.
+   * ---------------------------------------------------------------------- */
+
+  it("400s an oversized partialPayload (input-cap failure) and never calls the agent port", async () => {
+    const token = await issueSessionFor("priya-raman", "41.0.0.8");
+    const spy = vi.spyOn(agentsModule, "getAgentPort");
+    try {
+      const { POST } = await import("../intake/route");
+      const res = await POST(
+        new Request("http://localhost/api/chat/intake", {
+          method: "POST",
+          headers: bearer(token, "41.0.0.8"),
+          body: JSON.stringify({
+            conversation: [],
+            partialPayload: { oversized: "x".repeat(25_000) },
+          }),
+        }),
+      );
+      expect(res.status).toBe(400);
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("scales the budget reservation with actual input size (429s a large-but-legal body against a near-exhausted budget that a flat 600-token reservation would have admitted)", async () => {
+    const { getBudgetStoreForTests } = await import("@/lib/services/route-guard");
+    const store = getBudgetStoreForTests();
+    const today = new Date().toISOString().slice(0, 10);
+    // Mirrors lib/services/route-guard.ts's DAILY_TOKEN_CAP (500_000) as of
+    // this test's writing. Top up usage so only ~5000 tokens remain today:
+    // enough to admit a flat 600-token reservation, but not the
+    // conversation-scaled estimate for a ~40k-char legal body (~10.6k
+    // tokens), proving the reservation actually scales with input size.
+    const DAILY_TOKEN_CAP_ASSUMED = 500_000;
+    const REMAINING_TARGET = 5_000;
+    const used = await store.getUsed(today);
+    const topUp = DAILY_TOKEN_CAP_ASSUMED - used - REMAINING_TARGET;
+    if (topUp > 0) {
+      await store.addUsage(today, topUp);
+    }
+
+    const token = await issueSessionFor("priya-raman", "41.0.0.9");
+    const { POST } = await import("../intake/route");
+    const largeConversation = Array.from({ length: 10 }, () => ({
+      role: "user" as const,
+      content: "x".repeat(4000),
+    }));
+    const res = await POST(
+      new Request("http://localhost/api/chat/intake", {
+        method: "POST",
+        headers: bearer(token, "41.0.0.9"),
+        body: JSON.stringify({ conversation: largeConversation, partialPayload: EMPTY_INTAKE_PAYLOAD }),
+      }),
+    );
+    expect(res.status).toBe(429);
+  });
+
+  it("still 200s a normal small body (regression) with the mocked port reply", async () => {
+    const token = await issueSessionFor("priya-raman", "41.0.0.10");
+    const { POST } = await import("../intake/route");
+    const res = await POST(
+      new Request("http://localhost/api/chat/intake", {
+        method: "POST",
+        headers: bearer(token, "41.0.0.10"),
+        body: JSON.stringify({
+          conversation: [{ role: "user", content: "Hello, I'd like to start an intake." }],
+          partialPayload: EMPTY_INTAKE_PAYLOAD,
+        }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(typeof json.reply).toBe("string");
   });
 });
 

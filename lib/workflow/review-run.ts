@@ -258,6 +258,11 @@ export async function startDraftRun(
   const runResults = await runWithConcurrencyLimit(toRun, concurrency, async (domain) => {
     const result = await draftWithRetry(port, cycleId, domain, intake, maxAttempts);
     if (result.ok) {
+      // A signature is a human decision and always wins: if the row was
+      // signed by a reviewer while this domain's draftReview call was still
+      // in flight, `persistDraft` refuses to overwrite it (returns false),
+      // and the domain is reported as `skipped: already signed`, never as
+      // `drafted`.
       const persisted = await persistDraft(db, cycleId, domain, result.value);
       if (!persisted) {
         return { domain, status: "skipped" as const, reason: "already signed" as const };
@@ -291,6 +296,21 @@ export async function startDraftRun(
   return { runId, cycleId, outcomes };
 }
 
+/**
+ * Persists a successful draft. Returns `true` if it wrote, `false` if it
+ * skipped because the row was signed by a human reviewer concurrently (the
+ * signature wins — see the module-level race-condition note above `and`
+ * `signReview` in lib/services/initiative-service.ts for the established
+ * compare-and-set pattern this mirrors). The UPDATE branch is therefore
+ * conditional at the DB level (`status <> 'signed'`), asserted via the
+ * `.returning()` rowcount rather than a separate read-then-write race
+ * window: the SELECT above is only used to decide insert-vs-update and to
+ * get `existing.id`, never trusted for the write's correctness.
+ *
+ * The insert branch (row absent) is never the race: a concurrent sign
+ * requires an existing row to sign, so a missing row always means insert is
+ * safe.
+ */
 async function persistDraft(
   db: Db,
   cycleId: string,
@@ -336,6 +356,14 @@ function describePortFailure(error: PortFailure): string {
   return error.message;
 }
 
+/**
+ * Persists a failed draft attempt. Returns `true` if it wrote, `false` if it
+ * skipped because the row was signed by a human reviewer concurrently (the
+ * signature wins — see `persistDraft`'s doc comment for the shared
+ * compare-and-set rationale). Same conditional-UPDATE / `.returning()`
+ * rowcount-assert shape as `persistDraft`; the insert branch is not the race
+ * for the same reason (a concurrent sign requires an existing row).
+ */
 async function persistFailure(
   db: Db,
   cycleId: string,
@@ -435,12 +463,18 @@ export async function runSingleDomainDraft(
     .from(reviewDecisions)
     .where(and(eq(reviewDecisions.cycleId, cycleId), eq(reviewDecisions.domain, domain)));
   if (existingRows[0]?.status === "signed") {
-    throw new Error(`runSingleDomainDraft: cannot re-draft a signed review (${cycleId}/${domain})`);
+    throw cannotRedraftSignedError(cycleId, domain);
   }
 
   const intake = await loadIntakeSnapshot(db, cycle.initiativeId);
   const result = await draftWithRetry(port, cycleId, domain, intake, maxAttempts);
   if (result.ok) {
+    // The pre-check above only guards against a signature that already
+    // existed when this call started. If a reviewer signs the row WHILE
+    // draftReview was in flight, `persistDraft`'s DB-level CAS refuses to
+    // overwrite it (returns false) — reported as `skipped: already signed`
+    // rather than thrown, because `runReviewAgent` (the audit-writing
+    // caller) records the outcome of every run, including a lost race.
     const persisted = await persistDraft(db, cycleId, domain, result.value);
     if (!persisted) {
       return { cycleId, domain, status: "skipped", reason: "already signed" };
@@ -452,6 +486,11 @@ export async function runSingleDomainDraft(
     return { cycleId, domain, status: "skipped", reason: "already signed" };
   }
   return { cycleId, domain, status: "failed", error: describePortFailure(result.error) };
+}
+
+/** Error for the already-signed pre-check in `runSingleDomainDraft`. */
+function cannotRedraftSignedError(cycleId: string, domain: Domain): Error {
+  return new Error(`runSingleDomainDraft: cannot re-draft a signed review (${cycleId}/${domain})`);
 }
 
 /** UI polling endpoint support (task brief: `getRunProgress(cycleId)`). */
