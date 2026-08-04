@@ -51,11 +51,7 @@ for (const [label, viewport] of [
   ["iPad portrait", IPAD_PORTRAIT],
 ] as const) {
   test.describe(`${label} (${viewport.width}x${viewport.height})`, () => {
-    // NOTE: context options only — spreading devices["Desktop Chrome"] here
-    // would drag in the worker-scoped defaultBrowserType, which Playwright
-    // rejects inside a describe. The project config already applies the
-    // Desktop Chrome descriptor.
-    test.use({ viewport, isMobile: true, hasTouch: true });
+    test.use({ viewport, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
 
     test(`no horizontal overflow on any console route`, async ({ page }) => {
       for (const route of ROUTES) {
@@ -123,55 +119,64 @@ for (const [label, viewport] of [
 
             const cx = rect.left + rect.width / 2;
             const cy = rect.top + rect.height / 2;
-            const dx = Math.max(rect.width, REQUIRED) / 2 - 1;
-            const dy = Math.max(rect.height, REQUIRED) / 2 - 1;
 
-            // The probeable region is the viewport intersected with every
-            // overflow-clipping ancestor's box: a control half-scrolled out
-            // of a scroll pane (a wide table's trailing sort header, the
-            // last item of the mobile nav strip) is reachable by scrolling
-            // the pane, exactly like content below the viewport fold — its
-            // clipped-away pixels cannot be probed and are not occlusions.
-            // The 1px inset matters at the extremes: elementFromPoint
-            // returns null on the last device pixel of the viewport.
-            let clipL = 0;
-            let clipT = 0;
-            let clipR = innerWidth;
-            let clipB = innerHeight;
-            for (let p = el.parentElement; p; p = p.parentElement) {
-              const pcs = getComputedStyle(p);
-              if (/(auto|scroll|hidden|clip)/.test(pcs.overflowX + pcs.overflowY)) {
-                const pr = p.getBoundingClientRect();
-                clipL = Math.max(clipL, pr.left);
-                clipT = Math.max(clipT, pr.top);
-                clipR = Math.min(clipR, pr.right);
-                clipB = Math.min(clipB, pr.bottom);
+            // Only controls currently on screen can be hit-tested. One off
+            // the bottom of a long page is not a failure, just unprobeable.
+            // Note `>=`: the last addressable pixel is innerHeight - 1, and
+            // elementFromPoint returns null exactly at innerHeight.
+            if (cx < 0 || cy < 0 || cx >= innerWidth || cy >= innerHeight) continue;
+
+            // A box that already meets the minimum on both axes needs no
+            // probing — hit-testing it would only re-measure what the rect
+            // already says, with rounding noise.
+            if (rect.width >= REQUIRED && rect.height >= REQUIRED) continue;
+
+            // Otherwise measure the CONTIGUOUS region around the centre that
+            // actually resolves to this control, rather than probing a 44px
+            // box centred on it. The distinction matters for a control that
+            // sits off-centre inside a larger target: an initiative's title
+            // link is 20px of type at the top of a much taller cell that is
+            // entirely tappable. A centred-box probe calls that a failure;
+            // a fingertip does not.
+            const reaches = (stepX: number, stepY: number) => {
+              for (let d = 1; d <= REQUIRED; d++) {
+                const px = cx + stepX * d;
+                const py = cy + stepY * d;
+                // Running off screen means we cannot disprove reachability.
+                // `>=`, not `>`: elementFromPoint returns null at exactly
+                // innerWidth/innerHeight, and a null there was being read as
+                // "something else got the tap" — which reported a partly
+                // off-screen row as a 24px target when it was really 65px.
+                if (px < 0 || py < 0 || px >= innerWidth || py >= innerHeight) return REQUIRED;
+                const hit = document.elementFromPoint(px, py);
+                // null means the point is outside the visible viewport, not
+                // that another element is covering this one.
+                if (!hit) return REQUIRED;
+                // Only the control itself or its own descendants count. An
+                // ancestor row receiving the tap is not this control being
+                // reachable.
+                if (!(hit && (hit === el || el.contains(hit)))) return d - 1;
               }
-            }
+              return REQUIRED;
+            };
 
-            let reachable = 0;
-            const probes: [number, number][] = [
-              [cx, cy - dy],
-              [cx, cy + dy],
-              [cx - dx, cy],
-              [cx + dx, cy],
-            ];
-            for (const [px, py] of probes) {
-              if (px < clipL + 1 || py < clipT + 1 || px > clipR - 1 || py > clipB - 1) {
-                reachable++;
-                continue;
-              }
-              const hit = document.elementFromPoint(px, py);
-              // Only the control itself or its own descendants count. An
-              // ancestor row receiving the tap is not this control being
-              // reachable.
-              if (hit && (hit === el || el.contains(hit))) reachable++;
-            }
-
-            if (reachable < probes.length) {
+            const centreHit = document.elementFromPoint(cx, cy);
+            if (!(centreHit && (centreHit === el || el.contains(centreHit)))) {
+              // Something is covering the control's own centre.
               const name = (el.getAttribute("aria-label") || el.textContent || "").trim().slice(0, 40);
               failures.push(
-                `<${el.tagName.toLowerCase()}> "${name}" ${Math.round(rect.width)}x${Math.round(rect.height)} reachable ${reachable}/4`,
+                `<${el.tagName.toLowerCase()}> "${name}" centre covered by <${centreHit?.tagName.toLowerCase() ?? "nothing"}>`,
+              );
+              continue;
+            }
+
+            const height = reaches(0, -1) + reaches(0, 1) + 1;
+            const width = reaches(-1, 0) + reaches(1, 0) + 1;
+
+            if (height < REQUIRED || width < REQUIRED) {
+              const name = (el.getAttribute("aria-label") || el.textContent || "").trim().slice(0, 40);
+              failures.push(
+                `<${el.tagName.toLowerCase()}> "${name}" box ${Math.round(rect.width)}x${Math.round(rect.height)}, tappable ${width}x${height}`,
               );
             }
           }
@@ -196,10 +201,8 @@ for (const [label, viewport] of [
             const cs = getComputedStyle(el);
             if (cs.display === "none" || cs.visibility === "hidden") continue;
             if (el.closest(".sr-only")) continue;
-            // Base UI form components mirror their value into a deliberately
-            // 1x1 clip-path-hidden native input for form participation
-            // (aria-hidden, tabindex=-1). That is not user chrome collapsing
-            // — same exemption the focus-zoom check above applies.
+            // Base UI's Select renders a 1x1 clipped proxy input to carry its
+            // value for form submission. It is aria-hidden and not a control.
             if (el.getAttribute("aria-hidden") === "true") continue;
             if (r.height > 0 && r.width > 0 && r.width < 24) {
               found.push(`collapsed <${el.tagName.toLowerCase()}> w=${r.width.toFixed(1)}`);
@@ -240,7 +243,7 @@ test.describe("iPhone landscape dialogs", () => {
   // 393px tall: a centred dialog with no height cap overflowed equally off
   // the top and bottom here, hiding its own submit button with no way to
   // scroll to it.
-  test.use({ viewport: { width: 852, height: 393 }, isMobile: true, hasTouch: true });
+  test.use({ viewport: { width: 852, height: 393 }, isMobile: true, hasTouch: true, deviceScaleFactor: 3 });
 
   test("a dialog fits the viewport and its submit stays reachable", async ({ page }) => {
     await page.goto("/inbox");

@@ -232,20 +232,20 @@ export function InitiativeTable({
                 className="h-10 border-b last:border-0 hover:bg-muted/40"
               >
                 <SeverityStripeCell severe={severe} />
-                <td className="max-w-[11rem] px-2 py-1.5 @2xl:max-w-[18rem] @4xl:max-w-[26rem]">
-                  {/* touch-target: at 56px coarse-pointer row pitch the 44px
-                      overlay stays inside the row, and the positioned link
-                      paints above the static slug line + header row, so a
-                      fingertip anywhere in the row's upper band reaches the
-                      link (mobile pass: title links measured 20px tall and
-                      probed 2/4 without it). */}
+                {/* `relative` anchors the stretched link below. Everything in
+                    this cell — the title and the slug beneath it — points at
+                    one destination, so on touch the whole cell is the target
+                    rather than the 20px line of type (measured: a fingertip
+                    reached only 2 of 4 edges of the bare link). */}
+                <td className="relative max-w-[11rem] px-2 py-1.5 @2xl:max-w-[18rem] @4xl:max-w-[26rem]">
+                  {/* Truncation lives on the inner span, not the link: the
+                      stretched hit area is generated inside the link, so
+                      `overflow:hidden` there would clip it back to the text
+                      box and undo the whole point. */}
                   <Link
                     href={`/initiatives/${i.slug}`}
-                    className="touch-target block font-medium text-foreground hover:text-primary hover:underline"
+                    className="touch-stretch block min-w-0 font-medium text-foreground hover:text-primary hover:underline"
                   >
-                    {/* truncate lives on an inner span: overflow:hidden on
-                        the link itself would clip the touch-target overlay
-                        back down to the 20px text box. */}
                     <span className="block truncate">{i.title}</span>
                   </Link>
                   <div className="label-mono truncate text-muted-foreground">{i.slug}</div>

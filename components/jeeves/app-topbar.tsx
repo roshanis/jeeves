@@ -103,7 +103,7 @@ export function AppTopBar() {
           >
             {breadcrumb}
           </p>
-          {/* Global search is hidden below `lg`. Three reasons, all measured:
+          {/* Global search is hidden below `xl`. Three reasons, all measured:
               it is the single widest incompressible item in this bar (the
               status cluster + a search input could not fit under 404px, so
               every console route overflowed an iPhone horizontally); at
@@ -111,11 +111,16 @@ export function AppTopBar() {
               the input to ~0 width on an iPad in portrait so its absolutely
               positioned icon and ⌘K hint overlapped the breadcrumb; and it
               is not yet wired to a search backend, so on a small screen it
-              was spending the viewport on a control that does nothing. The
-              `min-w` floor is a belt-and-braces guard: rather than collapse
-              into an overlap again at some future width, the input keeps a
-              usable size and the flex row gives ground elsewhere. */}
-          <label className="relative hidden w-full max-w-sm min-w-[10rem] items-center lg:flex">
+              was spending the viewport on a control that does nothing.
+
+              Deliberately NO min-width. An earlier cut added one as a
+              "cannot collapse again" guard and it backfired: in live mode at
+              1280 the status cluster leaves this slot ~158px, so a 160px
+              floor stopped the field shrinking and it spilled OVER the
+              cluster, swallowing clicks meant for the Reset control. The
+              breakpoint is what keeps this field out of cramped layouts;
+              inside them it must yield freely. */}
+          <label className="relative hidden w-full max-w-sm items-center xl:flex">
             <Search
               className="pointer-events-none absolute left-2.5 h-4 w-4 text-muted-foreground"
               aria-hidden
@@ -135,7 +140,14 @@ export function AppTopBar() {
             persona) separated by hairlines rather than three floating pills.
             Hairline gutters tighten on phones so the three readouts still fit
             a 375px viewport without the cluster forcing a horizontal scroll. */}
-        <div className="flex min-w-0 shrink items-center divide-x divide-border">
+        {/* `shrink-0` is load-bearing: these readouts are all
+            `whitespace-nowrap`, so letting the cluster shrink squeezes its
+            BOX without shrinking its CONTENT — in live mode (wider chip plus
+            a Reset control) the search field then overlapped the cluster and
+            swallowed clicks meant for it. The search yields instead: it is
+            capped at max-w-sm, has no min-width, and sits in a `min-w-0
+            flex-1` slot, so it gives ground before anything overlaps. */}
+        <div className="flex shrink-0 items-center divide-x divide-border">
           <div className="pr-1.5 sm:pr-2.5">
             <ThemeToggle />
           </div>

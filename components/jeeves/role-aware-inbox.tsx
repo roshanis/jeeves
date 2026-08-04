@@ -252,13 +252,20 @@ function OperationalAlertsCard({
         ) : (
           <ul className="divide-y">
             {alerts.map((i) => (
-              <li key={i.slug} className="flex items-start gap-2.5 px-4 py-2.5">
+              /* The whole row — icon, title, date, badges — describes one
+                 initiative and nothing else in it is interactive, so on touch
+                 the row is the target. Without this the title link is 20px of
+                 type inside a ~60px row (measured: a fingertip got only a
+                 20px-tall target on an iPad). */
+              <li key={i.slug} className="relative flex items-start gap-2.5 px-4 py-2.5">
                 <ShieldAlert className="mt-0.5 size-4 shrink-0 text-status-critical-fg" aria-hidden />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-start justify-between gap-2">
+                    {/* Truncation on the inner span — `overflow:hidden` on
+                        the link would clip its own stretched hit area. */}
                     <Link
                       href={`/initiatives/${i.slug}`}
-                      className="touch-target min-w-0 text-sm font-medium hover:text-primary hover:underline"
+                      className="touch-stretch min-w-0 text-sm font-medium hover:text-primary hover:underline"
                     >
                       <span className="block truncate">{i.title}</span>
                     </Link>
@@ -312,13 +319,13 @@ function RecentDecisionsCard({
               const meta = DECISION_META[dec.type];
               const Icon = meta.icon;
               return (
-                <li key={`${slug}-${idx}`} className="flex items-start gap-2.5 px-4 py-2.5">
+                <li key={`${slug}-${idx}`} className="relative flex items-start gap-2.5 px-4 py-2.5">
                   <Icon className={`mt-0.5 size-4 shrink-0 ${meta.className}`} aria-hidden />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-start justify-between gap-2">
                       <Link
                         href={`/initiatives/${slug}`}
-                        className="touch-target min-w-0 text-sm font-medium hover:text-primary hover:underline"
+                        className="touch-stretch min-w-0 text-sm font-medium hover:text-primary hover:underline"
                       >
                         <span className="block truncate">{initTitle}</span>
                       </Link>
@@ -768,10 +775,13 @@ function DomainReviewQueueTable({
                 data-slot="initiative-row"
                 className="h-10 border-b last:border-0 hover:bg-muted/40"
               >
-                <td className="px-3 py-1.5">
+                {/* Title and slug both point at this one review, so on touch
+                    the whole cell is the target rather than the 20px title
+                    line. `relative` anchors the stretched hit area. */}
+                <td className="relative px-3 py-1.5">
                   <Link
                     href={`/initiatives/${row.slug}?tab=reviews`}
-                    className="font-medium text-foreground hover:text-primary hover:underline"
+                    className="touch-stretch font-medium text-foreground hover:text-primary hover:underline"
                   >
                     {row.title}
                   </Link>
@@ -808,12 +818,12 @@ function EvalQualityCard({ evalBreaches }: { evalBreaches: EvalBreachRow[] }) {
         ) : (
           <ul className="divide-y">
             {evalBreaches.map((b) => (
-              <li key={b.slug} className="flex items-start gap-2.5 px-4 py-2.5">
+              <li key={b.slug} className="relative flex items-start gap-2.5 px-4 py-2.5">
                 <ShieldAlert className="mt-0.5 size-4 shrink-0 text-status-critical-fg" aria-hidden />
                 <div className="min-w-0 flex-1">
                   <Link
                     href={`/initiatives/${b.slug}?tab=evals`}
-                    className="text-sm font-medium hover:text-primary hover:underline"
+                    className="touch-stretch text-sm font-medium hover:text-primary hover:underline"
                   >
                     {b.title}
                   </Link>

@@ -83,28 +83,28 @@ export function DemoModeChip() {
             <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-75" />
             <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-primary" />
           </span>
-          {/* Phones show just "Live" — the qualifier is ~120px of a 375px
-              viewport, and live mode is already unmistakable from the pulsing
-              LED and primary tint. `sr-only` (not `hidden`) on the remainder
-              keeps the full phrase in the accessibility tree and in
-              textContent at every width, so screen-reader users and the
-              tests that assert on "Live demo (session workspace)" both still
-              see the whole label. */}
+          {/* Below `lg` this reads just "Live". Live mode is already
+              unmistakable from the pulsing LED and the primary tint, and the
+              qualifier is expensive: measured, the full live cluster (LED
+              label + persona name + Reset + persona select) is 677px, wider
+              than a landscape iPhone SE. `lg` rather than `sm` because that
+              677px only fits once the viewport can actually spare it.
+
+              Two spans rather than one split label, deliberately. The
+              abbreviation is aria-hidden and the full phrase is sr-only until
+              `lg`, so the accessibility tree reads exactly one complete label
+              at every width — and the full phrase stays a single text node,
+              which is what queries matching on an element's own text
+              (Testing Library's getByText, and the e2e assertion on this
+              chip) actually look for. */}
           <span className="label-mono whitespace-nowrap text-primary">
-            {/* Two spans rather than one split label, deliberately. The
-                phone-sized abbreviation is aria-hidden and the full phrase is
-                sr-only until `sm`, so the accessibility tree reads exactly
-                one complete label at every width — and the full phrase stays
-                a single text node, which is what queries that match on an
-                element's own text (Testing Library's getByText, and the e2e
-                assertion on this chip) actually look for. */}
-            <span className="sm:hidden" aria-hidden>
+            <span className="lg:hidden" aria-hidden>
               Live
             </span>
-            <span className="sr-only sm:not-sr-only sm:inline">Live demo (session workspace)</span>
+            <span className="sr-only lg:not-sr-only lg:inline">Live demo (session workspace)</span>
           </span>
         </span>
-        <span className="hidden text-xs text-muted-foreground sm:inline">
+        <span className="hidden text-xs text-muted-foreground lg:inline">
           {session.personaLabel}
         </span>
         <Button
@@ -122,12 +122,12 @@ export function DemoModeChip() {
               label ("Reset" + a nested " to read-only") does NOT work here:
               accessible-name computation trims each node before joining, so
               the leading space is dropped and the button ends up named
-              "Resetto read-only". Two complete strings, with the phone-sized
-              one aria-hidden, keep the name exactly "Reset to read-only". */}
-          <span className="sm:hidden" aria-hidden>
+              "Resetto read-only". Two complete strings, with the compact one
+              aria-hidden, keep the name exactly "Reset to read-only". */}
+          <span className="lg:hidden" aria-hidden>
             Reset
           </span>
-          <span className="sr-only sm:not-sr-only sm:inline">Reset to read-only</span>
+          <span className="sr-only lg:not-sr-only lg:inline">Reset to read-only</span>
         </Button>
       </span>
     );
