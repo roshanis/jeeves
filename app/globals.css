@@ -532,6 +532,18 @@
   }
 
   /*
+   * The real target for a wrapped checkbox/radio is its LABEL — clicking the
+   * text toggles the control — and on the intake form those label rows were
+   * only ~20px tall, which makes a column of options genuinely fiddly to hit.
+   * Giving the label the full 44px is what actually makes these tappable;
+   * sizing the box alone would not have.
+   */
+  label:has(> input[type="checkbox"]),
+  label:has(> input[type="radio"]) {
+    min-height: 44px;
+  }
+
+  /*
    * Buttons are h-8/h-7/h-6 by variant. On touch they take the 44px minimum
    * for real (not via an overlay): a button is a primary control, and on a
    * phone the extra height reads as correct rather than bloated.
@@ -549,6 +561,25 @@
    */
   [class~="group/button"],
   [data-slot="select-trigger"] {
+    min-height: 44px;
+  }
+
+  /*
+   * Tabs. The list is `h-8` and each trigger is `h-[calc(100%-1px)]`, so the
+   * triggers measured 25px — the primary navigation on every initiative
+   * detail page and on the intake form. Sized here rather than with
+   * .touch-target because TabsTrigger already uses its own `::after` for the
+   * active-state underline, and a hit-area overlay would collide with it.
+   *
+   * Both are sized: the trigger's own min-height is what guarantees the 44px,
+   * and the list needs matching room because its `h-8` would otherwise hold a
+   * taller child overflowing its box. (List height alone is not enough — with
+   * `p-[3px]` and `h-[calc(100%-1px)]` a 44px list yields a 37px trigger.)
+   */
+  [data-slot="tabs-list"] {
+    min-height: 52px;
+  }
+  [data-slot="tabs-trigger"] {
     min-height: 44px;
   }
 

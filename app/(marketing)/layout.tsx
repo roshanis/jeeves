@@ -42,16 +42,19 @@ export default function MarketingLayout({
               </span>
             </Link>
 
-            <nav className="flex items-center gap-6">
+            {/* Tighter gutters on phones: with the nav links grown to the
+                44px touch minimum, three items plus 24px gaps overflowed a
+                375px viewport by 13px. */}
+            <nav className="flex items-center gap-3 sm:gap-6">
               <Link
                 href="/frameworks"
-                className="text-sm font-medium text-muted-foreground hover:text-foreground"
+                className="touch-min inline-flex items-center justify-center text-sm font-medium text-muted-foreground hover:text-foreground"
               >
                 Frameworks
               </Link>
               <Link
                 href="/pilot"
-                className="text-sm font-medium text-muted-foreground hover:text-foreground"
+                className="touch-min inline-flex items-center justify-center text-sm font-medium text-muted-foreground hover:text-foreground"
               >
                 Pilot
               </Link>

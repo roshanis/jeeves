@@ -92,11 +92,15 @@ export function AppTopBar() {
                 "Jeeves" as the link's accessible name. */}
             <span className="text-sm font-semibold sr-only sm:not-sr-only">Jeeves</span>
           </Link>
-          {/* min-w-0 (not shrink-0): on a deep detail route in live mode the
-              breadcrumb + the search's min-w floor + the grown status cluster
-              exceed the row; the breadcrumb must ellipsize (truncate) rather
-              than force the search label to overflow ON TOP of the status
-              cluster, where its input swallowed the Reset control's clicks. */}
+          {/* min-w-0 (not shrink-0): with shrink-0 the `truncate` here could
+              never engage, so a long detail-page breadcrumb ("Portfolio /
+              Prior Auth Clinical Summarizer") pushed straight through its
+              slot — measured overlapping the status chip by 9px on an iPad in
+              portrait, and on a deep route in live mode forcing the search
+              label over the status cluster, where its input swallowed the
+              Reset control's clicks. Letting it ellipsize fixes both; the
+              container's overflow-x-clip above is the backstop for the
+              pathological width where even a full ellipsis cannot absorb it. */}
           <p
             className="label-mono hidden min-w-0 truncate text-foreground/80 sm:block"
             data-slot="breadcrumb"

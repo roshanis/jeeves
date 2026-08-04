@@ -35,7 +35,21 @@ const IPAD_PORTRAIT = { width: 834, height: 1194 };
 // Read-only routes only: these render from the frozen mock snapshot (see
 // playwright.config.ts), so they do not care whether the live-loop spec has
 // already created its extra initiative.
-const ROUTES = ["/inbox", "/portfolio", "/controls", "/monitoring"] as const;
+//
+// The detail page and the intake form are here because the first cut of this
+// pass covered only list routes and both turned out to be broken: the tab
+// bar (primary navigation on every detail page AND the intake form) rendered
+// 25px-tall triggers, and a long detail-page breadcrumb overlapped the
+// status chip on an iPad in portrait. Neither surfaced anywhere else.
+const ROUTES = [
+  "/inbox",
+  "/portfolio",
+  "/controls",
+  "/monitoring",
+  "/initiatives/prior-auth-summarizer",
+  "/initiatives/prior-auth-summarizer?tab=reviews",
+  "/initiatives/new",
+] as const;
 
 /** Document-level horizontal overflow, in CSS pixels. */
 async function horizontalOverflow(page: import("@playwright/test").Page) {
@@ -73,6 +87,10 @@ for (const [label, viewport] of [
         const tooSmall = await page.evaluate(() =>
           Array.from(document.querySelectorAll("input:not([type=hidden]), select, textarea"))
             .filter((el) => el.getAttribute("aria-hidden") !== "true")
+            // Checkboxes and radios are exempt: Safari's focus zoom is a
+            // text-entry behaviour, and these take no text. They are sized
+            // for touch separately (a 24px minimum hit area), not by font.
+            .filter((el) => !["checkbox", "radio"].includes(el.getAttribute("type") ?? ""))
             .map((el) => ({
               tag: el.tagName.toLowerCase(),
               size: parseFloat(getComputedStyle(el).fontSize),
@@ -90,8 +108,14 @@ for (const [label, viewport] of [
 
         const undersized = await page.evaluate(() => {
           const REQUIRED = 44;
+          // A checkbox/radio wrapped in a label is not the target — the label
+          // is, because clicking its text toggles the control. So measure
+          // those labels and skip the inputs inside them; measuring the 24px
+          // box instead would report a failure for a perfectly tappable row
+          // (and hide a real one, when the ROW is what is too small).
           const SELECTOR =
-            'a[href], button, [role="button"], input:not([type="hidden"]), select, textarea, [role="tab"]';
+            'a[href], button, [role="button"], input:not([type="hidden"]), select, textarea, [role="tab"],' +
+            ' label:has(> input[type="checkbox"]), label:has(> input[type="radio"])';
           const failures: string[] = [];
 
           for (const el of Array.from(document.querySelectorAll(SELECTOR))) {
@@ -108,6 +132,14 @@ for (const [label, viewport] of [
             if ((el as HTMLButtonElement).disabled) continue;
             if (el.getAttribute("aria-disabled") === "true") continue;
             if (style.pointerEvents === "none") continue;
+            // Measured via the wrapping label instead (see SELECTOR above).
+            const inputType = el.getAttribute("type");
+            if (
+              (inputType === "checkbox" || inputType === "radio") &&
+              el.parentElement?.tagName === "LABEL"
+            ) {
+              continue;
+            }
             // Links flowing inline within prose are exempt.
             if (
               el.tagName === "A" &&
