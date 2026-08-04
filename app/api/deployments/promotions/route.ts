@@ -25,9 +25,9 @@ import {
   resolveViewerWorkspaceId,
 } from "@/lib/services/viewer-workspace";
 
-export async function GET(req?: Request): Promise<Response> {
+export async function GET(req: Request): Promise<Response> {
   const db = getDb();
-  const viewerWorkspaceId = req ? await resolveViewerWorkspaceId(req) : null;
+  const viewerWorkspaceId = await resolveViewerWorkspaceId(req);
   const [list, workspaceByInitiative] = await Promise.all([
     listPromotions(db),
     initiativeWorkspaceMap(db),

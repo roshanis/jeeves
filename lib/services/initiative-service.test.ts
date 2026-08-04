@@ -923,6 +923,79 @@ describe("lib/services/initiative-service", () => {
    * transaction and enforce it against the caller's session workspace.
    * -------------------------------------------------------------------- */
   describe("workspace authorization on mutations (external-review finding #1)", () => {
+    describe("submitIntake() / triage()", () => {
+      it("submitIntake checks workspace before requester ownership or lifecycle state", async () => {
+        const draft = await svc.createDraft(db, {
+          payload: CHAMPION_PREFILL_PAYLOAD,
+          requesterActor: REQUESTER,
+          requesterName: "Priya Raman",
+          workspaceId: "ws-A",
+        });
+        await db
+          .update(initiatives)
+          .set({ state: "deployed" })
+          .where(eq(initiatives.id, draft.initiativeId));
+
+        const OTHER_REQUESTER = { id: "dan-kowalski", role: "requester" as const };
+        await expect(
+          svc.submitIntake(db, draft.initiativeId, OTHER_REQUESTER, "ws-B"),
+        ).rejects.toThrow(NotFoundError);
+        await expect(
+          svc.submitIntake(db, draft.initiativeId, OTHER_REQUESTER, "ws-B"),
+        ).rejects.toThrow(`initiative not found: ${draft.initiativeId}`);
+      });
+
+      it("submitIntake allows the owning workspace and any workspace for a null-workspace initiative", async () => {
+        const owned = await svc.createDraft(db, {
+          payload: CHAMPION_PREFILL_PAYLOAD,
+          requesterActor: REQUESTER,
+          requesterName: "Priya Raman",
+          workspaceId: "ws-A",
+        });
+        await expect(
+          svc.submitIntake(db, owned.initiativeId, REQUESTER, "ws-A"),
+        ).resolves.toMatchObject({ submitted: true });
+
+        const seededStyle = await svc.createDraft(db, {
+          payload: { ...CHAMPION_PREFILL_PAYLOAD, basics: { ...CHAMPION_PREFILL_PAYLOAD.basics, title: "Shared intake" } },
+          requesterActor: REQUESTER,
+          requesterName: "Priya Raman",
+          workspaceId: null,
+        });
+        await expect(
+          svc.submitIntake(db, seededStyle.initiativeId, REQUESTER, "ws-any"),
+        ).resolves.toMatchObject({ submitted: true });
+      });
+
+      it("triage checks workspace before lifecycle validation, and permits owner/null-workspace calls", async () => {
+        const foreignWrongState = await svc.createDraft(db, {
+          payload: CHAMPION_PREFILL_PAYLOAD,
+          requesterActor: REQUESTER,
+          requesterName: "Priya Raman",
+          workspaceId: "ws-A",
+        });
+        await expect(
+          svc.triage(db, foreignWrongState.initiativeId, "ws-B"),
+        ).rejects.toThrow(NotFoundError);
+
+        await svc.submitIntake(db, foreignWrongState.initiativeId, REQUESTER, "ws-A");
+        await expect(
+          svc.triage(db, foreignWrongState.initiativeId, "ws-A"),
+        ).resolves.toMatchObject({ branch: "review" });
+
+        const seededStyle = await svc.createDraft(db, {
+          payload: { ...CHAMPION_PREFILL_PAYLOAD, basics: { ...CHAMPION_PREFILL_PAYLOAD.basics, title: "Shared triage" } },
+          requesterActor: REQUESTER,
+          requesterName: "Priya Raman",
+          workspaceId: null,
+        });
+        await svc.submitIntake(db, seededStyle.initiativeId, REQUESTER, "ws-any");
+        await expect(
+          svc.triage(db, seededStyle.initiativeId, "ws-any"),
+        ).resolves.toMatchObject({ branch: "review" });
+      });
+    });
+
     async function initiativeReadyToDecide(
       workspaceId: string | null,
     ): Promise<{ initiativeId: string; cycleId: string }> {
@@ -932,8 +1005,8 @@ describe("lib/services/initiative-service", () => {
         requesterName: "Priya Raman",
         workspaceId,
       });
-      await svc.submitIntake(db, draft.initiativeId, REQUESTER);
-      const triageResult = await svc.triage(db, draft.initiativeId);
+      await svc.submitIntake(db, draft.initiativeId, REQUESTER, workspaceId);
+      const triageResult = await svc.triage(db, draft.initiativeId, workspaceId);
       if (triageResult.branch !== "review") throw new Error("expected review branch");
       return { initiativeId: draft.initiativeId, cycleId: triageResult.cycleId };
     }

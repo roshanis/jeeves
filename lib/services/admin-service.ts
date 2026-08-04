@@ -17,6 +17,7 @@ import type * as schema from "../db/schema";
 import { auditEvents, controlDefinitions, deploymentVersions, effectiveControls, initiatives } from "../db/schema";
 import type { Actor, LifecycleState, Tier } from "../domain/types";
 import { transition, IllegalTransitionError } from "../lifecycle/transitions";
+import { workspaceMismatch } from "./workspace-guard";
 
 /**
  * Re-exported so route handlers can catch a STATE violation (e.g. pausing an
@@ -128,6 +129,7 @@ export async function setEvalThreshold(
   db: Db,
   actor: Actor,
   input: SetEvalThresholdInput,
+  sessionWorkspaceId: string | null = null,
 ): Promise<SetEvalThresholdResult> {
   requireAdminWithReason(actor, input.reason);
 
@@ -176,6 +178,9 @@ export async function setEvalThreshold(
     const initiativeRows = await tx.select().from(initiatives).where(eq(initiatives.id, input.initiativeId));
     const initiative = initiativeRows[0];
     if (!initiative) throw new NotFoundError("initiative", input.initiativeId);
+    if (workspaceMismatch(initiative.workspaceId, sessionWorkspaceId)) {
+      throw new NotFoundError("initiative", input.initiativeId);
+    }
 
     const depRows = await tx
       .select()
@@ -236,6 +241,7 @@ export interface PauseResumeResult {
 async function loadInitiativeAndDeploymentOrThrow(
   tx: Tx,
   initiativeId: string,
+  sessionWorkspaceId: string | null,
 ): Promise<{
   initiative: typeof initiatives.$inferSelect;
   deployment: typeof deploymentVersions.$inferSelect;
@@ -243,6 +249,9 @@ async function loadInitiativeAndDeploymentOrThrow(
   const initiativeRows = await tx.select().from(initiatives).where(eq(initiatives.id, initiativeId));
   const initiative = initiativeRows[0];
   if (!initiative) throw new NotFoundError("initiative", initiativeId);
+  if (workspaceMismatch(initiative.workspaceId, sessionWorkspaceId)) {
+    throw new NotFoundError("initiative", initiativeId);
+  }
 
   const depRows = await tx.select().from(deploymentVersions).where(eq(deploymentVersions.initiativeId, initiativeId));
   const deployment = depRows.slice().sort((a, b) => b.deployedAt.getTime() - a.deployedAt.getTime())[0];
@@ -263,11 +272,16 @@ export async function pauseDeployment(
   actor: Actor,
   initiativeId: string,
   reason: string,
+  sessionWorkspaceId: string | null = null,
 ): Promise<PauseResumeResult> {
   requireAdminWithReason(actor, reason);
 
   return db.transaction(async (tx) => {
-    const { initiative, deployment } = await loadInitiativeAndDeploymentOrThrow(tx, initiativeId);
+    const { initiative, deployment } = await loadInitiativeAndDeploymentOrThrow(
+      tx,
+      initiativeId,
+      sessionWorkspaceId,
+    );
     const ts = Date.now();
 
     const result = transition(initiative.state as LifecycleState, "pause", actor, { ts, reason });
@@ -308,11 +322,16 @@ export async function resumeDeployment(
   actor: Actor,
   initiativeId: string,
   reason: string,
+  sessionWorkspaceId: string | null = null,
 ): Promise<PauseResumeResult> {
   requireAdminWithReason(actor, reason);
 
   return db.transaction(async (tx) => {
-    const { initiative, deployment } = await loadInitiativeAndDeploymentOrThrow(tx, initiativeId);
+    const { initiative, deployment } = await loadInitiativeAndDeploymentOrThrow(
+      tx,
+      initiativeId,
+      sessionWorkspaceId,
+    );
     const ts = Date.now();
 
     const result = transition(initiative.state as LifecycleState, "resume", actor, { ts, reason });

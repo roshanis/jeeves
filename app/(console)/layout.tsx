@@ -6,7 +6,8 @@ import { AppMobileNav } from "@/components/jeeves/app-mobile-nav";
 // scoped to the (console) route group, so it wraps every ops route
 // (/inbox, /portfolio, /reviews, /agents, /monitoring, /controls, /audit,
 // /promotions, /admin, /initiatives/*) but NOT the public landing page at
-// "/" (app/page.tsx), which renders full-bleed via the root layout alone.
+// "/" (app/(marketing)/page.tsx), which renders full-bleed via the root
+// layout + app/(marketing)/layout.tsx, not this console chrome.
 // This used to live directly in app/layout.tsx — see the comment there.
 export default function ConsoleLayout({
   children,

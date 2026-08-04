@@ -145,6 +145,36 @@ describe("lib/services/promotion-service", () => {
     });
   });
 
+  describe("promoteCheckpoint — workspace authorization", () => {
+    it("treats a foreign-workspace deployment exactly like an unknown deployment id", async () => {
+      const initiativeId = await paCorrespondenceModelId(db);
+      const v21Id = await v21DeploymentId(db, initiativeId);
+      await db
+        .update(initiatives)
+        .set({ workspaceId: "ws-A" })
+        .where(eq(initiatives.id, initiativeId));
+
+      await expect(
+        promoteCheckpoint(db, v21Id, APPROVER, FULL_ATTESTATION, "foreign attempt", "ws-B"),
+      ).rejects.toThrow(NotFoundError);
+      await expect(
+        promoteCheckpoint(db, v21Id, APPROVER, FULL_ATTESTATION, "foreign attempt", "ws-B"),
+      ).rejects.toThrow(`deploymentVersion not found: ${v21Id}`);
+      await expect(
+        promoteCheckpoint(db, v21Id, APPROVER, FULL_ATTESTATION, "owner promotion", "ws-A"),
+      ).resolves.toMatchObject({ promotedDeploymentVersionId: v21Id });
+    });
+
+    it("keeps null-workspace checkpoints shared", async () => {
+      const initiativeId = await paCorrespondenceModelId(db);
+      const v21Id = await v21DeploymentId(db, initiativeId);
+
+      await expect(
+        promoteCheckpoint(db, v21Id, APPROVER, FULL_ATTESTATION, "shared checkpoint", "ws-any"),
+      ).resolves.toMatchObject({ promotedDeploymentVersionId: v21Id });
+    });
+  });
+
   describe("promoteCheckpoint — role guard (separation of duties)", () => {
     it("rejects an admin actor with ForbiddenError", async () => {
       const initiativeId = await paCorrespondenceModelId(db);

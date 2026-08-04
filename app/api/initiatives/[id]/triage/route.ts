@@ -28,7 +28,7 @@ export async function POST(
   const db = getDb();
 
   try {
-    const result = await triage(db, id);
+    const result = await triage(db, id, guard.workspaceId);
     return Response.json(result, { status: 200 });
   } catch (err) {
     if (err instanceof NotFoundError) {

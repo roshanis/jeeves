@@ -639,14 +639,7 @@ export class DbDataProvider implements DataProvider {
     id: CannedAuditQueryId,
     opts?: WorkspaceScopedReadOptions,
   ): Promise<AuditQueryRow[]> {
-    // "q01-control-changes" is the one query not traceable to any single
-    // initiative (a global admin event on a portfolio-wide runtime control —
-    // see the case below), so it alone is answered from the unfiltered
-    // snapshot; every other canned query filters through visibleSnapshot.
-    const snap =
-      id === "q01-control-changes"
-        ? await this.loadSnapshot()
-        : this.visibleSnapshot(await this.loadSnapshot(), opts);
+    const snap = this.visibleSnapshot(await this.loadSnapshot(), opts);
 
     switch (id) {
       case "member-facing-phi": {
@@ -768,14 +761,21 @@ export class DbDataProvider implements DataProvider {
       }
 
       case "q01-control-changes": {
-        // Seed-spec §7.4: what changed on Q-01 and who changed it -> the
-        // base-30d admin event (Ray Chen, 0.10 -> 0.08).
+        // Tier-default changes have no initiativeId and are portfolio-wide.
+        // Project overrides are initiative-linked and must be visible only
+        // when their owning initiative survived visibleSnapshot().
+        const visibleInitiativeIds = new Set(snap.initiatives.map((initiative) => initiative.id));
         const events = await this.db
           .select()
           .from(auditEvents)
           .where(eq(auditEvents.action, "control_threshold_changed"))
           .orderBy(asc(auditEvents.ts));
         return events
+          .filter(
+            (event) =>
+              event.initiativeId === null ||
+              visibleInitiativeIds.has(event.initiativeId),
+          )
           .filter((e) => (e.metadata as { controlId?: string } | null)?.controlId === "Q-01")
           .map((e) => {
             const reason = (e.metadata as { reason?: string } | null)?.reason;

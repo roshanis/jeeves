@@ -34,8 +34,13 @@ import { runMutationGuard } from "@/lib/services/route-guard";
  */
 const BASE_DATE_MS = Date.parse("2026-07-01T00:00:00Z");
 
-/** Canonical demo replay point: base+14d (seed-spec §4's forward-seeded breach window). */
-export const DEFAULT_MONITOR_NOW_TS = BASE_DATE_MS + 14 * 24 * 60 * 60 * 1000;
+/**
+ * Canonical demo replay point: base+14d (seed-spec §4's forward-seeded breach
+ * window). Module-local: Next 16.2.12's route typegen rejects non-handler
+ * exports from route modules, and nothing imported this anyway (the cron
+ * route keeps its own synced copy by design).
+ */
+const DEFAULT_MONITOR_NOW_TS = BASE_DATE_MS + 14 * 24 * 60 * 60 * 1000;
 
 /** Rough token estimate for the budget reserve — sized generously since a run can summarize multiple breaches. */
 const ESTIMATED_TOKENS_PER_RUN = 800;
@@ -71,6 +76,6 @@ export async function POST(req: Request): Promise<Response> {
   }
 
   const db = getDb();
-  const result = await runMonitor(db, guard.actor, nowTs);
+  const result = await runMonitor(db, guard.actor, nowTs, guard.workspaceId);
   return Response.json(result, { status: 200 });
 }

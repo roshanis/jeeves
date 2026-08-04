@@ -414,6 +414,95 @@ describe("lib/workflow/review-run", () => {
       ).rejects.toThrow(/signed/i);
     });
 
+    it("preserves a signature written while the agent call is in flight and reports skipped: already signed", async () => {
+      const { cycleId } = await setUpChampionInReview(db);
+      const basePort = createMockAgentPort();
+      const racingPort = {
+        ...basePort,
+        draftReview: async (
+          input: Parameters<typeof basePort.draftReview>[0],
+        ) => {
+          await db
+            .update(reviewDecisions)
+            .set({
+              status: "signed",
+              reviewer: "elena-vasquez",
+              signedAt: new Date("2026-07-26T12:00:00.000Z"),
+              draftMd: "Human-signed draft",
+            })
+            .where(
+              and(
+                eq(reviewDecisions.cycleId, cycleId),
+                eq(reviewDecisions.domain, "clinical-safety"),
+              ),
+            );
+          return basePort.draftReview(input);
+        },
+      };
+
+      const result = await runSingleDomainDraft(
+        db,
+        cycleId,
+        "clinical-safety",
+        racingPort,
+      );
+
+      expect(result).toMatchObject({
+        status: "skipped",
+        reason: "already signed",
+      });
+      const [row] = await db
+        .select()
+        .from(reviewDecisions)
+        .where(
+          and(
+            eq(reviewDecisions.cycleId, cycleId),
+            eq(reviewDecisions.domain, "clinical-safety"),
+          ),
+        );
+      expect(row!.status).toBe("signed");
+      expect(row!.reviewer).toBe("elena-vasquez");
+      expect(row!.draftMd).toBe("Human-signed draft");
+    });
+
+    it("re-drafts a returned review when no concurrent signature occurs", async () => {
+      const { cycleId } = await setUpChampionInReview(db);
+      await db
+        .update(reviewDecisions)
+        .set({
+          status: "returned",
+          draftMd: "Returned draft",
+          returnReason: "Revise the evidence.",
+        })
+        .where(
+          and(
+            eq(reviewDecisions.cycleId, cycleId),
+            eq(reviewDecisions.domain, "clinical-safety"),
+          ),
+        );
+
+      const result = await runSingleDomainDraft(
+        db,
+        cycleId,
+        "clinical-safety",
+        createMockAgentPort(),
+      );
+
+      expect(result.status).toBe("drafted");
+      const [row] = await db
+        .select()
+        .from(reviewDecisions)
+        .where(
+          and(
+            eq(reviewDecisions.cycleId, cycleId),
+            eq(reviewDecisions.domain, "clinical-safety"),
+          ),
+        );
+      expect(row!.status).toBe("drafted");
+      expect(row!.returnReason).toBeNull();
+      expect(row!.draftMd).not.toBe("Returned draft");
+    });
+
     it("throws for an unknown cycle", async () => {
       await expect(
         runSingleDomainDraft(db, "cycle-does-not-exist", "legal", createMockAgentPort()),

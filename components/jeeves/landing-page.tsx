@@ -7,7 +7,7 @@ import {
 } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { DEMO_BANNER_TEXT } from "@/lib/demo-banner";
+import { CONTACT_URL } from "@/lib/marketing/site-config";
 import { cn } from "@/lib/utils";
 
 /**
@@ -18,20 +18,21 @@ import { cn } from "@/lib/utils";
  * lives under app/(console)/, starting at /inbox — see
  * app/(console)/layout.tsx and app/(console)/inbox/page.tsx.
  *
- * Every link on this page points at a real console route (/inbox,
- * /portfolio, /reviews, /controls, /monitoring, /audit) — no fake
- * integrations, no dead links, no forms, no mutations.
+ * The demo-disclaimer strip and site header/nav now live in
+ * app/(marketing)/layout.tsx (shared across "/", "/frameworks", "/pilot"),
+ * so this component starts directly with the dark hero band.
+ *
+ * Positioning: Jeeves the product is pitched for real here; "Meridian
+ * Health" is the clearly-labeled fictional demo scenario visitors can click
+ * into. No invented clients, testimonials, metrics, or prices — every link
+ * on this page points at a real route (/inbox, /portfolio, /frameworks,
+ * /pilot, or CONTACT_URL) — no fake integrations, no dead links, no forms,
+ * no mutations.
  */
 export function LandingPage() {
   return (
     <div className="flex min-h-screen flex-col">
-      {/* a) Demo disclaimer strip — same visual language as the console's
-          app-topbar strip, rendering the shared DEMO_BANNER_TEXT constant. */}
-      <div className="bg-amber-100 px-4 py-1 text-center text-[11px] font-medium text-amber-900 dark:bg-amber-950/70 dark:text-amber-200">
-        {DEMO_BANNER_TEXT}
-      </div>
-
-      {/* b) + c): header row and hero, both on the dark charcoal surface. */}
+      {/* Hero, on the dark charcoal surface. */}
       <div className="relative overflow-hidden bg-sidebar text-sidebar-foreground">
         {/* Subtle decorative dot grid — quiet, no color, purely textural. */}
         <div
@@ -44,32 +45,9 @@ export function LandingPage() {
           }}
         />
 
-        <div className="relative mx-auto flex max-w-[72rem] items-center justify-between px-6 py-5">
-          <div className="flex items-center gap-2.5">
-            <span className="grid h-8 w-8 place-items-center rounded-md bg-sidebar-primary text-sidebar-primary-foreground">
-              <ShieldCheck className="h-5 w-5" aria-hidden />
-            </span>
-            <span className="flex flex-col leading-tight">
-              <span className="text-sm font-semibold">Jeeves</span>
-              <span className="text-[11px] text-sidebar-foreground/60">
-                Governance Console
-              </span>
-            </span>
-          </div>
-          <Link
-            href="/inbox"
-            className={cn(
-              buttonVariants({ variant: "outline" }),
-              "border-sidebar-border bg-transparent text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
-            )}
-          >
-            Console
-          </Link>
-        </div>
-
         <div className="relative mx-auto max-w-[72rem] px-6 py-20 md:py-28">
           <span className="inline-flex items-center rounded-full border border-sidebar-primary/40 px-3 py-1 text-xs font-medium text-sidebar-primary">
-            Meridian Health · AI Governance Gateway
+            AI Governance Gateway for Healthcare AI
           </span>
 
           <h1 className="mt-6 max-w-[20ch] text-4xl font-semibold tracking-tight md:text-6xl">
@@ -77,24 +55,25 @@ export function LandingPage() {
           </h1>
 
           <p className="mt-6 max-w-[60ch] text-base text-sidebar-foreground/70 md:text-lg">
-            Jeeves is the governance gateway for Meridian Health&rsquo;s AI
-            portfolio — tiered intake, domain reviews with named accountable
-            approvers, deployment controls, and an append-only audit trail,
-            in one operations console.
+            Jeeves gives healthcare AI portfolios a governance operating
+            system — tiered intake, domain reviews with named accountable
+            approvers, deployment controls, and an append-only audit trail.
+            Explore it live against a fictional payer with fully synthetic
+            data.
           </p>
 
           <div className="mt-8 flex flex-wrap items-center gap-3">
-            <Link href="/inbox" className={buttonVariants({ size: "lg" })}>
-              Open the console
+            <Link href={CONTACT_URL} className={buttonVariants({ size: "lg" })}>
+              Book a governance assessment
             </Link>
             <Link
-              href="/portfolio"
+              href="/inbox"
               className={cn(
                 buttonVariants({ variant: "outline", size: "lg" }),
                 "border-sidebar-border bg-transparent text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
               )}
             >
-              Browse the portfolio
+              Explore the live demo
             </Link>
           </div>
         </div>
@@ -154,6 +133,56 @@ export function LandingPage() {
         </div>
       </section>
 
+      {/* f0) Built for both sides of procurement — payer buyers and vendor
+          sellers each get a card pointing at the crosswalk that matters to
+          them. */}
+      <section className="border-t bg-background py-16">
+        <div className="mx-auto max-w-[72rem] px-6">
+          <h2 className="text-2xl font-semibold tracking-tight md:text-3xl">
+            Built for both sides of procurement
+          </h2>
+
+          <div className="mt-8 grid gap-4 sm:grid-cols-2">
+            <Card>
+              <CardHeader>
+                <CardTitle>Health plans &amp; providers</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm text-muted-foreground">
+                  Govern the AI portfolio end to end: intake to audit, a
+                  HIPAA-aware control catalog, and named accountability at
+                  every decision.
+                </p>
+                <Link
+                  href="/frameworks"
+                  className="mt-3 inline-block text-sm font-medium text-primary hover:underline"
+                >
+                  See the framework crosswalk →
+                </Link>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader>
+                <CardTitle>AI vendors selling into healthcare</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm text-muted-foreground">
+                  Arrive procurement-ready: mapped controls, an evidence
+                  pack, and a live governance story instead of a blank
+                  security questionnaire.
+                </p>
+                <Link
+                  href="/pilot"
+                  className="mt-3 inline-block text-sm font-medium text-primary hover:underline"
+                >
+                  See the pilot →
+                </Link>
+              </CardContent>
+            </Card>
+          </div>
+        </div>
+      </section>
+
       {/* f) How it works band. */}
       <section className="border-t bg-muted/40 py-16">
         <div className="mx-auto max-w-[72rem] px-6">
@@ -181,11 +210,34 @@ export function LandingPage() {
         </div>
       </section>
 
+      {/* f1) Slim frameworks band before the final CTA. */}
+      <section className="border-t bg-background py-10 text-center">
+        <div className="mx-auto max-w-[72rem] px-6">
+          <h2 className="text-base font-medium text-muted-foreground">
+            Mapped to the frameworks your reviewers ask about
+          </h2>
+          <div className="mt-4 flex flex-wrap items-center justify-center gap-x-8 gap-y-2">
+            <Link
+              href="/frameworks/nist-ai-rmf"
+              className="text-sm font-medium text-primary hover:underline"
+            >
+              NIST AI RMF crosswalk →
+            </Link>
+            <Link
+              href="/frameworks/eu-ai-act"
+              className="text-sm font-medium text-primary hover:underline"
+            >
+              EU AI Act crosswalk →
+            </Link>
+          </div>
+        </div>
+      </section>
+
       {/* g) Final CTA band — dark again. */}
       <section className="bg-sidebar py-16 text-center text-sidebar-foreground">
         <div className="mx-auto max-w-[40rem] px-6">
           <h2 className="text-2xl font-semibold tracking-tight md:text-3xl">
-            Explore the demo
+            See it live
           </h2>
           <p className="mt-3 text-sm text-sidebar-foreground/70">
             Public visitors are read-only. Live actions require the demo
@@ -193,17 +245,11 @@ export function LandingPage() {
           </p>
           <div className="mt-6">
             <Link href="/inbox" className={buttonVariants({ size: "lg" })}>
-              Enter the console
+              Explore the live demo
             </Link>
           </div>
         </div>
       </section>
-
-      {/* h) Footer — same string the console footer uses. */}
-      <footer className="border-t px-5 py-4 text-center text-xs text-muted-foreground">
-        Fictional demo. Synthetic data only. Not affiliated with any real
-        organization.
-      </footer>
     </div>
   );
 }

@@ -65,7 +65,8 @@ const FULL_ATTESTATION = {
 describe("GET /api/deployments/promotions", () => {
   it("200s with no session required and includes the seeded v2.1 entry", async () => {
     const { GET } = await import("../promotions/route");
-    const res = await GET();
+    // Bare request, no cookie/auth → resolves to the public (null) viewer.
+    const res = await GET(new Request("http://localhost/api/deployments/promotions"));
     expect(res.status).toBe(200);
     const json = (await res.json()) as Array<{ version: string; initiativeSlug: string }>;
     const entry = json.find((p) => p.version === "v2.1" && p.initiativeSlug === "pa-correspondence-model");

@@ -46,7 +46,7 @@
  * cancellation or a request that will provably fail the same way again.
  */
 import { randomUUID } from "node:crypto";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, ne } from "drizzle-orm";
 import type { Db } from "../db/client";
 import { auditEvents, intakeVersions, reviewCycles, reviewDecisions } from "../db/schema";
 import type { Domain } from "../domain/types";
@@ -64,6 +64,8 @@ export interface DraftRunDomainOutcome {
   status: "drafted" | "failed" | "skipped";
   /** Present when status === "failed". */
   error?: PortFailure;
+  /** Present when persistence loses a race to an immutable human signature. */
+  reason?: "already signed";
 }
 
 export interface StartDraftRunResult {
@@ -256,10 +258,16 @@ export async function startDraftRun(
   const runResults = await runWithConcurrencyLimit(toRun, concurrency, async (domain) => {
     const result = await draftWithRetry(port, cycleId, domain, intake, maxAttempts);
     if (result.ok) {
-      await persistDraft(db, cycleId, domain, result.value);
+      const persisted = await persistDraft(db, cycleId, domain, result.value);
+      if (!persisted) {
+        return { domain, status: "skipped" as const, reason: "already signed" as const };
+      }
       return { domain, status: "drafted" as const };
     }
-    await persistFailure(db, cycleId, domain, result.error);
+    const persisted = await persistFailure(db, cycleId, domain, result.error);
+    if (!persisted) {
+      return { domain, status: "skipped" as const, reason: "already signed" as const };
+    }
     return { domain, status: "failed" as const, error: result.error };
   });
 
@@ -274,7 +282,7 @@ export async function startDraftRun(
     action: "draft_run_completed",
     detail: `Draft run ${runId} for cycle ${cycleId}: ${outcomes.filter((o) => o.status === "drafted").length} drafted, ${
       outcomes.filter((o) => o.status === "failed").length
-    } failed, ${alreadyDone.length} already done.`,
+    } failed, ${outcomes.filter((o) => o.status === "skipped").length} skipped.`,
     before: null,
     after: null,
     metadata: { runId, outcomes },
@@ -288,7 +296,7 @@ async function persistDraft(
   cycleId: string,
   domain: Domain,
   value: DraftReviewOutput,
-): Promise<void> {
+): Promise<boolean> {
   const rows = await db
     .select()
     .from(reviewDecisions)
@@ -297,10 +305,12 @@ async function persistDraft(
   const citations: string[] = [...value.missingEvidence];
 
   if (existing) {
-    await db
+    const updated = await db
       .update(reviewDecisions)
       .set({ status: "drafted", draftMd: value.draftMarkdown, citations, returnReason: null })
-      .where(eq(reviewDecisions.id, existing.id));
+      .where(and(eq(reviewDecisions.id, existing.id), ne(reviewDecisions.status, "signed")))
+      .returning();
+    return updated.length > 0;
   } else {
     await db.insert(reviewDecisions).values({
       id: `rd-${randomUUID()}`,
@@ -314,6 +324,7 @@ async function persistDraft(
       returnReason: null,
       createdAt: new Date(nowTs()),
     });
+    return true;
   }
 }
 
@@ -330,7 +341,7 @@ async function persistFailure(
   cycleId: string,
   domain: Domain,
   error: PortFailure,
-): Promise<void> {
+): Promise<boolean> {
   const rows = await db
     .select()
     .from(reviewDecisions)
@@ -344,10 +355,12 @@ async function persistFailure(
   const reasonText = `draft failed: ${describePortFailure(error)}`;
 
   if (existing) {
-    await db
+    const updated = await db
       .update(reviewDecisions)
       .set({ status: "pending", returnReason: reasonText })
-      .where(eq(reviewDecisions.id, existing.id));
+      .where(and(eq(reviewDecisions.id, existing.id), ne(reviewDecisions.status, "signed")))
+      .returning();
+    return updated.length > 0;
   } else {
     await db.insert(reviewDecisions).values({
       id: `rd-${randomUUID()}`,
@@ -361,6 +374,7 @@ async function persistFailure(
       returnReason: reasonText,
       createdAt: new Date(nowTs()),
     });
+    return true;
   }
 }
 
@@ -384,11 +398,13 @@ async function persistFailure(
 export interface RunSingleDomainResult {
   cycleId: string;
   domain: Domain;
-  status: "drafted" | "failed";
+  status: "drafted" | "failed" | "skipped";
   /** The freshly drafted markdown — present only when status === "drafted". */
   draftMd?: string;
   /** Human-readable failure reason — present only when status === "failed". */
   error?: string;
+  /** Present when a concurrent human signature wins the persistence race. */
+  reason?: "already signed";
 }
 
 /** Options for `runSingleDomainDraft`. */
@@ -425,10 +441,16 @@ export async function runSingleDomainDraft(
   const intake = await loadIntakeSnapshot(db, cycle.initiativeId);
   const result = await draftWithRetry(port, cycleId, domain, intake, maxAttempts);
   if (result.ok) {
-    await persistDraft(db, cycleId, domain, result.value);
+    const persisted = await persistDraft(db, cycleId, domain, result.value);
+    if (!persisted) {
+      return { cycleId, domain, status: "skipped", reason: "already signed" };
+    }
     return { cycleId, domain, status: "drafted", draftMd: result.value.draftMarkdown };
   }
-  await persistFailure(db, cycleId, domain, result.error);
+  const persisted = await persistFailure(db, cycleId, domain, result.error);
+  if (!persisted) {
+    return { cycleId, domain, status: "skipped", reason: "already signed" };
+  }
   return { cycleId, domain, status: "failed", error: describePortFailure(result.error) };
 }
 

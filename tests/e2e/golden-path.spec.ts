@@ -27,7 +27,7 @@ test.describe("champion storyline: read-only golden path", () => {
       ),
     ).toBeVisible();
 
-    await page.getByRole("link", { name: "Open the console" }).click();
+    await page.getByRole("link", { name: "Explore the live demo" }).first().click();
     await expect(page).toHaveURL(/\/inbox$/);
     await expect(
       page.getByRole("heading", { name: /what needs attention/i }),
@@ -124,6 +124,26 @@ test.describe("champion storyline: read-only golden path", () => {
     await page.goto("/controls");
 
     await expect(page.getByText(/17 controls/)).toBeVisible();
+  });
+
+  // Monetization M1 (marketing pages): read-only, no forms/mutations —
+  // covers the NIST AI RMF crosswalk (heading + a real catalog control chip)
+  // and the pilot one-pager (heading + "Contact for pricing" since no
+  // NEXT_PUBLIC_PILOT_PRICE is set in the test env).
+  test("framework and pilot pages render", async ({ page }) => {
+    await page.goto("/frameworks/nist-ai-rmf");
+    await expect(
+      page.getByRole("heading", {
+        name: "Jeeves and the NIST AI Risk Management Framework",
+      }),
+    ).toBeVisible();
+    await expect(page.getByText("C-01").first()).toBeVisible();
+
+    await page.goto("/pilot");
+    await expect(
+      page.getByRole("heading", { name: "Procurement-readiness pilot" }),
+    ).toBeVisible();
+    await expect(page.getByText("Contact for pricing")).toBeVisible();
   });
 });
 

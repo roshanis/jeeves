@@ -104,6 +104,7 @@ export interface DraftRunDomainOutcome {
   domain: Domain;
   status: "drafted" | "failed" | "skipped";
   error?: unknown;
+  reason?: "already signed";
 }
 
 export interface StartDraftRunResult {
@@ -129,11 +130,13 @@ export interface DraftRunProgress {
 export interface RunReviewAgentResult {
   cycleId: string;
   domain: Domain;
-  status: "drafted" | "failed";
+  status: "drafted" | "failed" | "skipped";
   /** Fresh draft markdown — present only when status === "drafted". */
   draftMd?: string;
   /** Human-readable failure reason — present only when status === "failed". */
   error?: string;
+  /** Present when a concurrent human signature wins the persistence race. */
+  reason?: "already signed";
 }
 
 export interface SignReviewResult {

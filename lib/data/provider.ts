@@ -28,9 +28,9 @@ import type {
  * initiative that row is ultimately traceable to (directly, or via a
  * deployment/cycle) — see lib/data/db-provider.ts's `visibleSnapshot`.
  * `controlCatalog`'s control DEFINITIONS (the catalog itself) and
- * `auditQuery("q01-control-changes")`'s admin event are global/portfolio-wide
- * configuration, not owned by any one initiative, so they are never
- * filtered — only the per-instance status/rows layered on top of them are.
+ * `auditQuery("q01-control-changes")` tier-default events (which have no
+ * initiativeId) are global/portfolio-wide configuration. Initiative-linked
+ * project overrides remain scoped to the owning initiative's visibility.
  */
 export interface WorkspaceScopedReadOptions {
   viewerWorkspaceId?: string | null;
