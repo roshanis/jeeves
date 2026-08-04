@@ -204,7 +204,24 @@ export default async function InitiativeDetailPage({
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_18rem]">
         <Tabs defaultValue={normalizeTab(tab)}>
-          <TabsList className="flex-wrap">
+          {/* Eight tabs used to wrap into a fixed-height box and render ON TOP
+              of the panel beneath (measured on an iPhone: "Evals /
+              Deployments / Audit" overlapping the Summary heading). Wrapping
+              cannot be rescued by letting the box grow either — TabsTrigger
+              is `h-[calc(100%-1px)]`, so on a wrapped auto-height list every
+              trigger stretches to the FULL list height and the rows overlap
+              each other.
+
+              So this is a single scrollable row at EVERY width, the same
+              pattern as the mobile nav strip. Not breakpoint-scoped, and that
+              is the point: a first cut applied it only below `lg` and an iPad
+              Pro 12.9 in portrait — 1024px, exactly at the breakpoint, with
+              the sidebar taking 224 of it — went straight back to wrapping
+              and spilling. Whether eight tabs fit depends on the space this
+              list actually has, not on the viewport width, so nothing here is
+              conditional. `max-w-full` (not `w-full`) keeps the list hugging
+              its content when there is room, so wide screens look unchanged. */}
+          <TabsList className="scroll-thin scroll-x-pane max-w-full flex-nowrap justify-start overflow-x-auto [&>*]:shrink-0">
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="intake">Intake</TabsTrigger>
             <TabsTrigger value="reviews">Reviews</TabsTrigger>

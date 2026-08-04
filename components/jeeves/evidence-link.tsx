@@ -34,7 +34,11 @@ export function EvidenceLink({
         href={`/initiatives/${slug}?tab=${tab}`}
         data-slot="evidence-nav-link"
         className={cn(
-          "flex items-center gap-2.5 px-3 py-2.5 text-sm font-medium text-foreground transition-colors hover:bg-accent",
+          // .touch-min: these stack as full-width rows in a divided list and
+          // measured 41px — three short of the touch minimum. Growing them
+          // for real costs 3px in a list that is already row-shaped, where an
+          // overlay would instead bleed onto the neighbouring row.
+          "touch-min flex items-center gap-2.5 px-3 py-2.5 text-sm font-medium text-foreground transition-colors hover:bg-accent",
           className,
         )}
       >
