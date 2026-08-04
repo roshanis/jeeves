@@ -145,7 +145,7 @@ export default async function MonitoringPage() {
         </CardHeader>
         <CardContent className="p-0">
           <SyntheticDataLabel className="p-4">
-            <div className="scroll-thin overflow-x-auto rounded-md border border-border">
+            <div className="scroll-thin scroll-x-pane overflow-x-auto rounded-md border border-border">
               <Table>
                 <TableHeader>
                   <TableRow>

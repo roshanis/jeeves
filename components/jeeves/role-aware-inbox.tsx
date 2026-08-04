@@ -392,7 +392,11 @@ function ViewLink({ href, children }: { href: string; children: React.ReactNode 
   return (
     <Link
       href={href}
-      className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
+      /* .touch-target rather than .touch-min: this is a text link ("Full
+         portfolio →"), and giving it a real 44px box would leave it floating
+         in a slab of empty space. The overlay grows only what a fingertip
+         needs — the tappable area — and leaves the type where it sits. */
+      className="touch-target inline-flex items-center gap-1 text-sm text-primary hover:underline"
     >
       {children} <ArrowRight className="h-3.5 w-3.5" />
     </Link>
@@ -741,7 +745,7 @@ function DomainReviewQueueTable({
 
   return (
     <div
-      className="panel card-quiet scroll-thin overflow-x-auto"
+      className="panel card-quiet scroll-thin scroll-x-pane overflow-x-auto"
       data-slot="initiative-table"
     >
       <table className="w-full min-w-[36rem] border-collapse text-sm">

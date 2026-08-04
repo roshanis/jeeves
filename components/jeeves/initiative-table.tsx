@@ -111,7 +111,13 @@ function Th({
     >
       <button
         onClick={() => onToggle(k)}
-        className={`inline-flex items-center gap-1 whitespace-nowrap rounded-sm transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background ${
+        /* .touch-min: the sort control is only ~16px tall by design (it is a
+           column label, not a button) — far too small for a fingertip. It
+           takes a real 44px minimum on touch pointers rather than an overlay,
+           because this header sits inside a horizontally-scrolling container
+           whose clipping would have swallowed an overlay that extended above
+           the first row (measured: 1 of 4 probe edges reachable). */
+        className={`touch-min inline-flex items-center gap-1 whitespace-nowrap rounded-sm transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background ${
           align === "right" ? "flex-row-reverse" : ""
         } ${active ? "text-foreground" : "text-muted-foreground"}`}
       >
@@ -181,7 +187,7 @@ export function InitiativeTable({
     // columns based on the space this table actually has, so the fix holds
     // regardless of what else is on the page.
     <div
-      className="panel card-quiet scroll-thin @container overflow-x-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      className="panel card-quiet scroll-thin scroll-x-pane @container overflow-x-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       data-slot="initiative-table"
       tabIndex={0}
       role="region"

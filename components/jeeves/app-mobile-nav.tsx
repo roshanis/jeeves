@@ -25,7 +25,7 @@ export function AppMobileNav() {
   return (
     <nav
       aria-label="Primary"
-      className="flex gap-1.5 overflow-x-auto border-b bg-card px-3 py-2 md:hidden scroll-thin"
+      className="pad-safe-x scroll-thin scroll-x-pane flex gap-1.5 overflow-x-auto border-b bg-card px-3 py-2 md:hidden"
     >
       {FLAT_ITEMS.map((item) => {
         const active = isNavItemActive(item, pathname);
@@ -35,13 +35,16 @@ export function AppMobileNav() {
             key={item.href}
             href={item.href}
             aria-current={active ? "page" : undefined}
-            className={`flex h-8 shrink-0 items-center gap-1.5 rounded-md px-3 text-xs whitespace-nowrap transition-colors duration-(--motion-base) ease-(--motion-ease) ${
+            /* h-11 = 44px, Apple's minimum touch target. This strip is
+               `md:hidden`, so it only ever renders on touch-sized viewports
+               and the taller pill costs desktop nothing. */
+            className={`flex h-11 shrink-0 items-center gap-1.5 rounded-md px-3.5 text-sm whitespace-nowrap transition-colors duration-(--motion-base) ease-(--motion-ease) ${
               active
                 ? "bg-accent font-medium text-accent-foreground shadow-[inset_0_0_0_1px_var(--border)]"
                 : "text-muted-foreground hover:bg-muted"
             }`}
           >
-            <Icon className="h-3.5 w-3.5 shrink-0" aria-hidden />
+            <Icon className="h-4 w-4 shrink-0" aria-hidden />
             {item.label}
           </Link>
         );

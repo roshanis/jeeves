@@ -331,6 +331,29 @@
       scroll-behavior: auto !important;
     }
   }
+
+  /*
+   * ---- iOS / iPadOS behaviour (mobile-readiness pass 2026-08-04) ----
+   *
+   * These are browser-behaviour corrections, not styling choices, so they
+   * live in base rather than being re-applied per component.
+   */
+  html {
+    /* Safari inflates text when an iPhone rotates to landscape unless the
+       page opts out. "100%" keeps user pinch-zoom working (never use
+       `none`, which disables zoom entirely — WCAG 1.4.4). */
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+  body {
+    /* Kill the grey flash iOS paints over any tapped element; every
+       interactive surface here already has its own :active/:focus state. */
+    -webkit-tap-highlight-color: transparent;
+    /* Stop the whole-page rubber-band on iOS while leaving inner panes
+       (which set their own overscroll-behavior) free to scroll. */
+    overscroll-behavior-y: none;
+  }
+
 }
 
 @layer components {
@@ -399,5 +422,161 @@
   .scroll-thin {
     scrollbar-width: thin;
     scrollbar-color: var(--border) transparent;
+  }
+
+  /* ---- Touch readiness (mobile pass 2026-08-04) ---- */
+
+  /*
+   * Horizontally-scrolling pane. On iOS a horizontal swipe that reaches the
+   * end of a scroller chains to the browser's back/forward gesture — so
+   * flicking through a wide table would navigate away from the page instead
+   * of scrolling it. `contain` keeps the gesture inside the pane.
+   */
+  .scroll-x-pane {
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /*
+   * Expands a control's TOUCH area without changing its visual size or
+   * disturbing layout, via a transparent absolutely-positioned overlay.
+   *
+   * The console is deliberately dense — 32px controls and 16px table sort
+   * buttons are right for a mouse at desk distance but well under Apple's
+   * 44pt minimum for a fingertip. Growing them for real would inflate every
+   * toolbar and destroy the instrument-deck rhythm on desktop, so instead
+   * the hit area grows only on coarse pointers, and only outward.
+   *
+   * Requires the element to establish a containing block; `position:
+   * relative` is set here so call sites need only add the class. The parent
+   * must not clip (no `overflow:hidden`) for the overlay to be reachable.
+   */
+  .touch-target {
+    position: relative;
+  }
+  @media (pointer: coarse) {
+    .touch-target::after {
+      content: "";
+      position: absolute;
+      /* Centres a 44px-minimum box on the control: half the shortfall on
+         each side, clamped at 0 so already-large controls are untouched. */
+      top: 50%;
+      left: 50%;
+      translate: -50% -50%;
+      width: max(100%, 44px);
+      height: max(100%, 44px);
+      /* Sits above the control's own background but below any popover. */
+      z-index: 1;
+    }
+  }
+
+  /*
+   * Safe-area insets: iPhones with a Dynamic Island / notch and every iPad
+   * running a full-screen web app reserve edge space that content must not
+   * sit under — most visibly the home-indicator strip at the bottom and, in
+   * landscape, the rounded corners at left/right. `env()` resolves to 0 on
+   * hardware without insets, so these are inert on desktop.
+   */
+  .pad-safe-x {
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+  }
+  .pad-safe-b {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}
+
+/* ===========================================================================
+ * Touch-pointer overrides (iPhone / iPad readiness pass, 2026-08-04)
+ *
+ * DELIBERATELY UNLAYERED. Everything above lives in @layer base/components,
+ * and Tailwind's utilities layer outranks both — so a `text-sm` or `h-8`
+ * utility on a call site would win against these rules if they were layered,
+ * which is exactly the bug the first cut of this pass shipped: `min-height`
+ * applied (no utility competes for it) while `font-size` was silently
+ * overridden by `text-sm` and iOS kept zooming. Unlayered CSS beats every
+ * layer, so these corrections hold wherever they are needed.
+ *
+ * All of it is gated on `(pointer: coarse)`, so the console's mouse-density
+ * layout is bit-for-bit unchanged on desktop.
+ * ======================================================================== */
+@media (pointer: coarse) {
+  /*
+   * iOS Safari zooms the viewport whenever a focused form control computes a
+   * font-size under 16px, with no way back except a manual pinch — measured
+   * here at 66 controls (search, filters, selects) sitting at 14px. `max()`
+   * raises only what is too small and still honours a deliberately larger
+   * font. `select` is included: iOS zooms when the picker opens too.
+   */
+  input:not([type="checkbox"]):not([type="radio"]):not([aria-hidden="true"]),
+  select:not([aria-hidden="true"]),
+  textarea:not([aria-hidden="true"]) {
+    font-size: max(16px, 1em);
+    /* Controls are sized h-8 (32px) for mouse density; a fingertip needs 44,
+       and a 16px font in a 32px box is cramped besides. */
+    min-height: 44px;
+  }
+  /* `:not([aria-hidden="true"])` above is load-bearing, not defensive. Base
+     UI's Select renders a 1x1 clipped proxy <input> to carry the value for
+     form submission; without the guard, min-height inflated that invisible
+     proxy to 44px inside the persona switcher's flex row. It is aria-hidden
+     and tabindex="-1" — not a control anyone can touch — so it must not be
+     sized like one. */
+
+  /* Checkboxes and radios keep their small visual box — growing the box
+     itself would look wrong — but take the WCAG 2.5.8 minimum hit area. */
+  input[type="checkbox"],
+  input[type="radio"] {
+    min-width: 24px;
+    min-height: 24px;
+  }
+
+  /*
+   * Buttons are h-8/h-7/h-6 by variant. On touch they take the 44px minimum
+   * for real (not via an overlay): a button is a primary control, and on a
+   * phone the extra height reads as correct rather than bloated.
+   *
+   * Matched on the `group/button` marker class rather than
+   * `[data-slot="button"]`, because the data-slot attribute misses two whole
+   * categories (both measured failing before this selector was changed):
+   *   1. `buttonVariants({...})` applied to a <Link>/<a> — every landing-page
+   *      CTA — emits the classes but never the data-slot attribute.
+   *   2. <Button data-slot="auditor-submit"> — Button spreads {...props}
+   *      AFTER its own data-slot, so any call site passing a custom slot
+   *      silently overrides `button`.
+   * The marker class is the first token of the cva base string, so it is
+   * present on every button-shaped element in the app and on nothing else.
+   */
+  [class~="group/button"],
+  [data-slot="select-trigger"] {
+    min-height: 44px;
+  }
+
+  /*
+   * Real 44px minimum, for controls that CAN grow. Use this rather than
+   * .touch-target wherever the control sits in a wrapped row or a table
+   * header: an overlay would either be clipped by a scroll container or
+   * overlap its neighbours (measured — chips in a `flex-wrap gap-1.5` row
+   * only reached 3 of 4 probe edges because adjacent chips' overlays won
+   * the tap). Growing for real is honest and looks right on a phone.
+   */
+  .touch-min {
+    min-height: 44px;
+    /* Narrow controls need the horizontal minimum too: a "Tier" column
+       header measured 37px wide, so a fingertip landing a few px either
+       side of centre fell into the neighbouring header instead. */
+    min-width: 44px;
+  }
+
+  /* Table rows carry the console's densest controls. Roomier cells lift row
+     height toward the 44px target, which is what makes the single link
+     inside a cell comfortable to hit without overlaying its neighbours.
+     Covers both the shadcn primitive and the hand-rolled data tables
+     (initiative-table et al) that use bare <td>/<th>. */
+  [data-slot="table-cell"],
+  [data-slot="table-head"],
+  table :is(td, th):not([aria-hidden="true"]) {
+    padding-top: 0.625rem;
+    padding-bottom: 0.625rem;
   }
 }

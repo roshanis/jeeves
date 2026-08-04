@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
 import "./globals.css";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -45,6 +45,34 @@ export const metadata: Metadata = {
   title: "Jeeves — AI Governance Gateway (Meridian Health demo)",
   description:
     "Fictional demo — synthetic data. AI governance workflow demo for a fictional healthcare payer.",
+};
+
+/**
+ * Mobile viewport (iPhone/iPad readiness pass 2026-08-04).
+ *
+ * Next ships a default `width=device-width, initial-scale=1`, which is
+ * necessary but not sufficient on Apple hardware:
+ *
+ * - `viewportFit: "cover"` lets the page paint into the notch/Dynamic-Island
+ *   and home-indicator regions, and is what makes `env(safe-area-inset-*)`
+ *   resolve to real values instead of 0. Without it those insets are always
+ *   zero and the safe-area padding in globals.css would silently do nothing.
+ * - `themeColor` tints the Safari toolbar to match the app's own chrome, per
+ *   theme, so the browser frame stops fighting the console's palette. The
+ *   values are --background from :root and .dark in globals.css.
+ *
+ * `maximumScale`/`userScalable` are deliberately NOT set: locking zoom is a
+ * WCAG 1.4.4 failure. The iOS focus-zoom problem is solved properly instead,
+ * by giving form controls a >=16px font on coarse pointers (globals.css).
+ */
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#f2f5f6" },
+    { media: "(prefers-color-scheme: dark)", color: "#0b1418" },
+  ],
 };
 
 export default function RootLayout({

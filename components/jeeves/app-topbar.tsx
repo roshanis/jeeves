@@ -1,6 +1,7 @@
 "use client";
 
-import { Search } from "lucide-react";
+import { Search, ShieldCheck } from "lucide-react";
+import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { RoleSwitcher } from "./role-switcher";
 import { DemoModeChip } from "./demo-mode-chip";
@@ -61,19 +62,51 @@ export function AppTopBar() {
   const breadcrumb = deriveBreadcrumb(pathname ?? "");
 
   return (
-    <div className="sticky top-0 z-30 border-b bg-card/95 backdrop-blur">
+    <div className="pad-safe-x sticky top-0 z-30 border-b bg-card/95 backdrop-blur">
       <div className="bg-status-warning-bg px-4 py-1 text-center text-[11px] font-medium text-status-warning-fg">
         {DEMO_BANNER_TEXT}
       </div>
-      <header className="flex h-14 items-center justify-between gap-4 px-4">
-        <div className="flex min-w-0 items-center gap-4">
+      <header className="flex h-14 items-center justify-between gap-2 px-4 sm:gap-4">
+        <div className="flex min-w-0 flex-1 items-center gap-4">
+          {/* Compact brand lockup, phones only. The sidebar carries the
+              Jeeves identity on desktop but is `hidden` below `md`, which
+              left small screens with no app name anywhere on the page — and
+              an empty left half of the top bar. This fills both gaps and,
+              like the sidebar's lockup, links home to /inbox. */}
+          <Link
+            href="/inbox"
+            className="touch-min flex shrink-0 items-center gap-2 md:hidden"
+            data-slot="mobile-brand"
+          >
+            <span className="grid size-7 shrink-0 place-items-center rounded-md bg-primary text-primary-foreground">
+              <ShieldCheck className="size-4" aria-hidden />
+            </span>
+            {/* Mark-only on phones, wordmark from `sm`. In live mode the
+                status cluster grows (LED label + Reset control) and the two
+                together overflowed a 375px bar by 16px; the shield alone
+                still reads as identity and as the way home. sr-only keeps
+                "Jeeves" as the link's accessible name. */}
+            <span className="text-sm font-semibold sr-only sm:not-sr-only">Jeeves</span>
+          </Link>
           <p
             className="label-mono hidden shrink-0 truncate text-foreground/80 sm:block"
             data-slot="breadcrumb"
           >
             {breadcrumb}
           </p>
-          <label className="relative flex w-full max-w-sm items-center">
+          {/* Global search is hidden below `lg`. Three reasons, all measured:
+              it is the single widest incompressible item in this bar (the
+              status cluster + a search input could not fit under 404px, so
+              every console route overflowed an iPhone horizontally); at
+              `md` the SIDEBAR also engages and eats 224px, which squashed
+              the input to ~0 width on an iPad in portrait so its absolutely
+              positioned icon and ⌘K hint overlapped the breadcrumb; and it
+              is not yet wired to a search backend, so on a small screen it
+              was spending the viewport on a control that does nothing. The
+              `min-w` floor is a belt-and-braces guard: rather than collapse
+              into an overlap again at some future width, the input keeps a
+              usable size and the flex row gives ground elsewhere. */}
+          <label className="relative hidden w-full max-w-sm min-w-[10rem] items-center lg:flex">
             <Search
               className="pointer-events-none absolute left-2.5 h-4 w-4 text-muted-foreground"
               aria-hidden
@@ -90,15 +123,17 @@ export function AppTopBar() {
           </label>
         </div>
         {/* Status cluster: one grouped instrument reading (theme / demo state /
-            persona) separated by hairlines rather than three floating pills. */}
-        <div className="flex shrink-0 items-center divide-x divide-border">
-          <div className="pr-2.5">
+            persona) separated by hairlines rather than three floating pills.
+            Hairline gutters tighten on phones so the three readouts still fit
+            a 375px viewport without the cluster forcing a horizontal scroll. */}
+        <div className="flex min-w-0 shrink items-center divide-x divide-border">
+          <div className="pr-1.5 sm:pr-2.5">
             <ThemeToggle />
           </div>
-          <div className="px-2.5">
+          <div className="min-w-0 px-1.5 sm:px-2.5">
             <DemoModeChip />
           </div>
-          <div className="pl-2.5">
+          <div className="min-w-0 pl-1.5 sm:pl-2.5">
             <RoleSwitcher />
           </div>
         </div>

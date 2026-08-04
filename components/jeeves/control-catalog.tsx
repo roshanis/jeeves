@@ -263,7 +263,7 @@ export function ControlCatalog({ controls }: { controls: ControlRow[] }) {
             type="button"
             onClick={() => setDomainFilter("all")}
             className={cn(
-              "rounded-md px-3 py-1.5 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+              "touch-min rounded-md px-3 py-1.5 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
               domainFilter === "all"
                 ? "bg-primary text-primary-foreground"
                 : "border bg-card text-muted-foreground hover:text-foreground",
@@ -277,7 +277,7 @@ export function ControlCatalog({ controls }: { controls: ControlRow[] }) {
               type="button"
               onClick={() => setDomainFilter(domain)}
               className={cn(
-                "rounded-md px-3 py-1.5 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+                "touch-min rounded-md px-3 py-1.5 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
                 domainFilter === domain
                   ? "bg-primary text-primary-foreground"
                   : "border bg-card text-muted-foreground hover:text-foreground",
@@ -293,7 +293,7 @@ export function ControlCatalog({ controls }: { controls: ControlRow[] }) {
             type="button"
             onClick={() => setStatusFilter("all")}
             className={cn(
-              "rounded-md px-3 py-1.5 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+              "touch-min rounded-md px-3 py-1.5 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
               statusFilter === "all"
                 ? "bg-primary text-primary-foreground"
                 : "border bg-card text-muted-foreground hover:text-foreground",
@@ -307,7 +307,7 @@ export function ControlCatalog({ controls }: { controls: ControlRow[] }) {
               type="button"
               onClick={() => setStatusFilter(status)}
               className={cn(
-                "rounded-md px-3 py-1.5 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+                "touch-min rounded-md px-3 py-1.5 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
                 statusFilter === status
                   ? "bg-primary text-primary-foreground"
                   : "border bg-card text-muted-foreground hover:text-foreground",
@@ -319,7 +319,7 @@ export function ControlCatalog({ controls }: { controls: ControlRow[] }) {
         </div>
       </div>
       <div
-        className="overflow-x-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="scroll-x-pane overflow-x-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         tabIndex={0}
         role="region"
         aria-label="Control catalog, grouped by domain"

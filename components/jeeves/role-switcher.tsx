@@ -66,13 +66,18 @@ export function RoleSwitcher() {
           ))}
         </SelectContent>
       </Select>
-      <Badge variant="outline" className="hidden font-mono text-[11px] tracking-wide sm:inline-flex">
+      {/* These two badges restate what the select already shows (the persona,
+          and their domain). They are worth their width only once the bar has
+          room to spare — at `sm` they were still competing with the search
+          field and status chip for an iPad portrait's 610px of top bar, so
+          they now wait for `xl`. */}
+      <Badge variant="outline" className="hidden font-mono text-[11px] tracking-wide xl:inline-flex">
         {persona.actorName}
       </Badge>
       {reviewerDomain ? (
         <Badge
           variant="secondary"
-          className="hidden sm:inline-flex"
+          className="hidden xl:inline-flex"
           data-slot="active-domain-chip"
         >
           {DOMAIN_LABEL[reviewerDomain]}

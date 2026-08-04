@@ -23,7 +23,7 @@ function Table({
       role="region"
       aria-label={containerLabel}
       tabIndex={0}
-      className="relative w-full overflow-x-auto focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+      className="scroll-x-pane relative w-full overflow-x-auto focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
     >
       <table
         data-slot="table"

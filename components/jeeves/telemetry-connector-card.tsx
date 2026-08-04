@@ -94,7 +94,7 @@ export function TelemetryConnectorCard({
 
         <div>
           <h4 className="kicker mb-2">Synthetic OTel traces — demo</h4>
-          <div className="scroll-thin overflow-x-auto rounded-md border border-border">
+          <div className="scroll-thin scroll-x-pane overflow-x-auto rounded-md border border-border">
             <Table containerLabel="Synthetic OTel traces, scrollable horizontally">
               <TableHeader>
                 <TableRow>

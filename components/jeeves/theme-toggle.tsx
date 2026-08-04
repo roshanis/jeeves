@@ -57,7 +57,13 @@ export function ThemeToggle() {
           // for this page view; the choice just won't persist.
         }
       }}
-      className="inline-flex size-8 shrink-0 items-center justify-center rounded-md border border-border bg-transparent text-muted-foreground transition-colors duration-(--motion-base) ease-(--motion-ease) hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+      /* .touch-min (real 44px on touch), NOT .touch-target: this button sits
+         at the left edge of the top bar's status cluster, and an overlay
+         extending 6px past a 32px button reached across the gap and stole
+         taps from the brand link beside it (measured — the brand's right
+         probe resolved to this button). Growing for real keeps every hit
+         area inside its own control. */
+      className="touch-min inline-flex size-8 shrink-0 items-center justify-center rounded-md border border-border bg-transparent text-muted-foreground transition-colors duration-(--motion-base) ease-(--motion-ease) hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
     >
       {dark ? <Sun className="size-4" aria-hidden /> : <Moon className="size-4" aria-hidden />}
     </button>

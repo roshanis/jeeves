@@ -38,7 +38,7 @@ export function PipelineBoard({ initiatives }: { initiatives: InitiativeSummary[
   return (
     <div
       data-slot="pipeline-board"
-      className="scroll-thin grid grid-flow-col auto-cols-[minmax(230px,1fr)] gap-3 overflow-x-auto pb-2"
+      className="scroll-thin scroll-x-pane grid grid-flow-col auto-cols-[minmax(230px,1fr)] gap-3 overflow-x-auto pb-2"
     >
       {COLUMNS.map((state) => {
         const items = byState.get(state) ?? [];
