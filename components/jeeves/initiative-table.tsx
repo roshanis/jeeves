@@ -232,12 +232,21 @@ export function InitiativeTable({
                 className="h-10 border-b last:border-0 hover:bg-muted/40"
               >
                 <SeverityStripeCell severe={severe} />
-                <td className="max-w-[11rem] px-2 py-1.5 @2xl:max-w-[18rem] @4xl:max-w-[26rem]">
+                {/* `relative` anchors the stretched link below. Everything in
+                    this cell — the title and the slug beneath it — points at
+                    one destination, so on touch the whole cell is the target
+                    rather than the 20px line of type (measured: a fingertip
+                    reached only 2 of 4 edges of the bare link). */}
+                <td className="relative max-w-[11rem] px-2 py-1.5 @2xl:max-w-[18rem] @4xl:max-w-[26rem]">
+                  {/* Truncation lives on the inner span, not the link: the
+                      stretched hit area is generated inside the link, so
+                      `overflow:hidden` there would clip it back to the text
+                      box and undo the whole point. */}
                   <Link
                     href={`/initiatives/${i.slug}`}
-                    className="block truncate font-medium text-foreground hover:text-primary hover:underline"
+                    className="touch-stretch block min-w-0 font-medium text-foreground hover:text-primary hover:underline"
                   >
-                    {i.title}
+                    <span className="block truncate">{i.title}</span>
                   </Link>
                   <div className="label-mono truncate text-muted-foreground">{i.slug}</div>
                 </td>

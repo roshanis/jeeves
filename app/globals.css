@@ -560,6 +560,25 @@
    * only reached 3 of 4 probe edges because adjacent chips' overlays won
    * the tap). Growing for real is honest and looks right on a phone.
    */
+  /*
+   * Stretches a link's hit area over its whole positioned container — the
+   * "stretched link" pattern. For a table cell whose entire content belongs
+   * to one destination (an initiative's title AND its slug line), the honest
+   * target is the cell, not the 20px line of type inside it. Requires the
+   * container to be `relative`.
+   *
+   * GOTCHA: the overlay is generated INSIDE the link, so the link itself must
+   * not clip. `truncate` (overflow:hidden) on the same element silently
+   * confines the overlay to the text box — measured as a 20px-tall target on
+   * a 59px row. Truncate an inner span instead, never the stretching link.
+   */
+  .touch-stretch::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+  }
+
   .touch-min {
     min-height: 44px;
     /* Narrow controls need the horizontal minimum too: a "Tier" column
