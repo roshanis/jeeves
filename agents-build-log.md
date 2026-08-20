@@ -508,3 +508,23 @@ SIGN-OFF: BLOCKED — do not merge PR #2 yet.
 ### Diff summary: FIVE REAL DEFECTS on surfaces never previously measured. (1) The tab bar — primary navigation on every detail page AND the intake form — rendered 25px triggers. (2) Worse, its eight tabs WRAPPED into a fixed-height box and painted ON TOP of the panel below; letting the box grow does not fix it either, because TabsTrigger is `h-[calc(100%-1px)]` so on a wrapped auto-height list every trigger stretches to the full list height and the rows overlap each other — below `lg` it is now a single scrollable row, the same pattern as the mobile nav strip. (3) A long detail-page breadcrumb overlapped the status chip by 9px on iPad portrait (it was `shrink-0`, so its own `truncate` could never engage). (4) Evidence nav links measured 41px. (5) Intake checkbox/radio LABELS were ~20px tall — the label is the real target since clicking its text toggles the control, so sizing the 24px box would not have helped. Marketing site (arrived via main): nav links were 20px, and growing them to 44px then overflowed a 375px viewport by 13px until the gutters were tightened on phones.
 ### Verification: tsc clean · eslint 0 errors · full unit suite 989/989 (87 files) · e2e 22/22 · production build green · sweeps at 0 overflow / 0 undersized targets / 0 sub-16px controls / 0 collapsed-or-overlapping chrome / 0 page errors across console list routes, console detail routes, the intake form and all five marketing routes, in BOTH themes. Desktop re-measured byte-identical (tab list 32px / trigger 25px, chip 27px, toggle 32px, sort button 16px, cell padding 0).
 ### Recommendations / Next steps: FOUR NOTES. (a) The tab fix was WRONG the first time in an instructive way: scoped to `max-lg`, it left an iPad Pro 12.9 in portrait — 1024px, exactly at the breakpoint, with the sidebar taking 224 of it — wrapping and spilling again. Whether eight tabs fit depends on the space the LIST actually has, not on viewport width, so the scroll row is now unconditional (`max-w-full` keeps it hugging its content where there is room, so wide screens are unchanged). This is the same lesson as the container-query fix in the 2026-08-02 pass: viewport breakpoints are the wrong instrument when the constraint is a component's own width. (b) A malformed comment in the touch block was silently swallowing the rule immediately after it — the CSS parser recovered by the NEXT rule, so tab triggers were sized while the tab list was not, which presented as a confusing measurement rather than an error. A brace/comment balance check now catches that class of thing. (b) main had independently landed a different fix for the same breadcrumb bug (min-w-0 plus an overflow-x-clip backstop); the rebase conflict was resolved by keeping main's superset and merging the two rationales into one comment rather than picking a side. (c) The `.next/dev` type cache from an earlier `next dev` run goes stale across a rebase that MOVES a route (app/page.tsx -> app/(marketing)/page.tsx) and makes `tsc` report a phantom error; a fresh checkout and the production build are both clean. STILL OPEN, unchanged from the first pass: below `sm` the read-only chip is icon-only (label kept for screen readers); the global search is still a non-functional stub, now hidden below `xl`; and nothing has been run on real Apple hardware — this is all Chromium emulating those viewports with a coarse pointer, which does not model Safari's own quirks.
+
+## [AGENT: Claude] [2026-08-20T17:13Z]
+### Action: Added an MIT license to the repository
+### Files changed: LICENSE (new), package.json, README.md
+### Diff summary:
+- `LICENSE` — standard MIT text, copyright 2026 Roshan Venugopal (the
+  dominant commit author on this repo).
+- `package.json` — added `"license": "MIT"` alongside the existing
+  `"private": true`. The private flag stays: it blocks accidental
+  `npm publish`, and is independent of the license terms.
+- `README.md` — new License section linking the file, with a note that the
+  license covers the code only, not the fictional scenario, the referenced
+  framework names, or third-party dependencies.
+### Recommendations / Next steps:
+- No test added — docs/config-only change, so per §5's exception the check was
+  lint (0 errors; the one warning is pre-existing, in a `coverage/` artifact)
+  plus a JSON-validity parse of package.json.
+- MIT was chosen because the human said so; no license audit of the dependency
+  tree was performed, and MIT imposes no obligation to run one. If this ever
+  ships as a real product rather than a demo, that audit is still owed.
