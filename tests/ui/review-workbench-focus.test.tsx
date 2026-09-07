@@ -40,7 +40,7 @@ describe("ReviewWorkbench domain filter focus rings", () => {
     expect(allButton.className).toContain("focus-visible:ring-2");
     expect(allButton.className).toContain("focus-visible:ring-offset-background");
 
-    const legalButton = screen.getByRole("button", { name: /Legal/ });
+    const legalButton = screen.getByRole("button", { name: /^Legal/ });
     expect(legalButton.className).toContain("focus-visible:ring-2");
     expect(legalButton.className).toContain("focus-visible:ring-offset-background");
   });

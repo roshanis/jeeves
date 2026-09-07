@@ -789,6 +789,7 @@ function toSummary(init: InitiativeFixture): InitiativeSummary {
   const domains = domainsRequiredFor(init);
   return {
     slug: init.slug,
+    isSeeded: true,
     title: init.title,
     tier: init.tier,
     state: init.state,
@@ -995,6 +996,12 @@ export class MockDataProvider implements DataProvider {
     if (!detail) return null;
     if (!isVisibleToViewer(slug, opts)) return null;
     return detail;
+  }
+
+  async listInitiativeDetails(opts?: WorkspaceScopedReadOptions): Promise<InitiativeDetail[]> {
+    return [...DETAILS.values()].filter((detail) =>
+      isVisibleToViewer(detail.summary.slug, opts),
+    );
   }
 
   // `_opts` unused: accepted for DataProvider interface parity with

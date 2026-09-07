@@ -8,21 +8,29 @@
  */
 import * as React from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { IntakeForm } from "./intake-form";
+import { EMPTY_PAYLOAD, IntakeForm } from "./intake-form";
 import { IntakeChat } from "./intake-chat";
+import type { IntakePayload } from "@/lib/intake/types";
 
-export function IntakeModeToggle() {
+export function IntakeModeToggle({ initialPayload, initiativeId, initialVersion, initialSlug }: {
+  initialPayload?: IntakePayload;
+  initiativeId?: string;
+  initialVersion?: number;
+  initialSlug?: string;
+}) {
+  const [mode, setMode] = React.useState("structured");
+  const [payload, setPayload] = React.useState(initialPayload ?? EMPTY_PAYLOAD);
   return (
-    <Tabs defaultValue="structured" data-slot="intake-mode-toggle">
+    <Tabs value={mode} onValueChange={setMode} data-slot="intake-mode-toggle">
       <TabsList>
         <TabsTrigger value="structured">Structured form</TabsTrigger>
         <TabsTrigger value="chat">Chat with intake assistant</TabsTrigger>
       </TabsList>
-      <TabsContent value="structured">
-        <IntakeForm />
+      <TabsContent value="structured" keepMounted>
+        <IntakeForm initialPayload={payload} onPayloadChange={setPayload} initiativeId={initiativeId} initialVersion={initialVersion} initialSlug={initialSlug} />
       </TabsContent>
-      <TabsContent value="chat">
-        <IntakeChat />
+      <TabsContent value="chat" keepMounted>
+        <IntakeChat payload={payload} onPayloadChange={setPayload} onReview={() => setMode("structured")} />
       </TabsContent>
     </Tabs>
   );

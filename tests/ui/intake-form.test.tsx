@@ -42,7 +42,7 @@ describe("IntakeForm — empty state", () => {
       "Does a qualified human review each output before it takes effect?",
       "Does it affect individuals' opportunities, rights, or services (members, providers, or employees)?",
     ]) {
-      expect(screen.getByText(question)).toBeTruthy();
+      expect(screen.getByRole("group", { name: new RegExp(question.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")) })).toBeTruthy();
     }
   });
 });

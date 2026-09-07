@@ -38,11 +38,15 @@ const EXPECTED_HREFS = [
 ];
 
 describe("AppMobileNav", () => {
-  it("renders one link per nav item with the correct hrefs", () => {
-    const { getAllByRole } = render(<AppMobileNav />);
-    const links = getAllByRole("link") as HTMLAnchorElement[];
-    const hrefs = links.map((link) => link.getAttribute("href"));
-    expect(hrefs).toEqual(EXPECTED_HREFS);
+  it("keeps workflow navigation primary and the remaining tools in a closed disclosure", () => {
+    const { container } = render(<AppMobileNav />);
+    const details = container.querySelector("details");
+    expect(details).not.toBeNull();
+    expect(details!.open).toBe(false);
+    expect(Array.from(details!.querySelectorAll("a")).map((a) => a.getAttribute("href")))
+      .toEqual(["/agents", "/promotions", "/admin"]);
+    const hrefs = Array.from(container.querySelectorAll("a")).map((a) => a.getAttribute("href"));
+    expect(hrefs.sort()).toEqual([...EXPECTED_HREFS].sort());
   });
 
   it("marks only the active route's link with aria-current", () => {

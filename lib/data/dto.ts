@@ -9,6 +9,8 @@ export interface InitiativeSummary {
   // live actions (pause/resume, threshold override) can target seeded
   // initiatives by id; may be absent in a slug-only context.
   initiativeId?: string;
+  /** True for shared seeded fixtures; false for workspace-owned live rows. */
+  isSeeded?: boolean;
   title: string;
   tier: Tier;
   state: LifecycleState;

@@ -1,10 +1,7 @@
+import { loadPortfolioDetails } from "@/app/_lib/portfolio-data";
+import { loadIncidentsForViewer } from "@/app/_lib/incident-data";
+import { IncidentDataNotice } from "@/components/jeeves/incident-data-notice";
 import { getAppProvider, getCurrentWorkspaceId } from "@/app/_lib/data-provider";
-import { getDb } from "@/lib/db/client";
-import { listIncidents, type IncidentListRow } from "@/lib/services/monitor-service";
-import {
-  deploymentWorkspaceMap,
-  isDeploymentVisible,
-} from "@/lib/services/viewer-workspace";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -28,51 +25,25 @@ import type { ThresholdInitiativeOption } from "@/components/jeeves/threshold-ed
 // button exists on this page for any role — separation of duties is
 // architectural, not a permission flag.
 
-// Incidents come from the DB (post-breach). In mock/read-only mode there is no
-// DB to query, so we skip the fetch entirely and render the empty state.
-// Incidents carry no workspace column of their own — ownership resolves via
-// deploymentId -> initiative.workspaceId (P0 read-isolation pass,
-// external-review finding 2), same filtering GET /api/monitor/incidents
-// applies over HTTP.
-async function loadIncidents(viewerWorkspaceId: string | null): Promise<IncidentListRow[]> {
-  const dbMode =
-    process.env.DATA_PROVIDER === "db" || !!process.env.DATABASE_URL;
-  if (!dbMode) return [];
-  try {
-    const db = getDb();
-    const [incidents, workspaceByDeployment] = await Promise.all([
-      listIncidents(db),
-      deploymentWorkspaceMap(db),
-    ]);
-    return incidents.filter((inc) =>
-      isDeploymentVisible(workspaceByDeployment, inc.deploymentId, viewerWorkspaceId),
-    );
-  } catch {
-    // A missing/unseeded store must not crash the console.
-    return [];
-  }
-}
-
 export default async function AdminPage() {
   const provider = getAppProvider();
   const viewerWorkspaceId = await getCurrentWorkspaceId();
-  const [catalog, initiatives, q01Changes, incidents] = await Promise.all([
+  const [catalog, details, q01Changes, incidentResult] = await Promise.all([
     provider.controlCatalog({ viewerWorkspaceId }),
-    provider.listInitiatives({ viewerWorkspaceId }),
+    loadPortfolioDetails(provider, viewerWorkspaceId),
     provider.auditQuery("q01-control-changes", { viewerWorkspaceId }),
-    loadIncidents(viewerWorkspaceId),
+    loadIncidentsForViewer(viewerWorkspaceId),
   ]);
 
   const q01 = catalog.find((c) => c.id === "Q-01");
-  const details = await Promise.all(
-    initiatives.map((i) => provider.getInitiativeDetail(i.slug, { viewerWorkspaceId })),
-  );
+  const initiatives = details.map((detail) => detail.summary);
+  const incidents = incidentResult.incidents ?? [];
 
   // Project-override options for the threshold dialog: only initiatives whose
   // DB id is resolvable (real-provider mode). Empty in mock mode → the dialog
   // falls back to tier-default edits only.
   const initiativeOptions: ThresholdInitiativeOption[] = initiatives
-    .filter((i) => !!i.initiativeId)
+    .filter((i) => !!i.initiativeId && !i.isSeeded)
     .map((i) => ({ initiativeId: i.initiativeId as string, title: i.title, slug: i.slug }));
 
   const deploymentRows = details.flatMap((detail) =>
@@ -80,7 +51,7 @@ export default async function AdminPage() {
       ? detail.deployments.map((d) => ({
           slug: detail.summary.slug,
           title: detail.summary.title,
-          initiativeId: detail.summary.initiativeId ?? null,
+          initiativeId: detail.summary.isSeeded ? null : detail.summary.initiativeId ?? null,
           state: detail.summary.state,
           deployment: d,
         }))
@@ -157,8 +128,7 @@ export default async function AdminPage() {
             </Table>
             <div className="flex items-center justify-between gap-3 border-t px-4 py-2.5">
               <p className="text-xs text-muted-foreground">
-                Last changed 30 days ago by Ray Chen — &ldquo;Q2 quality
-                initiative&rdquo; (0.10&nbsp;→&nbsp;0.08). Every edit is audited.
+                Every edit requires a reason. Recorded changes appear in the control-change audit log below.
               </p>
               <ThresholdEditAction
                 currentThreshold={q01?.threshold ?? null}
@@ -175,9 +145,9 @@ export default async function AdminPage() {
           <CardContent className="space-y-3">
             <p className="text-sm text-muted-foreground">
               Synchronously evaluates Q-01 against current observation data
-              for all deployments; applies pause + incident + reassessment on
-              a sustained breach. Idempotent — re-running when already paused
-              reports &ldquo;No new breaches detected.&rdquo;
+              for deployed versions in your workspace. A sustained breach creates
+              an incident, pauses the deployment, and opens reassessment.
+              Re-running does not duplicate an existing incident.
             </p>
             <RunMonitorPanel withSelector />
           </CardContent>
@@ -191,7 +161,9 @@ export default async function AdminPage() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          {incidents.length === 0 ? (
+          {incidentResult.status === "unavailable" ? (
+            <IncidentDataNotice reason={incidentResult.reason} />
+          ) : incidents.length === 0 ? (
             <p className="text-sm text-muted-foreground" data-slot="no-incidents">
               No incidents recorded. Run the monitor to evaluate deployments
               against their eval-quality floor.
@@ -273,11 +245,11 @@ export default async function AdminPage() {
                     <LifecycleBadge state={row.state} />
                   </TableCell>
                   <TableCell>
-                    <DeploymentActionButton
+                    {row.initiativeId ? <DeploymentActionButton
                       title={row.title}
                       initiativeId={row.initiativeId}
                       status={row.deployment.status}
-                    />
+                    /> : <span className="text-xs text-muted-foreground">Read-only example</span>}
                   </TableCell>
                 </TableRow>
               ))}

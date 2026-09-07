@@ -55,6 +55,7 @@ type EffectiveControlRecord = typeof effectiveControls.$inferSelect;
 type ControlDefinitionRecord = typeof controlDefinitions.$inferSelect;
 type IntakeVersionRecord = typeof intakeVersions.$inferSelect;
 type ObservationRecord = typeof observations.$inferSelect;
+type AuditEventRecord = typeof auditEvents.$inferSelect;
 
 interface PortfolioSnapshot {
   initiatives: InitiativeRecord[];
@@ -66,7 +67,8 @@ interface PortfolioSnapshot {
   effectiveControls: EffectiveControlRecord[];
   controlDefs: ControlDefinitionRecord[];
   intakes: IntakeVersionRecord[];
-  evalObservations: ObservationRecord[];
+  observations: ObservationRecord[];
+  auditEvents: AuditEventRecord[];
 }
 
 function toIso(d: Date): string {
@@ -177,8 +179,11 @@ export class DbDataProvider implements DataProvider {
       ),
       controlDefs: snap.controlDefs, // global catalog — never workspace-scoped
       intakes: snap.intakes.filter((iv) => visibleInitiativeIds.has(iv.initiativeId)),
-      evalObservations: snap.evalObservations.filter((o) =>
+      observations: snap.observations.filter((o) =>
         visibleDeploymentIds.has(o.deploymentId),
+      ),
+      auditEvents: snap.auditEvents.filter(
+        (event) => event.initiativeId === null || visibleInitiativeIds.has(event.initiativeId),
       ),
     };
   }
@@ -194,7 +199,8 @@ export class DbDataProvider implements DataProvider {
       ecRows,
       defRows,
       intakeRows,
-      evalObsRows,
+      observationRows,
+      auditEventRows,
     ] = await Promise.all([
       this.db.select().from(initiatives).orderBy(asc(initiatives.slug)),
       this.db.select().from(riskAssessments),
@@ -205,9 +211,8 @@ export class DbDataProvider implements DataProvider {
       this.db.select().from(effectiveControls),
       this.db.select().from(controlDefinitions),
       this.db.select().from(intakeVersions),
-      // Only the eval series is needed portfolio-wide (breach badge);
-      // full telemetry is loaded per-initiative in getInitiativeDetail.
-      this.db.select().from(observations).where(eq(observations.kind, "eval_hallucination")),
+      this.db.select().from(observations),
+      this.db.select().from(auditEvents).orderBy(asc(auditEvents.ts), asc(auditEvents.id)),
     ]);
 
     return {
@@ -220,7 +225,8 @@ export class DbDataProvider implements DataProvider {
       effectiveControls: ecRows,
       controlDefs: defRows,
       intakes: intakeRows,
-      evalObservations: evalObsRows,
+      observations: observationRows,
+      auditEvents: auditEventRows,
     };
   }
 
@@ -303,7 +309,8 @@ export class DbDataProvider implements DataProvider {
         init.tier as Tier,
         q01.thresholdOverride ?? null,
       );
-      const series = snap.evalObservations
+      const series = snap.observations
+        .filter((o) => o.kind === "eval_hallucination")
         .filter((o) => o.deploymentId === q01.deploymentId)
         .sort((a, b) => a.ts.getTime() - b.ts.getTime());
       const latest = series[series.length - 1];
@@ -355,6 +362,7 @@ export class DbDataProvider implements DataProvider {
     return {
       slug: init.slug,
       initiativeId: init.id,
+      isSeeded: init.workspaceId === null,
       title: init.title,
       tier: (init.tier ?? "low") as Tier,
       state: init.state as LifecycleState,
@@ -389,6 +397,18 @@ export class DbDataProvider implements DataProvider {
     if (!init) return null;
     if (!this.isVisibleToViewer(init, opts)) return null;
 
+    return this.detailOf(snap, init);
+  }
+
+  async listInitiativeDetails(opts?: WorkspaceScopedReadOptions): Promise<InitiativeDetail[]> {
+    const snap = this.visibleSnapshot(await this.loadSnapshot(), opts);
+    return Promise.all(snap.initiatives.map((init) => this.detailOf(snap, init)));
+  }
+
+  private async detailOf(
+    snap: PortfolioSnapshot,
+    init: InitiativeRecord,
+  ): Promise<InitiativeDetail> {
     const summary = this.summaryOf(snap, init);
 
     const intakeRow = snap.intakes
@@ -460,11 +480,9 @@ export class DbDataProvider implements DataProvider {
     // Full telemetry for the operational deployment (all kinds).
     let telemetry: TelemetrySeries[] = [];
     if (operationalDep) {
-      const obsRows = await this.db
-        .select()
-        .from(observations)
-        .where(eq(observations.deploymentId, operationalDep.id))
-        .orderBy(asc(observations.ts));
+      const obsRows = snap.observations
+        .filter((observation) => observation.deploymentId === operationalDep.id)
+        .sort((a, b) => a.ts.getTime() - b.ts.getTime());
       const byKind = new Map<string, ObservationRecord[]>();
       for (const o of obsRows) {
         const list = byKind.get(o.kind) ?? [];
@@ -495,11 +513,7 @@ export class DbDataProvider implements DataProvider {
       at: toIso(d.deployedAt),
     }));
 
-    const eventRows = await this.db
-      .select()
-      .from(auditEvents)
-      .where(eq(auditEvents.initiativeId, init.id))
-      .orderBy(asc(auditEvents.ts), asc(auditEvents.id));
+    const eventRows = snap.auditEvents.filter((event) => event.initiativeId === init.id);
     const events: AuditEventRow[] = eventRows.map((e) => ({
       ts: toIso(e.ts),
       actor: e.actor,

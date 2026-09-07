@@ -1090,6 +1090,83 @@ describe("lib/services/initiative-service", () => {
   });
 
   describe("createDraft workspace tagging (M2.5 inc.2a foundation)", () => {
+    it("returns the original draft when a lost create response is retried with the same request id", async () => {
+      const input = {
+        payload: CHAMPION_PREFILL_PAYLOAD,
+        requesterActor: REQUESTER,
+        requesterName: "Priya Raman",
+        workspaceId: "ws-intake-retry",
+        requestId: "stable-create-key-1234",
+      };
+      const first = await svc.createDraft(db, input);
+      const retry = await svc.createDraft(db, input);
+      expect(retry).toEqual(first);
+      expect((await db.select().from(initiatives)).filter((row) => row.id === first.initiativeId)).toHaveLength(1);
+    });
+
+    it("rejects reuse of a creation key with a different payload", async () => {
+      const input = {
+        payload: CHAMPION_PREFILL_PAYLOAD,
+        requesterActor: REQUESTER,
+        requesterName: "Priya Raman",
+        workspaceId: "ws-intake-retry",
+        requestId: "stable-create-key-5678",
+      };
+      await svc.createDraft(db, input);
+      await expect(svc.createDraft(db, { ...input, payload: { ...CHAMPION_PREFILL_PAYLOAD, basics: { ...CHAMPION_PREFILL_PAYLOAD.basics, title: "Different" } } })).rejects.toThrow(ConflictError);
+    });
+
+    it("replays the original creation contract after the draft has been edited", async () => {
+      const input = { payload: CHAMPION_PREFILL_PAYLOAD, requesterActor: REQUESTER, requesterName: "Priya Raman", workspaceId: "ws-replay-edited", requestId: "stable-create-key-9012" };
+      const created = await svc.createDraft(db, input);
+      await svc.updateIntakeDraft(db, {
+        initiativeId: created.initiativeId,
+        payload: { ...CHAMPION_PREFILL_PAYLOAD, basics: { ...CHAMPION_PREFILL_PAYLOAD.basics, title: "Edited after create" } },
+        expectedVersion: 1,
+        actor: REQUESTER,
+        workspaceId: "ws-replay-edited",
+      });
+      const replay = await svc.createDraft(db, input);
+      expect(replay.initiativeId).toBe(created.initiativeId);
+      expect(replay).toEqual(created);
+    });
+
+    it("uses expectedVersion as a compare-and-set when updating an owned draft", async () => {
+      const draft = await svc.createDraft(db, {
+        payload: CHAMPION_PREFILL_PAYLOAD,
+        requesterActor: REQUESTER,
+        requesterName: "Priya Raman",
+        workspaceId: "ws-intake-cas",
+      });
+      const changed = { ...CHAMPION_PREFILL_PAYLOAD, basics: { ...CHAMPION_PREFILL_PAYLOAD.basics, title: "Updated draft" } };
+      const updated = await svc.updateIntakeDraft(db, { initiativeId: draft.initiativeId, payload: changed, expectedVersion: 1, actor: REQUESTER, workspaceId: "ws-intake-cas" });
+      expect(updated.version).toBe(2);
+      await expect(svc.updateIntakeDraft(db, { initiativeId: draft.initiativeId, payload: changed, expectedVersion: 1, actor: REQUESTER, workspaceId: "ws-intake-cas" })).rejects.toThrow(ConflictError);
+    });
+
+    it("commits only one of two concurrent edits with the same expected version", async () => {
+      const draft = await svc.createDraft(db, { payload: CHAMPION_PREFILL_PAYLOAD, requesterActor: REQUESTER, requesterName: "Priya Raman", workspaceId: "ws-concurrent-edit" });
+      const edit = (title: string) => svc.updateIntakeDraft(db, {
+        initiativeId: draft.initiativeId,
+        payload: { ...CHAMPION_PREFILL_PAYLOAD, basics: { ...CHAMPION_PREFILL_PAYLOAD.basics, title } },
+        expectedVersion: 1,
+        actor: REQUESTER,
+        workspaceId: "ws-concurrent-edit",
+      });
+      const results = await Promise.allSettled([edit("Concurrent A"), edit("Concurrent B")]);
+      expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+      expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
+      expect((results.find((result) => result.status === "rejected") as PromiseRejectedResult).reason).toBeInstanceOf(ConflictError);
+    });
+
+    it("replays a successful submission without a second transition or audit event", async () => {
+      const draft = await svc.createDraft(db, { payload: CHAMPION_PREFILL_PAYLOAD, requesterActor: REQUESTER, requesterName: "Priya Raman" });
+      const first = await svc.submitIntake(db, draft.initiativeId, REQUESTER);
+      const retry = await svc.submitIntake(db, draft.initiativeId, REQUESTER);
+      expect(retry).toEqual(first);
+      const events = await db.select().from(auditEvents).where(eq(auditEvents.initiativeId, draft.initiativeId));
+      expect(events.filter((event) => event.action === "submit")).toHaveLength(1);
+    });
     it("persists the passed workspaceId on the created initiative row", async () => {
       const draft = await svc.createDraft(db, {
         payload: CHAMPION_PREFILL_PAYLOAD,

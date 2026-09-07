@@ -1,6 +1,6 @@
 "use client";
 
-import { Search, ShieldCheck } from "lucide-react";
+import { ShieldCheck } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { RoleSwitcher } from "./role-switcher";
@@ -107,38 +107,6 @@ export function AppTopBar() {
           >
             {breadcrumb}
           </p>
-          {/* Global search is hidden below `xl`. Three reasons, all measured:
-              it is the single widest incompressible item in this bar (the
-              status cluster + a search input could not fit under 404px, so
-              every console route overflowed an iPhone horizontally); at
-              `md` the SIDEBAR also engages and eats 224px, which squashed
-              the input to ~0 width on an iPad in portrait so its absolutely
-              positioned icon and ⌘K hint overlapped the breadcrumb; and it
-              is not yet wired to a search backend, so on a small screen it
-              was spending the viewport on a control that does nothing.
-
-              Deliberately NO min-width. An earlier cut added one as a
-              "cannot collapse again" guard and it backfired: in live mode at
-              1280 the status cluster leaves this slot ~158px, so a 160px
-              floor stopped the field shrinking and it spilled OVER the
-              cluster, swallowing clicks meant for the Reset control. The
-              breakpoint is what keeps this field out of cramped layouts;
-              inside them it must yield freely. */}
-          <label className="relative hidden w-full max-w-sm items-center xl:flex">
-            <Search
-              className="pointer-events-none absolute left-2.5 h-4 w-4 text-muted-foreground"
-              aria-hidden
-            />
-            <input
-              type="search"
-              placeholder="Search initiatives, controls, decisions…"
-              aria-label="Global search"
-              className="h-8 w-full rounded-md border bg-background pl-8 pr-14 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
-            />
-            <kbd className="pointer-events-none absolute right-2 hidden items-center gap-0.5 rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[10px] font-medium text-muted-foreground sm:inline-flex">
-              &#8984;K
-            </kbd>
-          </label>
         </div>
         {/* Status cluster: one grouped instrument reading (theme / demo state /
             persona) separated by hairlines rather than three floating pills.

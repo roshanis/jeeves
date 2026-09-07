@@ -133,7 +133,7 @@ async function createLiveInitiative(
     new Request("http://localhost/api/initiatives", {
       method: "POST",
       headers: bearer(token, ip),
-      body: JSON.stringify({ payload: CHAMPION_PAYLOAD }),
+      body: JSON.stringify({ payload: CHAMPION_PAYLOAD, requestId: "read-isolation-create" }),
     }),
   );
   expect(res.status).toBe(200);
