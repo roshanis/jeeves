@@ -86,7 +86,10 @@ async function createLiveInitiative(
     new Request("http://localhost/api/initiatives", {
       method: "POST",
       headers: bearer(token, ip),
-      body: JSON.stringify({ payload: CHAMPION_PAYLOAD }),
+      body: JSON.stringify({
+        payload: CHAMPION_PAYLOAD,
+        requestId: `mutation-workspace-${ip.replaceAll(".", "-")}`,
+      }),
     }),
   );
   expect(response.status).toBe(200);

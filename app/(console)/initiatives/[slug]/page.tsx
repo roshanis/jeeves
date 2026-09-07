@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { getInitiativeDetailCoherent } from "@/app/_lib/data-provider";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { InitiativeTabs } from "@/components/jeeves/initiative-tabs";
 import { AlertOctagon, AlertTriangle, CheckCircle2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { TierBadge } from "@/components/jeeves/tier-badge";
@@ -17,30 +18,6 @@ import { EvalsTab } from "@/components/jeeves/operate-tab";
 import { DeploymentsTab, DEPLOYMENT_STATUS_LABEL } from "@/components/jeeves/deployments-tab";
 import { InitiativeBlockersRail } from "@/components/jeeves/initiative-blockers-rail";
 import { AuditTab } from "@/components/jeeves/audit-tab";
-
-const TAB_IDS = [
-  "overview",
-  "intake",
-  "reviews",
-  "decisions",
-  "controls",
-  "evals",
-  "deployments",
-  "audit",
-] as const;
-type TabId = (typeof TAB_IDS)[number];
-
-function normalizeTab(tab: string | undefined): TabId {
-  // Legacy deep links used "operate" before the tab split into
-  // Evals/Deployments — route them to Evals rather than falling back to
-  // Overview.
-  if (tab === "operate") {
-    return "evals";
-  }
-  return (TAB_IDS as readonly string[]).includes(tab ?? "")
-    ? (tab as TabId)
-    : "overview";
-}
 
 /** Segmented review-progress gauge — one filled tick per signed review, with
  * a mono "0/8 signed" readout so the instrument reads at a glance. */
@@ -85,6 +62,9 @@ export default async function InitiativeDetailPage({
     notFound();
   }
   const { summary } = detail;
+  const latestPause = detail.events
+    .filter((event) => event.action === "pause")
+    .sort((a, b) => Date.parse(b.ts) - Date.parse(a.ts))[0];
 
   // At-a-glance case-file meta strip (persistent across tabs): review
   // sign-off progress, open-blocker count, and the latest deployment
@@ -192,10 +172,8 @@ export default async function InitiativeDetailPage({
         >
           <AlertOctagon className="mt-0.5 size-4 shrink-0" aria-hidden />
           <p>
-            <strong className="font-semibold">Eval-quality breach.</strong>{" "}
-            The Q-01 hallucination-rate floor was exceeded on a sustained window;
-            this deployment is paused and a reassessment review cycle is open. See
-            the Evals and Audit tabs for the incident record.
+            <strong className="font-semibold">Deployment paused.</strong>{" "}
+            {latestPause?.detail ?? "Review the Audit tab for the recorded reason and next steps."}
           </p>
         </div>
       ) : null}
@@ -203,7 +181,7 @@ export default async function InitiativeDetailPage({
       <LiveActionsBar slug={summary.slug} state={summary.state} />
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_18rem]">
-        <Tabs defaultValue={normalizeTab(tab)}>
+        <InitiativeTabs initialTab={tab}>
           {/* Eight tabs used to wrap into a fixed-height box and render ON TOP
               of the panel beneath (measured on an iPhone: "Evals /
               Deployments / Audit" overlapping the Summary heading). Wrapping
@@ -235,7 +213,7 @@ export default async function InitiativeDetailPage({
             <OverviewTab detail={detail} />
           </TabsContent>
           <TabsContent value="intake">
-            <IntakeTab intake={detail.intake} />
+            <IntakeTab intake={detail.intake} summary={summary} />
           </TabsContent>
           <TabsContent value="reviews">
             <ReviewsTab reviews={detail.reviews} slug={summary.slug} />
@@ -255,7 +233,7 @@ export default async function InitiativeDetailPage({
           <TabsContent value="audit">
             <AuditTab events={detail.events} />
           </TabsContent>
-        </Tabs>
+        </InitiativeTabs>
 
         <InitiativeBlockersRail detail={detail} />
       </div>

@@ -49,12 +49,14 @@ import { useRole } from "./role-context";
 import {
   apiErrorToMessage,
   isApiError,
-  returnReview,
   runReviewAgent,
-  signReview,
 } from "@/lib/client/api";
 import { useLiveInfo } from "@/lib/client/use-live-info";
 import { useLiveSessionOptional } from "@/lib/client/session-context";
+import {
+  getReviewActionEligibility,
+  performReviewMutation,
+} from "@/lib/client/review-actions";
 
 export interface ReviewQueueRow {
   slug: string;
@@ -98,7 +100,8 @@ function DomainIcon({ domain, className }: { domain: Domain; className?: string 
 
 export function ReviewWorkbench({ rows }: { rows: ReviewQueueRow[] }) {
   const { reviewerDomain } = useRole();
-  const [selected, setSelected] = React.useState<ReviewQueueRow | null>(null);
+  const [selected, setSelected] = React.useState<{ slug: string; domain: Domain } | null>(null);
+  const [drafts, setDrafts] = React.useState<Record<string, string>>({});
   const [override, setOverride] = React.useState<Domain | "all" | null>(null);
   // Queue aging clock — null on server/first render (placeholder), then the
   // cached client time. See useClientNow above for the hydration rationale.
@@ -119,13 +122,11 @@ export function ReviewWorkbench({ rows }: { rows: ReviewQueueRow[] }) {
   // If the current selection got filtered out, don't show a hidden row's
   // detail panel — derive the displayed selection instead of reacting to
   // the filter change after the fact (avoids a setState-in-effect cascade).
-  const visibleSelected =
-    selected &&
-    filteredRows.some(
-      (row) => row.slug === selected.slug && row.review.domain === selected.review.domain,
-    )
-      ? selected
-      : null;
+  const visibleSelected = selected
+    ? filteredRows.find(
+        (row) => row.slug === selected.slug && row.review.domain === selected.domain,
+      ) ?? null
+    : null;
 
   return (
     <div className="flex flex-col gap-6" data-slot="review-workbench">
@@ -142,6 +143,7 @@ export function ReviewWorkbench({ rows }: { rows: ReviewQueueRow[] }) {
               <button
                 type="button"
                 onClick={() => setOverride("all")}
+                aria-pressed={effectiveFilter === "all"}
                 className={`touch-min rounded-md px-3 py-1.5 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background ${
                   effectiveFilter === "all"
                     ? "bg-primary text-primary-foreground"
@@ -168,6 +170,7 @@ export function ReviewWorkbench({ rows }: { rows: ReviewQueueRow[] }) {
                     key={domain}
                     type="button"
                     onClick={() => setOverride(domain)}
+                    aria-pressed={isActive}
                     className={`touch-min rounded-md px-3 py-1.5 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background ${
                       isActive
                         ? "bg-primary text-primary-foreground"
@@ -213,16 +216,21 @@ export function ReviewWorkbench({ rows }: { rows: ReviewQueueRow[] }) {
                 return (
                 <TableRow
                   key={`${row.slug}-${row.review.domain}`}
-                  onClick={() => setSelected(row)}
-                  className="cursor-pointer"
                   data-selected={
                     visibleSelected?.slug === row.slug &&
                     visibleSelected?.review.domain === row.review.domain
                   }
                 >
                   <TableCell>
-                    <span className="font-medium">{row.title}</span>{" "}
-                    <span className="text-xs text-muted-foreground">{row.slug}</span>
+                    <button
+                      type="button"
+                      onClick={() => setSelected({ slug: row.slug, domain: row.review.domain })}
+                      aria-label={`Open ${DOMAIN_LABEL[row.review.domain]} review for ${row.title}`}
+                      className="text-left hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                      <span className="font-medium">{row.title}</span>{" "}
+                      <span className="text-xs text-muted-foreground">{row.slug}</span>
+                    </button>
                   </TableCell>
                   <TableCell>
                     <TierBadge tier={row.tier} />
@@ -320,15 +328,26 @@ export function ReviewWorkbench({ rows }: { rows: ReviewQueueRow[] }) {
             </Card>
 
             <AssessmentPane
-              key={`${visibleSelected.slug}-${visibleSelected.review.domain}`}
               row={visibleSelected}
+              editedText={
+                drafts[`${visibleSelected.slug}:${visibleSelected.review.domain}`] ??
+                visibleSelected.review.draftMd ??
+                ""
+              }
+              onEditedTextChange={(value) =>
+                setDrafts((current) => ({
+                  ...current,
+                  [`${visibleSelected.slug}:${visibleSelected.review.domain}`]: value,
+                }))
+              }
             />
           </div>
         </div>
       ) : (
         <p className="rounded-lg border border-dashed bg-muted/30 px-4 py-8 text-center text-sm text-muted-foreground">
-          Select a review from the queue to open the three-column workbench —
-          evidence &amp; policy, the agent draft, and your findings.
+          {rows.length === 0
+            ? "Nothing is awaiting signature. Drafts that have not started remain available from the initiative’s Reviews tab."
+            : "Select a review from the queue to open the three-column workbench — evidence & policy, the agent draft, and your findings."}
         </p>
       )}
     </div>
@@ -339,26 +358,31 @@ export function ReviewWorkbench({ rows }: { rows: ReviewQueueRow[] }) {
  * Right pane — editable assessment + Sign/Return. Keyed by slug+domain from
  * the parent so its draft-edit state re-initializes per selection.
  */
-function AssessmentPane({ row }: { row: ReviewQueueRow }) {
+function AssessmentPane({
+  row,
+  editedText,
+  onEditedTextChange,
+}: {
+  row: ReviewQueueRow;
+  editedText: string;
+  onEditedTextChange: (value: string) => void;
+}) {
   const router = useRouter();
-  const { reviewerDomain } = useRole();
   const live = useLiveSessionOptional();
   const session = live?.session ?? null;
   const liveInfo = useLiveInfo(row.slug);
   const cycleId = liveInfo?.cycleId ?? null;
 
-  const [editedText, setEditedText] = React.useState(row.review.draftMd ?? "");
   const [pending, setPending] = React.useState(false);
   const [running, setRunning] = React.useState(false);
   const [returnOpen, setReturnOpen] = React.useState(false);
 
-  const canAct = Boolean(session?.role === "reviewer" && cycleId);
-  const actionable = row.review.status === "drafted" || row.review.status === "returned";
-
-  // On-demand agent run: only the reviewer assigned to THIS domain, in a live
-  // session, may (re)draft it (the server enforces the same domain scope).
-  const isOwnDomain = reviewerDomain === row.review.domain;
-  const canRunAgent = Boolean(session?.role === "reviewer" && cycleId && isOwnDomain);
+  const eligibility = getReviewActionEligibility(
+    session,
+    cycleId,
+    row.review.domain,
+    row.review.status,
+  );
   const alreadySigned = row.review.status === "signed";
   const hasDraft = Boolean(row.review.draftMd);
 
@@ -368,7 +392,7 @@ function AssessmentPane({ row }: { row: ReviewQueueRow }) {
     try {
       const res = await runReviewAgent(session.token, cycleId, row.review.domain);
       if (res.status === "drafted") {
-        if (res.draftMd) setEditedText(res.draftMd);
+        if (res.draftMd) onEditedTextChange(res.draftMd);
         toast.success(`${DOMAIN_LABEL[row.review.domain]} agent drafted a fresh assessment.`);
       } else {
         toast.error(`Agent run failed: ${res.error ?? "unknown error"}`);
@@ -386,11 +410,15 @@ function AssessmentPane({ row }: { row: ReviewQueueRow }) {
     if (!session || !cycleId) return;
     setPending(true);
     try {
-      await signReview(
+      await performReviewMutation(
         session.token,
         cycleId,
         row.review.domain,
-        editedText !== (row.review.draftMd ?? "") ? editedText : undefined,
+        {
+          kind: "sign",
+          editedDraftMd:
+            editedText !== (row.review.draftMd ?? "") ? editedText : undefined,
+        },
       );
       toast.success(`${DOMAIN_LABEL[row.review.domain]} review signed.`);
       router.refresh();
@@ -406,7 +434,10 @@ function AssessmentPane({ row }: { row: ReviewQueueRow }) {
     if (!session || !cycleId) return;
     setPending(true);
     try {
-      await returnReview(session.token, cycleId, row.review.domain, reason);
+      await performReviewMutation(session.token, cycleId, row.review.domain, {
+        kind: "return",
+        reason,
+      });
       setReturnOpen(false);
       toast.success(`${DOMAIN_LABEL[row.review.domain]} review returned.`);
       router.refresh();
@@ -426,7 +457,7 @@ function AssessmentPane({ row }: { row: ReviewQueueRow }) {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3 pt-4">
-        {canRunAgent ? (
+        {eligibility.canRunAgent ? (
           <div className="flex flex-col gap-1.5 border-b pb-3" data-slot="run-agent">
             <button
               type="button"
@@ -448,8 +479,8 @@ function AssessmentPane({ row }: { row: ReviewQueueRow }) {
         <textarea
           className="min-h-40 w-full rounded-md border border-input bg-transparent p-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
           value={editedText}
-          onChange={(e) => setEditedText(e.target.value)}
-          disabled={!canAct}
+          onChange={(e) => onEditedTextChange(e.target.value)}
+          disabled={!eligibility.canEdit}
           maxLength={20_000}
           aria-label="Assessment text"
           data-slot="assessment-textarea"
@@ -460,14 +491,14 @@ function AssessmentPane({ row }: { row: ReviewQueueRow }) {
             requiresRole="reviewer"
             pending={pending}
             pendingLabel="Signing…"
-            onAction={canAct && actionable ? () => void handleSign() : undefined}
+            onAction={eligibility.canSignOrReturn ? () => void handleSign() : undefined}
           />
           <GatedActionButton
             label="Return"
             variant="outline"
             requiresRole="reviewer"
             pending={pending}
-            onAction={canAct && actionable ? () => setReturnOpen(true) : undefined}
+            onAction={eligibility.canSignOrReturn ? () => setReturnOpen(true) : undefined}
           />
         </div>
         <p className="text-xs text-muted-foreground">

@@ -30,6 +30,8 @@ import { CHAMPION_PREFILL_PAYLOAD } from "@/lib/intake/champion-prefill";
 import { previewTier } from "@/lib/client/tier-preview";
 import {
   createInitiative,
+  createIntakeRequestId,
+  updateIntakeDraft,
   submitIntake,
   isApiError,
   apiErrorToMessage,
@@ -127,7 +129,7 @@ const OVERLAY_QUESTIONS: {
   },
 ];
 
-const EMPTY_PAYLOAD: IntakePayload = {
+export const EMPTY_PAYLOAD: IntakePayload = {
   basics: {
     title: "",
     sponsorOrg: "",
@@ -260,21 +262,32 @@ const GAP_LEVEL_CLASS: Record<CompletenessGap["level"], string> = {
  * The form
  * ---------------------------------------------------------------------- */
 
-export function IntakeForm() {
+export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: initialInitiativeId, initialVersion, initialSlug }: {
+  initialPayload?: IntakePayload;
+  onPayloadChange?: (payload: IntakePayload) => void;
+  initiativeId?: string;
+  initialVersion?: number;
+  initialSlug?: string;
+} = {}) {
   const router = useRouter();
   const { session, logout } = useLiveSession();
 
-  const [payload, setPayload] = React.useState<IntakePayload>(EMPTY_PAYLOAD);
-  // Multi-entry (one per line) fields keep raw text state so typing
-  // newlines works; the payload arrays are derived on every change.
-  const [dataSourcesText, setDataSourcesText] = React.useState("");
-  const [populationsText, setPopulationsText] = React.useState("");
-  const [integrationsText, setIntegrationsText] = React.useState("");
+  const [internalPayload, setInternalPayload] = React.useState<IntakePayload>(initialPayload ?? EMPTY_PAYLOAD);
+  const payload = initialPayload ?? internalPayload;
   const [submitting, setSubmitting] = React.useState(false);
+  const [initiativeId, setInitiativeId] = React.useState(initialInitiativeId);
+  const [version, setVersion] = React.useState(initialVersion);
+  const [slug, setSlug] = React.useState(initialSlug);
+  const [savedPayload, setSavedPayload] = React.useState<IntakePayload | null>(initialPayload ?? null);
+  const requestId = React.useRef<string | null>(null);
+  const creationPayload = React.useRef<IntakePayload | null>(null);
+  const [error, setError] = React.useState<string | null>(null);
 
   const patch = React.useCallback((update: (prev: IntakePayload) => IntakePayload) => {
-    setPayload((prev) => update(prev));
-  }, []);
+    const next = update(payload);
+    if (onPayloadChange) onPayloadChange(next);
+    else setInternalPayload(next);
+  }, [onPayloadChange, payload]);
 
   function splitLines(text: string): string[] {
     return text
@@ -284,10 +297,8 @@ export function IntakeForm() {
   }
 
   function loadChampion() {
-    setPayload(CHAMPION_PREFILL_PAYLOAD);
-    setDataSourcesText(CHAMPION_PREFILL_PAYLOAD.data.dataSources.join("\n"));
-    setPopulationsText(CHAMPION_PREFILL_PAYLOAD.populationImpact.affectedPopulations.join("\n"));
-    setIntegrationsText(CHAMPION_PREFILL_PAYLOAD.deployment.integrationPoints.join("\n"));
+    if (onPayloadChange) onPayloadChange(CHAMPION_PREFILL_PAYLOAD);
+    else setInternalPayload(CHAMPION_PREFILL_PAYLOAD);
   }
 
   const preview = previewTier(payload.overlay);
@@ -300,8 +311,31 @@ export function IntakeForm() {
   async function handleSubmit() {
     if (!session) return;
     setSubmitting(true);
+    setError(null);
     try {
-      const created = await createInitiative(session.token, payload);
+      requestId.current ??= createIntakeRequestId();
+      creationPayload.current ??= payload;
+      let created = initiativeId && version
+        ? savedPayload && JSON.stringify(savedPayload) === JSON.stringify(payload)
+          ? { initiativeId, slug: slug ?? initiativeId, intakeVersionId: "", version }
+          : await updateIntakeDraft(session.token, initiativeId, payload, version)
+        : await createInitiative(
+            session.token,
+            creationPayload.current ?? payload,
+            requestId.current,
+          );
+      if (!initiativeId && JSON.stringify(creationPayload.current) !== JSON.stringify(payload)) {
+        created = await updateIntakeDraft(
+          session.token,
+          created.initiativeId,
+          payload,
+          created.version,
+        );
+      }
+      setInitiativeId(created.initiativeId);
+      setSlug(created.slug);
+      setVersion(created.version);
+      setSavedPayload(payload);
       rememberInitiative(created.slug, created.initiativeId);
       const submitted = await submitIntake(session.token, created.initiativeId);
       if (submitted.submitted) {
@@ -318,11 +352,14 @@ export function IntakeForm() {
       }
     } catch (err) {
       if (isApiError(err)) {
-        toast.error(apiErrorToMessage(err));
+        const message = err.status === 409 ? "This draft changed in another tab. Reload it before trying again." : apiErrorToMessage(err);
+        setError(message);
+        toast.error(message);
         if (err.status === 401) {
           logout();
         }
       } else {
+        setError("Something went wrong — please try again.");
         toast.error("Something went wrong — please try again.");
       }
     } finally {
@@ -357,13 +394,13 @@ export function IntakeForm() {
         ) : null}
 
         <div>
-          <Button type="button" variant="outline" onClick={loadChampion} data-slot="load-champion">
+          <Button type="button" variant="outline" onClick={loadChampion} disabled={submitting} data-slot="load-champion">
             Load champion example
           </Button>
         </div>
 
         <fieldset
-          disabled={!session}
+          disabled={!isRequester || submitting}
           data-slot="intake-fieldset"
           className="flex min-w-0 flex-col gap-4 border-0 p-0"
         >
@@ -448,9 +485,8 @@ export function IntakeForm() {
             <CardContent className="grid grid-cols-1 gap-3">
               <TextAreaField
                 label="Data source(s) — one per line"
-                value={dataSourcesText}
+                value={payload.data.dataSources.join("\n")}
                 onChange={(v) => {
-                  setDataSourcesText(v);
                   const entries = splitLines(v);
                   patch((p) => ({ ...p, data: { ...p.data, dataSources: entries } }));
                 }}
@@ -572,9 +608,8 @@ export function IntakeForm() {
             <CardContent className="grid grid-cols-1 gap-3">
               <TextAreaField
                 label="Affected populations — one per line"
-                value={populationsText}
+                value={payload.populationImpact.affectedPopulations.join("\n")}
                 onChange={(v) => {
-                  setPopulationsText(v);
                   const entries = splitLines(v);
                   patch((p) => ({
                     ...p,
@@ -619,9 +654,8 @@ export function IntakeForm() {
             <CardContent className="grid grid-cols-1 gap-3">
               <TextAreaField
                 label="Integration points — one per line"
-                value={integrationsText}
+                value={payload.deployment.integrationPoints.join("\n")}
                 onChange={(v) => {
-                  setIntegrationsText(v);
                   const entries = splitLines(v);
                   patch((p) => ({
                     ...p,
@@ -648,10 +682,10 @@ export function IntakeForm() {
             </CardHeader>
             <CardContent className="flex flex-col gap-4">
               {OVERLAY_QUESTIONS.map(({ key, question, helper }, index) => (
-                <div key={key} className="flex flex-col gap-1" data-slot="overlay-question">
-                  <span className="text-sm font-medium">
+                <fieldset key={key} className="flex flex-col gap-1" data-slot="overlay-question">
+                  <legend className="text-sm font-medium">
                     {index + 1}. <span>{question}</span>
-                  </span>
+                  </legend>
                   <span className="text-xs text-muted-foreground">{helper}</span>
                   <div className="flex gap-4 pt-0.5">
                     {[
@@ -671,7 +705,7 @@ export function IntakeForm() {
                       </label>
                     ))}
                   </div>
-                </div>
+                </fieldset>
               ))}
             </CardContent>
           </Card>
@@ -696,6 +730,7 @@ export function IntakeForm() {
             </span>
           ) : null}
         </div>
+        {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
       </div>
 
       <div className="flex flex-col gap-4 lg:sticky lg:top-4 lg:self-start">

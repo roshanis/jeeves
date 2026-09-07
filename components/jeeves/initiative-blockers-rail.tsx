@@ -33,7 +33,7 @@ function deriveBlockers(detail: InitiativeDetail): Blocker[] {
   const blockers: Blocker[] = [];
 
   if (detail.summary.state === "paused" || detail.summary.state === "re_review") {
-    blockers.push({ label: "Deployment paused — eval-quality breach", severity: "high" });
+    blockers.push({ label: "Deployment paused — review the recorded reason in Audit", severity: "high" });
   }
 
   for (const review of detail.reviews) {
@@ -41,6 +41,11 @@ function deriveBlockers(detail: InitiativeDetail): Blocker[] {
       blockers.push({
         label: `Review returned: ${DOMAIN_LABEL[review.domain]}`,
         severity: "high",
+      });
+    } else if (review.status === "drafted") {
+      blockers.push({
+        label: `Review awaiting signature: ${DOMAIN_LABEL[review.domain]}`,
+        severity: "amber",
       });
     } else if (review.status === "pending") {
       blockers.push({
@@ -129,7 +134,7 @@ export function InitiativeBlockersRail({ detail }: { detail: InitiativeDetail })
         <div className="p-4">
           {blockers.length === 0 ? (
             <p className="text-sm text-muted-foreground">
-              No open blockers — all required reviews signed and controls met.
+              No blockers recorded in the current reviews and controls.
             </p>
           ) : (
             <ul className="space-y-2.5">
@@ -161,7 +166,7 @@ export function InitiativeBlockersRail({ detail }: { detail: InitiativeDetail })
         </div>
         <div className="scroll-thin max-h-80 space-y-3 overflow-y-auto p-4">
           {evidence.length === 0 ? (
-            <p className="text-sm text-muted-foreground">All required evidence on file.</p>
+            <p className="text-sm text-muted-foreground">{detail.controls.length === 0 ? "No evidence requirements recorded yet." : "No missing evidence flagged in the current controls."}</p>
           ) : (
             evidenceGroups.map((group) => (
               <div key={group.prefix} className="space-y-1.5">

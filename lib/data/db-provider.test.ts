@@ -1,5 +1,5 @@
 import { eq } from "drizzle-orm";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createTestDb, closeTestDb, type TestDb } from "../db/test-client";
 import { seedDatabase } from "../../scripts/seed";
 import {
@@ -80,9 +80,24 @@ describe("lib/data/db-provider", () => {
 
       // Every summary carries an ISO updatedAt (time-in-state) for the Age column.
       for (const r of rows) {
+        expect(r.isSeeded).toBe(true);
         expect(typeof r.updatedAt).toBe("string");
         expect(Number.isNaN(Date.parse(r.updatedAt!))).toBe(false);
       }
+    });
+  });
+
+  describe("listInitiativeDetails", () => {
+    it("loads every visible detail with one fixed-size aggregate snapshot", async () => {
+      const select = vi.spyOn(db, "select");
+
+      const details = await provider.listInitiativeDetails({ viewerWorkspaceId: null });
+
+      expect(details).toHaveLength(12);
+      expect(select).toHaveBeenCalledTimes(11);
+      expect(details.find((detail) => detail.summary.slug === "member-chat-copilot"))
+        .toEqual(await provider.getInitiativeDetail("member-chat-copilot", { viewerWorkspaceId: null }));
+      select.mockRestore();
     });
   });
 
@@ -443,6 +458,18 @@ describe("lib/data/db-provider", () => {
       expect(
         await provider.getInitiativeDetail("ws-alpha-initiative", { viewerWorkspaceId: WS_B }),
       ).toBeNull(); // foreign workspace -> treated as not found
+    });
+
+    it("bulk details preserve seeded plus own visibility and exclude foreign workspaces", async () => {
+      const anon = await provider.listInitiativeDetails({ viewerWorkspaceId: null });
+      const wsA = await provider.listInitiativeDetails({ viewerWorkspaceId: WS_A });
+
+      expect(anon.map((detail) => detail.summary.slug)).not.toContain("ws-alpha-initiative");
+      expect(wsA.map((detail) => detail.summary.slug)).toContain("ws-alpha-initiative");
+      expect(wsA.map((detail) => detail.summary.slug)).not.toContain("ws-beta-initiative");
+      expect(wsA).toHaveLength(13);
+      expect(wsA.find((detail) => detail.summary.slug === "ws-alpha-initiative")?.summary.isSeeded)
+        .toBe(false);
     });
   });
 

@@ -74,6 +74,12 @@ export interface CreateInitiativeResult {
   initiativeId: string;
   slug: string;
   intakeVersionId: string;
+  version: number;
+}
+
+export interface IntakeDraftResult extends CreateInitiativeResult {
+  payload: IntakePayload;
+  version: number;
 }
 
 export type SubmitIntakeResult =
@@ -338,7 +344,7 @@ async function parseErrorBody(res: Response): Promise<{ message: string; gaps?: 
 
 async function request<T>(
   url: string,
-  options: { method: "GET" | "POST"; token?: string; body?: unknown },
+  options: { method: "GET" | "POST" | "PUT"; token?: string; body?: unknown },
 ): Promise<T> {
   const headers: Record<string, string> = {};
   if (options.body !== undefined) {
@@ -373,15 +379,41 @@ export function postSession(passcode: string, personaKey: string): Promise<Sessi
   });
 }
 
+/** New per-editor creation key; callers retain it for every retry of that draft creation. */
+export function createIntakeRequestId(): string {
+  return globalThis.crypto.randomUUID();
+}
+
 /** POST /api/initiatives — requester-only intake draft creation. */
 export function createInitiative(
   token: string,
   payload: IntakePayload,
+  requestId = createIntakeRequestId(),
 ): Promise<CreateInitiativeResult> {
   return request<CreateInitiativeResult>("/api/initiatives", {
     method: "POST",
     token,
-    body: { payload },
+    body: { payload, requestId },
+  });
+}
+
+export function getIntakeDraft(token: string, initiativeId: string): Promise<IntakeDraftResult> {
+  return request<IntakeDraftResult>(`/api/initiatives/${encodeURIComponent(initiativeId)}/intake`, {
+    method: "GET",
+    token,
+  });
+}
+
+export function updateIntakeDraft(
+  token: string,
+  initiativeId: string,
+  payload: IntakePayload,
+  expectedVersion: number,
+): Promise<IntakeDraftResult> {
+  return request<IntakeDraftResult>(`/api/initiatives/${encodeURIComponent(initiativeId)}/intake`, {
+    method: "PUT",
+    token,
+    body: { payload, expectedVersion },
   });
 }
 

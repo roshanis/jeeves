@@ -1,4 +1,8 @@
 import { defineConfig, devices } from "@playwright/test";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { E2E_COOKIE_SECRET, E2E_DEMO_PASSCODE } from "./tests/e2e/constants";
 
 // webServer runs a PRODUCTION server (`db:seed && build && start`), not
 // `next dev`. This is load-bearing for the live-demo loop, not just a
@@ -11,29 +15,25 @@ import { defineConfig, devices } from "@playwright/test";
 // coherent.
 //
 // Env layering inside the command:
-// - `npm run db:seed` migrates + deterministically re-seeds ./.pglite
+// - `npm run db:seed` migrates + deterministically seeds a newly-created,
+//   disposable OS-temp PGlite directory
 //   (scripts/seed.ts wipes + reinserts), so every run starts from the same
 //   12 seeded initiatives.
-// - `DATA_PROVIDER=mock npm run build` forces the MOCK provider during
-//   prerendering: static pages (/ /inbox /audit /controls /reviews) freeze the
-//   baseline mock snapshot (exactly what the read-only tests assert), and
-//   the 17 parallel prerender workers never open PGlite concurrently.
-// - `npm run start` runs with DATA_PROVIDER=db (webServer.env below), so
-//   the DYNAMIC routes — /initiatives/[slug] and every /api/** handler —
-//   read/write the seeded PGlite store coherently. (Consequence: a
-//   live-created initiative renders on its dynamic detail page but does
-//   not appear on the statically-frozen home board — acceptable for e2e.)
+// - `DATA_PROVIDER=mock npm run build` keeps prerendering isolated from the
+//   mutable database. `npm run start` then receives DATA_PROVIDER=db through
+//   webServer.env, so dynamic case-file pages and API handlers share the
+//   seeded PGlite store used by the live workflow.
 //
 // Fixed port 3117 (not the Next.js default 3000): this machine routinely runs
 // other, unrelated dev servers on ports ~3000-3010, and this suite must not
 // collide with them or need to kill/reuse a process it didn't start.
 //
 // Live-demo loop support:
-// - DEMO_PASSCODE lets POST /api/session succeed inside the webServer; the
-//   live-loop e2e test additionally self-skips unless the RUNNER's own env
-//   has DEMO_PASSCODE set (run `DEMO_PASSCODE=e2e-test-pass npm run
-//   test:e2e` to include it).
-// - No OPENAI_API_KEY is set, so lib/agents getAgentPort() selects the
+// - the passcode and cookie secret are fixed test-only values shared with
+//   the spec, so the mutation story always runs.
+// - OPENAI_API_KEY and DATABASE_URL are explicitly blanked so ambient env
+//   files cannot switch the suite to an external provider or database.
+//   lib/agents getAgentPort() therefore selects the
 //   deterministic offline mock adapter for draft runs (its documented
 //   default).
 //
@@ -42,6 +42,7 @@ import { defineConfig, devices } from "@playwright/test";
 // exact seeded counts. Serial in-file order keeps the mutating test last,
 // deterministically.
 const PORT = 3117;
+const disposablePgliteDir = mkdtempSync(join(tmpdir(), "jeeves-playwright-"));
 
 export default defineConfig({
   testDir: "./tests/e2e",
@@ -61,13 +62,17 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: "npm run db:seed && DATA_PROVIDER=mock npm run build && npm run start",
+    command: "npm run db:seed && DATA_PROVIDER=mock npm run build -- --webpack && npm run start",
     url: `http://localhost:${PORT}`,
     reuseExistingServer: false,
     timeout: 240_000,
     env: {
       PORT: String(PORT),
-      DEMO_PASSCODE: "e2e-test-pass",
+      DATABASE_URL: "",
+      OPENAI_API_KEY: "",
+      DEMO_PASSCODE: E2E_DEMO_PASSCODE,
+      JEEVES_COOKIE_SECRET: E2E_COOKIE_SECRET,
+      JEEVES_PGLITE_DIR: disposablePgliteDir,
       DATA_PROVIDER: "db",
     },
   },

@@ -13,14 +13,9 @@
  * null), keeping SSR markup independent of sessionStorage and avoiding
  * setState-in-effect churn.
  *
- * `login()` also flips the existing demo role switcher (`useRole()`) to the
- * roleKey matching the persona's ActorRole, so role-based rendering
- * (RoleGate/HideForAdmin/saved views) stays consistent with what the API
- * will actually authorize. NOTE (documented judgment call): after a full
- * page reload the rehydrated session does NOT re-force the role switcher —
- * the switcher returns to its default while live-action gating continues to
- * key off the session's own role, which is the source of truth the API
- * enforces.
+ * Login and rehydration select the exact authenticated persona in the role
+ * context, keeping visible identity, reviewer domain, and API authorization
+ * aligned. Public preview switching is disabled while this session exists.
  *
  * `logout()` returns the app to read-only mode; it intentionally does NOT
  * clear the live-initiative registry (lib/client/live-registry.ts) — see
@@ -30,7 +25,7 @@
  */
 import * as React from "react";
 import { postSession } from "./api";
-import { findPersona, roleKeyForActorRole, type LivePersona } from "./personas";
+import { findPersona, type LivePersona } from "./personas";
 import { useRole } from "@/components/jeeves/role-context";
 
 export interface LiveSession {
@@ -63,11 +58,17 @@ function loadStoredSession(): LiveSession | null {
     const raw = window.sessionStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as LiveSession;
+    const persona = findPersona(parsed?.personaKey);
     if (
       typeof parsed?.token !== "string" ||
+      typeof parsed?.workspaceId !== "string" ||
       typeof parsed?.expiresAt !== "number" ||
-      typeof parsed?.personaKey !== "string"
+      typeof parsed?.personaKey !== "string" ||
+      !persona ||
+      parsed.personaLabel !== persona.label ||
+      parsed.role !== persona.role
     ) {
+      window.sessionStorage.removeItem(STORAGE_KEY);
       return null;
     }
     if (parsed.expiresAt <= Date.now()) {
@@ -137,7 +138,19 @@ export function LiveSessionProvider({ children }: { children: React.ReactNode })
     getSessionSnapshot,
     getSessionServerSnapshot,
   );
-  const { setRoleKey, setPersonaKey } = useRole();
+  const { setPersonaKey } = useRole();
+
+  React.useEffect(() => {
+    if (!session) return;
+    setPersonaKey(session.personaKey);
+    const remainingMs = session.expiresAt - Date.now();
+    if (remainingMs <= 0) {
+      setStoredSession(null);
+      return;
+    }
+    const timer = window.setTimeout(() => setStoredSession(null), remainingMs);
+    return () => window.clearTimeout(timer);
+  }, [session, setPersonaKey]);
 
   const login = React.useCallback(
     async (passcode: string, personaKey: string): Promise<LiveSession> => {
@@ -155,16 +168,10 @@ export function LiveSessionProvider({ children }: { children: React.ReactNode })
         role: persona.role,
       };
       setStoredSession(next);
-      // Select the exact persona (drives roleKey + reviewerDomain together)
-      // so e.g. logging in as sofia-grant scopes the Inbox to Responsible AI.
       setPersonaKey(personaKey);
-      // Kept for defense-in-depth / documentation of intent: setPersonaKey
-      // above already derives the matching roleKey via roleKeyForActorRole,
-      // so this is redundant but harmless (same roleKey, no extra render).
-      setRoleKey(roleKeyForActorRole(persona.role));
       return next;
     },
-    [setRoleKey, setPersonaKey],
+    [setPersonaKey],
   );
 
   const logout = React.useCallback(() => {

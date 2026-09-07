@@ -8,6 +8,7 @@ import {
   apiErrorToMessage,
   askAuditor,
   createInitiative,
+  createIntakeRequestId,
   decide,
   getDraftRunProgress,
   intakeChat,
@@ -35,6 +36,10 @@ const fetchMock = vi.fn();
 beforeEach(() => {
   fetchMock.mockReset();
   vi.stubGlobal("fetch", fetchMock);
+});
+
+it("creates a distinct idempotency key for each new intake editor", () => {
+  expect(createIntakeRequestId()).not.toBe(createIntakeRequestId());
 });
 
 afterEach(() => {

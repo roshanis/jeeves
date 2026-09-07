@@ -18,6 +18,7 @@ import {
   type LivePersona,
 } from "@/lib/client/personas";
 import { DOMAIN_LABEL } from "./domain-labels";
+import { useLiveSessionOptional } from "@/lib/client/session-context";
 
 // Group order: Requester, Reviewer, Approver, Program Office, Admin.
 const PERSONA_GROUP_ORDER: LivePersona["role"][] = [
@@ -41,17 +42,22 @@ function personaOptionLabel(persona: LivePersona): string {
  */
 export function RoleSwitcher() {
   const { personaKey, setPersonaKey, persona, reviewerDomain } = useRole();
+  const session = useLiveSessionOptional()?.session ?? null;
 
   return (
     <div className="flex items-center gap-2">
       <Select
         value={personaKey}
+        disabled={Boolean(session)}
         onValueChange={(value) => {
           if (value) setPersonaKey(value);
         }}
       >
-        <SelectTrigger aria-label="Switch role" size="sm">
-          <SelectValue />
+        <SelectTrigger
+          aria-label={session ? "Authenticated persona" : "Public preview persona"}
+          size="sm"
+        >
+          <SelectValue>{() => persona.actorName}</SelectValue>
         </SelectTrigger>
         <SelectContent>
           {PERSONA_GROUP_ORDER.map((role) => (
@@ -66,14 +72,6 @@ export function RoleSwitcher() {
           ))}
         </SelectContent>
       </Select>
-      {/* These two badges restate what the select already shows (the persona,
-          and their domain). They are worth their width only once the bar has
-          room to spare — at `sm` they were still competing with the search
-          field and status chip for an iPad portrait's 610px of top bar, so
-          they now wait for `xl`. */}
-      <Badge variant="outline" className="hidden font-mono text-[11px] tracking-wide xl:inline-flex">
-        {persona.actorName}
-      </Badge>
       {reviewerDomain ? (
         <Badge
           variant="secondary"
@@ -82,7 +80,19 @@ export function RoleSwitcher() {
         >
           {DOMAIN_LABEL[reviewerDomain]}
         </Badge>
-      ) : null}
+      ) : (
+        <Badge variant="outline" className="hidden sm:inline-flex">
+          {persona.label}
+        </Badge>
+      )}
+      {session ? (
+        <span className="sr-only">Preview switching is unavailable during a live session.</span>
+      ) : (
+        <span className="text-xs font-medium text-muted-foreground" title="Actions remain read-only">
+          Preview
+          <span className="sr-only"> persona; actions remain read-only.</span>
+        </span>
+      )}
     </div>
   );
 }

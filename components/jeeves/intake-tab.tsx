@@ -1,3 +1,4 @@
+"use client";
 // Intake tab (ui-spec §3.2): read-only rendering of the submitted
 // IntakeVersion, or the "Draft — not yet submitted" state for the champion.
 import type { InitiativeDetail } from "@/lib/data/dto";
@@ -13,6 +14,9 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { GatedActionButton } from "./role-gate";
+import Link from "next/link";
+import { buttonVariants } from "@/components/ui/button";
+import { useLiveSessionOptional } from "@/lib/client/session-context";
 
 const FIELD_LABEL: Record<string, string> = {
   title: "Title",
@@ -40,7 +44,11 @@ function renderValue(value: string | boolean | null): React.ReactNode {
   return value;
 }
 
-export function IntakeTab({ intake }: { intake: InitiativeDetail["intake"] }) {
+export function IntakeTab({ intake, summary }: {
+  intake: InitiativeDetail["intake"];
+  summary?: InitiativeDetail["summary"] & { isSeeded?: boolean };
+}) {
+  const session = useLiveSessionOptional()?.session;
   if (!intake) {
     return <p className="text-sm text-muted-foreground">No intake record.</p>;
   }
@@ -87,7 +95,11 @@ export function IntakeTab({ intake }: { intake: InitiativeDetail["intake"] }) {
       </div>
 
       {!intake.submitted ? (
-        <GatedActionButton label="Continue intake" variant="outline" />
+        session?.role === "requester" && session.personaLabel === summary?.requester && summary?.isSeeded === false ? (
+          <Link className={buttonVariants({ variant: "outline" })} href={`/initiatives/${summary.slug}/edit`}>Continue intake</Link>
+        ) : (
+          <GatedActionButton label={summary?.isSeeded ? "Example draft — read only" : "Continue intake"} variant="outline" />
+        )
       ) : null}
     </div>
   );

@@ -38,6 +38,8 @@ export interface WorkspaceScopedReadOptions {
 
 export interface DataProvider {
   listInitiatives(opts?: WorkspaceScopedReadOptions): Promise<InitiativeSummary[]>;
+  /** Load all details visible to one viewer from one request-local read snapshot. */
+  listInitiativeDetails(opts?: WorkspaceScopedReadOptions): Promise<InitiativeDetail[]>;
   getInitiativeDetail(
     slug: string,
     opts?: WorkspaceScopedReadOptions,

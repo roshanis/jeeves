@@ -122,13 +122,13 @@ function StatusSegment({
   fraction,
 }: {
   icon: typeof ClipboardList;
-  value: number;
+  value: number | string;
   label: string;
   tone?: "default" | "warn" | "alert";
   context?: string;
   fraction?: number;
 }) {
-  const isProblem = tone !== "default" && value > 0;
+  const isProblem = tone !== "default" && typeof value === "number" && value > 0;
   const toneFg = tone === "alert" ? "text-status-critical-fg" : "text-status-warning-fg";
   const toneStripe = tone === "alert" ? "bg-status-critical-fg" : "bg-status-warning-fg";
   return (
@@ -208,14 +208,18 @@ function OperationalAlertsCard({
   dedupedCount = 0,
 }: {
   alerts: InitiativeSummary[];
-  hasIncidents: boolean;
+  hasIncidents: boolean | null;
   dedupedCount?: number;
 }) {
   return (
     <Card className="card-quiet">
       <CardSectionHeader title="Operational alerts" />
       <CardContent className="p-0">
-        {alerts.length === 0 && !hasIncidents && dedupedCount === 0 ? (
+        {alerts.length === 0 && hasIncidents === null ? (
+          <p className="px-4 py-4 text-sm text-muted-foreground">
+            Operational incident status is unavailable in public preview.
+          </p>
+        ) : alerts.length === 0 && hasIncidents === false && dedupedCount === 0 ? (
           <p className="px-4 py-4 text-sm text-muted-foreground">
             No active alerts. Run the monitor from Administration to evaluate deployments.
           </p>
@@ -423,7 +427,7 @@ export function RoleAwareInbox({
   initiatives: InitiativeSummary[];
   recentDecisions: DecisionEntry[];
   alerts: InitiativeSummary[];
-  incidentCount: number;
+  incidentCount: number | null;
   counts: { inReview: number; slaBreaches: number; reassessing: number; deployed: number };
   domainReviews: DomainReviewRow[];
   controls: ControlRow[];
@@ -469,7 +473,7 @@ function RoleView({
   initiatives: InitiativeSummary[];
   recentDecisions: DecisionEntry[];
   alerts: InitiativeSummary[];
-  incidentCount: number;
+  incidentCount: number | null;
   counts: { inReview: number; slaBreaches: number; reassessing: number; deployed: number };
   domainReviews: DomainReviewRow[];
   controls: ControlRow[];
@@ -531,7 +535,7 @@ function ProgramView({
   initiatives: InitiativeSummary[];
   recentDecisions: DecisionEntry[];
   alerts: InitiativeSummary[];
-  incidentCount: number;
+  incidentCount: number | null;
   counts: { inReview: number; slaBreaches: number; reassessing: number; deployed: number };
 }) {
   const attention = initiatives.filter(
@@ -608,7 +612,7 @@ function ProgramView({
         <div className="flex flex-col gap-6">
           <OperationalAlertsCard
             alerts={alertsNotInTable}
-            hasIncidents={incidentCount > 0}
+            hasIncidents={incidentCount === null ? null : incidentCount > 0}
             dedupedCount={alerts.length - alertsNotInTable.length}
           />
           <RecentDecisionsCard recentDecisions={recentDecisions} />
@@ -1144,7 +1148,7 @@ function AdminView({
 }: {
   initiatives: InitiativeSummary[];
   alerts: InitiativeSummary[];
-  incidentCount: number;
+  incidentCount: number | null;
   counts: { inReview: number; slaBreaches: number; reassessing: number; deployed: number };
 }) {
   const paused = initiatives.filter((i) => i.state === "paused" || i.state === "re_review");
@@ -1175,10 +1179,15 @@ function AdminView({
           },
           {
             icon: ShieldAlert,
-            value: incidentCount,
+            value: incidentCount ?? "—",
             label: "Open incidents",
             tone: "alert",
-            context: incidentCount > 0 ? "requires triage" : "none open",
+            context:
+              incidentCount === null
+                ? "unavailable"
+                : incidentCount > 0
+                  ? "requires triage"
+                  : "none open",
           },
           {
             icon: CheckCircle2,
@@ -1212,7 +1221,7 @@ function AdminView({
         <div className="flex flex-col gap-6">
           <OperationalAlertsCard
             alerts={alertsNotInTable}
-            hasIncidents={incidentCount > 0}
+            hasIncidents={incidentCount === null ? null : incidentCount > 0}
             dedupedCount={alerts.length - alertsNotInTable.length}
           />
         </div>

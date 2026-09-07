@@ -17,3 +17,18 @@ describe("InitiativeBlockersRail — breach initiative (#4 member-chat-copilot)"
     expect(screen.getByText("Control Q-01: breached")).toBeDefined();
   });
 });
+
+
+describe("InitiativeBlockersRail — incomplete governance", () => {
+  it("does not claim reviews or evidence are complete before they exist", async () => {
+    const detail = await getProvider().getInitiativeDetail("member-chat-copilot");
+    renderWithProviders(<InitiativeBlockersRail detail={{ ...detail!, summary: { ...detail!.summary, state: "intake_draft" }, reviews: [], controls: [] }} />);
+    expect(screen.queryAllByText(/all required reviews signed|All required evidence on file/i)).toHaveLength(0);
+  });
+
+  it("includes drafted reviews still awaiting a signature among blockers", async () => {
+    const detail = await getProvider().getInitiativeDetail("member-chat-copilot");
+    renderWithProviders(<InitiativeBlockersRail detail={{ ...detail!, summary: { ...detail!.summary, state: "in_review" }, reviews: [{ ...detail!.reviews[0]!, domain: "legal", status: "drafted" }], controls: [] }} />);
+    expect(screen.getByText("Review awaiting signature: Legal")).toBeTruthy();
+  });
+});

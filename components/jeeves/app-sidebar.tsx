@@ -28,15 +28,15 @@ import {
 // sidebar and the mobile nav strip so the two never disagree about section
 // order (design pass 2026-08-01).
 export const NAV_ITEMS = [
-  { href: "/inbox", label: "Inbox", icon: Inbox, exact: true },
-  { href: "/portfolio", label: "Portfolio", icon: LayoutList },
-  { href: "/reviews", label: "Reviews", icon: ClipboardCheck },
-  { href: "/agents", label: "Agents", icon: Bot },
-  { href: "/monitoring", label: "Monitoring", icon: Activity },
-  { href: "/controls", label: "Controls", icon: ShieldCheck },
-  { href: "/audit", label: "Audit", icon: ScrollText },
-  { href: "/promotions", label: "Promotions", icon: GitPullRequestArrow },
-  { href: "/admin", label: "Administration", icon: Settings2 },
+  { href: "/inbox", label: "Inbox", section: "primary", icon: Inbox, exact: true },
+  { href: "/portfolio", label: "Portfolio", section: "primary", icon: LayoutList },
+  { href: "/reviews", label: "Reviews", section: "primary", icon: ClipboardCheck },
+  { href: "/agents", label: "Agents", section: "tools", icon: Bot },
+  { href: "/monitoring", label: "Monitoring", section: "primary", icon: Activity },
+  { href: "/controls", label: "Controls", section: "primary", icon: ShieldCheck },
+  { href: "/audit", label: "Audit", section: "primary", icon: ScrollText },
+  { href: "/promotions", label: "Promotions", section: "tools", icon: GitPullRequestArrow },
+  { href: "/admin", label: "Administration", section: "tools", icon: Settings2 },
 ];
 
 export type NavItem = (typeof NAV_ITEMS)[number];
@@ -114,12 +114,17 @@ export function AppSidebar() {
             <p className="kicker px-3 pt-3 pb-1.5 text-sidebar-foreground-muted first:pt-1">
               {section.label}
             </p>
-            {section.items.map((item) => (
+            {section.items.filter((item) => item.href !== "/agents" && item.href !== "/promotions").map((item) => (
               <SidebarLink key={item.href} item={item} active={isNavItemActive(item, pathname)} />
             ))}
           </div>
         ))}
 
+        <div className="mt-5 flex flex-col gap-0.5 border-t border-sidebar-border/60 pt-3">
+          <p className="kicker px-3 pb-1.5 text-sidebar-foreground-muted">More tools</p>
+          <SidebarLink item={navItem("/agents")} active={isNavItemActive(navItem("/agents"), pathname)} />
+          <SidebarLink item={navItem("/promotions")} active={isNavItemActive(navItem("/promotions"), pathname)} />
+        </div>
         <div className="mt-auto flex flex-col gap-0.5 border-t border-sidebar-border/60 pt-2">
           <SidebarLink item={ADMIN_NAV_ITEM} active={isNavItemActive(ADMIN_NAV_ITEM, pathname)} />
         </div>

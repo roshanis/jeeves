@@ -196,7 +196,7 @@ describe("POST /api/initiatives — auth + role-from-session", () => {
       new Request("http://localhost/api/initiatives", {
         method: "POST",
         headers: { "content-type": "application/json", "x-forwarded-for": "2.2.2.2" },
-        body: JSON.stringify({ payload: CHAMPION_PAYLOAD }),
+        body: JSON.stringify({ payload: CHAMPION_PAYLOAD, requestId: "routes-create-key-0001" }),
       }),
     );
     expect(res.status).toBe(401);
@@ -209,7 +209,7 @@ describe("POST /api/initiatives — auth + role-from-session", () => {
       new Request("http://localhost/api/initiatives", {
         method: "POST",
         headers: bearer(token, "3.3.3.3"),
-        body: JSON.stringify({ payload: CHAMPION_PAYLOAD }),
+        body: JSON.stringify({ payload: CHAMPION_PAYLOAD, requestId: "routes-create-key-0002" }),
       }),
     );
     expect(res.status).toBe(200);
@@ -227,7 +227,7 @@ describe("POST /api/initiatives — auth + role-from-session", () => {
       new Request("http://localhost/api/initiatives", {
         method: "POST",
         headers: bearer(token, "4.4.4.4"),
-        body: JSON.stringify({ payload: CHAMPION_PAYLOAD, role: "requester" }),
+        body: JSON.stringify({ payload: CHAMPION_PAYLOAD, role: "requester", requestId: "routes-create-key-0003" }),
       }),
     );
     expect(res.status).toBe(403);
@@ -242,7 +242,7 @@ describe("POST /api/initiatives — auth + role-from-session", () => {
         new Request("http://localhost/api/initiatives", {
           method: "POST",
           headers: bearer(token, "5.5.5.5"),
-          body: JSON.stringify({ payload: CHAMPION_PAYLOAD }),
+          body: JSON.stringify({ payload: CHAMPION_PAYLOAD, requestId: `routes-rate-limit-${i}`.padEnd(16, "0") }),
         }),
       );
     }
@@ -271,7 +271,7 @@ describe("full champion route chain: submit -> triage -> draft-run -> sign -> de
       new Request("http://localhost/api/initiatives", {
         method: "POST",
         headers: bearer(requesterToken, "10.0.0.1"),
-        body: JSON.stringify({ payload: CHAMPION_PAYLOAD }),
+        body: JSON.stringify({ payload: CHAMPION_PAYLOAD, requestId: "routes-create-key-0004" }),
       }),
     );
     expect(createRes.status).toBe(200);
@@ -435,7 +435,7 @@ describe("requester ownership authz on submit", () => {
       new Request("http://localhost/api/initiatives", {
         method: "POST",
         headers: bearer(owner.token, "13.0.0.1"),
-        body: JSON.stringify({ payload: CHAMPION_PAYLOAD }),
+        body: JSON.stringify({ payload: CHAMPION_PAYLOAD, requestId: "routes-create-key-0005" }),
       }),
     );
     expect(createRes.status).toBe(200);
@@ -497,7 +497,7 @@ describe("deep-review budget multiplier on draft-run", () => {
       new Request("http://localhost/api/initiatives", {
         method: "POST",
         headers: bearer(token, ip),
-        body: JSON.stringify({ payload: CHAMPION_PAYLOAD }),
+        body: JSON.stringify({ payload: CHAMPION_PAYLOAD, requestId: `routes-helper-${ip.replaceAll(".", "-")}` }),
       }),
     );
     const { initiativeId } = await createRes.json();
@@ -578,7 +578,7 @@ describe("budget-exhaustion 429 on draft-run", () => {
       new Request("http://localhost/api/initiatives", {
         method: "POST",
         headers: bearer(requesterToken, "11.0.0.1"),
-        body: JSON.stringify({ payload: CHAMPION_PAYLOAD }),
+        body: JSON.stringify({ payload: CHAMPION_PAYLOAD, requestId: "routes-create-key-0006" }),
       }),
     );
     const { initiativeId } = await createRes.json();
@@ -623,7 +623,7 @@ describe("POST /api/reviews/[cycleId]/[domain]/run — on-demand agent run", () 
       new Request("http://localhost/api/initiatives", {
         method: "POST",
         headers: bearer(requesterToken, ip),
-        body: JSON.stringify({ payload: CHAMPION_PAYLOAD }),
+        body: JSON.stringify({ payload: CHAMPION_PAYLOAD, requestId: "routes-create-key-0007" }),
       }),
     );
     const { initiativeId } = await createRes.json();
@@ -737,7 +737,7 @@ describe("GET routes stay public read-only", () => {
       new Request("http://localhost/api/initiatives", {
         method: "POST",
         headers: bearer(requesterToken, "12.0.0.1"),
-        body: JSON.stringify({ payload: CHAMPION_PAYLOAD }),
+        body: JSON.stringify({ payload: CHAMPION_PAYLOAD, requestId: "routes-create-key-0008" }),
       }),
     );
     const { initiativeId } = await createRes.json();
@@ -780,7 +780,7 @@ describe("workspace isolation on mutation routes (external-review finding #1)", 
       new Request("http://localhost/api/initiatives", {
         method: "POST",
         headers: bearer(requesterToken, "50.0.0.1"),
-        body: JSON.stringify({ payload: CHAMPION_PAYLOAD }),
+        body: JSON.stringify({ payload: CHAMPION_PAYLOAD, requestId: "routes-create-key-0009" }),
       }),
     );
     const { initiativeId } = await createRes.json();
@@ -846,7 +846,7 @@ describe("workspace isolation on submit/triage routes (external-review finding P
       new Request("http://localhost/api/initiatives", {
         method: "POST",
         headers: bearer(ownerToken, "52.0.0.1"),
-        body: JSON.stringify({ payload: CHAMPION_PAYLOAD }),
+        body: JSON.stringify({ payload: CHAMPION_PAYLOAD, requestId: "routes-create-key-0011" }),
       }),
     );
     const { initiativeId } = await createRes.json();
@@ -885,7 +885,7 @@ describe("workspace isolation on submit/triage routes (external-review finding P
       new Request("http://localhost/api/initiatives", {
         method: "POST",
         headers: bearer(ownerToken, "53.0.0.1"),
-        body: JSON.stringify({ payload: CHAMPION_PAYLOAD }),
+        body: JSON.stringify({ payload: CHAMPION_PAYLOAD, requestId: "routes-create-key-0012" }),
       }),
     );
     const { initiativeId } = await createRes.json();
@@ -976,7 +976,7 @@ describe("409 conflict mapping on submit/triage routes (external-review finding 
       new Request("http://localhost/api/initiatives", {
         method: "POST",
         headers: bearer(token, "54.0.0.1"),
-        body: JSON.stringify({ payload: CHAMPION_PAYLOAD }),
+        body: JSON.stringify({ payload: CHAMPION_PAYLOAD, requestId: "routes-create-key-0013" }),
       }),
     );
     const { initiativeId } = await createRes.json();
@@ -1001,7 +1001,7 @@ describe("409 conflict mapping on submit/triage routes (external-review finding 
       new Request("http://localhost/api/initiatives", {
         method: "POST",
         headers: bearer(token, "55.0.0.1"),
-        body: JSON.stringify({ payload: CHAMPION_PAYLOAD }),
+        body: JSON.stringify({ payload: CHAMPION_PAYLOAD, requestId: "routes-create-key-0014" }),
       }),
     );
     const { initiativeId } = await createRes.json();
@@ -1042,7 +1042,7 @@ describe("POST /api/initiatives/[id]/draft-run — role + workspace authorizatio
       new Request("http://localhost/api/initiatives", {
         method: "POST",
         headers: bearer(token, ip),
-        body: JSON.stringify({ payload: CHAMPION_PAYLOAD }),
+        body: JSON.stringify({ payload: CHAMPION_PAYLOAD, requestId: "routes-create-key-0010" }),
       }),
     );
     const { initiativeId } = await createRes.json();
