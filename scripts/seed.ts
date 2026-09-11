@@ -2551,21 +2551,12 @@ async function main() {
   const { getDb, closeDb } = await import("../lib/db/client");
   const db = getDb();
 
-  // Ensure the schema exists before seeding. Against the local PGlite dev
-  // store (no DATABASE_URL) the real migrations under drizzle/ are applied
-  // here; against Neon the same migrations run via the neon-serverless
-  // migrator (matches the pooled/WebSocket driver getDb() now uses so
-  // transaction() is atomic). Both migrators are idempotent (drizzle's
-  // migrations journal table).
-  if (process.env.DATABASE_URL) {
-    const { migrate } = await import("drizzle-orm/neon-serverless/migrator");
-    type NeonDb = Parameters<typeof migrate>[0];
-    await migrate(db as NeonDb, { migrationsFolder: "./drizzle" });
-  } else {
-    const { migrate } = await import("drizzle-orm/pglite/migrator");
-    type PgliteDb = Parameters<typeof migrate>[0];
-    await migrate(db as PgliteDb, { migrationsFolder: "./drizzle" });
-  }
+  // Ensure the schema exists before seeding. Shared with `npm run db:migrate`
+  // (lib/db/migrate.ts) so the two can never disagree about which migrator
+  // matches which driver — both key off DATABASE_URL exactly as getDb() does,
+  // and both are idempotent via drizzle's migrations journal table.
+  const { applyMigrations } = await import("../lib/db/migrate");
+  await applyMigrations(db);
 
   const counts = await seedDatabase(db);
    

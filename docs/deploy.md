@@ -85,33 +85,55 @@ npm run start        # next start (after build)
    | `OPENAI_API_KEY` | Optional | Only set this if you want **live** LLM-drafted reviews during the demo. Omit it and the app runs entirely on the keyless mock adapter — safe default for a public URL. |
    | `OPENAI_MODEL` | Optional (only meaningful with `OPENAI_API_KEY`) | Model id for the real adapter, e.g. the value in `.env.example` (`gpt-5.1`). Unused when `OPENAI_API_KEY` is unset. |
 
-4. **Seed Neon before the demo.** There is no seed step that runs on Vercel
-   itself — Vercel serves the app, it does not run one-off scripts. Seed
-   Neon from your local machine, pointed at the same database Vercel uses:
+4. **Migrate Neon first.** There is no migrate or seed step that runs on
+   Vercel itself — Vercel serves the app, it does not run one-off scripts.
+   Run this from your local machine, pointed at the same database Vercel
+   uses:
+
+   ```bash
+   DATABASE_URL="<your Neon pooled connection string>" npm run db:migrate
+   ```
+
+   `npm run db:migrate` (`scripts/migrate.ts` -> `lib/db/migrate.ts`) applies
+   every migration under `drizzle/` and does nothing else. It is:
+
+   - **non-destructive** — it never deletes rows, and `lib/db/migrate.test.ts`
+     asserts that existing rows (including `audit_events`) survive a run;
+   - **idempotent** — safe to re-run; drizzle's migrations journal table
+     skips anything already applied;
+   - **driver-matched** — it selects the neon-serverless or PGlite migrator
+     off `DATABASE_URL` exactly as `getDb()` does, so the migrator always
+     matches the handle the app itself uses.
+
+   This is the command to use against a database that holds real data, and
+   it is the only one on this page that is safe to point at production.
+
+   > Prefer this over `npx drizzle-kit push`. `push` diffs your local schema
+   > against the live database and applies the difference directly, which can
+   > drop columns; it also bypasses the migrations journal, so the database
+   > and `drizzle/` fall out of step. `npx drizzle-kit migrate` is equivalent
+   > to `npm run db:migrate` but needs the `drizzle-kit` devDependency and
+   > `drizzle.config.ts` (which throws unless `DATABASE_URL` is set).
+
+5. **Seed Neon before the demo — DESTRUCTIVE, never against real data.**
 
    ```bash
    DATABASE_URL="<your Neon pooled connection string>" npm run db:seed
    ```
 
-   Re-running this is safe for local iteration — the seed script is
-   deterministic and intended to run against a clean schema per
-   `docs/seed-spec.md`. If you need a totally fresh demo dataset, reset the
-   Neon branch/schema first, then re-seed. Do not seed against a database
-   that is currently serving a live demo audience mid-session.
+   Read this before running it: `npm run db:seed` **wipes every seeded
+   table and repopulates it**, and to do that it issues
+   `ALTER TABLE audit_events DISABLE TRIGGER ALL` so it can delete the
+   append-only audit log (`scripts/seed.ts`, "Wipe in FK-safe order"). That
+   is correct for a demo dataset and catastrophic for a real one — the audit
+   log is the compliance record the product exists to keep.
 
-5. **Run migrations against Neon first, then seed.** `drizzle.config.ts`
-   requires `DATABASE_URL` to be set at invocation time (it throws a clear
-   error otherwise). From your local machine:
-
-   ```bash
-   DATABASE_URL="<your Neon pooled connection string>" npx drizzle-kit push
-   ```
-
-   (or `migrate`, depending on which workflow you prefer — either way this
-   runs locally against Neon, not on Vercel.) This must happen before
-   `npm run db:seed` against the same database, since seeding assumes the
-   schema — including the append-only `AuditEvent` trigger in
-   `drizzle/0002_audit_events_append_only.sql` — already exists.
+   `scripts/seed.ts` refuses to run when `NODE_ENV=production` unless you
+   set `ALLOW_SEED=1`. Treat that prompt as the question it is, not a
+   formality. Seeding also assumes the schema already exists (including the
+   append-only trigger in `drizzle/0002_audit_events_append_only.sql`), which
+   is why step 4 comes first. Do not seed against a database that is
+   currently serving a live demo audience mid-session.
 
 6. **Playwright is NOT run on Vercel.** `npm run test:e2e` boots its own
    `next dev` server on a fixed local port (3117) and is a local/CI-only
@@ -179,10 +201,17 @@ current code, not hypothetical ones.
 >   at all.
 >
 > Verify before sharing the URL:
-> - Confirm whether `OPENAI_API_KEY` is set on the deployment. If it is,
->   understand that (given gap (b)) the daily budget cap is **per instance**,
->   not truly global — size your expectations accordingly, or unset the key
->   for a fully public link and only set it for a controlled live session.
+> - Confirm whether `OPENAI_API_KEY` is set on the deployment. The daily
+>   budget cap **is** global: it moved to Postgres in M2.5 and uses
+>   `DbBudgetStore`'s atomic `INSERT … ON CONFLICT` upsert
+>   (`lib/security/budget.ts`), serialized per day-key, so concurrent
+>   requests on different instances cannot race past the cap. (An earlier
+>   version of this bullet said the cap was per-instance "given gap (b)" —
+>   that was left over from before the move and contradicted gap (b) directly.
+>   What remains per-instance is the *rate limiters*, not the budget.)
+>   The residual exposure with a key set is therefore bounded by the daily
+>   budget, but reached faster than the rate limits suggest; unset the key
+>   for a fully public link and set it only for a controlled live session.
 > - Confirm `DEMO_PASSCODE` is actually set (not the `.env.example`
 >   placeholder) — an empty/misconfigured passcode falls back to `""`,
 >   which `app/api/session/route.ts` will simply fail closed against a
