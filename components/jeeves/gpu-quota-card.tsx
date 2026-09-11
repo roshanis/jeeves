@@ -19,6 +19,7 @@ import {
 import type { TelemetrySeries } from "@/lib/data/dto";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { SyntheticDataLabel } from "@/components/jeeves/synthetic-data-label";
+import { cn } from "@/lib/utils";
 
 // Single-series chart -> categorical slot 1 (fixed data-color contract order).
 const SERIES_COLOR = "var(--chart-1)";
@@ -29,22 +30,58 @@ function formatShortDate(ts: string): string {
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
+/**
+ * Quota status, split by TENSE.
+ *
+ * `series.points.some(p => p.value > quota)` answers "did utilization ever
+ * cross the quota?" — a question about history. This card used to render
+ * that answer as the present-tense "Over quota" badge and describe it to
+ * screen readers as "Currently over quota.", so the seeded claims-ocr-coder
+ * series showed OVER QUOTA while its latest reading was 25% against an 80%
+ * quota. Both readings are worth surfacing; they just are not the same
+ * claim. (operate-tab.tsx gets this right with the same predicate by saying
+ * "Threshold exceeded" — past tense.)
+ */
+type QuotaStatus = "no-quota" | "within" | "peaked" | "over";
+
+export function quotaStatus(
+  points: { value: number }[],
+  quota: number | null,
+): QuotaStatus {
+  if (quota === null || points.length === 0) return "no-quota";
+  if (points[points.length - 1]!.value > quota) return "over";
+  return points.some((p) => p.value > quota) ? "peaked" : "within";
+}
+
+const QUOTA_BADGE_LABEL: Record<QuotaStatus, string | null> = {
+  "no-quota": null,
+  within: null,
+  peaked: "Peaked over quota",
+  over: "Over quota",
+};
+
+const QUOTA_DESCRIPTION: Record<QuotaStatus, string> = {
+  "no-quota": "",
+  within: " Within quota.",
+  peaked: " Peaked over quota earlier in this window; currently within it.",
+  over: " Currently over quota.",
+};
+
 // Accessible summary for the chart (WCAG SHOULD-FIX #3) — derived from the
-// exact same `data`/`quota`/`overQuota` values the chart plots, so it can
+// exact same `data`/`quota`/`status` values the chart plots, so it can
 // never drift from what's rendered.
 function describeGpuChart(
   title: string,
   data: { ts: string; value: number }[],
   quota: number | null,
-  overQuota: boolean,
+  status: QuotaStatus,
 ): string {
   if (data.length === 0) {
     return `Area chart of GPU utilization vs quota for ${title}. No telemetry available.`;
   }
   const latest = data[data.length - 1]!;
   const quotaText = quota !== null ? ` Quota: ${quota}%.` : " No quota set.";
-  const statusText = quota !== null ? (overQuota ? " Currently over quota." : " Within quota.") : "";
-  return `Area chart of GPU utilization vs quota for ${title}. Latest: ${latest.value.toFixed(0)}%.${quotaText}${statusText}`;
+  return `Area chart of GPU utilization vs quota for ${title}. Latest: ${latest.value.toFixed(0)}%.${quotaText}${QUOTA_DESCRIPTION[status]}`;
 }
 
 function GpuTooltip({
@@ -141,7 +178,8 @@ export function GpuQuotaCard({
 }) {
   const data = series.points.map((p) => ({ ts: formatShortDate(p.ts), value: p.value }));
   const quota = series.threshold;
-  const overQuota = quota !== null && series.points.some((p) => p.value > quota);
+  const status = quotaStatus(series.points, quota);
+  const badgeLabel = QUOTA_BADGE_LABEL[status];
   const sparse = data.length > 0 && data.length < 8;
   const tickInterval = data.length > 6 ? Math.ceil(data.length / 6) - 1 : 0;
 
@@ -150,10 +188,17 @@ export function GpuQuotaCard({
       <CardHeader className="border-b bg-muted/40 py-3">
         <CardTitle className="kicker flex flex-wrap items-center gap-2">
           GPU utilization vs quota — {title}
-          {overQuota ? (
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-status-critical-bg px-2 py-0.5 text-xs font-medium text-status-critical-fg">
+          {badgeLabel ? (
+            <span
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium",
+                status === "over"
+                  ? "bg-status-critical-bg text-status-critical-fg"
+                  : "bg-status-serious-bg text-status-serious-fg",
+              )}
+            >
               <span className="size-1.5 shrink-0 rounded-full bg-current" aria-hidden="true" />
-              Over quota
+              {badgeLabel}
             </span>
           ) : null}
         </CardTitle>
@@ -168,7 +213,7 @@ export function GpuQuotaCard({
           <div
             className="h-[200px] w-full"
             role="img"
-            aria-label={describeGpuChart(title, data, quota, overQuota)}
+            aria-label={describeGpuChart(title, data, quota, status)}
           >
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={data} margin={{ top: 18, right: 40, bottom: 0, left: 0 }}>

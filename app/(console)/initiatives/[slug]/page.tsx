@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import { getInitiativeDetailCoherent } from "@/app/_lib/data-provider";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { AlertOctagon, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { AlertOctagon, AlertTriangle, CheckCircle2, MinusCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { TierBadge } from "@/components/jeeves/tier-badge";
 import { LifecycleBadge } from "@/components/jeeves/lifecycle-badge";
@@ -15,7 +15,10 @@ import { DecisionsTab } from "@/components/jeeves/decisions-tab";
 import { ControlsTab } from "@/components/jeeves/controls-tab";
 import { EvalsTab } from "@/components/jeeves/operate-tab";
 import { DeploymentsTab, DEPLOYMENT_STATUS_LABEL } from "@/components/jeeves/deployments-tab";
-import { InitiativeBlockersRail } from "@/components/jeeves/initiative-blockers-rail";
+import {
+  InitiativeBlockersRail,
+  summarizeBlockers,
+} from "@/components/jeeves/initiative-blockers-rail";
 import { AuditTab } from "@/components/jeeves/audit-tab";
 
 const TAB_IDS = [
@@ -90,15 +93,11 @@ export default async function InitiativeDetailPage({
   // sign-off progress, open-blocker count, and the latest deployment
   // version/status when one exists.
   const signedReviews = detail.reviews.filter((r) => r.status === "signed").length;
-  const openBlockers =
-    (summary.state === "paused" || summary.state === "re_review" ? 1 : 0) +
-    detail.reviews.filter((r) => r.status === "returned" || r.status === "pending").length +
-    detail.controls.filter(
-      (c) =>
-        c.status === "breached" ||
-        c.status === "overdue" ||
-        c.status === "exception_requested",
-    ).length;
+  // Shared with the rail (components/jeeves/initiative-blockers-rail.tsx)
+  // rather than re-derived here: this strip used to keep its own copy of the
+  // count, which meant it repeated the rail's bug — a green check reading
+  // "0 open blockers" on an initiative that had not been reviewed at all.
+  const blockerSummary = summarizeBlockers(detail);
   const latestDeployment =
     detail.deployments.length > 0 ? detail.deployments[detail.deployments.length - 1] : null;
 
@@ -152,22 +151,32 @@ export default async function InitiativeDetailPage({
 
           <div className="flex flex-col gap-1.5">
             <span className="kicker">Blockers</span>
-            <span
-              className={cn(
-                "inline-flex w-fit items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium",
-                openBlockers > 0
-                  ? "bg-status-serious-bg text-status-serious-fg"
-                  : "bg-status-good-bg text-status-good-fg",
-              )}
-            >
-              {openBlockers > 0 ? (
-                <AlertTriangle className="size-3" aria-hidden />
-              ) : (
-                <CheckCircle2 className="size-3" aria-hidden />
-              )}
-              <span className="stat-value">{openBlockers}</span> open blocker
-              {openBlockers === 1 ? "" : "s"}
-            </span>
+            {blockerSummary.kind === "not-applicable" ? (
+              // Neutral, not green: nothing is being counted here. A green
+              // check reads as "passed", which is exactly the false
+              // reassurance this strip used to give an un-triaged initiative.
+              <span className="inline-flex w-fit items-center gap-1.5 rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
+                <MinusCircle className="size-3" aria-hidden />
+                {blockerSummary.label}
+              </span>
+            ) : (
+              <span
+                className={cn(
+                  "inline-flex w-fit items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium",
+                  blockerSummary.count > 0
+                    ? "bg-status-serious-bg text-status-serious-fg"
+                    : "bg-status-good-bg text-status-good-fg",
+                )}
+              >
+                {blockerSummary.count > 0 ? (
+                  <AlertTriangle className="size-3" aria-hidden />
+                ) : (
+                  <CheckCircle2 className="size-3" aria-hidden />
+                )}
+                <span className="stat-value">{blockerSummary.count}</span> open blocker
+                {blockerSummary.count === 1 ? "" : "s"}
+              </span>
+            )}
           </div>
 
           {latestDeployment ? (

@@ -276,6 +276,22 @@ export function IntakeForm() {
     setPayload((prev) => update(prev));
   }, []);
 
+  // "Pristine" = the form exactly as it was opened. Reference equality is
+  // enough: patch() always produces a NEW payload object, and loadChampion()
+  // swaps in the prefill, so the identity check flips on first interaction
+  // without threading a setter through every field.
+  //
+  // It gates FRAMING only, never content or the submit gate: an untouched
+  // form still lists every gap and still carries data-level="BLOCKING", but
+  // presents them as work remaining rather than as 11 red failures for
+  // fields the visitor has not had a chance to fill (and, in the default
+  // read-only mode, is not permitted to fill).
+  const pristine =
+    payload === EMPTY_PAYLOAD &&
+    dataSourcesText === "" &&
+    populationsText === "" &&
+    integrationsText === "";
+
   function splitLines(text: string): string[] {
     return text
       .split("\n")
@@ -729,7 +745,7 @@ export function IntakeForm() {
           </CardContent>
         </Card>
 
-        <Card size="sm" data-slot="completeness-meter">
+        <Card size="sm" data-slot="completeness-meter" data-pristine={String(pristine)}>
           <CardHeader>
             <CardTitle className="text-sm">Completeness</CardTitle>
           </CardHeader>
@@ -742,6 +758,10 @@ export function IntakeForm() {
               <p className="text-xs text-emerald-700 dark:text-emerald-400">
                 Submission is not blocked — all blocking rules pass.
               </p>
+            ) : pristine ? (
+              <p className="text-xs text-muted-foreground">
+                Still to complete before this can be submitted:
+              </p>
             ) : (
               <p className="text-xs text-destructive">
                 Blocking gaps must be resolved before submission.
@@ -750,16 +770,22 @@ export function IntakeForm() {
             {(["BLOCKING", "REQUIRED_FOR_TIER", "ADVISORY"] as const).map((level) => {
               const gaps = gapsByLevel(level);
               if (gaps.length === 0) return null;
+              // Untouched: neutral styling. Nothing has failed yet — the
+              // visitor simply has not started. The status colours return the
+              // moment they engage.
+              const levelClass = pristine ? "text-muted-foreground" : GAP_LEVEL_CLASS[level];
               return (
                 <div key={level} className="space-y-1">
-                  <p className={`text-xs font-medium uppercase ${GAP_LEVEL_CLASS[level]}`}>
-                    {GAP_LEVEL_LABEL[level]} ({gaps.length})
+                  <p className={`text-xs font-medium uppercase ${levelClass}`}>
+                    {pristine && level === "BLOCKING"
+                      ? `Still to complete (${gaps.length})`
+                      : `${GAP_LEVEL_LABEL[level]} (${gaps.length})`}
                   </p>
                   <ul className="space-y-1">
                     {gaps.map((gap) => (
                       <li
                         key={gap.ruleId}
-                        className={`text-xs ${GAP_LEVEL_CLASS[level]}`}
+                        className={`text-xs ${levelClass}`}
                         data-slot="completeness-gap"
                         data-rule={gap.ruleId}
                         data-level={gap.level}

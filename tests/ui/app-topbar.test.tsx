@@ -16,6 +16,8 @@ afterEach(() => {
 
 vi.mock("next/navigation", () => ({
   usePathname: () => "/monitoring",
+  // The top bar now hosts the ⌘K command palette, which routes on select.
+  useRouter: () => ({ push: vi.fn(), refresh: vi.fn(), replace: vi.fn() }),
 }));
 
 import { AppTopBar, deriveBreadcrumb, DEMO_BANNER_TEXT } from "@/components/jeeves/app-topbar";
@@ -53,7 +55,7 @@ describe("AppTopBar", () => {
   it("renders the breadcrumb slot for the current pathname and the exact demo banner text", () => {
     renderWithProviders(
       <LiveSessionProvider>
-        <AppTopBar />
+        <AppTopBar initiatives={[]} />
       </LiveSessionProvider>,
     );
     expect(document.querySelector('[data-slot="breadcrumb"]')?.textContent).toBe("Monitoring");

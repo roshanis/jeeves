@@ -237,9 +237,13 @@ function OperationalAlertsCard({
                   operational alert{dedupedCount === 1 ? "" : "s"} in the table
                 </span>
               </div>
+              {/* No spatial reference: the rail is a second COLUMN only at
+                  `xl` (grid-cols-1 below it), so on every phone, tablet and
+                  small laptop it stacks BELOW the table and "on the left"
+                  was simply wrong. */}
               <p className="mt-1 text-sm text-muted-foreground">
                 None hidden here — {dedupedCount === 1 ? "it's" : "they're all"} already listed in
-                the table on the left.
+                the table on this page.
               </p>
             </div>
           </div>

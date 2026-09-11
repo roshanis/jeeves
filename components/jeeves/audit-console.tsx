@@ -48,9 +48,17 @@ export function AuditConsole({
 }: {
   results: Record<CannedAuditQueryId, AuditQueryRow[]>;
 }) {
-  const [activeId, setActiveId] = React.useState<CannedAuditQueryId | null>(null);
+  // Default to a query that actually has rows. The page already fetches all
+  // four result sets server-side, so this costs nothing extra — but the
+  // console used to render a bare "Run a canned query" prompt over data it
+  // was already holding, leaving most of the screen empty on arrival.
+  // Falling through to the first query keeps an all-empty dataset showing a
+  // real (if empty) result rather than a prompt.
+  const defaultId =
+    QUERY_META.find((q) => (results[q.id]?.length ?? 0) > 0)?.id ?? QUERY_META[0]!.id;
+  const [activeId, setActiveId] = React.useState<CannedAuditQueryId>(defaultId);
   const active = QUERY_META.find((q) => q.id === activeId) ?? null;
-  const rows = activeId ? results[activeId] : [];
+  const rows = results[activeId] ?? [];
 
   return (
     <div className="flex flex-col gap-4" data-slot="audit-console">
@@ -72,11 +80,7 @@ export function AuditConsole({
         <p className="text-xs text-muted-foreground" data-slot="query-explanation">
           {active.explanation}
         </p>
-      ) : (
-        <p className="text-sm text-muted-foreground">
-          Run a canned query to see evidence-linked results.
-        </p>
-      )}
+      ) : null}
 
       {active ? (
         <Card>

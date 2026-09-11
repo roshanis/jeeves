@@ -528,3 +528,96 @@ SIGN-OFF: BLOCKED — do not merge PR #2 yet.
 - MIT was chosen because the human said so; no license audit of the dependency
   tree was performed, and MIT imposes no obligation to run one. If this ever
   ships as a real product rather than a demo, that audit is still owed.
+
+## [AGENT: Claude] [2026-09-11T23:43Z]
+### Action: UI correctness pass, a non-destructive migration path, and a production-readiness assessment
+### Files changed:
+lib/db/{migrate.ts,migrate.test.ts} (new); scripts/migrate.ts (new); scripts/seed.ts; package.json;
+components/jeeves/{initiative-blockers-rail,gpu-quota-card,eval-comparison,audit-console,intake-form,role-aware-inbox,app-topbar,command-palette}.tsx;
+app/(console)/{layout.tsx,not-found.tsx,error.tsx,initiatives/[slug]/page.tsx};
+tests/ui/{initiative-blockers-rail-states,gpu-quota-card-tense,eval-comparison-copy,audit-console-default,intake-form-pristine,command-palette,app-topbar,audit-console}.test.tsx;
+tests/e2e/rendered-copy.spec.ts (new); docs/{deploy.md,production-readiness.md}; README.md.
+
+### Diff summary:
+THEME: the console asserted several things that were not true. Each fix below
+removes a false claim rather than restyling anything.
+
+1. BLOCKERS RAIL (the significant one). deriveBlockers()/outstandingEvidence()
+   read only rows that EXIST, but review rows are written by triage() and
+   effective controls by decide() — so an initiative in intake has neither and
+   was told "No open blockers — all required reviews signed and controls met."
+   plus "All required evidence on file." Measured live via the DB provider:
+   prior-auth-summarizer (Critical, intake_draft) and social-sentiment-miner
+   (rejected) both rendered the all-clear. Now lifecycle-aware: pre-review,
+   triaged, rejected and retired each get an accurate line, and the all-clear
+   sentence is reserved for an initiative that actually has signed reviews and
+   met controls. The detail page duplicated the same derivation and rendered a
+   GREEN CHECK with "0 open blockers" — it now shares summarizeBlockers() with
+   the rail, and reports a neutral "None required yet"/"Rejected"/"Retired"
+   chip instead of a pass.
+
+2. GPU QUOTA CARD. overQuota came from .some(p => p.value > quota) — "ever
+   crossed" — but rendered as the present-tense "OVER QUOTA" with an
+   accessible description reading "Currently over quota." while the latest
+   reading was 25% against an 80% quota. Split into quotaStatus():
+   over / peaked / within. Note operate-tab.tsx uses the same predicate and
+   already said "Threshold exceeded" (past tense, correct) — this card was the
+   outlier, not a systemic pattern.
+
+3. EVAL COMPARISON. Rendered "Hallucination ratecompared:". The source has a
+   real space; the production JSX transform trims the leading whitespace of a
+   multi-line text node following an expression. IMPORTANT: vitest's transform
+   does NOT, so a unit test passes either way — verified by writing one and
+   watching it pass against the bug. The real guard is
+   tests/e2e/rendered-copy.spec.ts, which runs against `next build`.
+
+4. AUDIT CONSOLE. The page fetches all four canned result sets server-side and
+   rendered nothing until a chip was clicked (~55% of a 1440x900 viewport
+   empty on arrival, over data already in the payload). Now defaults to the
+   first query that HAS rows.
+
+5. INTAKE FORM. /initiatives/new greeted a first-time visitor with 11 BLOCKING
+   errors and 5 advisories in red at "0% passing", before any input — and in
+   the default read-only mode those are failures for fields the visitor is not
+   permitted to fill. Untouched forms now frame the same gaps as work
+   remaining; the error framing returns on first interaction. Content and the
+   submit gate are unchanged (data-level="BLOCKING" still present).
+
+6. COMMAND PALETTE (new). The search input and its ⌘K badge were inert:
+   Meta+K left focus on <body>, Enter navigated nowhere, and the badge was
+   hardcoded ⌘K so it was already wrong on Windows/Linux. Real palette over
+   initiatives + console routes, built on the existing Base UI dialog, no new
+   dependencies. Scope deliberately narrow so no advertised category can
+   return empty. Index comes from the console layout, workspace-scoped like
+   every other read. Compact trigger below xl, where the field is hidden.
+
+7. 404 / ERROR. app/(console)/{not-found,error}.tsx — there were none anywhere
+   in app/, so a bad slug got Next's stock "404 / This page could not be
+   found." The error boundary deliberately shows error.digest, never
+   error.message, since this app holds a connection string and an API key.
+
+8. INBOX. "already listed in the table on the left" — the rail is a second
+   column only at xl, so on every phone, tablet and small laptop it stacks
+   BELOW. Now width-independent. The card's dedup behaviour itself was a
+   deliberate earlier decision and was left alone.
+
+9. DB MIGRATE (new). migrate() was called only from scripts/seed.ts, which
+   wipes every table and disables the audit append-only trigger to do it.
+   npm run db:migrate is non-destructive, idempotent and driver-matched;
+   tests assert rows survive and the triggers stay armed. docs/deploy.md
+   reordered (migrate before seed; the steps contradicted their own prose)
+   and a stale §3(c) contradiction about the token budget corrected against
+   lib/security/budget.ts.
+
+10. docs/production-readiness.md (new). Verdict: demo-ready, not
+    production-ready. Blockers are no authentication (personaKey is chosen by
+    the caller, so approver identity is self-asserted) and per-instance rate
+    limiting. Also records that the mock/DB provider divergence is what let
+    finding 1 survive a green suite.
+
+### Recommendations / Next steps:
+- Provider-parity test: mock and DB disagree on content per lifecycle state,
+  which is a hole in every UI test that sources fixtures from the mock.
+- Move the rate-limit buckets to the DB; DbBudgetStore is a working model.
+- Backup/restore is still undocumented.
+- Not done, deliberately: authentication. That is a project, not a task.

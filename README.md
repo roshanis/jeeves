@@ -223,7 +223,14 @@ prints a pre-flight checklist (passcode, agent/telemetry connector status,
 cron secret, build SHA, and a 12-initiative smoke count).
 
 See `docs/deploy.md` for the full Vercel + Neon deployment runbook, known
-gaps, and a demo-day checklist.
+gaps, and a demo-day checklist. Use `npm run db:migrate` (non-destructive) to
+apply schema changes — `npm run db:seed` wipes every table, audit log
+included, and is for demo datasets only.
+
+See `docs/production-readiness.md` for an assessment of what would have to
+change before this is a system a real payer could run its governance on. Short
+version: deployable as a demo today; not a production installation, chiefly
+because approver identity is self-asserted rather than authenticated.
 
 ---
 
@@ -269,8 +276,8 @@ conditional approval — against a real (mocked-LLM) run.
   explicitly labeled as synthetic.
 
 See `docs/deploy.md` §3 for the current, explicitly-documented gaps (e.g.
-Neon driver transaction semantics, rate-limiter scope) before relying on this
-for anything beyond a controlled demo.
+rate-limiter scope) and `docs/production-readiness.md` for the fuller
+assessment, before relying on this for anything beyond a controlled demo.
 
 ---
 

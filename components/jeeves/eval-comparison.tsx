@@ -109,10 +109,20 @@ export function EvalComparison({
         </CardHeader>
         <CardContent className="flex flex-col gap-2">
           <p className="text-xs text-muted-foreground">
-            {metricLabel} compared: the initiative&apos;s live eval series
-            (not a per-checkpoint series — the candidate checkpoint has not
-            yet run its own separate eval telemetry) against the runtime
-            threshold this deployment is gated on.
+            {/* `{metricLabel} compared:` looks right in source but rendered
+                as "Hallucination ratecompared:" in a production build: the
+                text node after the expression spans several lines, and the
+                build's JSX transform trims each line before joining. Vitest's
+                transform does NOT, so this is invisible to a unit test —
+                tests/e2e/golden-path.spec.ts carries the real guard, since it
+                runs against `next build`. The explicit {" "} makes the output
+                the same under either transform. */}
+            {metricLabel}
+            {" "}
+            compared: the initiative&apos;s live eval series (not a
+            per-checkpoint series — the candidate checkpoint has not yet run
+            its own separate eval telemetry) against the runtime threshold
+            this deployment is gated on.
           </p>
           <div className="flex flex-wrap items-center gap-3">
             <span className="stat-value text-2xl" data-slot="eval-comparison-latest">
