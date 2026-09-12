@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { NAV_SECTIONS, ADMIN_NAV_ITEM, isNavItemActive, type NavItem } from "./app-sidebar";
+import { NAV_SECTIONS, ADMIN_NAV_ITEM, isNavItemActive, type NavItem } from "./nav-items";
 
 /**
  * Mobile nav strip — the console's AppSidebar is `hidden` below `md` (see

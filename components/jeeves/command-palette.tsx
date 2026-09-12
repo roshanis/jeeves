@@ -24,7 +24,7 @@ import {
   DialogDescription,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { NAV_ITEMS } from "./app-sidebar";
+import { NAV_ITEMS } from "./nav-items";
 import { cn } from "@/lib/utils";
 
 export interface PaletteInitiative {

@@ -3,65 +3,30 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
-  Inbox,
-  LayoutList,
-  ClipboardCheck,
-  Bot,
-  Activity,
-  ShieldCheck,
-  ScrollText,
-  GitPullRequestArrow,
-  Settings2,
-} from "lucide-react";
+  NAV_SECTIONS,
+  ADMIN_NAV_ITEM,
+  isNavItemActive,
+  type NavItem,
+} from "./nav-items";
+import { ShieldCheck } from "lucide-react";
 
 // Governance Operations Console navigation (Codex design review): a charcoal
 // left rail, not a marketing top-nav. Inbox is the working dashboard; every
 // route stays visible to all roles (role changes ACTIONS, not access — §0/§11).
-// Inbox now lives at /inbox — "/" is the public marketing landing page
-// (components/jeeves/landing-page.tsx), so the console's own "home" link
-// must point at the real ops route. Exported so app-mobile-nav.tsx (the
-// md:hidden nav strip) reuses the exact same item list instead of drifting.
+// Inbox lives at /inbox — "/" is the public marketing landing page.
 //
-// Flat order is preserved verbatim (routes/labels unchanged) — nothing in
-// this repo may depend on NAV_ITEMS ordering changing. NAV_SECTIONS below is
-// a purely presentational grouping over the same items, used by both the
-// sidebar and the mobile nav strip so the two never disagree about section
-// order (design pass 2026-08-01).
-export const NAV_ITEMS = [
-  { href: "/inbox", label: "Inbox", icon: Inbox, exact: true },
-  { href: "/portfolio", label: "Portfolio", icon: LayoutList },
-  { href: "/reviews", label: "Reviews", icon: ClipboardCheck },
-  { href: "/agents", label: "Agents", icon: Bot },
-  { href: "/monitoring", label: "Monitoring", icon: Activity },
-  { href: "/controls", label: "Controls", icon: ShieldCheck },
-  { href: "/audit", label: "Audit", icon: ScrollText },
-  { href: "/promotions", label: "Promotions", icon: GitPullRequestArrow },
-  { href: "/admin", label: "Administration", icon: Settings2 },
-];
-
-export type NavItem = (typeof NAV_ITEMS)[number];
-
-function navItem(href: string): NavItem {
-  const item = NAV_ITEMS.find((i) => i.href === href);
-  if (!item) throw new Error(`Unknown nav href: ${href}`);
-  return item;
-}
-
-// Section groupings (Oversee / Operate / Govern); Administration is pinned
-// separately near the bottom of the rail rather than folded into Govern.
-export const NAV_SECTIONS: { label: string; items: NavItem[] }[] = [
-  { label: "Oversee", items: ["/inbox", "/portfolio", "/reviews"].map(navItem) },
-  { label: "Operate", items: ["/agents", "/monitoring", "/promotions"].map(navItem) },
-  { label: "Govern", items: ["/controls", "/audit"].map(navItem) },
-];
-
-export const ADMIN_NAV_ITEM = navItem("/admin");
-
-export function isNavItemActive(item: NavItem, pathname: string): boolean {
-  return item.exact
-    ? pathname === item.href
-    : pathname === item.href || pathname.startsWith(item.href + "/");
-}
+// The nav DATA now lives in ./nav-items.ts, a module with no "use client"
+// boundary, because server components need it too (app/(console)/not-found.tsx
+// links to every section). A plain value imported from a client module into a
+// server component arrives as a client-reference proxy, not the value. These
+// re-exports keep every existing importer of app-sidebar working unchanged.
+export {
+  NAV_ITEMS,
+  NAV_SECTIONS,
+  ADMIN_NAV_ITEM,
+  isNavItemActive,
+  type NavItem,
+} from "./nav-items";
 
 // Active state reads as a machined selection rather than a plain highlight:
 // a full-height 2px signal rail flush to the rail's outer edge, plus a

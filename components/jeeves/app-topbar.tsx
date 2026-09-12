@@ -6,7 +6,7 @@ import { usePathname } from "next/navigation";
 import { RoleSwitcher } from "./role-switcher";
 import { DemoModeChip } from "./demo-mode-chip";
 import { ThemeToggle } from "./theme-toggle";
-import { NAV_ITEMS, isNavItemActive } from "./app-sidebar";
+import { NAV_ITEMS, isNavItemActive } from "./nav-items";
 import { DEMO_BANNER_TEXT } from "@/lib/demo-banner";
 import { CommandPalette, type PaletteInitiative } from "./command-palette";
 

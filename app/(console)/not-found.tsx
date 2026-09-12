@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { FileQuestion } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
-import { NAV_SECTIONS } from "@/components/jeeves/app-sidebar";
+import { NAV_SECTIONS } from "@/components/jeeves/nav-items";
 
 // Console 404. Rendered inside app/(console)/layout.tsx, so the sidebar,
 // top bar and mobile nav stay put — this is the panel that fills <main>.

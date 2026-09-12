@@ -26,6 +26,8 @@ vi.mock("next/font/local", () => ({
 
 vi.mock("next/navigation", () => ({
   usePathname: () => "/inbox",
+  // The console top bar hosts the ⌘K command palette, which routes on select.
+  useRouter: () => ({ push: vi.fn(), refresh: vi.fn(), replace: vi.fn() }),
 }));
 
 if (typeof window.matchMedia !== "function") {
