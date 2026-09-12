@@ -1,6 +1,12 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // Standalone output: Next traces the exact runtime files (including the
+  // node_modules it actually needs) into .next/standalone, so a container
+  // image can ship that instead of the whole dependency tree. Required by
+  // deploy/podman/Containerfile; harmless on Vercel, which ignores it.
+  output: "standalone",
+
   // PGlite ships WASM/data assets that break when bundled by
   // Turbopack/webpack (its internal file loading receives a bundler URL
   // where Node expects a filesystem path: "The 'path' argument must be of

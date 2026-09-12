@@ -1,0 +1,26 @@
+# Build context exclusions for `podman build` (also honoured by docker).
+# Keeping the context small matters: node_modules alone is ~1GB here and is
+# rebuilt inside the image anyway from package-lock.json.
+
+.git
+.github
+node_modules
+.next
+.pglite
+coverage
+playwright-report
+test-results
+tsconfig.tsbuildinfo
+
+# Never ship secrets into a build context — they would land in the image
+# layer even if the Containerfile never COPYs them explicitly.
+.env
+.env.*
+!.env.example
+
+# Local tooling noise
+*.log
+.DS_Store
+.vscode
+.idea
+.claude

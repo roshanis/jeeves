@@ -16,6 +16,7 @@
 // DATABASE_URL, so the migrator always matches the handle it is given.
 // Drizzle's migrations journal table makes either path idempotent.
 import type { Db } from "./client";
+import { selectDriver } from "./driver-select";
 
 /** Folder holding the drizzle-generated + hand-written migrations. */
 export const MIGRATIONS_FOLDER = "./drizzle";
@@ -56,7 +57,15 @@ export function describeMigrationTarget(databaseUrl: string | undefined): string
     if (!hostname) return "Postgres (DATABASE_URL set, host unparseable)";
     const database = pathname.replace(/^\//, "");
     const label = database ? `${hostname}/${database}` : hostname;
-    return `Neon Postgres — ${label}`;
+    // Name the driver that will actually be used rather than assuming Neon —
+    // this printed "Neon Postgres — 127.0.0.1/jeeves" against a plain
+    // Postgres container, which is exactly the confusion ./driver-select.ts
+    // exists to prevent.
+    const vendor =
+      selectDriver(databaseUrl, process.env.JEEVES_DB_DRIVER) === "neon"
+        ? "Neon Postgres"
+        : "Postgres";
+    return `${vendor} — ${label}`;
   } catch {
     return "Postgres (DATABASE_URL set, host unparseable)";
   }

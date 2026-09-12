@@ -1,0 +1,54 @@
+# Jeeves app, managed by systemd via Podman Quadlet.
+#
+# Build BOTH images first (Quadlet does not build):
+#   podman build -f deploy/podman/Containerfile -t localhost/jeeves:latest .
+#   podman build -f deploy/podman/Containerfile --target migrator \
+#     -t localhost/jeeves-migrator:latest .
+#
+# Then apply migrations once, before first start. Note this uses the MIGRATOR
+# image: the runtime image is the traced standalone output and deliberately
+# does not carry tsx/esbuild.
+#   podman run --rm --network jeeves \
+#     -e DATABASE_URL='postgres://jeeves:PASSWORD@jeeves-db:5432/jeeves' \
+#     localhost/jeeves-migrator:latest npm run db:migrate
+[Unit]
+Description=Jeeves AI Governance Gateway
+After=network-online.target
+# Start ordering only — systemd cannot wait on the DB's health from here, so
+# the app may briefly fail its own health check while Postgres finishes
+# starting. Restart=always below covers that; the health probe is what keeps
+# a database-less instance from being treated as up.
+Requires=jeeves-db.service
+After=jeeves-db.service
+
+[Container]
+ContainerName=jeeves-app
+Image=localhost/jeeves:latest
+Network=jeeves.network
+PublishPort=3000:3000
+
+EnvironmentFile=%h/.config/containers/systemd/jeeves.env
+Environment=DATA_PROVIDER=db
+Environment=NODE_ENV=production
+
+# GET /api/health round-trips `select 1` to Postgres, so an instance that is
+# running but cannot reach its database reports unhealthy rather than up.
+HealthCmd=node -e "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+HealthInterval=30s
+HealthRetries=3
+HealthStartPeriod=15s
+
+# Defence in depth — the app writes nothing to its own filesystem. Next needs
+# a writable /tmp for its cache, so that is mounted as tmpfs rather than
+# leaving the whole root writable.
+ReadOnly=true
+Tmpfs=/tmp:rw,noexec,nosuid,size=64m
+NoNewPrivileges=true
+DropCapability=ALL
+
+[Service]
+Restart=always
+TimeoutStartSec=90
+
+[Install]
+WantedBy=default.target

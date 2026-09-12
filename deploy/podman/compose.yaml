@@ -1,0 +1,119 @@
+# Jeeves — Podman Compose stack (app + Postgres).
+#
+#   cd deploy/podman
+#   cp env.example .env && edit .env        # set the two passwords
+#   podman compose up -d --build
+#   podman compose run --rm migrate         # schema
+#   podman compose run --rm seed            # demo data — DESTRUCTIVE, see below
+#
+# Works with `podman compose` (Podman 4.7+, which shells out to a compose
+# provider) and with `podman-compose`. For a machine that should bring this up
+# at boot, prefer the systemd Quadlet units in ./quadlet — they are the
+# Podman-native path and do not need a compose provider at all.
+#
+# Nothing here is exposed beyond the app's port: Postgres is reachable only on
+# the internal network, so the database is not published to the host.
+
+services:
+  db:
+    image: docker.io/library/postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-jeeves}
+      POSTGRES_USER: ${POSTGRES_USER:-jeeves}
+      # No default. An unset password here would make postgres:16-alpine
+      # refuse to start rather than come up open, which is the behaviour we
+      # want — but be explicit in .env rather than relying on that.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - jeeves-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # `pg_isready` returns 0 only once the server accepts connections, so
+      # the app's `service_healthy` dependency waits for a usable database
+      # rather than merely a started container.
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-jeeves} -d ${POSTGRES_DB:-jeeves}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+
+  app:
+    build:
+      context: ../..
+      dockerfile: deploy/podman/Containerfile
+    image: jeeves:local
+    environment:
+      # host `db` resolves on the compose network. lib/db/driver-select.ts
+      # sends any non-*.neon.tech host to node-postgres; the Neon serverless
+      # driver would try to open a WebSocket to :443 here and fail.
+      DATABASE_URL: postgres://${POSTGRES_USER:-jeeves}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-jeeves}
+      DATA_PROVIDER: db
+      DEMO_PASSCODE: ${DEMO_PASSCODE:?set DEMO_PASSCODE in .env}
+      # Unset by default: with no key the app uses the deterministic keyless
+      # mock adapter and cannot generate spend. Set it only for a controlled
+      # live session.
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-}
+      CRON_SECRET: ${CRON_SECRET:-}
+    ports:
+      - "${APP_PORT:-3000}:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+
+  # One-shot: apply migrations. Deliberately NOT run by the app on boot —
+  # with more than one replica, concurrent boots would race on the same
+  # schema, and an automatic migration is exactly the kind of thing that
+  # should be a decision rather than a side effect of a restart.
+  #
+  #   podman compose run --rm migrate
+  migrate:
+    # Built from the `migrator` stage, NOT the runtime image: these scripts
+    # run through tsx, tsx needs esbuild, and esbuild is not in the standalone
+    # trace (Next traces what the app imports; the app never imports a CLI).
+    build:
+      context: ../..
+      dockerfile: deploy/podman/Containerfile
+      target: migrator
+    image: jeeves-migrator:local
+    profiles: ["tools"]
+    command: ["npm", "run", "db:migrate"]
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-jeeves}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-jeeves}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  # One-shot: load the synthetic demo dataset. DESTRUCTIVE — it wipes every
+  # seeded table, and disables the audit_events append-only triggers in order
+  # to delete the audit log. Never run this against anything you care about.
+  # NODE_ENV is deliberately left unset so scripts/seed.ts does not treat this
+  # as a production reseed; if you set NODE_ENV=production you will also need
+  # ALLOW_SEED=1, which is the guard doing its job.
+  #
+  #   podman compose run --rm seed
+  seed:
+    build:
+      context: ../..
+      dockerfile: deploy/podman/Containerfile
+      target: migrator
+    image: jeeves-migrator:local
+    profiles: ["tools"]
+    command: ["npm", "run", "db:seed"]
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-jeeves}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-jeeves}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+volumes:
+  jeeves-pgdata:

@@ -14,13 +14,19 @@
 //   lib/db/test-client.ts) regardless of DATABASE_URL, so test runs never
 //   depend on network access or shared local state.
 import { neonConfig, Pool } from "@neondatabase/serverless";
+import { Pool as PgPool } from "pg";
 import { drizzle as drizzleNeon, type NeonDatabase } from "drizzle-orm/neon-serverless";
+import { drizzle as drizzleNodePg, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { drizzle as drizzlePglite, type PgliteDatabase } from "drizzle-orm/pglite";
 import { PGlite } from "@electric-sql/pglite";
 import ws from "ws";
 import * as schema from "./schema";
+import { selectDriver } from "./driver-select";
 
-export type Db = NeonDatabase<typeof schema> | PgliteDatabase<typeof schema>;
+export type Db =
+  | NeonDatabase<typeof schema>
+  | NodePgDatabase<typeof schema>
+  | PgliteDatabase<typeof schema>;
 
 /**
  * Resolve the persistent PGlite directory. Local development keeps the
@@ -39,10 +45,10 @@ export function localPgliteDirectory(): string {
 // via API routes) and concurrent access corrupted the store once. One
 // process-wide handle fixes coherence for the single-instance demo.
 const DB_CACHE_KEY = Symbol.for("jeeves.db.cachedDb");
-type DbCacheSlot = { db: Db | null; pool: Pool | null };
+type DbCacheSlot = { db: Db | null; pool: Pool | null; pgPool: PgPool | null };
 const dbSlot: DbCacheSlot = ((globalThis as Record<symbol, unknown>)[
   DB_CACHE_KEY
-] ??= { db: null, pool: null }) as DbCacheSlot;
+] ??= { db: null, pool: null, pgPool: null }) as DbCacheSlot;
 
 /**
  * Returns the process-wide DB handle, creating it on first use. Safe to
@@ -55,11 +61,26 @@ export function getDb(): Db {
   }
 
   const databaseUrl = process.env.DATABASE_URL;
+  // See ./driver-select.ts: the Neon serverless driver speaks to Neon's
+  // WebSocket proxy, NOT the Postgres wire protocol, so it cannot be used
+  // for a plain Postgres server (a container sidecar, RDS, a local install).
+  // Pointing it at one fails with `connect ECONNREFUSED <host>:443` — it
+  // ignores the port in the URL entirely.
+  const driver = selectDriver(databaseUrl, process.env.JEEVES_DB_DRIVER);
 
-  if (databaseUrl) {
+  if (driver === "neon") {
     neonConfig.webSocketConstructor = ws;
     dbSlot.pool ??= new Pool({ connectionString: databaseUrl });
     dbSlot.db = drizzleNeon({ client: dbSlot.pool, schema });
+    return dbSlot.db;
+  }
+
+  if (driver === "pg") {
+    // node-postgres: a real connection pool over the wire protocol. This is
+    // the right driver for any long-lived process (a container), and the only
+    // one that works against a non-Neon server.
+    dbSlot.pgPool ??= new PgPool({ connectionString: databaseUrl });
+    dbSlot.db = drizzleNodePg({ client: dbSlot.pgPool, schema });
     return dbSlot.db;
   }
 
@@ -81,11 +102,20 @@ export function resetDbForTests(): void {
  * Neon WebSocket pool must likewise be ended by short-lived processes.
  */
 export async function closeDb(): Promise<void> {
-  if (!dbSlot.db && !dbSlot.pool) return;
+  if (!dbSlot.db && !dbSlot.pool && !dbSlot.pgPool) return;
 
   if (dbSlot.pool) {
     await dbSlot.pool.end();
     dbSlot.pool = null;
+    dbSlot.db = null;
+    return;
+  }
+
+  // node-postgres keeps its sockets open, so a CLI (scripts/migrate.ts,
+  // scripts/seed.ts) would hang on exit without this.
+  if (dbSlot.pgPool) {
+    await dbSlot.pgPool.end();
+    dbSlot.pgPool = null;
     dbSlot.db = null;
     return;
   }

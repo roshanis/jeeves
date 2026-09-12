@@ -1,0 +1,7 @@
+# Internal network for the stack. Postgres is reachable only here — it is
+# never published to the host.
+[Unit]
+Description=Jeeves internal network
+
+[Network]
+NetworkName=jeeves

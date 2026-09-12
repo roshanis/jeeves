@@ -754,3 +754,64 @@ against an actual 1100+/23).
 - Authentication (1.1) — the remaining blocker.
 - Exercise a restore into a scratch branch before any pilot.
 - Connection-pool sizing and query plans need the staging environment first.
+
+## [AGENT: Claude] [2026-09-12T02:08Z]
+### Action: Podman deployment — Containerfile, compose stack, Quadlet units, and the driver fix that makes any of it work
+### Files changed:
+deploy/podman/{Containerfile,compose.yaml,env.example,quadlet/*} (new); .containerignore (new);
+docs/deploy-podman.md (new); lib/db/{driver-select.ts,driver-select.test.ts} (new);
+lib/db/{client.ts,migrate.ts,migrate.test.ts}; app/api/health/{route.ts,route.test.ts} (new);
+next.config.ts; package.json (pg, @types/pg); README.md
+
+### Diff summary:
+THE BLOCKER, found before writing any container file: getDb() selected the
+NEON SERVERLESS driver for any DATABASE_URL. That driver talks to Neon's
+WebSocket proxy, not the Postgres wire protocol. Verified against a real
+PostgreSQL 16 at 127.0.0.1:5432:
+
+    DrizzleQueryError: Failed query: select 1 as ok
+      cause: ErrorEvent - connect ECONNREFUSED 127.0.0.1:443
+
+It ignored the :5432 and dialled 443. Every container deploy with a postgres
+sidecar — the obvious architecture — would have failed this way, pointing at a
+port nobody configured. lib/db/driver-select.ts routes *.neon.tech to the Neon
+driver (so Vercel is byte-identical) and everything else to node-postgres,
+with JEEVES_DB_DRIVER as an override. Host-suffix matched on the PARSED host,
+so "neon.tech.evil.example.com" is not Neon.
+
+Knock-on: describeMigrationTarget() printed "Neon Postgres — 127.0.0.1/jeeves"
+against plain Postgres. Now driver-aware.
+
+next.config.ts: output "standalone" (93MB traced, vs ~1GB node_modules),
+verified to include PGlite's .wasm/.data and the agents/*.md corpus.
+
+GET /api/health (new): round-trips . Unauthenticated by necessity,
+so it returns a status word and nothing else — no version, host, driver, or DB
+error text, since connection errors carry host and port.
+
+CONTAINERFILE BUG CAUGHT IN MY OWN DRAFT: the first version copied tsx into
+the runtime image for migrations. tsx needs esbuild, and esbuild is NOT in the
+standalone trace — Next traces what the APP imports and the app never imports
+a CLI. Would have failed module-not-found on first migration. Replaced with a
+dedicated "migrator" stage; runtime image is leaner as a result.
+
+VERIFIED (against real PostgreSQL 16, not a container):
+- driver fix: same URL that failed now connects
+- npm run db:migrate and db:seed both succeed against real Postgres
+- standalone server serves /, /inbox, /portfolio, /audit, /monitoring,
+  /initiatives/[slug], /controls — all 200, real seeded titles rendering
+- server writes NOTHING to its filesystem at runtime (justifies ReadOnly=true)
+- health: 200 up -> 503 with Postgres stopped -> 200 on recovery; the exact
+  HEALTHCHECK command from the Containerfile exits 0/nonzero correctly
+- Quadlet units: validated with podman's own generator, 0 errors; --read-only,
+  --cap-drop=all, --security-opt=no-new-privileges all translate
+
+NOT VERIFIED: the image itself. This environment blocks container-registry
+pulls (403 on production.cloudfront.docker.com), so no base image and no
+build. The COPY paths and stage wiring are the untested part; docs/deploy-podman.md
+says so at the top rather than implying otherwise.
+
+### Recommendations / Next steps:
+- First podman build is the remaining test.
+- TLS is out of scope — the app serves plain HTTP; put a proxy in front.
+- Authentication is unchanged by containerisation and still the blocker.

@@ -227,6 +227,10 @@ gaps, and a demo-day checklist. Use `npm run db:migrate` (non-destructive) to
 apply schema changes — `npm run db:seed` wipes every table, audit log
 included, and is for demo datasets only.
 
+Self-hosting with Podman (app + its own Postgres, no Neon or Vercel) is
+covered in `docs/deploy-podman.md` — `deploy/podman/` holds the Containerfile,
+a compose stack and systemd Quadlet units.
+
 See `docs/production-readiness.md` for an assessment of what would have to
 change before this is a system a real payer could run its governance on. Short
 version: deployable as a demo today; not a production installation, chiefly

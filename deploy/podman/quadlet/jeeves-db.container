@@ -1,0 +1,37 @@
+# Postgres for Jeeves, managed by systemd via Podman Quadlet.
+#
+# Install (rootless, recommended):
+#   mkdir -p ~/.config/containers/systemd
+#   cp deploy/podman/quadlet/* ~/.config/containers/systemd/
+#   cp deploy/podman/env.example ~/.config/containers/systemd/jeeves.env  # then edit
+#   systemctl --user daemon-reload && systemctl --user start jeeves-app
+#
+# Quadlet generates a .service from this file at daemon-reload; do not write
+# the .service by hand.
+[Unit]
+Description=Jeeves Postgres
+After=network-online.target
+
+[Container]
+ContainerName=jeeves-db
+Image=docker.io/library/postgres:16-alpine
+Network=jeeves.network
+Volume=jeeves-db.volume:/var/lib/postgresql/data
+
+# Credentials come from an environment file that stays OUT of the repo.
+# Quadlet reads it at start; keep it mode 0600.
+EnvironmentFile=%h/.config/containers/systemd/jeeves.env
+Environment=POSTGRES_DB=jeeves
+Environment=POSTGRES_USER=jeeves
+
+# No PublishPort: the database is deliberately not reachable from the host.
+HealthCmd=pg_isready -U jeeves -d jeeves
+HealthInterval=5s
+HealthRetries=20
+HealthStartPeriod=10s
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

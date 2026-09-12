@@ -1,0 +1,7 @@
+# Postgres data. Podman manages the volume; back it up with
+# `podman volume export jeeves-db` (see docs/deploy-podman.md).
+[Unit]
+Description=Jeeves Postgres data volume
+
+[Volume]
+VolumeName=jeeves-db

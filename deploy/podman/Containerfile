@@ -1,0 +1,97 @@
+# Jeeves — OCI image for Podman (also builds with Docker/Buildah).
+#
+# Build from the REPOSITORY ROOT so the build context includes the source:
+#   podman build -f deploy/podman/Containerfile -t jeeves:local .
+#
+# Stages:
+#   deps     — install from the lockfile, cached until package*.json changes
+#   builder  — next build, which emits .next/standalone (see next.config.ts)
+#   migrator — full toolchain, for the one-shot migrate/seed jobs
+#   runner   — DEFAULT target: node + the traced standalone output, nothing else
+#
+# `--target migrator` builds the migration image; a bare build gives `runner`,
+# because it is the last stage.
+#
+# Node 22 to match the toolchain this repo is developed and tested on. Pinned
+# by minor rather than `:22` so a rebuild picking up a new Node is deliberate.
+
+# ---------------------------------------------------------------- deps -----
+FROM docker.io/library/node:22.22-bookworm-slim AS deps
+WORKDIR /app
+
+# Only the manifests, so this layer survives every source-only change.
+COPY package.json package-lock.json ./
+
+# devDependencies are needed HERE — next, typescript and tailwind are all dev
+# deps and all required to build. They do not reach the runtime image.
+RUN npm ci --no-audit --no-fund
+
+# -------------------------------------------------------------- builder -----
+FROM docker.io/library/node:22.22-bookworm-slim AS builder
+WORKDIR /app
+
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+
+# Build against the MOCK provider. Prerendering must not require a reachable
+# database — the image is routinely built before Postgres exists, and a build
+# that opened a connection would also bake build-time rows into static pages.
+# At runtime the app reads DATA_PROVIDER/DATABASE_URL from the environment.
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV DATA_PROVIDER=mock
+RUN npm run build
+
+# ------------------------------------------------------------- migrator -----
+# One-shot jobs (`npm run db:migrate`, `npm run db:seed`) run from their own
+# image rather than the runtime one.
+#
+# They have to: both scripts are TypeScript executed through `tsx`, tsx depends
+# on esbuild, and esbuild is NOT in the standalone trace — Next only traces what
+# the APPLICATION imports, and the app never imports a CLI. Copying tsx alone
+# into the runner produced a module-not-found on first use. Keeping the
+# toolchain here instead means the runtime image stays lean AND the migration
+# path actually works.
+FROM builder AS migrator
+WORKDIR /app
+# node_modules, drizzle/, scripts/ and lib/ are all already present from the
+# builder stage. Default to the safe job; override for the destructive one.
+CMD ["npm", "run", "db:migrate"]
+
+# --------------------------------------------------------------- runner -----
+FROM docker.io/library/node:22.22-bookworm-slim AS runner
+WORKDIR /app
+
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+# Bind all interfaces: the default loopback bind is unreachable from outside
+# the container's network namespace.
+ENV HOSTNAME=0.0.0.0
+ENV PORT=3000
+
+# Non-root. Podman is commonly rootless, which already maps the container user
+# to an unprivileged host uid — but the image should not depend on how it is
+# run. The node image ships uid/gid 1000 as `node`.
+USER node
+
+# next.config.ts sets output: "standalone", so Next traces the exact runtime
+# files — including the node_modules actually reached, PGlite's .wasm/.data
+# assets, and (via outputFileTracingIncludes) the agents/*.md corpus that
+# /agents/[id] reads from disk at runtime.
+COPY --from=builder --chown=node:node /app/.next/standalone ./
+# Static assets and public/ are not part of the traced output; Next documents
+# copying them alongside it.
+COPY --from=builder --chown=node:node /app/.next/static ./.next/static
+COPY --from=builder --chown=node:node /app/public ./public
+
+EXPOSE 3000
+
+# Probes GET /api/health, which round-trips `select 1` to Postgres — a process
+# that is alive but cannot reach its database is not healthy. Verified both
+# ways against a real PostgreSQL 16: 200 while up, 503 within seconds of
+# stopping it, back to 200 on recovery. Uses node rather than curl so the image
+# needs no extra package.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+
+# server.js is emitted by the standalone build.
+CMD ["node", "server.js"]

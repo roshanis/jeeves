@@ -103,6 +103,15 @@ describe("lib/db/migrate — non-destructive migration runner", () => {
     ).toBe("Neon Postgres — ep-cool-name-123.eu-central-1.aws.neon.tech/jeeves");
   });
 
+  it("names plain Postgres as Postgres, not Neon", () => {
+    // It said "Neon Postgres — 127.0.0.1/jeeves" against a real PostgreSQL 16
+    // container, which is the vendor confusion driver-select.ts exists to
+    // stop. The label now follows the driver that will actually be used.
+    expect(describeMigrationTarget("postgres://postgres:test@db:5432/jeeves")).toBe(
+      "Postgres — db/jeeves",
+    );
+  });
+
   it("describes the local store when DATABASE_URL is unset", () => {
     expect(describeMigrationTarget(undefined)).toBe("local PGlite store (./.pglite)");
   });
