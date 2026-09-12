@@ -10,7 +10,7 @@
  * stay thin: call `runMutationGuard`, bail out on a non-null failure,
  * otherwise call the service layer.
  */
-import { TokenBucketRateLimiter } from "../security/rate-limit";
+import { DbTokenBucketRateLimiter } from "../security/db-rate-limit";
 import { verifyPasscode } from "../security/passcode";
 import { issueSession } from "../security/session";
 import { DbBudgetStore, reserve, type BudgetStore } from "../security/budget";
@@ -22,41 +22,50 @@ import { getDb } from "../db/client";
 import { sessions } from "../db/schema";
 
 /* -------------------------------------------------------------------------
- * Persistent session + budget state, with intentionally process-local rate
- * limiting for this demo increment.
+ * Persistent session, budget and rate-limit state.
+ *
+ * All three now live in Postgres. Rate limiting was the last piece still
+ * held in a module-scoped Map, which meant per-serverless-instance buckets:
+ * a caller got a fresh allowance by landing on a different instance, and a
+ * cold start reset it (docs/production-readiness.md §1.2). That mattered
+ * most for the passcode gate below, which was worth 5 attempts PER WARM
+ * INSTANCE rather than 5 overall.
  * ---------------------------------------------------------------------- */
 
 const SESSION_TTL_MS = 60 * 60 * 1000; // 1 hour demo session
-// Per-instance rate limiting is an accepted demo posture; shared limiting is a follow-up increment.
-let rateLimiter = new TokenBucketRateLimiter({ capacity: 20, refillPerSecond: 0.5 }, () => Date.now());
+const rateLimiter = new DbTokenBucketRateLimiter(
+  { capacity: 20, refillPerSecond: 0.5 },
+  getDb,
+  () => Date.now(),
+);
 const budgetStore: BudgetStore = new DbBudgetStore(getDb);
 const DAILY_TOKEN_CAP = 500_000;
 
 // Security review finding #1: /api/session sits pre-session outside
 // runMutationGuard, so the shared passcode was brute-forceable at wire
-// speed. Dedicated slow bucket: 5 attempts per client, one refill per 30s.
-let sessionAttemptLimiter = new TokenBucketRateLimiter(
+// speed. Dedicated slow bucket: 5 attempts per client, one refill per 30s —
+// and now genuinely 5 per client rather than 5 per instance.
+const sessionAttemptLimiter = new DbTokenBucketRateLimiter(
   { capacity: 5, refillPerSecond: 1 / 30 },
+  getDb,
   () => Date.now(),
 );
 
 /** Pre-session brute-force gate for POST /api/session. */
-export function checkSessionAttempt(clientKey: string): { allowed: boolean; retryAfterSeconds: number } {
+export async function checkSessionAttempt(
+  clientKey: string,
+): Promise<{ allowed: boolean; retryAfterSeconds: number }> {
   return sessionAttemptLimiter.checkAndConsume(clientKey);
 }
 
 /** Test-only: reset all module-scoped guard state between test files/cases. */
 export function resetGuardStateForTests(): void {
-  rateLimiter = new TokenBucketRateLimiter(
-    { capacity: 20, refillPerSecond: 0.5 },
-    () => Date.now(),
-  );
-  sessionAttemptLimiter = new TokenBucketRateLimiter(
-    { capacity: 5, refillPerSecond: 1 / 30 },
-    () => Date.now(),
-  );
-  // Session and budget rows live in the DB; API tests provide a fresh PGlite
-  // database for each case, so no module-scoped persistence state remains.
+  // Nothing left to reset. Sessions, the daily budget AND the rate-limit
+  // buckets all live in Postgres now, and API tests provide a fresh PGlite
+  // database per case — so there is no module-scoped state to clear. Kept as
+  // a no-op because every API test file calls it; removing it would be churn
+  // for no benefit, and it stays the right hook if process-local state ever
+  // returns.
 }
 
 export type GuardFailureKind = "unauthorized" | "rate_limited" | "invalid_input" | "budget_exhausted";
@@ -232,7 +241,7 @@ export async function runMutationGuard(
   }
 
   const clientKey = clientKeyFor(req);
-  const rl = rateLimiter.checkAndConsume(clientKey);
+  const rl = await rateLimiter.checkAndConsume(clientKey);
   if (!rl.allowed) {
     return {
       ok: false,
@@ -275,6 +284,6 @@ export function getBudgetStoreForTests(): BudgetStore {
 }
 
 /** Exposed for tests that want to exhaust the shared rate limiter deterministically. */
-export function getRateLimiterForTests(): TokenBucketRateLimiter {
+export function getRateLimiterForTests(): DbTokenBucketRateLimiter {
   return rateLimiter;
 }

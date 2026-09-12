@@ -392,6 +392,29 @@ export const controlExceptions = pgTable(
 );
 
 /* -------------------------------------------------------------------------
+ * Rate-limit buckets — shared token-bucket state (M-next).
+ *
+ * The limiter used to keep buckets in a module-scoped Map, so on a
+ * serverless fan-out every instance had its own allowance and a cold start
+ * reset it. That made the passcode brute-force gate on POST /api/session
+ * worth 5 attempts PER WARM INSTANCE rather than 5 overall
+ * (docs/production-readiness.md §1.2). Sessions and the daily token budget
+ * moved to Postgres for the same reason; this was the last piece of
+ * per-request guard state that had not.
+ * ---------------------------------------------------------------------- */
+
+export const rateLimitBuckets = pgTable("rate_limit_buckets", {
+  /** Opaque bucket key, e.g. "session:<hashed-client>" — see route-guard. */
+  key: text("key").primaryKey(),
+  /** Fractional: capacity 5 refilling at 1/30 per second is not integral. */
+  tokens: doublePrecision("tokens").notNull(),
+  /** Epoch ms of the last refill — the basis for elapsed-time refill math. */
+  lastRefillMs: bigint("last_refill_ms", { mode: "number" }).notNull(),
+  /** Epoch ms of the last real request; used only for pruning. */
+  lastTouchedMs: bigint("last_touched_ms", { mode: "number" }).notNull(),
+});
+
+/* -------------------------------------------------------------------------
  * Composite PK helper re-export (not used above but kept available for
  * migration authors / future join tables without re-importing drizzle-orm).
  * ---------------------------------------------------------------------- */

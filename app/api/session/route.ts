@@ -72,7 +72,7 @@ export async function POST(req: Request): Promise<Response> {
   // Security review finding #1: brute-force gate — this route sits
   // pre-session, outside runMutationGuard. Limiter lives in route-guard so
   // resetGuardStateForTests() clears it between tests.
-  const attempt = checkSessionAttempt(clientKeyFor(req));
+  const attempt = await checkSessionAttempt(clientKeyFor(req));
   if (!attempt.allowed) {
     return Response.json(
       { error: "too many attempts — try again later" },

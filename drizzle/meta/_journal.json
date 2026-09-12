@@ -64,6 +64,20 @@
       "when": 1783738680654,
       "tag": "0008_control_exceptions_status_at_request",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1783738680655,
+      "tag": "0009_rate_limit_buckets",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1783738680656,
+      "tag": "0010_query_path_indexes",
+      "breakpoints": true
     }
   ]
 }

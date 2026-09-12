@@ -1,6 +1,7 @@
 # Jeeves — Production Readiness Assessment
 
-> Assessed 2026-09-11 against the tree at that date. Every claim below was
+> Assessed 2026-09-11; revised 2026-09-12 after a remediation pass. Items
+> marked FIXED were closed in that pass and carry the evidence. Every claim below was
 > checked against the code, not inferred from the docs; where a finding was
 > measured against a running build, the measurement is quoted.
 >
@@ -16,8 +17,11 @@
 audience. `docs/deploy.md` is an accurate runbook and the safety posture for
 a shared link is sound.
 
-**As a production installation: no.** Two findings are structural rather than
-things to patch, and the first is disqualifying on its own.
+**As a production installation: no — but for one reason now, not two.**
+
+The 2026-09-12 pass closed the second blocker (per-instance rate limiting) and
+the two "should fix" items that were genuinely fixable in code. What remains
+is **authentication**, and that is disqualifying on its own.
 
 The distinction matters because almost everything *else* about this codebase
 is production-grade, which makes it easy to mistake for production-ready. It
@@ -58,7 +62,7 @@ be forged to adopt another workspace, and the session route deliberately does
 not reveal which half of the credential failed. None of that is wasted work —
 it is simply solving a different problem than authentication.
 
-### 1.2 Rate limiting is per-instance and will not hold on serverless
+### 1.2 Rate limiting is per-instance and will not hold on serverless — FIXED 2026-09-12
 
 **The finding.** `lib/security/rate-limit.ts`'s `TokenBucketRateLimiter` is
 held in module scope (see the module-scoped `rateLimiter` and
@@ -72,9 +76,23 @@ gets a multiple of the configured budget, and a cold start resets it entirely.
 With a low-entropy passcode (which is what a demo passcode is designed to be)
 this is the practical way in.
 
-**What it would take.** Move the buckets to the shared store the sessions and
-budget already use. This one *is* a task, not a project: `DbBudgetStore` in
-`lib/security/budget.ts` is a working model of the same pattern.
+**FIXED.** The buckets moved to Postgres — `rate_limit_buckets`
+(`drizzle/0009_rate_limit_buckets.sql`), driven by
+`lib/security/db-rate-limit.ts`. The consume path is a single
+`INSERT … ON CONFLICT DO UPDATE` whose `WHERE` re-derives the refilled
+balance and applies only when a token is available: the same
+compare-and-set shape `DbBudgetStore.reserveAtomic()` uses, and the reason
+concurrent requests across instances are safe. A read-modify-write in
+application code would not have been, however carefully written — two
+instances would read the same balance and both spend it.
+
+`lib/security/db-rate-limit.test.ts` asserts the property the Map could never
+have: two independent limiter instances over one database share a single
+allowance. It also covers a 12-request concurrent burst against a capacity of
+5, which yields exactly 5.
+
+The in-memory `TokenBucketRateLimiter` remains in the tree — it is still the
+right tool for a single-process context — but no longer guards any route.
 
 **Correctly scoped already:** sessions and the daily token budget are *not*
 affected — both moved to Postgres. `DbBudgetStore.reserveAtomic()` is a single
@@ -87,15 +105,21 @@ stale and contradicted §3(b). Now corrected.)
 
 ## 2. Should fix before a pilot
 
-### 2.1 No backup or restore procedure
+### 2.1 No backup or restore procedure — DOCUMENTED 2026-09-12, not yet exercised
 
-There is no documented backup, restore, or point-in-time-recovery process for
-the Neon database. For a system whose value proposition is an immutable audit
-trail, "what happens when the database is lost" has no written answer. Neon's
-own branching/PITR features probably cover it; nothing says so, which means
-nobody has decided the retention window.
+`docs/deploy.md` §4 now covers it: set a PITR retention window on the Neon
+project, branch before every migration, and never point `npm run db:seed` at
+real data. It also states plainly what the append-only trigger does and does
+not protect against — it stops the *application* deleting audit rows; it does
+nothing about a dropped database or a reseed against the wrong
+`DATABASE_URL`.
 
-### 2.2 The test suite cannot see the rendering path production uses
+Still open, and deliberately called out in that section: **nobody has
+restored from a backup.** A backup nobody has restored from is a hypothesis.
+Restoring into a scratch branch and booting the app against it belongs in the
+runbook before a pilot, not in an incident.
+
+### 2.2 The test suite cannot see the rendering path production uses — FIXED 2026-09-12
 
 `lib/data/mock-provider.ts` and `lib/data/db-provider.ts` are required to stay
 shape-identical, and they are — but they disagree about *content* for the same
@@ -110,25 +134,53 @@ fixture from the mock provider, so the buggy state was unreachable from the
 test, and the suite was green while the deployed app told a Critical-tier,
 un-triaged initiative that "all required reviews signed and controls met."
 
-A green suite here does not certify the path production runs. Worth either
-making the mock reproduce the DB's emptiness for pre-review states, or adding
-a provider-parity test that asserts the two agree per lifecycle state.
+**FIXED — both, in fact.** `lib/data/provider-parity.test.ts` asserts the
+lifecycle invariants the real system enforces, and the mock is now gated to
+honour them: no review rows before `triage()` writes them, and no effective
+controls before `decide()` generates them.
 
-### 2.3 No staging environment in the runbook
+Measuring it first was worth doing — the divergence was four initiatives, and
+one case that looked like a fifth was the invariant being wrong rather than
+the mock: `conditionally_approved` legitimately carries controls before
+anything is deployed, because generation happens at decision time, not
+deployment. The test encodes that distinction.
 
-`docs/deploy.md` goes from local to production. There is no documented
-environment in which to rehearse a migration against realistic data before
-running it against the real thing.
+The failing state is now reachable from a mock-sourced fixture, so a test
+like the original blockers-rail one would catch the original bug.
 
-### 2.4 Database sizing is unreviewed
+### 2.3 No staging environment — DOCUMENTED 2026-09-12, not built
 
-No index review, no connection-pool sizing, no query-plan work. The demo
-dataset is 12 initiatives and a few hundred rows, and `db-provider.ts` says so
-explicitly — it loads whole tables and assembles the read model in memory,
-which it calls "simpler and more auditable than a lattice of joins, and well
-within budget for a Neon/PGlite demo database." That is an honest and correct
-trade for a demo and an obvious problem at a real payer's volumes. The Inbox
-alone fans out to `getInitiativeDetail` per initiative.
+`docs/deploy.md` §5 now describes the cheap version — a second Vercel project
+against a Neon *branch* of production, so the data is realistic by
+construction and costs almost nothing — along with the traps (separate
+`DEMO_PASSCODE`, `OPENAI_API_KEY` unset, and the fact that a branch inherits
+whatever the parent held at branch time).
+
+**It is described, not built.** Nobody has stood one up, so the rehearsal
+space still does not exist.
+
+### 2.4 Database sizing — REVIEWED 2026-09-12; indexes added, read model unchanged
+
+**Index review done.** Postgres indexes primary keys and unique constraints
+only — never foreign keys — and while several composite uniques here happen to
+cover their leading FK column, seven filter/join columns had no cover at all.
+`drizzle/0010_query_path_indexes.sql` adds them, most importantly
+`initiatives(workspace_id)`: workspace read-isolation filters *every* read and
+that column was unindexed.
+
+**The read model is unchanged, and it is the real constraint.**
+`db-provider.ts` loads whole tables and assembles the portfolio in memory —
+"simpler and more auditable than a lattice of joins, and well within budget
+for a Neon/PGlite demo database" — and the Inbox fans out to one
+`getInitiativeDetail` per initiative. Both are correct trades at 12
+initiatives. Neither is fixed by an index, because an index cannot speed up a
+query that reads every row. At a real payer's volumes the read model has to
+change first; the indexes only stop the point lookups and joins from being a
+second problem on top.
+
+Still not done: connection-pool sizing and query-plan work against realistic
+data — neither of which is meaningful without the staging environment in
+§2.3.
 
 ---
 
@@ -169,9 +221,13 @@ weigh against it.
 | Driver + transactions | Ready — pooled Neon serverless, real interactive transactions |
 | Append-only audit enforcement | Ready — DB-level triggers, tested |
 | Non-destructive migration path | **Added 2026-09-11** — see below |
-| Backup / restore | **Missing** — undocumented |
-| Sizing, indexes, pooling | **Unreviewed** — demo-scale by design |
-| Staging environment | **Missing** |
+| Shared rate limiting | **Added 2026-09-12** — §1.2 |
+| Provider-parity tests | **Added 2026-09-12** — §2.2 |
+| Backup / restore | **Documented** (deploy.md §4) — never exercised |
+| Indexes | **Reviewed**, 7 added (0010) |
+| Pooling, query plans | **Unreviewed** — needs staging first |
+| Read model | **Demo-scale by design** — whole-table loads; the real scaling constraint |
+| Staging environment | **Documented** (deploy.md §5) — not built |
 
 ### The migration path (fixed 2026-09-11)
 
@@ -196,8 +252,12 @@ effective controls, identical before and after.
 If the question is *"can we show this to a customer?"* — yes, today.
 
 If it is *"can we install this at a payer and let them govern real AI systems
-with it?"* — not yet, and the work is not evenly distributed. The database,
-transactional integrity, audit immutability, and web security posture are in
-good shape. Authentication does not exist, and without it the system's central
-output — a named accountable approval — is not trustworthy, no matter how
-immutably it is stored.
+with it?"* — not yet, and the remaining work is now concentrated in one place.
+The database, transactional integrity, audit immutability, rate limiting, web
+security posture and test fidelity are all in good shape.
+
+Authentication does not exist. Until it does, the system's central output — a
+named accountable approval — is not trustworthy, no matter how immutably it is
+stored, because the name on it was chosen by whoever typed the shared
+passcode. Everything else on this page is an engineering task. This one is a
+product decision about what the system is for.

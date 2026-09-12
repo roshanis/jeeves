@@ -698,3 +698,59 @@ OTHER RESOLUTIONS:
   merge of this size.
 - Still open from the previous entry: provider-parity test, rate-limit buckets
   in the DB, backup/restore, authentication.
+
+## [AGENT: Claude] [2026-09-12T01:54Z]
+### Action: Remediation pass over docs/production-readiness.md — five of six known issues closed
+### Files changed:
+drizzle/{0009_rate_limit_buckets,0010_query_path_indexes}.sql (new); drizzle/meta/_journal.json;
+lib/security/{db-rate-limit.ts,db-rate-limit.test.ts} (new); lib/services/route-guard.ts;
+app/api/session/route.ts; lib/db/schema.ts; lib/data/{mock-provider.ts,provider-parity.test.ts (new)};
+docs/{deploy.md,production-readiness.md}
+
+### Diff summary:
+1.2 RATE LIMITING (blocker) — FIXED. Buckets moved from a module-scoped Map to
+Postgres. The consume path is ONE statement: INSERT ... ON CONFLICT DO UPDATE
+with a WHERE that re-derives the refilled balance and applies only when a
+token is available — the compare-and-set shape DbBudgetStore.reserveAtomic()
+already uses. A read-modify-write in app code would not have been safe: two
+instances would read the same balance and both spend it. The decisive test is
+that two independent limiter instances over one DB share one allowance, which
+the Map could never do; a 12-request concurrent burst against capacity 5
+yields exactly 5.
+
+2.2 PROVIDER DIVERGENCE — FIXED. lib/data/provider-parity.test.ts asserts the
+lifecycle invariants the real system enforces, and the mock is gated to honour
+them. WORTH RECORDING: measuring first changed the answer. The test initially
+flagged five initiatives; one was MY INVARIANT being wrong, not the mock —
+conditionally_approved legitimately carries controls before deployment because
+generateEffectiveControlsInTx runs at decision time. Had I "fixed" the mock to
+match the first guess I would have made it wrong in a new direction.
+
+2.4 DB SIZING — REVIEWED, 7 indexes added (0010). Postgres never indexes
+foreign keys; several composite uniques here happen to cover their leading FK
+column and seven filter/join columns had no cover at all. Most important:
+initiatives(workspace_id), which every read filters on for isolation. NOT
+oversold — the read model is the real constraint (db-provider loads whole
+tables; the Inbox fans out per initiative) and no index helps a query that
+reads every row.
+
+2.1 BACKUP/RESTORE and 2.3 STAGING — DOCUMENTED, not solved, and labelled that
+way in both docs. deploy.md §4 covers PITR retention, branch-before-migrate,
+and states plainly that the append-only trigger protects against the
+APPLICATION, not a dropped database or a reseed against the wrong
+DATABASE_URL. §5 describes a Neon-branch staging setup. Neither has been
+exercised; a backup nobody has restored from is a hypothesis.
+
+1.1 AUTHENTICATION — NOT ATTEMPTED, deliberately. It needs a real IdP, and a
+hand-rolled stand-in would make a forgeable approver identity LESS visible
+while leaving it just as forgeable. It is now the only thing between this and
+a production installation, and it is a product decision, not an engineering
+task.
+
+Also: removed stale test counts from deploy.md (claimed 438 unit / 5 e2e
+against an actual 1100+/23).
+
+### Recommendations / Next steps:
+- Authentication (1.1) — the remaining blocker.
+- Exercise a restore into a scratch branch before any pilot.
+- Connection-pool sizing and query plans need the staging environment first.

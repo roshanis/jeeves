@@ -59,8 +59,8 @@ Other scripts you have available (`package.json`):
 ```bash
 npm run lint        # eslint
 npm run typecheck   # tsc --noEmit
-npm test            # vitest run (438 tests as of this writing)
-npm run test:e2e    # playwright test (5 tests; boots its own dev server on :3117)
+npm test            # vitest run (full unit suite)
+npm run test:e2e    # playwright test (boots its own server on :3117)
 npm run build        # next build
 npm run start        # next start (after build)
 ```
@@ -221,7 +221,85 @@ current code, not hypothetical ones.
 
 ---
 
-## 4. Demo-day checklist
+## 4. Backups and restore
+
+Short version: **Neon's own branching and point-in-time restore are the
+backup mechanism; this repository adds nothing on top, and nothing here
+substitutes for setting a retention window on the Neon project.**
+
+That matters more here than in a typical app. `audit_events` is append-only
+at the database level, which protects it from the *application* — it does not
+protect it from a dropped database, a deleted Neon branch, or a reseed run
+against the wrong `DATABASE_URL`. The append-only trigger and a backup solve
+different problems.
+
+### What to set up before this holds real data
+
+1. **Set a PITR retention window on the Neon project.** Neon's history
+   retention determines how far back you can branch or restore. The default
+   on free tiers is short; pick a window that matches how long you would need
+   to notice a bad write. Governance records are the product, so err long.
+2. **Take a branch before any migration.** Neon branches are copy-on-write
+   and cheap:
+
+   ```bash
+   # before: neonctl branches create --name pre-0009 --parent main
+   DATABASE_URL="<pooled url>" npm run db:migrate
+   ```
+
+   `npm run db:migrate` is non-destructive and tested as such
+   (`lib/db/migrate.test.ts`), but a branch costs nothing and covers the case
+   where the migration is correct and the *schema change* is the mistake.
+3. **Never point `npm run db:seed` at a database with real data.** It wipes
+   every seeded table and disables the `audit_events` append-only triggers to
+   do it. The `ALLOW_SEED=1` guard under `NODE_ENV=production` is the only
+   thing standing between a mistyped `DATABASE_URL` and the loss of the
+   compliance record.
+
+### Restore
+
+Restore is a Neon operation, not an application one: branch from a timestamp
+before the bad write and repoint `DATABASE_URL` at the new branch. There is
+no application-level undo, and there deliberately is no "delete audit events"
+path to undo *with* — the trigger rejects `DELETE` from the app entirely.
+
+### Not covered
+
+No automated backup verification, and no drill. A backup nobody has restored
+from is a hypothesis. If this goes to a pilot, restoring into a scratch
+branch and booting the app against it should be part of the runbook, not a
+thing discovered during an incident.
+
+---
+
+## 5. Staging
+
+There is **no staging environment**, and the steps above go straight from a
+local machine to production.
+
+For a demo that is proportionate. For anything with real data it is not,
+because the one operation you most want to rehearse — a migration against
+realistic data — is the one with no rehearsal space.
+
+The cheap version, if a pilot happens:
+
+1. A second Vercel project pointed at a **Neon branch** of production rather
+   than a separate database. Branches are copy-on-write, so this is close to
+   free and the data is realistic by construction.
+2. Deploy there first, run `npm run db:migrate` against the branch, boot the
+   app, and confirm the console renders before touching production.
+3. `DEMO_PASSCODE` must differ between the two, and `OPENAI_API_KEY` should
+   be unset on staging unless a specific test needs it — the daily token
+   budget is per database, so a staging branch has its own cap and its own
+   bill.
+
+Note that a Neon branch shares the parent's data at the moment of branching,
+including anything sensitive. In this demo everything is synthetic, so it is
+moot — but that stops being true the moment it is not a demo.
+
+---
+
+## 6. Demo-day checklist
 
 Run through this the morning of a demo, in order:
 
