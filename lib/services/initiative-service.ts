@@ -52,6 +52,7 @@ import { deriveTier } from "../triage/rules";
 import { requiredDomains } from "../triage/routing";
 import { fastLaneEligibility } from "../approval/eligibility";
 import { applicabilityApplies } from "./applicability";
+import { enqueueReviewRequests } from "./notification-service";
 import { ACTOR_DIRECTORY, FAST_LANE_POLICY, SYSTEM_ACTOR, isPersonaKey, reviewerDomainFor } from "./actors";
 import { workspaceMismatch } from "./workspace-guard";
 
@@ -748,6 +749,25 @@ export async function triage(
       `Opened review cycle ${cycleId} for ${domains.length} required domain(s).`,
       { cycleId },
     );
+
+    // Record the ask, in THIS transaction, so a review row cannot exist
+    // without a recorded request for it. Placed in the review branch only:
+    // the fast-lane branch above returns before this point, and telling
+    // eight domains to review something that was just auto-approved under
+    // standing authority would be worse than telling them nothing.
+    //
+    // Nothing is delivered — see lib/services/notification-service.ts. This
+    // is the durable record of who was asked and when, which is what the
+    // audit trail and the reviewer queues need; a transport can be added
+    // later without changing the invariant.
+    await enqueueReviewRequests(tx, {
+      initiativeId,
+      initiativeTitle: initiative.title,
+      cycleId,
+      domains,
+      tier,
+      now: nowTs(),
+    });
 
     return { branch: "review", tier, requiredDomains: domains, riskAssessmentId, cycleId };
   });

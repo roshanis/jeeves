@@ -866,3 +866,70 @@ initiative directly in 'in_review' with all reviews open.
   transition that opens the reviews is the natural hook for it.
 - A hosted demo with no DEMO_PASSCODE set cannot accept submissions at all,
   regardless of the UI.
+
+## [AGENT: Claude] [2026-09-12T15:43Z]
+### Action: Review-request notification workflow — recording the ask, without faking delivery
+### Files changed:
+drizzle/0011_review_notifications.sql (new); drizzle/meta/_journal.json; lib/db/schema.ts;
+lib/domain/labels.ts (new); components/jeeves/domain-labels.tsx;
+lib/services/{notification-service.ts,notification-service.test.ts} (new);
+lib/services/initiative-service.ts; components/jeeves/review-request-queue.tsx (new);
+app/(console)/reviews/page.tsx
+
+### Diff summary:
+triage() opens one review per required domain — eight at once for a Critical
+initiative — but nothing ever TOLD those domains. A row appeared in a queue
+and waited to be noticed. There was no notification transport anywhere in the
+codebase (grepped: no SMTP, SendGrid, Slack, webhook). That is the gap between
+"Legal has been asked" and "Legal knows they were asked".
+
+WHAT WAS BUILT: review_notifications, written in the SAME TRANSACTION as the
+review rows. The invariant is that a review cannot exist without a recorded
+request for it — a post-commit fire-and-forget send could lose the ask while
+keeping the review, which is precisely how a governance queue stalls quietly.
+Idempotent per (cycle, domain, kind) via a unique index, matching triage()'s
+own documented re-runnability.
+
+WHAT WAS DELIBERATELY NOT BUILT: delivery. There is no transport, and
+inventing one would mean a demo claiming to have emailed Legal while nothing
+left the process — the "no fake integrations" rule. deliveryTransportStatus()
+is the single place that decides whether the UI may claim delivery, and it
+reports unconfigured. The UI panel says "Not delivered" and "nothing is
+emailed or posted anywhere", the same posture as the telemetry connector card.
+
+HOOK PLACEMENT MATTERED. triage() creates the review rows BEFORE checking
+fast-lane eligibility, and the fast-lane branch does not close them. So the
+hook went in the review branch only — notifying eight domains about something
+just auto-approved under standing authority would be worse than notifying
+nobody. (Noted in passing: the live code leaves orphaned pending reviews on a
+fast-lane triage while the seed script creates none for its fast-lane
+initiative. Pre-existing inconsistency, not touched.)
+
+LAYERING FIX FORCED BY THIS: DOMAIN_LABEL lived in
+components/jeeves/domain-labels.tsx, which also exports a React component, so
+a service importing it would have pulled JSX into lib/ — and lib/ importing
+components/ is backwards anyway. Moved the map to lib/domain/labels.ts;
+domain-labels.tsx re-exports it so all 13 existing importers are unaffected.
+
+VERIFIED: 8/8 service tests. End to end against real PostgreSQL 16 — submit,
+triage, then /reviews shows 8 recorded asks, "Not delivered", and the
+unconfigured-transport notice. Renders in the PRODUCTION build too, not just
+dev.
+
+INVESTIGATED AND CLEARED: a hydration mismatch on DemoModeChip appeared in
+dev with an active session. Not mine — my only change to that file was moving
+the dialog's open state; `session` is read identically. And it is dev-only:
+the production build is clean both with and without a session. The cause is
+that the session lives in sessionStorage, so the first paint is the read-only
+chip and then it swaps — a flash in prod, a warning in dev.
+
+### Recommendations / Next steps:
+- A real transport is now a contained addition: one place to change
+  (deliveryTransportStatus) plus a worker that sets delivered_at. The
+  invariant does not move.
+- formatShortDate is duplicated as a private helper in three chart
+  components; I used an ISO slice rather than adding a fourth copy. Worth
+  extracting to lib/format one day.
+- Fast-lane leaves orphaned pending review rows (above). Worth a decision:
+  close them on fast-lane approval, or do not create them until the branch is
+  known.

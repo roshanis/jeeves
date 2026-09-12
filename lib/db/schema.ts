@@ -392,6 +392,45 @@ export const controlExceptions = pgTable(
 );
 
 /* -------------------------------------------------------------------------
+ * Review-request notifications.
+ *
+ * The durable record that a domain was ASKED to review something. Written in
+ * the same transaction as the review rows themselves, so if a review exists
+ * the request for it was recorded — the two cannot disagree.
+ *
+ * Delivery is not implemented: there is no configured transport, and faking
+ * one would mean claiming to have emailed Legal when nothing left the
+ * process. `deliveredAt`/`deliveryChannel` stay null until something real
+ * ships them. See drizzle/0011_review_notifications.sql.
+ * ---------------------------------------------------------------------- */
+
+export const reviewNotifications = pgTable(
+  "review_notifications",
+  {
+    id: text("id").primaryKey(),
+    initiativeId: text("initiative_id")
+      .notNull()
+      .references(() => initiatives.id),
+    cycleId: text("cycle_id")
+      .notNull()
+      .references(() => reviewCycles.id),
+    domain: text("domain").notNull(), // Domain
+    kind: text("kind").notNull(), // 'review_requested' | future nudges
+    /** Rendered at enqueue time — the ask as it was made, not as it reads now. */
+    subject: text("subject").notNull(),
+    body: text("body").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    deliveredAt: timestamp("delivered_at", { withTimezone: true }),
+    deliveryChannel: text("delivery_channel"),
+  },
+  (t) => [
+    // triage() is idempotent per (cycle, domain); the ask must be too, or a
+    // re-run would queue a duplicate.
+    uniqueIndex("review_notifications_cycle_domain_kind_uq").on(t.cycleId, t.domain, t.kind),
+  ],
+);
+
+/* -------------------------------------------------------------------------
  * Rate-limit buckets — shared token-bucket state (M-next).
  *
  * The limiter used to keep buckets in a module-scoped Map, so on a

@@ -4,19 +4,13 @@
 // control-catalog) keep importing these plain values from here without
 // crossing the client-module boundary.
 import type { ReviewRow } from "@/lib/data/dto";
-import type { Domain } from "@/lib/domain/types";
 import { cn } from "@/lib/utils";
 
-export const DOMAIN_LABEL: Record<Domain, string> = {
-  legal: "Legal",
-  procurement: "Procurement",
-  "tech-architecture": "Tech Architecture",
-  "responsible-ai": "Responsible AI",
-  security: "Security",
-  "privacy-hipaa": "Privacy/HIPAA",
-  "clinical-safety": "Clinical Safety",
-  "data-governance": "Data Governance",
-};
+// The map itself now lives in lib/domain/labels.ts — pure data, importable
+// from the service layer without dragging JSX along (this module also
+// exports a component). Re-exported here so existing importers are
+// unaffected.
+export { DOMAIN_LABEL } from "@/lib/domain/labels";
 
 const STATUS_CLASS: Record<ReviewRow["status"], string> = {
   pending: "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300",
