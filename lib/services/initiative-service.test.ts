@@ -45,6 +45,7 @@ async function seedControlCatalog(db: TestDb): Promise<void> {
 }
 
 const REQUESTER = { id: "priya-raman", role: "requester" as const };
+const PROGRAM = { id: "nia-okafor", role: "program" as const };
 const REVIEWER = { id: "elena-vasquez", role: "reviewer" as const };
 const APPROVER = { id: "angela-torres", role: "approver" as const };
 const ADMIN = { id: "ray-chen", role: "admin" as const };
@@ -103,6 +104,7 @@ describe("lib/services/initiative-service", () => {
       const afterSubmit = (await db.select().from(initiatives).where(eq(initiatives.id, draft.initiativeId)))[0]!;
       expect(afterSubmit.state).toBe("submitted");
 
+      await svc.startQc(db, draft.initiativeId, PROGRAM);
       const triageResult = await svc.triage(db, draft.initiativeId);
       expect(triageResult.branch).toBe("review"); // critical + PHI + member-facing -> never fast-lane eligible
       expect(triageResult.tier).toBe("critical");
@@ -226,6 +228,7 @@ describe("lib/services/initiative-service", () => {
       });
       expect(submitResult.submitted).toBe(true);
 
+      await svc.startQc(db, draft.initiativeId, PROGRAM);
       const triageResult = await svc.triage(db, draft.initiativeId);
       expect(triageResult.branch).toBe("fast-lane");
       if (triageResult.branch !== "fast-lane") throw new Error("unreachable");
@@ -251,6 +254,7 @@ describe("lib/services/initiative-service", () => {
         requesterName: "Dan Kowalski",
       });
       await svc.submitIntake(db, draft.initiativeId, { id: "dan-kowalski", role: "requester" });
+      await svc.startQc(db, draft.initiativeId, PROGRAM);
       const triageResult = await svc.triage(db, draft.initiativeId);
       expect(triageResult.branch).toBe("fast-lane");
 
@@ -283,6 +287,7 @@ describe("lib/services/initiative-service", () => {
         requesterName: "Priya Raman",
       });
       await svc.submitIntake(db, draft.initiativeId, REQUESTER);
+      await svc.startQc(db, draft.initiativeId, PROGRAM);
       await svc.triage(db, draft.initiativeId);
       return draft;
     }
@@ -344,6 +349,7 @@ describe("lib/services/initiative-service", () => {
         requesterName: "Priya Raman",
       });
       await svc.submitIntake(db, draft.initiativeId, REQUESTER);
+      await svc.startQc(db, draft.initiativeId, PROGRAM);
       await svc.triage(db, draft.initiativeId);
       return draft;
     }
@@ -418,6 +424,7 @@ describe("lib/services/initiative-service", () => {
         requesterName: "Priya Raman",
       });
       await svc.submitIntake(db, draft.initiativeId, REQUESTER);
+      await svc.startQc(db, draft.initiativeId, PROGRAM);
       await svc.triage(db, draft.initiativeId);
       return draft;
     }
@@ -524,6 +531,7 @@ describe("lib/services/initiative-service", () => {
         requesterName: "Priya Raman",
       });
       await svc.submitIntake(db, draft.initiativeId, REQUESTER);
+      await svc.startQc(db, draft.initiativeId, PROGRAM);
       const triageResult = await svc.triage(db, draft.initiativeId);
       if (triageResult.branch !== "review") throw new Error("expected review branch");
       return { initiativeId: draft.initiativeId, cycleId: triageResult.cycleId };
@@ -640,6 +648,7 @@ describe("lib/services/initiative-service", () => {
       // is illegal (no such rule), so it throws inside the transaction body after triage() has
       // already run once successfully. Confirm the SECOND (failed) call left no additional
       // risk_assessments/review_cycles rows and did not change state further.
+      await svc.startQc(db, initiativeId, PROGRAM);
       await svc.triage(db, initiativeId); // succeeds once, moves to in_review (champion is not fast-lane eligible)
       const afterFirstTriage = (
         await db.select().from(initiatives).where(eq(initiatives.id, initiativeId))
@@ -661,6 +670,7 @@ describe("lib/services/initiative-service", () => {
         requesterName: "Priya Raman",
       });
       await svc.submitIntake(db, draft.initiativeId, REQUESTER);
+      await svc.startQc(db, draft.initiativeId, PROGRAM);
       await svc.triage(db, draft.initiativeId);
 
       await expect(
@@ -735,6 +745,7 @@ describe("lib/services/initiative-service", () => {
         requesterName: "Priya Raman",
       });
       await svc.submitIntake(db, draft.initiativeId, REQUESTER);
+      await svc.startQc(db, draft.initiativeId, PROGRAM);
       const triageResult = await svc.triage(db, draft.initiativeId);
       if (triageResult.branch !== "review") throw new Error("expected review branch");
       const rds = await db
@@ -930,6 +941,7 @@ describe("lib/services/initiative-service", () => {
         requesterName: "Priya Raman",
       });
       await svc.submitIntake(db, draft.initiativeId, REQUESTER);
+      await svc.startQc(db, draft.initiativeId, PROGRAM);
       const triageResult = await svc.triage(db, draft.initiativeId);
       if (triageResult.branch !== "review") throw new Error("expected review branch");
       const initiativeId = draft.initiativeId;
@@ -1055,6 +1067,7 @@ describe("lib/services/initiative-service", () => {
         requesterName: "Priya Raman",
       });
       await svc.submitIntake(db, draft.initiativeId, REQUESTER);
+      await svc.startQc(db, draft.initiativeId, PROGRAM);
       const result = await svc.triage(db, draft.initiativeId);
       expect(result.branch).toBe("fast-lane");
 
@@ -1077,6 +1090,7 @@ describe("lib/services/initiative-service", () => {
         requesterName: "Priya Raman",
       });
       await svc.submitIntake(db, draft.initiativeId, REQUESTER);
+      await svc.startQc(db, draft.initiativeId, PROGRAM);
       const result = await svc.triage(db, draft.initiativeId);
       expect(result.tier).toBe("critical");
 
@@ -1254,6 +1268,7 @@ describe("lib/services/initiative-service", () => {
         ).rejects.toThrow(NotFoundError);
 
         await svc.submitIntake(db, foreignWrongState.initiativeId, REQUESTER, "ws-A");
+        await svc.startQc(db, foreignWrongState.initiativeId, PROGRAM, "ws-A");
         await expect(
           svc.triage(db, foreignWrongState.initiativeId, SYSTEM_ACTOR, "ws-A"),
         ).resolves.toMatchObject({ branch: "review" });
@@ -1265,6 +1280,7 @@ describe("lib/services/initiative-service", () => {
           workspaceId: null,
         });
         await svc.submitIntake(db, seededStyle.initiativeId, REQUESTER, "ws-any");
+        await svc.startQc(db, seededStyle.initiativeId, PROGRAM, "ws-any");
         await expect(
           svc.triage(db, seededStyle.initiativeId, SYSTEM_ACTOR, "ws-any"),
         ).resolves.toMatchObject({ branch: "review" });
@@ -1285,6 +1301,7 @@ describe("lib/services/initiative-service", () => {
       // initiative was created with, matching how a real same-browser
       // session would carry it through the whole flow.
       await svc.submitIntake(db, draft.initiativeId, REQUESTER, workspaceId);
+      await svc.startQc(db, draft.initiativeId, PROGRAM, workspaceId);
       const triageResult = await svc.triage(db, draft.initiativeId, SYSTEM_ACTOR, workspaceId);
       if (triageResult.branch !== "review") throw new Error("expected review branch");
       return { initiativeId: draft.initiativeId, cycleId: triageResult.cycleId };
@@ -1395,7 +1412,10 @@ describe("lib/services/initiative-service", () => {
     });
 
     describe("triage()", () => {
-      async function submittedInWorkspace(workspaceId: string | null): Promise<string> {
+      // Named for where it leaves the initiative: `in_qc`, not `submitted`.
+      // triage() is only reachable from there now, so a "submitted" fixture
+      // would test the QC gate rather than the workspace check this block is about.
+      async function inQcInWorkspace(workspaceId: string | null): Promise<string> {
         const draft = await svc.createDraft(db, {
           payload: CHAMPION_PREFILL_PAYLOAD,
           requesterActor: REQUESTER,
@@ -1403,11 +1423,12 @@ describe("lib/services/initiative-service", () => {
           workspaceId,
         });
         await svc.submitIntake(db, draft.initiativeId, REQUESTER, workspaceId);
+        await svc.startQc(db, draft.initiativeId, PROGRAM, workspaceId);
         return draft.initiativeId;
       }
 
       it("a session bound to a DIFFERENT workspace gets NotFoundError — same shape as an unknown id", async () => {
-        const initiativeId = await submittedInWorkspace("ws-A");
+        const initiativeId = await inQcInWorkspace("ws-A");
         await expect(svc.triage(db, initiativeId, SYSTEM_ACTOR, "ws-B")).rejects.toThrow(NotFoundError);
         await expect(svc.triage(db, initiativeId, SYSTEM_ACTOR, "ws-B")).rejects.toThrow(
           `initiative not found: ${initiativeId}`,
@@ -1415,10 +1436,10 @@ describe("lib/services/initiative-service", () => {
       });
 
       it("no partial write happens on a workspace-mismatch rejection", async () => {
-        const initiativeId = await submittedInWorkspace("ws-A");
+        const initiativeId = await inQcInWorkspace("ws-A");
         await expect(svc.triage(db, initiativeId, SYSTEM_ACTOR, "ws-B")).rejects.toThrow(NotFoundError);
         const row = (await db.select().from(initiatives).where(eq(initiatives.id, initiativeId)))[0]!;
-        expect(row.state).toBe("submitted"); // unchanged
+        expect(row.state).toBe("in_qc"); // unchanged
         const raRows = await db
           .select()
           .from(riskAssessments)
@@ -1427,18 +1448,18 @@ describe("lib/services/initiative-service", () => {
       });
 
       it("a session bound to the OWNING workspace succeeds", async () => {
-        const initiativeId = await submittedInWorkspace("ws-A");
+        const initiativeId = await inQcInWorkspace("ws-A");
         const res = await svc.triage(db, initiativeId, SYSTEM_ACTOR, "ws-A");
         expect(res.tier).toBe("critical");
       });
 
       it("a session with a NULL workspace cannot triage a workspace-tagged initiative", async () => {
-        const initiativeId = await submittedInWorkspace("ws-A");
+        const initiativeId = await inQcInWorkspace("ws-A");
         await expect(svc.triage(db, initiativeId, SYSTEM_ACTOR, null)).rejects.toThrow(NotFoundError);
       });
 
       it("a seeded (null-workspace) initiative is triageable from ANY session workspace", async () => {
-        const initiativeId = await submittedInWorkspace(null);
+        const initiativeId = await inQcInWorkspace(null);
         const res = await svc.triage(db, initiativeId, SYSTEM_ACTOR, "ws-anything-at-all");
         expect(res.tier).toBe("critical");
       });
@@ -1519,6 +1540,7 @@ describe("lib/services/initiative-service", () => {
         requesterName: "Priya Raman",
       });
       await svc.submitIntake(db, draft.initiativeId, REQUESTER);
+      await svc.startQc(db, draft.initiativeId, PROGRAM);
       const triageResult = await svc.triage(db, draft.initiativeId);
       if (triageResult.branch !== "review") throw new Error("expected review branch");
 
@@ -1556,6 +1578,7 @@ describe("lib/services/initiative-service", () => {
         requesterName: "Priya Raman",
       });
       await svc.submitIntake(db, draft.initiativeId, REQUESTER);
+      await svc.startQc(db, draft.initiativeId, PROGRAM);
       await svc.triage(db, draft.initiativeId);
 
       const first = await svc.decide(db, draft.initiativeId, APPROVER, null, { decision: "rejected" });
@@ -1585,6 +1608,7 @@ describe("lib/services/initiative-service", () => {
         requesterName: "Priya Raman",
       });
       await svc.submitIntake(db, draft.initiativeId, REQUESTER);
+      await svc.startQc(db, draft.initiativeId, PROGRAM);
       await svc.triage(db, draft.initiativeId);
 
       // Test-only same-transaction write injection (see file-level comment
@@ -1659,6 +1683,7 @@ describe("lib/services/initiative-service", () => {
         requesterName: "Priya Raman",
       });
       await svc.submitIntake(db, draft.initiativeId, REQUESTER);
+      await svc.startQc(db, draft.initiativeId, PROGRAM);
       const triageResult = await svc.triage(db, draft.initiativeId);
       if (triageResult.branch !== "review") throw new Error("expected review branch");
       const rows = await db
@@ -1802,6 +1827,7 @@ describe("lib/services/initiative-service", () => {
         requesterName: "Priya Raman",
       });
       await svc.submitIntake(db, draft.initiativeId, REQUESTER);
+      await svc.startQc(db, draft.initiativeId, PROGRAM);
 
       /* eslint-disable @typescript-eslint/no-explicit-any */
       const dbAny = db as any;
@@ -1830,7 +1856,7 @@ describe("lib/services/initiative-service", () => {
                   afterWhere.returning = async (...args: unknown[]) => {
                     // Simulated concurrent second triage() call: flips the
                     // initiative's state directly, between THIS triage()'s
-                    // own read ('submitted') and its first CAS update below.
+                    // own read ('in_qc') and its first CAS update below.
                     await realUpdate(initiatives)
                       .set({ state: "triaged" })
                       .where(eq(initiatives.id, draft.initiativeId));
@@ -1860,10 +1886,10 @@ describe("lib/services/initiative-service", () => {
       spy.mockRestore();
 
       // Whole transaction rolled back — including the injected write — back
-      // to the pre-transaction 'submitted' state, and no risk_assessments/
+      // to the pre-transaction 'in_qc' state, and no risk_assessments/
       // review_cycles rows from the "losing" call.
       const row = (await db.select().from(initiatives).where(eq(initiatives.id, draft.initiativeId)))[0]!;
-      expect(row.state).toBe("submitted");
+      expect(row.state).toBe("in_qc");
       const raRows = await db
         .select()
         .from(riskAssessments)

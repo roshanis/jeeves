@@ -992,3 +992,63 @@ Self-approval prevention falls out of the gate rather than being bolted on.
 - Fast-lane still creates review rows before the eligibility check, so a
   fast-lane initiative carries orphaned pending reviews. Unchanged by this
   work and still worth a decision.
+
+## [AGENT: Claude] [2026-09-12T18:40Z]
+### Action: Carry the QC gate through the rest of the suite, and give the QC return a real dialog
+### Files changed:
+- lib/services/initiative-service.test.ts
+- lib/services/notification-service.test.ts
+- lib/workflow/review-run.test.ts
+- app/api/__tests__/routes.test.ts
+- app/api/__tests__/read-isolation.test.ts
+- app/api/__tests__/mutation-workspace-authz.test.ts
+- tests/ui/initiative-blockers-rail-states.test.tsx
+- tests/ui/qc-return-dialog.test.tsx (new)
+- components/jeeves/live-actions-bar.tsx
+
+### Diff summary:
+The gate commit (e9ec34a) was correct and deliberately unpushed: removing
+`submitted --triage-->` broke 93 tests across 7 files, every one of them a flow
+that drove submit -> triage directly. That number is the measure of how much of
+this codebase depends on the fan-out being one click from submission — which is
+the reason the gate was worth adding.
+
+FIXED BY INSERTING THE HOP, NOT BY WEAKENING THE GATE. At the service level
+that is `await svc.startQc(db, id, PROGRAM)` before each triage; over HTTP it
+needs a SECOND session, because the Program Office is not the requester and the
+QC session has to land in the same workspace or it gets the stranger's 404 —
+hence `passQcOverHttp(initiativeId, workspaceCookie, ip)` in routes.test.ts and
+a matching helper in the other two API files.
+
+THREE FIXTURES WERE RENAMED RATHER THAN LEFT LYING: `submittedInWorkspace` ->
+`inQcInWorkspace`, `submittedChampion` -> `championReadyToTriage`. A helper
+named for a state it no longer leaves the row in is a trap for the next reader.
+The same applies to two assertions that read `expect(row.state).toBe("submitted")`
+as their "unchanged" anchor — now `"in_qc"`, which is what unchanged means here.
+
+ORDERING MATTERED IN ONE PLACE: the triage-409 test arms an injector on the
+NEXT transaction. The QC hop has to happen before the injector is installed, or
+the injector intercepts QC instead of triage and the test passes for the wrong
+reason.
+
+QC RETURN NOW USES ReasonDialog (previous entry's own recommendation). The
+reason is the only thing telling the requester what to fix and it lands on the
+append-only audit trail; `window.prompt` gave it one unstyled line, no way to
+show the server's error back to the person who typed it, and is suppressed
+outright in some contexts. The shared dialog also keeps the confirm button
+disabled until something is typed, so an empty reason never reaches the 400.
+
+### Verified:
+- 4 new UI tests written failing first (they caught the live `window.prompt`
+  call before the swap), then passing
+- lib/services + lib/workflow + lib/lifecycle + blockers-rail: 134 passed
+- app/api routes + read-isolation + mutation-workspace-authz: 42 passed
+- typecheck + lint clean
+
+### Recommendations / Next steps:
+- Still open from the previous entry: seed one initiative directly into
+  `in_qc` so the state is visible without driving the live loop.
+- Still open: fast-lane creates review rows before the eligibility check, so a
+  fast-lane initiative carries orphaned pending reviews.
+- `formatShortDate` is duplicated privately in three chart components; the
+  review-request queue slices ISO strings rather than adding a fourth copy.

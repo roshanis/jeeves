@@ -9,6 +9,7 @@ import * as svc from "../services/initiative-service";
 import { getRunProgress, runSingleDomainDraft, startDraftRun } from "./review-run";
 
 const REQUESTER = { id: "priya-raman", role: "requester" as const };
+const PROGRAM = { id: "nia-okafor", role: "program" as const };
 
 async function setUpChampionInReview(db: TestDb) {
   const draft = await svc.createDraft(db, {
@@ -17,6 +18,7 @@ async function setUpChampionInReview(db: TestDb) {
     requesterName: "Priya Raman",
   });
   await svc.submitIntake(db, draft.initiativeId, REQUESTER);
+  await svc.startQc(db, draft.initiativeId, PROGRAM);
   const triageResult = await svc.triage(db, draft.initiativeId);
   if (triageResult.branch !== "review") throw new Error("expected champion to route to review");
   return { initiativeId: draft.initiativeId, cycleId: triageResult.cycleId, domains: triageResult.requiredDomains };

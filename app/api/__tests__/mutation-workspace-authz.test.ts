@@ -111,6 +111,31 @@ async function expectSameNotFoundShape(
   );
 }
 
+/**
+ * Open QC on a submitted intake, in the SAME workspace as `session`.
+ *
+ * The QC gate now sits between submit and triage, and it is not the
+ * requester's to open (a gate its own applicant can open is not a gate) — so
+ * this issues a second session for the Program Office on the same workspace
+ * cookie rather than reusing the one that submitted.
+ */
+async function passQc(
+  session: { workspaceCookie: string },
+  initiativeId: string,
+  ip: string,
+): Promise<void> {
+  const program = await issueSession("nia-okafor", ip, session.workspaceCookie);
+  const { POST } = await import("../initiatives/[id]/qc/route");
+  const response = await POST(
+    new Request(`http://localhost/api/initiatives/${initiativeId}/qc`, {
+      method: "POST",
+      headers: bearer(program.token, ip),
+    }),
+    { params: Promise.resolve({ id: initiativeId }) },
+  );
+  expect(response.status).toBe(200);
+}
+
 async function createWorkspacePair(personaKey: string, ipBase: string) {
   const owner = await issueSession(personaKey, `${ipBase}.1`);
   const foreign = await issueSession(personaKey, `${ipBase}.2`);
@@ -203,6 +228,7 @@ describe("remaining mutation routes enforce session workspace authorization", ()
       { params: Promise.resolve({ id: initiativeId }) },
     );
     expect(ownerSubmit.status).toBe(200);
+    await passQc(owner, initiativeId, "70.0.1.11");
     const ownerTriage = await POST(
       new Request(`http://localhost/api/initiatives/${initiativeId}/triage`, {
         method: "POST",
@@ -225,6 +251,7 @@ describe("remaining mutation routes enforce session workspace authorization", ()
       { params: Promise.resolve({ id: sharedId }) },
     );
     expect(sharedSubmit.status).toBe(200);
+    await passQc(foreign, sharedId, "70.0.1.12");
     const sharedTriage = await POST(
       new Request(`http://localhost/api/initiatives/${sharedId}/triage`, {
         method: "POST",

@@ -85,6 +85,35 @@ async function issueSessionInWorkspace(
   return { token: json.token, workspaceCookie: match ? match[0] : (workspaceCookie ?? "") };
 }
 
+/**
+ * Open QC on a submitted intake, over HTTP, as the Program Office.
+ *
+ * `submitted --triage-->` is gone: the review fan-out is reachable only
+ * through `in_qc`, and the requester cannot open their own gate. Chains below
+ * that are about what happens AFTER triage take the hop as one line — the
+ * gate itself is covered in lib/lifecycle/qc-gate.test.ts and
+ * lib/services/qc-gate.test.ts.
+ *
+ * `workspaceCookie` is the browser's: the QC session has to land in the same
+ * workspace as the initiative, or it gets the stranger's 404.
+ */
+async function passQcOverHttp(
+  initiativeId: string,
+  workspaceCookie: string,
+  ip: string,
+): Promise<void> {
+  const { token } = await issueSessionInWorkspace("nia-okafor", workspaceCookie);
+  const { POST } = await import("../initiatives/[id]/qc/route");
+  const res = await POST(
+    new Request(`http://localhost/api/initiatives/${initiativeId}/qc`, {
+      method: "POST",
+      headers: bearer(token, ip),
+    }),
+    { params: Promise.resolve({ id: initiativeId }) },
+  );
+  expect(res.status).toBe(200);
+}
+
 const CHAMPION_PAYLOAD = {
   basics: {
     title: "Prior-Auth Clinical Summarizer",
@@ -289,6 +318,8 @@ describe("full champion route chain: submit -> triage -> draft-run -> sign -> de
     const submitJson = await submitRes.json();
     expect(submitJson.submitted).toBe(true);
 
+    await passQcOverHttp(initiativeId, workspaceCookie, "10.0.0.1");
+
     const { POST: triagePost } = await import("../initiatives/[id]/triage/route");
     const triageRes = await triagePost(
       new Request(`http://localhost/api/initiatives/${initiativeId}/triage`, {
@@ -491,7 +522,7 @@ describe("deep-review budget multiplier on draft-run", () => {
   ];
 
   async function triagedInitiative(ip: string): Promise<{ id: string; token: string }> {
-    const token = await issueSessionFor("priya-raman");
+    const { token, workspaceCookie } = await issueSessionInWorkspace("priya-raman");
     const { POST: createInitiative } = await import("../initiatives/route");
     const createRes = await createInitiative(
       new Request("http://localhost/api/initiatives", {
@@ -509,6 +540,7 @@ describe("deep-review budget multiplier on draft-run", () => {
       }),
       { params: Promise.resolve({ id: initiativeId }) },
     );
+    await passQcOverHttp(initiativeId, workspaceCookie, ip);
     const { POST: triagePost } = await import("../initiatives/[id]/triage/route");
     await triagePost(
       new Request(`http://localhost/api/initiatives/${initiativeId}/triage`, {
@@ -572,7 +604,7 @@ describe("budget-exhaustion 429 on draft-run", () => {
     const today = new Date().toISOString().slice(0, 10);
     await store.addUsage(today, 10_000_000);
 
-    const requesterToken = await issueSessionFor("priya-raman");
+    const { token: requesterToken, workspaceCookie } = await issueSessionInWorkspace("priya-raman");
     const { POST: createInitiative } = await import("../initiatives/route");
     const createRes = await createInitiative(
       new Request("http://localhost/api/initiatives", {
@@ -591,6 +623,7 @@ describe("budget-exhaustion 429 on draft-run", () => {
       }),
       { params: Promise.resolve({ id: initiativeId }) },
     );
+    await passQcOverHttp(initiativeId, workspaceCookie, "11.0.0.1");
     const { POST: triagePost } = await import("../initiatives/[id]/triage/route");
     await triagePost(
       new Request(`http://localhost/api/initiatives/${initiativeId}/triage`, {
@@ -635,6 +668,7 @@ describe("POST /api/reviews/[cycleId]/[domain]/run — on-demand agent run", () 
       }),
       { params: Promise.resolve({ id: initiativeId }) },
     );
+    await passQcOverHttp(initiativeId, workspaceCookie, ip);
     const { POST: triagePost } = await import("../initiatives/[id]/triage/route");
     const triageRes = await triagePost(
       new Request(`http://localhost/api/initiatives/${initiativeId}/triage`, {
@@ -731,7 +765,7 @@ describe("POST /api/agents/health — connector probe", () => {
 
 describe("GET routes stay public read-only", () => {
   it("GET draft-run progress requires no session", async () => {
-    const requesterToken = await issueSessionFor("priya-raman");
+    const { token: requesterToken, workspaceCookie } = await issueSessionInWorkspace("priya-raman");
     const { POST: createInitiative } = await import("../initiatives/route");
     const createRes = await createInitiative(
       new Request("http://localhost/api/initiatives", {
@@ -749,6 +783,7 @@ describe("GET routes stay public read-only", () => {
       }),
       { params: Promise.resolve({ id: initiativeId }) },
     );
+    await passQcOverHttp(initiativeId, workspaceCookie, "12.0.0.1");
     const { POST: triagePost } = await import("../initiatives/[id]/triage/route");
     const triageRes = await triagePost(
       new Request(`http://localhost/api/initiatives/${initiativeId}/triage`, {
@@ -793,6 +828,7 @@ describe("workspace isolation on mutation routes (external-review finding #1)", 
       }),
       { params: Promise.resolve({ id: initiativeId }) },
     );
+    await passQcOverHttp(initiativeId, workspaceCookie, "50.0.0.1");
     const { POST: triagePost } = await import("../initiatives/[id]/triage/route");
     await triagePost(
       new Request(`http://localhost/api/initiatives/${initiativeId}/triage`, {
@@ -879,7 +915,7 @@ describe("workspace isolation on submit/triage routes (external-review finding P
   });
 
   it("triage route: a stranger's session gets 404; the owning session gets 200", async () => {
-    const { token: ownerToken } = await issueSessionInWorkspace("priya-raman");
+    const { token: ownerToken, workspaceCookie } = await issueSessionInWorkspace("priya-raman");
     const { POST: createInitiative } = await import("../initiatives/route");
     const createRes = await createInitiative(
       new Request("http://localhost/api/initiatives", {
@@ -897,6 +933,8 @@ describe("workspace isolation on submit/triage routes (external-review finding P
       }),
       { params: Promise.resolve({ id: initiativeId }) },
     );
+
+    await passQcOverHttp(initiativeId, workspaceCookie, "53.0.0.4");
 
     const { POST: triagePost } = await import("../initiatives/[id]/triage/route");
     const { token: strangerToken } = await issueSessionInWorkspace("angela-torres");
@@ -995,7 +1033,7 @@ describe("409 conflict mapping on submit/triage routes (external-review finding 
   });
 
   it("triage route maps ConflictError to 409", async () => {
-    const { token } = await issueSessionInWorkspace("priya-raman");
+    const { token, workspaceCookie } = await issueSessionInWorkspace("priya-raman");
     const { POST: createInitiative } = await import("../initiatives/route");
     const createRes = await createInitiative(
       new Request("http://localhost/api/initiatives", {
@@ -1013,6 +1051,10 @@ describe("409 conflict mapping on submit/triage routes (external-review finding 
       }),
       { params: Promise.resolve({ id: initiativeId }) },
     );
+
+    // Through the QC gate FIRST — the injector arms the next transaction, and
+    // the QC hop would otherwise be the one it intercepts.
+    await passQcOverHttp(initiativeId, workspaceCookie, "55.0.0.3");
 
     const restore = injectConcurrentInitiativeWrite(initiativeId, "triaged");
     const { POST: triagePost } = await import("../initiatives/[id]/triage/route");
@@ -1036,6 +1078,7 @@ describe("POST /api/initiatives/[id]/draft-run — role + workspace authorizatio
   async function createSubmittedTriagedInitiative(
     token: string,
     ip: string,
+    workspaceCookie: string,
   ): Promise<string> {
     const { POST: createInitiative } = await import("../initiatives/route");
     const createRes = await createInitiative(
@@ -1054,6 +1097,7 @@ describe("POST /api/initiatives/[id]/draft-run — role + workspace authorizatio
       }),
       { params: Promise.resolve({ id: initiativeId }) },
     );
+    await passQcOverHttp(initiativeId, workspaceCookie, ip);
     const { POST: triagePost } = await import("../initiatives/[id]/triage/route");
     await triagePost(
       new Request(`http://localhost/api/initiatives/${initiativeId}/triage`, {
@@ -1067,7 +1111,7 @@ describe("POST /api/initiatives/[id]/draft-run — role + workspace authorizatio
 
   it("403s a reviewer session (not in the allowed role set)", async () => {
     const { token: requesterToken, workspaceCookie } = await issueSessionInWorkspace("priya-raman");
-    const initiativeId = await createSubmittedTriagedInitiative(requesterToken, "51.0.0.1");
+    const initiativeId = await createSubmittedTriagedInitiative(requesterToken, "51.0.0.1", workspaceCookie);
     const { token: reviewerToken } = await issueSessionInWorkspace("elena-vasquez", workspaceCookie);
 
     const { POST: draftRunPost } = await import("../initiatives/[id]/draft-run/route");
@@ -1084,7 +1128,7 @@ describe("POST /api/initiatives/[id]/draft-run — role + workspace authorizatio
 
   it("200s an admin session (in the allowed role set) in the owning workspace", async () => {
     const { token: requesterToken, workspaceCookie } = await issueSessionInWorkspace("priya-raman");
-    const initiativeId = await createSubmittedTriagedInitiative(requesterToken, "51.0.1.1");
+    const initiativeId = await createSubmittedTriagedInitiative(requesterToken, "51.0.1.1", workspaceCookie);
     const { token: adminToken } = await issueSessionInWorkspace("ray-chen", workspaceCookie);
 
     const { POST: draftRunPost } = await import("../initiatives/[id]/draft-run/route");
@@ -1100,8 +1144,8 @@ describe("POST /api/initiatives/[id]/draft-run — role + workspace authorizatio
   });
 
   it("404s a requester session from a DIFFERENT workspace than the one that created the initiative", async () => {
-    const { token: requesterToken } = await issueSessionInWorkspace("priya-raman");
-    const initiativeId = await createSubmittedTriagedInitiative(requesterToken, "51.0.2.1");
+    const { token: requesterToken, workspaceCookie } = await issueSessionInWorkspace("priya-raman");
+    const initiativeId = await createSubmittedTriagedInitiative(requesterToken, "51.0.2.1", workspaceCookie);
 
     // A different browser — fresh workspace, no relation to the initiative above.
     const { token: strangerToken } = await issueSessionInWorkspace("dan-kowalski");

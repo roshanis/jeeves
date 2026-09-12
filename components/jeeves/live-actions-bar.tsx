@@ -11,9 +11,15 @@
  * their pages keep the untouched read-only rendering).
  *
  * Actions by lifecycle state:
- *  - submitted  -> "Run triage" (any authenticated persona; the server
- *                  records the system actor). Result rendered inline: tier,
- *                  branch (fast-lane vs review), required domains.
+ *  - submitted  -> "Open QC" (Program Office / Admin). The gate before the
+ *                  fan-out: triage asks every required domain at once, so
+ *                  this is the last point at which an incomplete intake
+ *                  costs nobody else time.
+ *  - in_qc      -> "Run triage" (any authenticated persona; the server
+ *                  records the system actor) or "Return to requester"
+ *                  (Program Office / Admin, reason required). Triage's
+ *                  result is rendered inline: tier, branch (fast-lane vs
+ *                  review), required domains.
  *  - in_review  -> "Record decision" (approver role) — approve /
  *                  conditionally approve (≥1 condition) / reject.
  *
@@ -48,6 +54,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { DisableWithTooltip, GatedActionButton } from "./role-gate";
+import { ReasonDialog } from "./reason-dialog";
 import { TierBadge } from "./tier-badge";
 import { DOMAIN_LABEL } from "./domain-labels";
 
@@ -61,7 +68,9 @@ export function LiveActionsBar({ slug, state }: { slug: string; state: Lifecycle
   const [triageResult, setTriageResult] = React.useState<TriageResult | null>(null);
   const [decideOpen, setDecideOpen] = React.useState(false);
   const [qcPending, setQcPending] = React.useState(false);
+  const [returnOpen, setReturnOpen] = React.useState(false);
   const [returnPending, setReturnPending] = React.useState(false);
+  const [returnError, setReturnError] = React.useState<string | null>(null);
 
   if (!session || !liveInfo?.initiativeId) {
     return null;
@@ -106,20 +115,24 @@ export function LiveActionsBar({ slug, state }: { slug: string; state: Lifecycle
     }
   }
 
-  async function handleReturnFromQc() {
+  // The reason is required by the service and lands on the append-only audit
+  // trail — it is the only thing telling the requester what to fix. Collected
+  // in the shared ReasonDialog (same control the admin pause/resume and
+  // review-return actions use), whose confirm button stays disabled until
+  // something has been typed, so an empty reason never reaches the 400.
+  async function handleReturnFromQc(reason: string) {
     if (!session) return;
-    // Deliberately a prompt rather than a silent default: the reason lands on
-    // the append-only audit trail and is the only thing telling the requester
-    // what to fix.
-    const reason = window.prompt("Why is this being returned to the requester?");
-    if (reason === null || reason.trim().length === 0) return;
+    setReturnError(null);
     setReturnPending(true);
     try {
-      await returnFromQc(session.token, initiativeId, reason.trim());
+      await returnFromQc(session.token, initiativeId, reason);
+      setReturnOpen(false);
       toast.success("Returned to the requester with your reason on the audit trail.");
       router.refresh();
     } catch (err) {
-      toast.error(isApiError(err) ? apiErrorToMessage(err) : "Could not return the intake.");
+      setReturnError(
+        isApiError(err) ? apiErrorToMessage(err) : "Could not return the intake.",
+      );
       if (isApiError(err) && err.status === 401) live?.logout();
     } finally {
       setReturnPending(false);
@@ -172,7 +185,7 @@ export function LiveActionsBar({ slug, state }: { slug: string; state: Lifecycle
             <DisableWithTooltip
               label="Return to requester"
               requiresRole="program"
-              onAction={() => void handleReturnFromQc()}
+              onAction={() => setReturnOpen(true)}
               pending={returnPending}
               pendingLabel="Returning…"
               data-slot="qc-return"
@@ -232,6 +245,22 @@ export function LiveActionsBar({ slug, state }: { slug: string; state: Lifecycle
           </div>
         ) : null}
       </CardContent>
+
+      <ReasonDialog
+        open={returnOpen}
+        onOpenChange={(open) => {
+          setReturnOpen(open);
+          if (!open) setReturnError(null);
+        }}
+        title="Return to requester"
+        description="The intake goes back to its requester for editing and resubmission. Your reason is what they will act on, and it is written to the audit trail."
+        confirmLabel="Return to requester"
+        pendingLabel="Returning…"
+        destructive
+        pending={returnPending}
+        error={returnError}
+        onConfirm={(reason) => void handleReturnFromQc(reason)}
+      />
 
       <Dialog open={decideOpen} onOpenChange={setDecideOpen}>
         <DialogContent data-slot="decide-dialog" className="sm:max-w-md">

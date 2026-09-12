@@ -13,6 +13,7 @@ const { pendingNotificationsForDomain, undeliveredNotifications, deliveryTranspo
   await import("./notification-service");
 
 const REQUESTER: Actor = { id: "priya-raman", role: "requester" };
+const PROGRAM: Actor = { id: "nia-okafor", role: "program" };
 const SYSTEM: Actor = { id: "system", role: "system" };
 
 /**
@@ -37,7 +38,10 @@ describe("review-request notifications", () => {
     await closeTestDb(testDb);
   });
 
-  async function submittedChampion(): Promise<string> {
+  // Through the QC gate, not merely submitted: triage() is only reachable
+  // from `in_qc`. The gate itself is lib/services/qc-gate.test.ts's subject;
+  // here it is one hop on the way to the fan-out these tests are about.
+  async function championReadyToTriage(): Promise<string> {
     const draft = await svc.createDraft(testDb, {
       payload: CHAMPION_PREFILL_PAYLOAD,
       requesterActor: REQUESTER,
@@ -45,11 +49,12 @@ describe("review-request notifications", () => {
       workspaceId: null,
     });
     await svc.submitIntake(testDb, draft.initiativeId, REQUESTER, null);
+    await svc.startQc(testDb, draft.initiativeId, PROGRAM, null);
     return draft.initiativeId;
   }
 
   it("asks every domain that triage opened a review for — no more, no fewer", async () => {
-    const id = await submittedChampion();
+    const id = await championReadyToTriage();
     const res = await svc.triage(testDb, id, SYSTEM, null);
     expect(res.branch).toBe("review");
 
@@ -64,7 +69,7 @@ describe("review-request notifications", () => {
   });
 
   it("records the ask against the same cycle as the review", async () => {
-    const id = await submittedChampion();
+    const id = await championReadyToTriage();
     const res = await svc.triage(testDb, id, SYSTEM, null);
 
     const notes = await testDb.select().from(reviewNotifications);
@@ -76,7 +81,7 @@ describe("review-request notifications", () => {
   });
 
   it("names the initiative and the domain in the message, rendered at ask time", async () => {
-    const id = await submittedChampion();
+    const id = await championReadyToTriage();
     await svc.triage(testDb, id, SYSTEM, null);
 
     const [row] = await testDb.select().from(initiatives).where(eq(initiatives.id, id));
@@ -92,7 +97,7 @@ describe("review-request notifications", () => {
   });
 
   it("leaves delivery unclaimed — nothing has actually been sent", async () => {
-    const id = await submittedChampion();
+    const id = await championReadyToTriage();
     await svc.triage(testDb, id, SYSTEM, null);
 
     const notes = await testDb.select().from(reviewNotifications);
@@ -103,7 +108,7 @@ describe("review-request notifications", () => {
   });
 
   it("is idempotent — re-running triage does not queue a second ask", async () => {
-    const id = await submittedChampion();
+    const id = await championReadyToTriage();
     await svc.triage(testDb, id, SYSTEM, null);
     const first = (await testDb.select().from(reviewNotifications)).length;
 
@@ -114,7 +119,7 @@ describe("review-request notifications", () => {
   });
 
   it("exposes a reviewer's own outstanding asks", async () => {
-    const id = await submittedChampion();
+    const id = await championReadyToTriage();
     await svc.triage(testDb, id, SYSTEM, null);
 
     const legal = await pendingNotificationsForDomain(testDb, "legal");
@@ -127,7 +132,7 @@ describe("review-request notifications", () => {
   });
 
   it("exposes the undelivered queue for the operator view", async () => {
-    const id = await submittedChampion();
+    const id = await championReadyToTriage();
     await svc.triage(testDb, id, SYSTEM, null);
 
     const queue = await undeliveredNotifications(testDb);

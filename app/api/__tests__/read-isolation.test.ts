@@ -301,6 +301,7 @@ describe("GET /api/initiatives/[id]/draft-run — read isolation (progress polli
   async function triageLiveInitiative(
     token: string,
     ip: string,
+    workspaceCookie: string,
   ): Promise<{ initiativeId: string; cycleId: string }> {
     const { initiativeId } = await createLiveInitiative(token, ip);
 
@@ -313,6 +314,20 @@ describe("GET /api/initiatives/[id]/draft-run — read isolation (progress polli
       { params: Promise.resolve({ id: initiativeId }) },
     );
     expect(submitRes.status).toBe(200);
+
+    // The QC gate: triage is no longer reachable from `submitted`, and it is
+    // not the requester's gate to open — a second session for the Program
+    // Office, on the same workspace cookie, opens it.
+    const program = await issueSessionInWorkspace("nia-okafor", `${ip}0`, workspaceCookie);
+    const { POST: qcPost } = await import("../initiatives/[id]/qc/route");
+    const qcRes = await qcPost(
+      new Request(`http://localhost/api/initiatives/${initiativeId}/qc`, {
+        method: "POST",
+        headers: bearer(program.token, `${ip}0`),
+      }),
+      { params: Promise.resolve({ id: initiativeId }) },
+    );
+    expect(qcRes.status).toBe(200);
 
     const { POST: triagePost } = await import("../initiatives/[id]/triage/route");
     const triageRes = await triagePost(
@@ -337,7 +352,7 @@ describe("GET /api/initiatives/[id]/draft-run — read isolation (progress polli
       "62.0.0.2",
     );
 
-    const { cycleId } = await triageLiveInitiative(tokenA, "62.0.0.1");
+    const { cycleId } = await triageLiveInitiative(tokenA, "62.0.0.1", cookieA);
 
     const { GET } = await import("../initiatives/[id]/draft-run/route");
 

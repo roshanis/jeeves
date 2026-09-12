@@ -117,11 +117,20 @@ describe("InitiativeBlockersRail — never claims all-clear before anything is r
     expect(screen.getByText(/not yet submitted/i)).toBeDefined();
   });
 
-  it("says a submitted initiative is awaiting triage rather than clear", () => {
+  it("says a submitted initiative is awaiting QC rather than clear", () => {
     renderWithProviders(<InitiativeBlockersRail detail={detailFor("submitted")} />);
 
     expect(screen.queryByText(ALL_CLEAR)).toBeNull();
-    expect(screen.getByText(/awaiting triage/i)).toBeDefined();
+    // Not "awaiting triage": a submitted intake waits on a person now, and
+    // saying so is the difference between a queue and a black hole.
+    expect(screen.getByText(/awaiting qc/i)).toBeDefined();
+  });
+
+  it("says an in-QC initiative is being checked rather than clear", () => {
+    renderWithProviders(<InitiativeBlockersRail detail={detailFor("in_qc")} />);
+
+    expect(screen.queryByText(ALL_CLEAR)).toBeNull();
+    expect(screen.getByText(/in qc/i)).toBeDefined();
   });
 
   it("does not claim a rejected initiative is clear", () => {
