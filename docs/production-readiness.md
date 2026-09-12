@@ -25,8 +25,9 @@ is **authentication**, and that is disqualifying on its own.
 
 The distinction matters because almost everything *else* about this codebase
 is production-grade, which makes it easy to mistake for production-ready. It
-is not the engineering that falls short; it is that two of the product's
-load-bearing guarantees are not actually enforced.
+is not the engineering that falls short; it is that the product's central
+guarantee — that an approval carries a named, accountable human — is not
+actually enforced.
 
 ---
 
