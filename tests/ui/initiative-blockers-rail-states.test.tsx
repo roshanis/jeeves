@@ -14,9 +14,8 @@ import { renderWithProviders } from "./helpers";
  * Lifecycle-awareness tests for the blockers rail.
  *
  * The rail used to derive everything from `detail.reviews` and
- * `detail.controls` alone, so BOTH empty arrays collapsed to
- * "No open blockers — all required reviews signed and controls met." and
- * "All required evidence on file.". But review rows only exist after
+ * `detail.controls` alone, so BOTH empty arrays collapsed to an all-clear.
+ * But review rows only exist after
  * triage() writes them, and effective controls only exist after a decision
  * generates them — so an initiative still in intake, or one that was
  * rejected, has neither and was told it was in the clear. Measured against
@@ -106,8 +105,8 @@ function control(overrides: Partial<ControlRow> = {}): ControlRow {
   };
 }
 
-const ALL_CLEAR = /all required reviews signed and controls met/i;
-const EVIDENCE_ALL_CLEAR = /all required evidence on file/i;
+const ALL_CLEAR = /no blockers recorded in the current reviews and controls/i;
+const EVIDENCE_ALL_CLEAR = /no missing evidence flagged in the current controls/i;
 
 describe("InitiativeBlockersRail — never claims all-clear before anything is required", () => {
   it("does not claim reviews are signed for an initiative still in intake", () => {
@@ -160,6 +159,10 @@ describe("InitiativeBlockersRail — never claims all-clear before anything is r
   });
 });
 
+// The all-clear copy is deliberately hedged ("recorded in the current reviews
+// and controls") rather than asserting every REQUIRED review is signed —
+// PR #7's wording, kept in the merge because this branch never compares the
+// rows it sees against summary.domainsRequired.
 describe("InitiativeBlockersRail — still reports a genuine all-clear", () => {
   it("reports no open blockers for a deployed initiative whose reviews and controls are satisfied", () => {
     renderWithProviders(
@@ -213,7 +216,12 @@ describe("InitiativeBlockersRail — existing blocker behaviour is preserved", (
       />,
     );
 
-    expect(screen.getByText("Deployment paused — eval-quality breach")).toBeDefined();
+    // PR #7 reworded this: a pause is not necessarily an eval-quality breach,
+    // so the blocker points at the reason actually recorded rather than
+    // asserting a cause.
+    expect(
+      screen.getByText("Deployment paused — review the recorded reason in Audit"),
+    ).toBeDefined();
   });
 
   it("still lists outstanding evidence when controls exist but lack it", () => {

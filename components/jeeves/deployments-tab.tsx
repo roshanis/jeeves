@@ -3,6 +3,7 @@
 // Telemetry/eval charts live on the separate Evals tab; this tab is a
 // restrained release ledger only.
 import type { DeploymentRow } from "@/lib/data/dto";
+import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Table,
@@ -96,8 +97,12 @@ export function DeploymentsTab({ deployments }: { deployments: DeploymentRow[] }
               </Table>
               {awaitingSignoff ? (
                 <p className="mt-3 text-xs text-status-warning-fg">
-                  One or more versions await promotion sign-off — see the Evals
-                  tab for the offline eval comparison.
+                  One or more versions await promotion sign-off. Review their
+                  evals, then open the{" "}
+                  <Link href="/promotions" className="underline underline-offset-4">
+                    promotion queue
+                  </Link>
+                  .
                 </p>
               ) : null}
             </>

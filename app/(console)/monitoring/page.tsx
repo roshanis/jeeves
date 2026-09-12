@@ -1,12 +1,9 @@
 import Link from "next/link";
 import { ShieldCheck } from "lucide-react";
+import { loadPortfolioDetails } from "@/app/_lib/portfolio-data";
+import { loadIncidentsForViewer } from "@/app/_lib/incident-data";
+import { IncidentDataNotice } from "@/components/jeeves/incident-data-notice";
 import { getAppProvider, getCurrentWorkspaceId } from "@/app/_lib/data-provider";
-import { getDb } from "@/lib/db/client";
-import { listIncidents, type IncidentListRow } from "@/lib/services/monitor-service";
-import {
-  deploymentWorkspaceMap,
-  isDeploymentVisible,
-} from "@/lib/services/viewer-workspace";
 import type { InitiativeDetail, TelemetrySeries } from "@/lib/data/dto";
 import { SyntheticDataLabel } from "@/components/jeeves/synthetic-data-label";
 import { LifecycleBadge } from "@/components/jeeves/lifecycle-badge";
@@ -45,27 +42,6 @@ function portfolioCostSeries(details: InitiativeDetail[]): PortfolioCostPoint[] 
     .map(([ts, totalUsd]) => ({ ts, totalUsd: Math.round(totalUsd * 100) / 100 }));
 }
 
-// Incidents carry no workspace column of their own — ownership resolves via
-// deploymentId -> initiative.workspaceId (P0 read-isolation pass,
-// external-review finding 2), same filtering GET /api/monitor/incidents
-// applies over HTTP.
-async function loadIncidents(viewerWorkspaceId: string | null): Promise<IncidentListRow[]> {
-  const dbMode = process.env.DATA_PROVIDER === "db" || !!process.env.DATABASE_URL;
-  if (!dbMode) return [];
-  try {
-    const db = getDb();
-    const [incidents, workspaceByDeployment] = await Promise.all([
-      listIncidents(db),
-      deploymentWorkspaceMap(db),
-    ]);
-    return incidents.filter((inc) =>
-      isDeploymentVisible(workspaceByDeployment, inc.deploymentId, viewerWorkspaceId),
-    );
-  } catch {
-    return [];
-  }
-}
-
 function latest(series: TelemetrySeries | undefined): number | null {
   if (!series || series.points.length === 0) return null;
   return series.points[series.points.length - 1]!.value;
@@ -73,17 +49,18 @@ function latest(series: TelemetrySeries | undefined): number | null {
 
 function breached(series: TelemetrySeries | undefined): boolean {
   if (!series || series.threshold === null) return false;
-  return series.points.some((p) => p.value > series.threshold!);
+  const value = latest(series);
+  return value !== null && value > series.threshold;
 }
 
 export default async function MonitoringPage() {
   const provider = getAppProvider();
   const viewerWorkspaceId = await getCurrentWorkspaceId();
-  const initiatives = await provider.listInitiatives({ viewerWorkspaceId });
-  const [details, incidents] = await Promise.all([
-    Promise.all(initiatives.map((i) => provider.getInitiativeDetail(i.slug, { viewerWorkspaceId }))),
-    loadIncidents(viewerWorkspaceId),
+  const [details, incidentResult] = await Promise.all([
+    loadPortfolioDetails(provider, viewerWorkspaceId),
+    loadIncidentsForViewer(viewerWorkspaceId),
   ]);
+  const incidents = incidentResult.incidents ?? [];
 
   const operating = details
     .filter((d): d is InitiativeDetail => d !== null)
@@ -112,31 +89,6 @@ export default async function MonitoringPage() {
           Eval quality, cost, and utilization across every deployment. Open an
           initiative to see full telemetry, or run the monitor from Administration.
         </p>
-      </div>
-
-      <TelemetryConnectorCard status={connectorStatus} traces={traces} />
-
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-        <CostBudgetCard points={portfolioCost} />
-        {gpuInitiative && gpuSeries ? (
-          <GpuQuotaCard
-            slug={gpuInitiative.summary.slug}
-            title={gpuInitiative.summary.title}
-            series={gpuSeries}
-          />
-        ) : (
-          <Card data-slot="gpu-quota-card-missing">
-            <CardHeader className="border-b bg-muted/40 py-3">
-              <CardTitle className="kicker">GPU utilization vs quota</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-muted-foreground">
-                No self-hosted initiative with GPU telemetry (claims-ocr-coder) is
-                present in this data set.
-              </p>
-            </CardContent>
-          </Card>
-        )}
       </div>
 
       <Card className="overflow-hidden">
@@ -223,7 +175,9 @@ export default async function MonitoringPage() {
           </CardTitle>
         </CardHeader>
         <CardContent className="p-0">
-          {incidents.length === 0 ? (
+          {incidentResult.status === "unavailable" ? (
+            <IncidentDataNotice reason={incidentResult.reason} />
+          ) : incidents.length === 0 ? (
             <div className="flex flex-col items-center justify-center gap-1.5 px-4 py-10 text-center">
               <ShieldCheck className="size-5 text-muted-foreground/60" aria-hidden="true" />
               <p className="text-sm text-muted-foreground">No incidents recorded.</p>
@@ -269,6 +223,37 @@ export default async function MonitoringPage() {
           )}
         </CardContent>
       </Card>
+
+      <details className="panel card-quiet p-4">
+        <summary className="cursor-pointer text-sm font-medium">
+          Cost, GPU, and illustrative telemetry
+        </summary>
+        <div className="mt-4 space-y-4">
+          <TelemetryConnectorCard status={connectorStatus} traces={traces} />
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+            <CostBudgetCard points={portfolioCost} />
+            {gpuInitiative && gpuSeries ? (
+              <GpuQuotaCard
+                slug={gpuInitiative.summary.slug}
+                title={gpuInitiative.summary.title}
+                series={gpuSeries}
+              />
+            ) : (
+              <Card data-slot="gpu-quota-card-missing">
+                <CardHeader className="border-b bg-muted/40 py-3">
+                  <CardTitle className="kicker">GPU utilization vs quota</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-sm text-muted-foreground">
+                    No self-hosted initiative with GPU telemetry (claims-ocr-coder) is
+                    present in this data set.
+                  </p>
+                </CardContent>
+              </Card>
+            )}
+          </div>
+        </div>
+      </details>
     </div>
   );
 }

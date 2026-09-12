@@ -55,9 +55,6 @@ function AgentGroup({
                   Cross-cutting
                 </Badge>
               )}
-              <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">
-                {a.capability}
-              </code>
             </div>
             <p className="mt-1.5 text-sm text-muted-foreground">{a.summary}</p>
             <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
@@ -77,8 +74,12 @@ function AgentGroup({
                   Controls: <span className="font-mono">{a.controlPrefix}-*</span>
                 </span>
               ) : null}
-              <span className="font-mono">{a.instructionsPath}</span>
+
             </div>
+            <details className="mt-2 text-xs text-muted-foreground">
+              <summary className="cursor-pointer">Implementation details</summary>
+              <p className="mt-2 break-all font-mono">{a.capability} · {a.instructionsPath}</p>
+            </details>
           </div>
         ))}
       </CardContent>

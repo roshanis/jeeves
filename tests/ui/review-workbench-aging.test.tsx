@@ -1,8 +1,13 @@
-import { describe, expect, it } from "vitest";
-import { screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import { fireEvent, screen } from "@testing-library/react";
 import { renderWithProviders } from "./helpers";
 import { ReviewWorkbench, type ReviewQueueRow } from "@/components/jeeves/review-workbench";
 import type { ReviewRow } from "@/lib/data/dto";
+import * as React from "react";
+
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ refresh: vi.fn() }),
+}));
 
 const OLD = "2020-01-01T00:00:00.000Z"; // far in the past -> always "overdue"
 
@@ -25,6 +30,52 @@ function queueRow(overrides: Partial<ReviewRow> & { slug: string; domain: Review
 }
 
 describe("ReviewWorkbench queue aging", () => {
+  it("resolves the selected review from refreshed row props", () => {
+    function RefreshHarness() {
+      const [draft, setDraft] = React.useState("initial server draft");
+      return (
+        <>
+          <button type="button" onClick={() => setDraft("refreshed server draft")}>refresh rows</button>
+          <ReviewWorkbench
+            rows={[queueRow({
+              slug: "refresh",
+              domain: "privacy-hipaa",
+              status: "drafted",
+              draftMd: draft,
+            })]}
+          />
+        </>
+      );
+    }
+    renderWithProviders(<RefreshHarness />);
+    fireEvent.click(screen.getByRole("button", {
+      name: "Open Privacy/HIPAA review for Initiative refresh",
+    }));
+    expect(screen.getAllByText("initial server draft")).toHaveLength(2);
+    fireEvent.click(screen.getByRole("button", { name: "refresh rows" }));
+    expect(screen.getAllByText("refreshed server draft")).toHaveLength(2);
+  });
+
+  it("selects a queue item through a named keyboard-focusable control", () => {
+    renderWithProviders(
+      <ReviewWorkbench
+        rows={[queueRow({ slug: "keyboard", domain: "privacy-hipaa", status: "drafted" })]}
+      />,
+    );
+
+    const open = screen.getByRole("button", {
+      name: "Open Privacy/HIPAA review for Initiative keyboard",
+    });
+    fireEvent.keyDown(open, { key: "Enter" });
+    fireEvent.click(open);
+    expect(screen.getByText("Privacy/HIPAA review")).toBeDefined();
+  });
+
+  it("distinguishes an empty signature queue from an unselected row", () => {
+    renderWithProviders(<ReviewWorkbench rows={[]} />);
+    expect(screen.getByText(/Nothing is awaiting signature/)).toBeDefined();
+  });
+
   it("renders an Age column and a waiting-age badge for unsigned reviews only", () => {
     const rows = [
       queueRow({ slug: "a", domain: "privacy-hipaa", status: "drafted", createdAt: OLD }),

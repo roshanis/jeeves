@@ -1,56 +1,23 @@
+import { loadPortfolioDetails } from "@/app/_lib/portfolio-data";
+import { loadIncidentsForViewer } from "@/app/_lib/incident-data";
+import { IncidentDataNotice } from "@/components/jeeves/incident-data-notice";
 import { getAppProvider, getCurrentWorkspaceId } from "@/app/_lib/data-provider";
-import { getDb } from "@/lib/db/client";
-import { listIncidents, type IncidentListRow } from "@/lib/services/monitor-service";
-import {
-  deploymentWorkspaceMap,
-  isDeploymentVisible,
-} from "@/lib/services/viewer-workspace";
-import type { InitiativeSummary, InitiativeDetail } from "@/lib/data/dto";
+import type { InitiativeSummary } from "@/lib/data/dto";
 import { RoleAwareInbox } from "@/components/jeeves/role-aware-inbox";
 
 // Eval-quality telemetry kinds that feed the Responsible AI reviewer's
-// side panel (components/jeeves/role-aware-inbox.tsx) — a breach is any
-// point that crosses its series' threshold.
+// side panel — compare the latest recorded reading with its threshold.
 const EVAL_KINDS = new Set(["eval_hallucination", "eval_relevance"]);
-
-// ATTENTION_STATES now lives only in components/jeeves/role-aware-inbox.tsx
-// (the "program" role's primary-table filter) — kept consistent there with
-// the original set used here before the role-aware Inbox split.
-
-// Incidents carry no workspace column of their own — ownership resolves via
-// deploymentId -> initiative.workspaceId (P0 read-isolation pass,
-// external-review finding 2), same filtering GET /api/monitor/incidents
-// applies over HTTP.
-async function loadIncidents(viewerWorkspaceId: string | null): Promise<IncidentListRow[]> {
-  const dbMode = process.env.DATA_PROVIDER === "db" || !!process.env.DATABASE_URL;
-  if (!dbMode) return [];
-  try {
-    const db = getDb();
-    const [incidents, workspaceByDeployment] = await Promise.all([
-      listIncidents(db),
-      deploymentWorkspaceMap(db),
-    ]);
-    return incidents.filter((inc) =>
-      isDeploymentVisible(workspaceByDeployment, inc.deploymentId, viewerWorkspaceId),
-    );
-  } catch {
-    return [];
-  }
-}
 
 export default async function InboxPage() {
   const provider = getAppProvider();
   const viewerWorkspaceId = await getCurrentWorkspaceId();
-  const [initiatives, incidents, controls] = await Promise.all([
-    provider.listInitiatives({ viewerWorkspaceId }),
-    loadIncidents(viewerWorkspaceId),
+  const [details, incidentResult, controls] = await Promise.all([
+    loadPortfolioDetails(provider, viewerWorkspaceId),
+    loadIncidentsForViewer(viewerWorkspaceId),
     provider.controlCatalog({ viewerWorkspaceId }),
   ]);
-  const details = (
-    await Promise.all(
-      initiatives.map((i) => provider.getInitiativeDetail(i.slug, { viewerWorkspaceId })),
-    )
-  ).filter((d): d is InitiativeDetail => d !== null);
+  const initiatives = details.map((detail) => detail.summary);
 
   // Domain-scoped review rows for the reviewer Inbox view (one row per
   // initiative, carrying just its reviews' domain+status) — lets each of
@@ -64,7 +31,7 @@ export default async function InboxPage() {
   }));
 
   // Eval-quality breaches: initiatives whose eval telemetry series has a
-  // threshold and at least one observed point crosses it. This is the
+  // threshold and whose latest observed point crosses it. This is the
   // Responsible AI reviewer's signal set — evals belong to RAI, not Legal.
   const evalBreaches = details
     .filter((d) =>
@@ -72,7 +39,8 @@ export default async function InboxPage() {
         (series) =>
           EVAL_KINDS.has(series.kind) &&
           series.threshold !== null &&
-          series.points.some((p) => p.value > series.threshold!),
+          series.points.length > 0 &&
+          series.points[series.points.length - 1]!.value > series.threshold,
       ),
     )
     .map((d) => ({
@@ -102,15 +70,18 @@ export default async function InboxPage() {
   );
 
   return (
+    <>
+    {incidentResult.status === "unavailable" ? <IncidentDataNotice reason={incidentResult.reason} /> : null}
     <RoleAwareInbox
       initiatives={initiatives}
       recentDecisions={recentDecisions}
       alerts={alerts}
-      incidentCount={incidents.length}
+      incidentCount={incidentResult.status === "success" ? incidentResult.incidents.filter((incident) => !incident.resolvedAt).length : null}
       counts={{ inReview, slaBreaches, reassessing, deployed }}
       domainReviews={domainReviews}
       controls={controls}
       evalBreaches={evalBreaches}
     />
+    </>
   );
 }

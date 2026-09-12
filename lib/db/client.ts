@@ -22,6 +22,16 @@ import * as schema from "./schema";
 
 export type Db = NeonDatabase<typeof schema> | PgliteDatabase<typeof schema>;
 
+/**
+ * Resolve the persistent PGlite directory. Local development keeps the
+ * historical repo-local default; isolated runners can point at a disposable
+ * directory without changing DATABASE_URL or touching ./.pglite.
+ */
+export function localPgliteDirectory(): string {
+  const override = process.env.JEEVES_PGLITE_DIR?.trim();
+  return override || "./.pglite";
+}
+
 // Cache on globalThis, not at module scope: Next.js dev/Turbopack creates
 // MULTIPLE server module graphs in one process, and a per-module cache gave
 // each graph its own PGlite instance over the same ./.pglite directory —
@@ -54,7 +64,7 @@ export function getDb(): Db {
   }
 
   // No DATABASE_URL: local persistent PGlite store, not a network call.
-  const client = new PGlite("./.pglite");
+  const client = new PGlite(localPgliteDirectory());
   dbSlot.db = drizzlePglite({ client, schema });
   return dbSlot.db;
 }

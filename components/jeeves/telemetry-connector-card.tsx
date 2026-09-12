@@ -84,7 +84,7 @@ export function TelemetryConnectorCard({
             </dd>
           </div>
           <div className="flex items-baseline justify-between gap-2 sm:block">
-            <dt className="kicker">Last sync</dt>
+            <dt className="kicker">Example timestamp (synthetic)</dt>
             <dd className="font-mono text-foreground">
               {status.lastSyncIso ? status.lastSyncIso.slice(0, 19).replace("T", " ") + " UTC" : "—"}
             </dd>
@@ -92,8 +92,11 @@ export function TelemetryConnectorCard({
         </dl>
         <p className="text-xs text-muted-foreground">{status.detail}</p>
 
-        <div>
-          <h4 className="kicker mb-2">Synthetic OTel traces — demo</h4>
+        <details>
+          <summary className="cursor-pointer text-sm font-medium">
+            View illustrative trace examples
+          </summary>
+          <h4 className="kicker mb-2 mt-3">Synthetic OTel traces — demo</h4>
           <div className="scroll-thin scroll-x-pane overflow-x-auto rounded-md border border-border">
             <Table containerLabel="Synthetic OTel traces, scrollable horizontally">
               <TableHeader>
@@ -120,7 +123,7 @@ export function TelemetryConnectorCard({
               </TableBody>
             </Table>
           </div>
-        </div>
+        </details>
       </CardContent>
     </Card>
   );

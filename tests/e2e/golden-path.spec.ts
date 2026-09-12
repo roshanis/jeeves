@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { E2E_DEMO_PASSCODE } from "./constants";
 
 // plan.md §8 test 12 — Playwright golden path (required, AGENTS.md hard rule
 // 8): a read-only champion storyline covering the public landing page, the
@@ -126,6 +127,48 @@ test.describe("champion storyline: read-only golden path", () => {
     await expect(page.getByText(/17 controls/)).toBeVisible();
   });
 
+  test("agent catalog confirms the deterministic offline runtime", async ({ page }) => {
+    await page.goto("/agents");
+    await expect(page.locator('[data-slot="agent-runtime-status"]')).toContainText(
+      "Runtime: Deterministic mock adapter",
+    );
+  });
+
+  test("case-file tabs preserve URL state across keyboard, reload, Back, and Forward", async ({
+    page,
+  }) => {
+    await page.goto("/initiatives/member-chat-copilot?tab=intake");
+    const intake = page.getByRole("tab", { name: "Intake" });
+    const reviews = page.getByRole("tab", { name: "Reviews" });
+
+    await expect(intake).toHaveAttribute("aria-selected", "true");
+    await reviews.focus();
+    await page.keyboard.press("Enter");
+    await expect(page).toHaveURL(/\?tab=reviews$/);
+    await expect(reviews).toHaveAttribute("aria-selected", "true");
+
+    await page.reload();
+    await expect(page).toHaveURL(/\?tab=reviews$/);
+    await expect(reviews).toHaveAttribute("aria-selected", "true");
+    await page.goBack();
+    await expect(page).toHaveURL(/\?tab=intake$/);
+    await expect(intake).toHaveAttribute("aria-selected", "true");
+    await page.goForward();
+    await expect(page).toHaveURL(/\?tab=reviews$/);
+    await expect(reviews).toHaveAttribute("aria-selected", "true");
+  });
+
+  test("narrow console header remains visible without horizontal overflow", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto("/inbox");
+    await expect(page.locator("header")).toBeVisible();
+    await expect(page.locator('[data-slot="demo-mode-chip"]')).toBeVisible();
+    const overflow = await page.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    );
+    expect(overflow).toBeLessThanOrEqual(1);
+  });
+
   // Monetization M1 (marketing pages): read-only, no forms/mutations —
   // covers the NIST AI RMF crosswalk (heading + a real catalog control chip)
   // and the pilot one-pager (heading + "Contact for pricing" since no
@@ -156,17 +199,13 @@ test.describe("champion storyline: read-only golden path", () => {
 // decision event. (8-domain honesty: every required domain is drafted
 // live, not 4-live-plus-4-seeded.)
 //
-// Requires DEMO_PASSCODE in the RUNNER environment (the webServer's own
-// env sets it for the server side — see playwright.config.ts). Without it
-// this describe self-skips and the read-only suite above is unaffected:
-//   DEMO_PASSCODE=e2e-test-pass npm run test:e2e
+// The runner and web server share a fixed, test-only passcode from
+// tests/e2e/constants.ts. This story is mandatory and never self-skips.
 test.describe("live demo loop: create → triage → draft run → sign → decide", () => {
-  test.skip(!process.env.DEMO_PASSCODE, "requires DEMO_PASSCODE in the runner env");
-
   /** Log in through the demo-mode chip dialog as the given persona. */
   async function loginAs(page: import("@playwright/test").Page, personaKey: string) {
     await page.locator('[data-slot="demo-mode-chip"]').click();
-    await page.locator('[data-slot="passcode-input"]').fill(process.env.DEMO_PASSCODE!);
+    await page.locator('[data-slot="passcode-input"]').fill(E2E_DEMO_PASSCODE);
     await page.locator('[data-slot="persona-select"]').selectOption(personaKey);
     await page.locator('[data-slot="live-login-submit"]').click();
     await expect(page.getByText("Live demo (session workspace)")).toBeVisible();
@@ -181,7 +220,7 @@ test.describe("live demo loop: create → triage → draft run → sign → deci
     page,
   }) => {
     // Generous budget: this single test walks the whole governance loop
-    // including a polled draft run.
+    // including a full eight-domain draft run.
     test.setTimeout(180_000);
 
     // --- Requester: live session + champion intake -----------------------
@@ -190,13 +229,34 @@ test.describe("live demo loop: create → triage → draft run → sign → deci
 
     await page.locator('[data-slot="load-champion"]').click();
 
+    // Exercise the real mocked chat route and the shared payload handoff.
+    // The structured champion answers must survive a Chat round-trip and
+    // return to the form unchanged when the assistant marks intake done.
+    await page.getByRole("tab", { name: "Chat with intake assistant" }).click();
+    const chat = page.locator('[data-slot="intake-chat"]');
+    await chat.locator('[data-slot="intake-chat-input"]').fill("Review the current answers.");
+    await chat.locator('[data-slot="intake-chat-submit"]').click();
+    await expect(chat.locator('[data-slot="intake-chat-done"]')).toBeVisible({
+      timeout: 30_000,
+    });
+    await chat.getByRole("button", { name: "Review and submit" }).click();
+    await expect(page.getByRole("tab", { name: "Structured form" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await expect(page.getByRole("textbox", { name: "Initiative title" })).toHaveValue(
+      "Prior-Auth Clinical Summarizer",
+    );
+
     // Live tier preview: rule 1 -> Critical, all 8 domains.
     const preview = page.locator('[data-slot="tier-preview"]');
     await expect(preview).toContainText("Critical");
     await expect(preview).toContainText("8 required domains");
 
     // Completeness meter: RFT-02 retention gap flagged, submit not blocked.
-    const meter = page.locator('[data-slot="completeness-meter"]');
+    const meter = page
+      .locator('[data-slot="intake-form"]')
+      .locator('[data-slot="completeness-meter"]');
     await expect(meter).toContainText("RFT-02");
     await expect(meter).toContainText("Submission is not blocked");
 
@@ -231,9 +291,8 @@ test.describe("live demo loop: create → triage → draft run → sign → deci
     );
     await draftPanel.locator('[data-slot="start-draft-run"]').click();
 
-    // Rows flip to Drafted as the 1.5s poll reports progress (mock agent
-    // adapter drafts deterministically; allow several poll cycles — all 8
-    // must land).
+    // The synchronous run returns after the deterministic mock adapter has
+    // drafted every selected domain; the refreshed rows must show all 8.
     await expect(async () => {
       const drafted = await page
         .locator('[data-slot="review-row"] [data-slot="review-status"][data-status="drafted"]')
@@ -249,7 +308,11 @@ test.describe("live demo loop: create → triage → draft run → sign → deci
     await loginAs(page, "marcus-webb");
 
     const phiRow = page.locator('[data-slot="review-row"][data-domain="privacy-hipaa"]');
+    const clinicalRow = page.locator('[data-slot="review-row"][data-domain="clinical-safety"]');
     await expect(phiRow.getByRole("button", { name: "Sign" })).toBeEnabled({
+      timeout: 15_000,
+    });
+    await expect(clinicalRow.getByRole("button", { name: "Sign" })).toBeDisabled({
       timeout: 15_000,
     });
     await phiRow.getByRole("button", { name: "Sign" }).click();

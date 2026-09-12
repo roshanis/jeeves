@@ -25,7 +25,7 @@
  * multi-statement writes throughout this file, which depend on that
  * transactional isolation being real, not simulated.
  */
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { and, eq, isNull } from "drizzle-orm";
 import type { Db } from "../db/client";
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
@@ -105,6 +105,18 @@ function assertWorkspaceAccess(
   }
 }
 
+/** Draft editing is private workspace state; shared seed rows are examples only. */
+function assertEditableDraftWorkspace(
+  resourceWorkspaceId: string | null,
+  sessionWorkspaceId: string | null,
+  initiativeId: string,
+): void {
+  if (resourceWorkspaceId === null && sessionWorkspaceId !== null) {
+    throw new NotFoundError("initiative", initiativeId);
+  }
+  assertWorkspaceAccess(resourceWorkspaceId, sessionWorkspaceId, "initiative", initiativeId);
+}
+
 /**
  * The common base type of both the top-level `Db` handle AND the
  * transaction-scoped handle passed into a `db.transaction(async (tx) => ...)`
@@ -127,6 +139,18 @@ export { IllegalTransitionError };
 
 function nowTs(): number {
   return Date.now();
+}
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .filter(([, item]) => item !== undefined)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => `${JSON.stringify(key)}:${canonicalJson(item)}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
 }
 
 function overlayFromPayload(payload: IntakePayload): OverlayFlags {
@@ -216,8 +240,10 @@ async function updateInitiativeState(
 async function loadInitiativeOrThrow(
   tx: Tx,
   initiativeId: string,
+  lock = false,
 ): Promise<typeof initiatives.$inferSelect> {
-  const rows = await tx.select().from(initiatives).where(eq(initiatives.id, initiativeId));
+  const query = tx.select().from(initiatives).where(eq(initiatives.id, initiativeId));
+  const rows = lock ? await query.for("update") : await query;
   const row = rows[0];
   if (!row) throw new NotFoundError("initiative", initiativeId);
   return row;
@@ -262,6 +288,16 @@ async function latestIntakeVersion(
   return rows.slice().sort((a, b) => b.version - a.version)[0]!;
 }
 
+async function firstIntakeVersion(
+  tx: Tx,
+  initiativeId: string,
+): Promise<typeof intakeVersions.$inferSelect | null> {
+  const rows = await tx.select().from(intakeVersions).where(
+    and(eq(intakeVersions.initiativeId, initiativeId), eq(intakeVersions.version, 1)),
+  );
+  return rows[0] ?? null;
+}
+
 async function latestRiskAssessment(
   tx: Tx,
   initiativeId: string,
@@ -297,12 +333,14 @@ export interface CreateDraftInput {
    * matching today's behavior for seeded/non-session creation paths.
    */
   workspaceId?: string | null;
+  requestId?: string;
 }
 
 export interface CreateDraftResult {
   initiativeId: string;
   slug: string;
   intakeVersionId: string;
+  version: number;
 }
 
 /**
@@ -314,14 +352,34 @@ export interface CreateDraftResult {
  * versa, would be an equally invalid partial state).
  */
 export async function createDraft(db: Db, input: CreateDraftInput): Promise<CreateDraftResult> {
-  const { payload, requesterActor, requesterName, workspaceId } = input;
+  const { payload, requesterActor, requesterName, workspaceId, requestId } = input;
 
   return db.transaction(async (tx) => {
-    const initiativeId = `init-${randomUUID()}`;
-    const slug = slugify(payload.basics.title || "untitled-initiative");
+    const requestHash = requestId
+      ? createHash("sha256")
+          .update(`${workspaceId ?? "shared"}\0${requesterActor.id}\0${requestId}`)
+          .digest("hex")
+      : null;
+    const initiativeId = requestHash ? `init-${requestHash.slice(0, 32)}` : `init-${randomUUID()}`;
+    const slug = requestHash
+      ? `${(payload.basics.title || "untitled-initiative").toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "") || "initiative"}-${requestHash.slice(0, 8)}`
+      : slugify(payload.basics.title || "untitled-initiative");
     const ts = new Date(nowTs());
 
-    await tx.insert(initiatives).values({
+    if (requestHash) {
+      const existing = await tx.select().from(initiatives).where(eq(initiatives.id, initiativeId));
+      if (existing[0]) {
+        assertWorkspaceAccess(existing[0].workspaceId, workspaceId ?? null, "initiative", initiativeId);
+        requireRequesterOwnership(requesterActor, existing[0]);
+        const firstIntake = await firstIntakeVersion(tx, initiativeId);
+        if (!firstIntake || canonicalJson(firstIntake.fields) !== canonicalJson(payload)) {
+          throw new ConflictError("idempotency key was already used with a different intake payload");
+        }
+        return { initiativeId, slug: existing[0].slug, intakeVersionId: firstIntake.id, version: firstIntake.version };
+      }
+    }
+
+    const inserted = await tx.insert(initiatives).values({
       id: initiativeId,
       slug,
       title: payload.basics.title,
@@ -332,10 +390,21 @@ export async function createDraft(db: Db, input: CreateDraftInput): Promise<Crea
       createdAt: ts,
       updatedAt: ts,
       workspaceId: workspaceId ?? null,
-    });
+    }).onConflictDoNothing().returning();
+
+    if (inserted.length === 0) {
+      const existing = await loadInitiativeOrThrow(tx, initiativeId);
+      assertWorkspaceAccess(existing.workspaceId, workspaceId ?? null, "initiative", initiativeId);
+      requireRequesterOwnership(requesterActor, existing);
+      const firstIntake = await firstIntakeVersion(tx, initiativeId);
+      if (!firstIntake || canonicalJson(firstIntake.fields) !== canonicalJson(payload)) {
+        throw new ConflictError("idempotency key was already used with a different intake payload");
+      }
+      return { initiativeId, slug: existing.slug, intakeVersionId: firstIntake.id, version: firstIntake.version };
+    }
 
     const completeness = evaluateCompleteness(payload);
-    const intakeVersionId = `iv-${randomUUID()}`;
+    const intakeVersionId = requestHash ? `iv-${requestHash.slice(0, 32)}` : `iv-${randomUUID()}`;
     await tx.insert(intakeVersions).values({
       id: intakeVersionId,
       initiativeId,
@@ -347,7 +416,7 @@ export async function createDraft(db: Db, input: CreateDraftInput): Promise<Crea
     });
 
     await tx.insert(auditEvents).values({
-      id: `evt-${randomUUID()}`,
+      id: requestHash ? `evt-create-${requestHash.slice(0, 32)}` : `evt-${randomUUID()}`,
       initiativeId,
       ts,
       actor: requesterActor.id,
@@ -359,7 +428,49 @@ export async function createDraft(db: Db, input: CreateDraftInput): Promise<Crea
       metadata: null,
     });
 
-    return { initiativeId, slug, intakeVersionId };
+    return { initiativeId, slug, intakeVersionId, version: 1 };
+  });
+}
+
+export interface IntakeDraftResult extends CreateDraftResult {
+  payload: IntakePayload;
+  version: number;
+}
+
+export async function getIntakeDraft(
+  db: Db,
+  initiativeId: string,
+  actor: Actor,
+  workspaceId: string | null,
+): Promise<IntakeDraftResult> {
+  const initiative = await loadInitiativeOrThrow(db as Tx, initiativeId);
+  assertEditableDraftWorkspace(initiative.workspaceId, workspaceId, initiativeId);
+  requireRequesterOwnership(actor, initiative);
+  if (initiative.state !== "intake_draft") throw new ConflictError("intake is no longer editable");
+  const intake = await latestIntakeVersion(db as Tx, initiativeId);
+  if (!intake || intake.submitted) throw new ConflictError("intake is no longer editable");
+  return { initiativeId, slug: initiative.slug, intakeVersionId: intake.id, version: intake.version, payload: intake.fields as unknown as IntakePayload };
+}
+
+export async function updateIntakeDraft(
+  db: Db,
+  input: { initiativeId: string; payload: IntakePayload; expectedVersion: number; actor: Actor; workspaceId: string | null },
+): Promise<IntakeDraftResult> {
+  return db.transaction(async (tx) => {
+    const initiative = await loadInitiativeOrThrow(tx, input.initiativeId, true);
+    assertEditableDraftWorkspace(initiative.workspaceId, input.workspaceId, input.initiativeId);
+    requireRequesterOwnership(input.actor, initiative);
+    if (initiative.state !== "intake_draft") throw new ConflictError("intake is no longer editable");
+    const current = await latestIntakeVersion(tx, input.initiativeId);
+    if (!current || current.submitted) throw new ConflictError("intake is no longer editable");
+    if (current.version !== input.expectedVersion) throw new ConflictError(`draft changed concurrently (expected version ${input.expectedVersion})`);
+    const nextVersion = current.version + 1;
+    const completeness = evaluateCompleteness(input.payload);
+    const intakeVersionId = `iv-${randomUUID()}`;
+    await tx.insert(intakeVersions).values({ id: intakeVersionId, initiativeId: input.initiativeId, version: nextVersion, submitted: false, fields: input.payload as unknown as Record<string, string | boolean | null>, missing: completeness.gaps.map((g) => g.field), createdAt: new Date(nowTs()) });
+    const initiativeUpdate = await tx.update(initiatives).set({ title: input.payload.basics.title, updatedAt: new Date(nowTs()) }).where(and(eq(initiatives.id, input.initiativeId), eq(initiatives.state, "intake_draft"))).returning();
+    if (initiativeUpdate.length === 0) throw new ConflictError("intake is no longer editable");
+    return { initiativeId: input.initiativeId, slug: initiative.slug, intakeVersionId, version: nextVersion, payload: input.payload };
   });
 }
 
@@ -399,12 +510,17 @@ export async function submitIntake(
   sessionWorkspaceId: string | null = null,
 ): Promise<SubmitIntakeResult | SubmitIntakeBlockedResult> {
   return db.transaction(async (tx) => {
-    const initiative = await loadInitiativeOrThrow(tx, initiativeId);
+    const initiative = await loadInitiativeOrThrow(tx, initiativeId, true);
     assertWorkspaceAccess(initiative.workspaceId, sessionWorkspaceId, "initiative", initiativeId);
     requireRequesterOwnership(actor, initiative);
     const intake = await latestIntakeVersion(tx, initiativeId);
     if (!intake) {
       throw new ValidationError("initiative has no intake version to submit");
+    }
+
+    if (initiative.state === "submitted" && intake.submitted) {
+      const completeness = evaluateCompleteness(intake.fields as unknown as IntakePayload);
+      return { submitted: true, completenessPct: completeness.completenessPct };
     }
 
     const payload = intake.fields as unknown as IntakePayload;

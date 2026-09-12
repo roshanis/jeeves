@@ -91,7 +91,13 @@ function noBlockersMessage(detail: InitiativeDetail): string {
     case "retired":
       return "Retired — no longer in service. Its audit trail is retained.";
     default:
-      return "No open blockers — all required reviews signed and controls met.";
+      // Codex's wording (PR #7), kept deliberately over the earlier "all
+      // required reviews signed and controls met": this branch knows only
+      // that deriveBlockers() found nothing in the rows that exist. It never
+      // compared them against summary.domainsRequired, so claiming every
+      // REQUIRED review is signed was an over-reach even where it happened
+      // to be true.
+      return "No blockers recorded in the current reviews and controls.";
   }
 }
 
@@ -101,7 +107,9 @@ function noBlockersMessage(detail: InitiativeDetail): string {
  * carry evidence — before a decision generates them there are none.
  */
 function noOutstandingEvidenceMessage(detail: InitiativeDetail): string {
-  if (detail.controls.length > 0) return "All required evidence on file.";
+  // Same hedge as above, same reason: this only knows nothing outstanding was
+  // flagged among the controls that exist.
+  if (detail.controls.length > 0) return "No missing evidence flagged in the current controls.";
   if (PRE_REVIEW_STATES.has(detail.summary.state)) {
     return "No controls issued yet — controls are generated when the initiative is approved.";
   }
@@ -130,7 +138,7 @@ function deriveBlockers(detail: InitiativeDetail): Blocker[] {
   const blockers: Blocker[] = [];
 
   if (detail.summary.state === "paused" || detail.summary.state === "re_review") {
-    blockers.push({ label: "Deployment paused — eval-quality breach", severity: "high" });
+    blockers.push({ label: "Deployment paused — review the recorded reason in Audit", severity: "high" });
   }
 
   for (const review of detail.reviews) {
@@ -138,6 +146,11 @@ function deriveBlockers(detail: InitiativeDetail): Blocker[] {
       blockers.push({
         label: `Review returned: ${DOMAIN_LABEL[review.domain]}`,
         severity: "high",
+      });
+    } else if (review.status === "drafted") {
+      blockers.push({
+        label: `Review awaiting signature: ${DOMAIN_LABEL[review.domain]}`,
+        severity: "amber",
       });
     } else if (review.status === "pending") {
       blockers.push({

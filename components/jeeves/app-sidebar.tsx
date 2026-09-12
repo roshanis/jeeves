@@ -6,6 +6,7 @@ import {
   NAV_SECTIONS,
   ADMIN_NAV_ITEM,
   isNavItemActive,
+  navItem,
   type NavItem,
 } from "./nav-items";
 import { ShieldCheck } from "lucide-react";
@@ -79,12 +80,17 @@ export function AppSidebar() {
             <p className="kicker px-3 pt-3 pb-1.5 text-sidebar-foreground-muted first:pt-1">
               {section.label}
             </p>
-            {section.items.map((item) => (
+            {section.items.filter((item) => item.href !== "/agents" && item.href !== "/promotions").map((item) => (
               <SidebarLink key={item.href} item={item} active={isNavItemActive(item, pathname)} />
             ))}
           </div>
         ))}
 
+        <div className="mt-5 flex flex-col gap-0.5 border-t border-sidebar-border/60 pt-3">
+          <p className="kicker px-3 pb-1.5 text-sidebar-foreground-muted">More tools</p>
+          <SidebarLink item={navItem("/agents")} active={isNavItemActive(navItem("/agents"), pathname)} />
+          <SidebarLink item={navItem("/promotions")} active={isNavItemActive(navItem("/promotions"), pathname)} />
+        </div>
         <div className="mt-auto flex flex-col gap-0.5 border-t border-sidebar-border/60 pt-2">
           <SidebarLink item={ADMIN_NAV_ITEM} active={isNavItemActive(ADMIN_NAV_ITEM, pathname)} />
         </div>

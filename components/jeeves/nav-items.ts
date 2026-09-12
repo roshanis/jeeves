@@ -28,21 +28,27 @@ import {
 // a purely presentational grouping over the same items, used by the sidebar,
 // the mobile nav strip and the 404 so they never disagree about section
 // order (design pass 2026-08-01).
+// `section` ("primary" | "tools") arrives from PR #7 — it splits the mobile
+// nav strip into the routes an operator works in daily and the ones they
+// visit occasionally. Preserved here verbatim when the data moved out of
+// app-sidebar.tsx.
 export const NAV_ITEMS = [
-  { href: "/inbox", label: "Inbox", icon: Inbox, exact: true },
-  { href: "/portfolio", label: "Portfolio", icon: LayoutList },
-  { href: "/reviews", label: "Reviews", icon: ClipboardCheck },
-  { href: "/agents", label: "Agents", icon: Bot },
-  { href: "/monitoring", label: "Monitoring", icon: Activity },
-  { href: "/controls", label: "Controls", icon: ShieldCheck },
-  { href: "/audit", label: "Audit", icon: ScrollText },
-  { href: "/promotions", label: "Promotions", icon: GitPullRequestArrow },
-  { href: "/admin", label: "Administration", icon: Settings2 },
+  { href: "/inbox", label: "Inbox", section: "primary", icon: Inbox, exact: true },
+  { href: "/portfolio", label: "Portfolio", section: "primary", icon: LayoutList },
+  { href: "/reviews", label: "Reviews", section: "primary", icon: ClipboardCheck },
+  { href: "/agents", label: "Agents", section: "tools", icon: Bot },
+  { href: "/monitoring", label: "Monitoring", section: "primary", icon: Activity },
+  { href: "/controls", label: "Controls", section: "primary", icon: ShieldCheck },
+  { href: "/audit", label: "Audit", section: "primary", icon: ScrollText },
+  { href: "/promotions", label: "Promotions", section: "tools", icon: GitPullRequestArrow },
+  { href: "/admin", label: "Administration", section: "tools", icon: Settings2 },
 ];
 
 export type NavItem = (typeof NAV_ITEMS)[number];
 
-function navItem(href: string): NavItem {
+/** Look up a single nav item by href. Exported because the sidebar pins
+ *  /agents and /promotions into their own "More tools" group (PR #7). */
+export function navItem(href: string): NavItem {
   const item = NAV_ITEMS.find((i) => i.href === href);
   if (!item) throw new Error(`Unknown nav href: ${href}`);
   return item;

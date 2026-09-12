@@ -529,6 +529,29 @@ SIGN-OFF: BLOCKED — do not merge PR #2 yet.
   tree was performed, and MIT imposes no obligation to run one. If this ever
   ships as a real product rather than a demo, that audit is still owed.
 
+## [AGENT: Codex] [2026-09-07T16:01Z]
+### Action: Implemented the approved UX/UI and simplification plan with Sol subagents; continuing integration and independent review.
+### Files changed: intake/session/review components and services; console navigation/status pages; request-local portfolio and incident loaders; targeted regression tests; disposable Playwright setup; approved unused components/helpers/tests removed; docs and this log.
+### Diff summary: User requested fixes with Sol. The required file/test/risk plan received Sol reviewer approval. Created isolated branch codex/ux-fixes-20260907 at /private/tmp/jeeves-codex-worktree-20260907 after saving a complete non-secret source backup and baseline manifest at /private/tmp/jeeves-review-backup-20260907. Preexisting security and monetization changes were copied intact and left untouched in the original checkout. Added persona/session alignment, domain-scoped review actions, keyboard queue controls, URL-backed tabs, draft editing/chat transfer and creation replay, truthful monitoring failures/pause evidence, one bulk portfolio read per page, simpler mobile navigation, and removal of approved unused code and duplicate/stub tests. Browser setup now uses a fresh temporary PGlite store with external DB/LLM environment values blanked.
+### Recommendations / Next steps: Targeted behavior regressions were observed failing before implementation, then passed. Combined TypeScript and ESLint currently pass; full coverage run and required browser workflow are running. Root review identified additional intake concurrency/retry edge cases and stale selected-review state; Sol agents are addressing these before completion. No commit, push, merge, deployment, dependency installation, external service call, or migration/reseed of an existing database. Original source remains preserved; verification results are provisional until final integration and review.
+
+## [AGENT: Codex] [2026-09-07T16:18Z]
+### Action: Completed UX/UI, workflow recovery, and simplification fixes with Sol implementation/review subagents, followed by final combined verification.
+### Files changed: See docs/JEEVES-FIXES-2026-09-07.md and the baseline-relative patch/manifest at /private/tmp/jeeves-review-backup-20260907. Main groups: session/review/intake components and client APIs; initiative create/edit/submit services and authenticated edit route/page; console navigation/status/data reads; focused regression and browser tests; six approved dead-code/test files removed; implementation report and this log.
+### Diff summary: Added exact persona hydration/expiry and domain-scoped review actions, keyboard selection and current-row refresh, cycle-scoped draft outcomes/retries, persistent form/chat state and working chat transfer, authenticated draft editing with serialized expected-version checks, stable original-request creation replay and idempotent submit retry. Fixed false monitoring/incident/pause/completion claims, URL tab history, mobile header/navigation layout, and redundant portfolio reads. Removed inert search, unused components/helper and their tests, duplicate landing assertions, runtime stub tests, and a fixed sparkline; optional agent/GPU/trace details remain behind disclosures. Root review caught and resolved stale request keys, lost-response edits, stale chat payloads, and stale selected reviews before final verification. Independent Sol reviews approved the settled root, identity/review, and intake changes with no concrete blockers.
+### Recommendations / Next steps: PASS: npm test -- --coverage --no-file-parallelism (83 files, 906 tests, 201.88s; 86.65% statements / 77.16% branches / 91.85% functions / 87.77% lines; configured coverage gates pass); npm run typecheck; npm run lint; git diff --check. PASS: CI=1 npm run test:e2e (12/12 in 16.8s), including webpack production build, actual mocked chat-to-form submission, eight-domain triage/drafting, domain-restricted signing, human conditional decision, audit/deployments/controls, keyboard tabs and reload/Back/Forward. Final Chromium screenshots at /private/tmp/jeeves-review-artifacts-20260907 show desktop and 390px mobile; document width equals viewport width, no console/page errors. E2E used fresh OS-temp PGlite with external database/LLM values blanked. No existing database, credentials, dependency versions, or original source changes were touched; source hashes match the pre-implementation backup. No commit, push, merge, or deployment. No claim of live OpenAI/Neon, production latency, screen-reader/physical-device, fresh external dependency audit, or browser promotion→monitor→reassessment verification. Existing release-gate concerns and optional exception-renewal route-test follow-up remain documented in the implementation report.
+
+## [AGENT: Codex] [2026-09-07T17:40Z]
+### Action: Integrating reviewed UX fixes into current main after explicit human merge authorization.
+### Files changed: Baseline-relative UX paths; conflict resolutions preserve newer main UI/mobile, agent adapters, security and CI.
+### Diff summary: Private snapshot commits isolate the UX changes from the older checkout's preexisting dirty security work. Integration branch codex/ux-main-integration-20260907 starts at origin/main 5f6c97f. Sol approved the integration plan and is resolving bounded UI/backend slices. Current main lockfile dependencies were installed locally with lifecycle scripts disabled; no dependency versions changed. Original worktrees and backups remain untouched.
+### Recommendations / Next steps: Re-run full verification and main-relative review, then open a PR, wait for GitHub CI, and merge under the user's instruction. No existing database reseed, force push, or production migration.
+
+## [AGENT: Codex] [2026-09-07T17:47Z]
+### Action: Completed current-main integration and independent Sol review; preparing the authorized PR and merge.
+### Files changed: 75 integration paths documented in docs/JEEVES-FIXES-2026-09-07.md; baseline-relative UX changes only, preserving current main improvements and original dirty work.
+### Diff summary: Conflict resolutions retain main's design tokens, breadcrumbs/theme toggle, responsive layouts, OpenAI Agents adapter, workspace safeguards and CI. New draft routes explicitly reject shared seed rows; retry/version contracts and the adapter type contract are retained. No dependency/schema/credential changes. All 334 original checkout source hashes still match backup.
+### Recommendations / Next steps: PASS: 97 files / 1,057 tests, 254.60s; coverage 87.08% statements / 77.17% branches / 92.09% functions / 88.15% lines; typecheck; lint; production webpack build; 25/25 Playwright workflow/mobile tests; staged diff check. Independent Sol final main-relative review APPROVED with no concrete blocker. Fresh npm production audit reports 12 inherited findings (10 high, 2 moderate, 0 critical), with package and lockfile unchanged from main. Open PR, wait for CI, then merge under explicit human authorization. No existing database reseed, production migration, force push, or live-service verification.
 ## [AGENT: Claude] [2026-09-11T23:43Z]
 ### Action: UI correctness pass, a non-destructive migration path, and a production-readiness assessment
 ### Files changed:
@@ -621,3 +644,57 @@ removes a false claim rather than restyling anything.
 - Move the rate-limit buckets to the DB; DbBudgetStore is a working model.
 - Backup/restore is still undocumented.
 - Not done, deliberately: authentication. That is a project, not a task.
+
+## [AGENT: Claude] [2026-09-12T01:22Z]
+### Action: Merged main (PR #7, Codex) into claude/ultraplan-review-r1slxv — six conflicts, one genuine disagreement
+### Files changed (conflict resolutions):
+agents-build-log.md; app/(console)/initiatives/[slug]/page.tsx;
+components/jeeves/{app-sidebar,app-mobile-nav,app-topbar,initiative-blockers-rail,nav-items,intake-form}.tsx;
+tests/ui/initiative-blockers-rail-states.test.tsx
+
+### Diff summary:
+Codex (PR #7, "Fix intake recovery, review identity, and truthful workflow UX")
+and this branch INDEPENDENTLY FIXED THE SAME BUG — the blockers rail claiming
+an un-reviewed initiative was in the clear. Per §4 the disagreement was put to
+the human rather than resolved unilaterally; they chose to combine. Result is
+a strict superset:
+
+- FROM CODEX, kept: the hedged all-clear wording ("No blockers recorded in the
+  current reviews and controls." / "No missing evidence flagged in the current
+  controls."). Their caution is well-founded and beat my wording — my version
+  asserted "all required reviews signed", but neither branch ever compares the
+  rows it can see against summary.domainsRequired, so that was an over-reach
+  even where it happened to be true.
+- FROM CODEX, kept: `drafted` reviews now raise "Review awaiting signature"
+  (a gap in the original that I missed entirely), and the paused blocker points
+  at the recorded reason instead of asserting "eval-quality breach".
+- FROM THIS BRANCH, kept: lifecycle-aware copy for the states where the hedge
+  is uninformative — intake_draft / submitted / triaged / rejected / retired
+  each say what stage the initiative is actually at.
+- FROM THIS BRANCH, kept: the detail-header chip. Codex did not touch it, so
+  on main it still rendered a GREEN CHECK reading "0 open blockers" for an
+  un-triaged initiative — the same false all-clear, stated more emphatically.
+  It now shares summarizeBlockers() with the rail.
+
+OTHER RESOLUTIONS:
+- app-topbar: Codex DELETED the dead search input; this branch replaced it
+  with a working ⌘K palette. Same intent, superset kept.
+- app-sidebar / nav-items: PR #7 added a `section` ("primary" | "tools") field
+  and pins /agents + /promotions into a "More tools" group via navItem().
+  Both carried into nav-items.ts, which is where the data now lives so server
+  components can import it; navItem() is exported for that sidebar grouping.
+- intake-form: TWO SEMANTIC BREAKS THAT AUTO-MERGED CLEANLY, no markers —
+  caught only by tsc. PR #7 removed the dataSourcesText/populationsText/
+  integrationsText state (multi-line fields now derive from the payload
+  arrays), which my `pristine` check referenced. Simplified to
+  `payload === EMPTY_PAYLOAD`, which is now both sufficient and more accurate:
+  every edit flows through patch(), and in the new draft-edit mode
+  initialPayload makes it false from the start, correctly.
+- agents-build-log: both entries kept, Codex's first (09-07 precedes 09-11).
+
+### Recommendations / Next steps:
+- A clean auto-merge is not a working merge: intake-form.tsx merged with zero
+  conflict markers and did not compile. Worth running tsc before trusting any
+  merge of this size.
+- Still open from the previous entry: provider-parity test, rate-limit buckets
+  in the DB, backup/restore, authentication.

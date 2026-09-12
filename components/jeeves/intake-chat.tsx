@@ -25,6 +25,7 @@
 import * as React from "react";
 import { toast } from "sonner";
 import type { CompletenessGap } from "@/lib/intake/completeness";
+import type { IntakePayload } from "@/lib/intake/types";
 import { intakeChat, isApiError, apiErrorToMessage } from "@/lib/client/api";
 import { useLiveSession } from "@/lib/client/session-context";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -49,12 +50,18 @@ const GAP_LEVEL_CLASS: Record<CompletenessGap["level"], string> = {
   ADVISORY: "text-muted-foreground",
 };
 
-export function IntakeChat() {
+export function IntakeChat({ payload, onPayloadChange, onReview }: {
+  payload?: IntakePayload;
+  onPayloadChange?: (payload: IntakePayload) => void;
+  onReview?: () => void;
+}) {
   const { session, logout } = useLiveSession();
   const isRequester = session?.role === "requester";
 
   const [conversation, setConversation] = React.useState<ConversationTurn[]>([]);
-  const [partialPayload, setPartialPayload] = React.useState<Record<string, unknown>>({});
+  const [partialPayload, setPartialPayload] = React.useState<Record<string, unknown>>(
+    (payload as unknown as Record<string, unknown>) ?? {},
+  );
   const [message, setMessage] = React.useState("");
   const [gaps, setGaps] = React.useState<CompletenessGap[]>([]);
   const [done, setDone] = React.useState(false);
@@ -78,10 +85,11 @@ export function IntakeChat() {
     try {
       const result = await intakeChat(session.token, {
         conversation: nextConversation,
-        partialPayload,
+        partialPayload: (payload as unknown as Record<string, unknown>) ?? partialPayload,
       });
       setConversation((prev) => [...prev, { role: "assistant", content: result.reply }]);
       setPartialPayload(result.updatedPayload as unknown as Record<string, unknown>);
+      onPayloadChange?.(result.updatedPayload);
       setGaps(result.gaps);
       setDone(result.done);
     } catch (err) {
@@ -150,9 +158,12 @@ export function IntakeChat() {
           </div>
 
           {done ? (
-            <Badge variant="secondary" data-slot="intake-chat-done">
-              Intake complete — no blocking gaps remain
-            </Badge>
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant="secondary" data-slot="intake-chat-done">
+                Intake complete — no blocking gaps remain
+              </Badge>
+              {onReview ? <Button type="button" variant="outline" onClick={onReview}>Review and submit</Button> : null}
+            </div>
           ) : null}
 
           <div className="flex items-center gap-2">

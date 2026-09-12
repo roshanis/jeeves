@@ -4,7 +4,6 @@
 // directly like tests/ui/landing-page.test.tsx.
 import { afterEach, describe, expect, it } from "vitest";
 import { cleanup, render } from "@testing-library/react";
-import { LandingPage } from "@/components/jeeves/landing-page";
 import { FrameworkMappingTable } from "@/components/jeeves/framework-mapping-table";
 import {
   CONTROL_FRAMEWORK_MAPPINGS,
@@ -90,31 +89,5 @@ describe("PilotPage", () => {
   it("shows the framework disclaimer as small print", () => {
     const { getByText } = render(<PilotPage />);
     expect(getByText(FRAMEWORK_DISCLAIMER)).toBeDefined();
-  });
-});
-
-describe("LandingPage (repositioned CTAs)", () => {
-  it('primary CTA "Book a governance assessment" links to CONTACT_URL', () => {
-    const { getByRole } = render(<LandingPage />);
-    const cta = getByRole("link", {
-      name: "Book a governance assessment",
-    }) as HTMLAnchorElement;
-    expect(cta.getAttribute("href")).toBe(CONTACT_URL);
-  });
-
-  it('secondary CTA "Explore the live demo" links to /inbox', () => {
-    const { getAllByRole } = render(<LandingPage />);
-    const ctas = getAllByRole("link", {
-      name: "Explore the live demo",
-    }) as HTMLAnchorElement[];
-    expect(ctas.length).toBeGreaterThan(0);
-    for (const cta of ctas) {
-      expect(cta.getAttribute("href")).toBe("/inbox");
-    }
-  });
-
-  it("has no console sidebar bleed-through", () => {
-    const { container } = render(<LandingPage />);
-    expect(container.querySelector("aside")).toBeNull();
   });
 });
