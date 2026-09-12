@@ -599,6 +599,118 @@ export interface TriageReviewResult {
  * `sessionWorkspaceId` — sit BEFORE `actor` in this function's positional
  * parameter list, so both must default) keep behaving exactly as before.
  */
+/* -------------------------------------------------------------------------
+ * QC gate — the human check between submission and the review fan-out.
+ * ---------------------------------------------------------------------- */
+
+export interface StartQcResult {
+  state: "in_qc";
+  completenessPct: number;
+}
+
+/**
+ * Take a submitted intake into QC.
+ *
+ * This is the gate. `triage()` asks every required domain at once — eight for
+ * a Critical initiative — so without it a half-complete intake could spend
+ * eight reviewers' time before anyone had read it. `submitted --triage-->` was
+ * removed from the transition table, so this is the only way forward.
+ *
+ * Program Office or Admin only: a gate an agent can open is not a gate.
+ */
+export async function startQc(
+  db: Db,
+  initiativeId: string,
+  actor: Actor,
+  sessionWorkspaceId: string | null = null,
+): Promise<StartQcResult> {
+  return db.transaction(async (tx) => {
+    const initiative = await loadInitiativeOrThrow(tx, initiativeId, true);
+    assertWorkspaceAccess(initiative.workspaceId, sessionWorkspaceId, "initiative", initiativeId);
+
+    const intake = await latestIntakeVersion(tx, initiativeId);
+    if (!intake) {
+      throw new ValidationError("initiative has no intake version to QC");
+    }
+    const completeness = evaluateCompleteness(intake.fields as unknown as IntakePayload);
+
+    const result = transition(initiative.state as LifecycleState, "start_qc", actor, {
+      ts: nowTs(),
+    });
+    await updateInitiativeState(tx, initiativeId, initiative.state as LifecycleState, result.after);
+    await insertAuditEvent(
+      tx,
+      initiativeId,
+      result.auditEvent,
+      `Opened QC on intake v${intake.version} (${completeness.completenessPct}% complete).`,
+      { completenessPct: completeness.completenessPct },
+    );
+
+    return { state: "in_qc", completenessPct: completeness.completenessPct };
+  });
+}
+
+export interface ReturnFromQcResult {
+  state: "intake_draft";
+  reason: string;
+}
+
+/**
+ * Fail QC and send the intake back to its requester.
+ *
+ * Returns to `intake_draft` so the requester edits and resubmits — the same
+ * shape as a returned domain review. The reason is required and lands on the
+ * append-only audit trail: a bare return tells the requester nothing, which
+ * is how an intake ends up bouncing.
+ *
+ * No review rows exist at this point (triage has not run), so there is
+ * nothing to unwind — which is exactly why the gate sits here rather than
+ * after the fan-out.
+ */
+export async function returnFromQc(
+  db: Db,
+  initiativeId: string,
+  actor: Actor,
+  reason: string,
+  sessionWorkspaceId: string | null = null,
+): Promise<ReturnFromQcResult> {
+  const trimmed = reason?.trim() ?? "";
+  if (trimmed.length === 0) {
+    throw new ValidationError("a QC return requires a reason");
+  }
+
+  return db.transaction(async (tx) => {
+    const initiative = await loadInitiativeOrThrow(tx, initiativeId, true);
+    assertWorkspaceAccess(initiative.workspaceId, sessionWorkspaceId, "initiative", initiativeId);
+
+    const result = transition(initiative.state as LifecycleState, "return_to_requester", actor, {
+      ts: nowTs(),
+      reason: trimmed,
+    });
+    await updateInitiativeState(tx, initiativeId, initiative.state as LifecycleState, result.after);
+
+    // Mark the intake unsubmitted so the requester's form is editable again
+    // and the completeness meter reads as work-in-progress rather than done.
+    const intake = await latestIntakeVersion(tx, initiativeId);
+    if (intake) {
+      await tx
+        .update(intakeVersions)
+        .set({ submitted: false })
+        .where(eq(intakeVersions.id, intake.id));
+    }
+
+    await insertAuditEvent(
+      tx,
+      initiativeId,
+      result.auditEvent,
+      `Returned from QC to the requester: ${trimmed}`,
+      { reason: trimmed },
+    );
+
+    return { state: "intake_draft", reason: trimmed };
+  });
+}
+
 export async function triage(
   db: Db,
   initiativeId: string,

@@ -933,3 +933,62 @@ chip and then it swaps — a flash in prod, a warning in dev.
 - Fast-lane leaves orphaned pending review rows (above). Worth a decision:
   close them on fast-lane approval, or do not create them until the branch is
   known.
+
+## [AGENT: Claude] [2026-09-12T17:55Z]
+### Action: QC gate — a human check between submission and the review fan-out
+### Files changed:
+lib/domain/types.ts; lib/lifecycle/{transitions.ts,transitions.test.ts,qc-gate.test.ts (new)};
+lib/services/{initiative-service.ts,qc-gate.test.ts (new)}; lib/client/api.ts;
+app/api/initiatives/[id]/qc/route.ts (new); app/api/initiatives/[id]/qc-return/route.ts (new);
+components/jeeves/{lifecycle-badge,initiative-table,initiative-blockers-rail,live-actions-bar}.tsx;
+lib/data/{mock-provider.ts,provider-parity.test.ts}; tests/e2e/golden-path.spec.ts
+
+### Human decisions taken before building (AskUserQuestion):
+- HARD gate: submitted->triage removed, so the fan-out is unreachable without QC.
+- Failed QC returns to intake_draft with a required reason.
+- QC owner: Program Office OR Admin.
+
+### Diff summary:
+New state `in_qc`:
+  submitted --start_qc(program|admin)--> in_qc
+  in_qc     --triage(system)----------> triaged  (opens the fan-out)
+  in_qc     --return_to_requester(program|admin, reason)--> intake_draft
+  submitted --triage--> REMOVED
+
+KEY JUDGMENT: QC is NOT a rename of triage. The triage route's own comment
+says triage is "a deterministic system computation, not a human judgment
+call" — still true, it derives tier + required domains from overlay flags. So
+the human gate is ENTERING QC; passing it means choosing to route rather than
+return. triage keeps its actor and its semantics, and the diff stays small.
+`system` is excluded from start_qc: a gate an agent can open is not a gate.
+
+returnFromQc also flips intakeVersions.submitted back to false — otherwise the
+requester's form stays locked and the completeness meter reads as finished.
+
+TYPE SYSTEM CAUGHT A LATENT BUG: Record<LifecycleState, ...> maps forced every
+display surface to handle in_qc, but lib/data/mock-provider.ts kept its OWN
+hand-maintained copy of the state union and silently stayed behind. Aliased it
+to the real type — that duplication is exactly the drift provider-parity.test
+exists to catch, and it would have bitten on the next state too.
+
+E2E NEEDED A PERSONA SWITCH, WHICH IS THE DESIGN WORKING: the golden path
+submitted as Priya then clicked "Run triage". It cannot now — the requester who
+submitted cannot pass their own QC — so the spec switches to nia-okafor.
+Self-approval prevention falls out of the gate rather than being bolted on.
+
+### Verified:
+- 16 transition tests incl. that submitted--triage--> stays gone
+- 10 service tests; the decisive one is that triage from `submitted` throws
+  with ZERO reviews and ZERO notifications created (it previously opened 8)
+- typecheck + lint clean
+
+### Recommendations / Next steps:
+- Seed data untouched: the 2 `submitted` initiatives now read as awaiting QC,
+  which is accurate. Seeding one directly into `in_qc` would make the state
+  visible without driving the live loop.
+- The QC return uses window.prompt for the reason. Adequate for a demo, but
+  every other reason-carrying action in this app uses a proper dialog
+  (reason-dialog.tsx) — worth switching for consistency.
+- Fast-lane still creates review rows before the eligibility check, so a
+  fast-lane initiative carries orphaned pending reviews. Unchanged by this
+  work and still worth a decision.

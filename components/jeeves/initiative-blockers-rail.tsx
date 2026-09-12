@@ -35,6 +35,7 @@ interface Blocker {
 const PRE_REVIEW_STATES: ReadonlySet<LifecycleState> = new Set([
   "intake_draft",
   "submitted",
+  "in_qc",
 ]);
 
 /**
@@ -83,7 +84,9 @@ function noBlockersMessage(detail: InitiativeDetail): string {
       return `Not yet submitted — no reviews or controls are required until intake is submitted and triaged.${gapText}`;
     }
     case "submitted":
-      return "Awaiting triage — the required review domains are assigned when triage runs.";
+      return "Awaiting QC — a submitted intake is checked before any domain is asked to review it.";
+    case "in_qc":
+      return "In QC — the intake is being checked. Passing QC opens every required domain review at once.";
     case "triaged":
       return "Triaged — required reviews are assigned but none has been drafted yet.";
     case "rejected":

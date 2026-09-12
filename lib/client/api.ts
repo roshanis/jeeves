@@ -426,6 +426,42 @@ export function submitIntake(token: string, initiativeId: string): Promise<Submi
 }
 
 /** POST /api/initiatives/[id]/triage — any authenticated persona. */
+export interface StartQcResult {
+  state: "in_qc";
+  completenessPct: number;
+}
+
+/**
+ * POST /api/initiatives/[id]/qc — open QC on a submitted intake.
+ *
+ * The gate before the review fan-out: triage() asks every required domain at
+ * once, so a half-complete intake would otherwise spend eight reviewers'
+ * time. Program Office or Admin only.
+ */
+export function startQc(token: string, initiativeId: string): Promise<StartQcResult> {
+  return request<StartQcResult>(`/api/initiatives/${encodeURIComponent(initiativeId)}/qc`, {
+    method: "POST",
+    token,
+  });
+}
+
+export interface ReturnFromQcResult {
+  state: "intake_draft";
+  reason: string;
+}
+
+/** POST /api/initiatives/[id]/qc-return — fail QC, back to the requester. */
+export function returnFromQc(
+  token: string,
+  initiativeId: string,
+  reason: string,
+): Promise<ReturnFromQcResult> {
+  return request<ReturnFromQcResult>(
+    `/api/initiatives/${encodeURIComponent(initiativeId)}/qc-return`,
+    { method: "POST", token, body: { reason } },
+  );
+}
+
 export function runTriage(token: string, initiativeId: string): Promise<TriageResult> {
   return request<TriageResult>(`/api/initiatives/${encodeURIComponent(initiativeId)}/triage`, {
     method: "POST",

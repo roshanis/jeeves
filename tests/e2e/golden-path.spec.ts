@@ -201,7 +201,7 @@ test.describe("champion storyline: read-only golden path", () => {
 //
 // The runner and web server share a fixed, test-only passcode from
 // tests/e2e/constants.ts. This story is mandatory and never self-skips.
-test.describe("live demo loop: create → triage → draft run → sign → decide", () => {
+test.describe("live demo loop: create → QC → triage → draft run → sign → decide", () => {
   /** Log in through the demo-mode chip dialog as the given persona. */
   async function loginAs(page: import("@playwright/test").Page, personaKey: string) {
     await page.locator('[data-slot="demo-mode-chip"]').click();
@@ -269,6 +269,20 @@ test.describe("live demo loop: create → triage → draft run → sign → deci
     await expect(
       page.getByRole("heading", { name: "Prior-Auth Clinical Summarizer" }),
     ).toBeVisible();
+
+    // --- QC gate: submitted work is checked before anyone is asked -------
+    // triage() opens all 8 domain reviews at once, so the gate sits here:
+    // this is the last point at which an incomplete intake costs nobody
+    // else time. `submitted --triage-->` was removed from the transition
+    // table, so this step is mandatory, not decorative.
+    //
+    // It also cannot be done by the requester who submitted it — QC is
+    // Program Office or Admin — hence the persona switch.
+    await expect(page.locator('[data-slot="start-qc"]')).toBeVisible();
+    await resetToReadOnly(page);
+    await loginAs(page, "nia-okafor");
+    await page.locator('[data-slot="start-qc"]').click();
+    await expect(page.locator('[data-slot="run-triage"]')).toBeVisible({ timeout: 30_000 });
 
     // --- Triage: Critical, 8 required domains, review branch -------------
     await page.locator('[data-slot="run-triage"]').click();

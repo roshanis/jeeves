@@ -30,6 +30,8 @@ import {
   runTriage,
   type DecideInput,
   type TriageResult,
+  startQc,
+  returnFromQc,
 } from "@/lib/client/api";
 import { rememberCycle } from "@/lib/client/live-registry";
 import { useLiveInfo } from "@/lib/client/use-live-info";
@@ -58,6 +60,8 @@ export function LiveActionsBar({ slug, state }: { slug: string; state: Lifecycle
   const [triaging, setTriaging] = React.useState(false);
   const [triageResult, setTriageResult] = React.useState<TriageResult | null>(null);
   const [decideOpen, setDecideOpen] = React.useState(false);
+  const [qcPending, setQcPending] = React.useState(false);
+  const [returnPending, setReturnPending] = React.useState(false);
 
   if (!session || !liveInfo?.initiativeId) {
     return null;
@@ -85,10 +89,50 @@ export function LiveActionsBar({ slug, state }: { slug: string; state: Lifecycle
     }
   }
 
-  const showTriage = state === "submitted" && !triageResult;
+  async function handleStartQc() {
+    if (!session) return;
+    setQcPending(true);
+    try {
+      const result = await startQc(session.token, initiativeId);
+      toast.success(
+        `QC opened — intake is ${result.completenessPct}% complete. Pass it to open the domain reviews, or return it to the requester.`,
+      );
+      router.refresh();
+    } catch (err) {
+      toast.error(isApiError(err) ? apiErrorToMessage(err) : "Could not open QC.");
+      if (isApiError(err) && err.status === 401) live?.logout();
+    } finally {
+      setQcPending(false);
+    }
+  }
+
+  async function handleReturnFromQc() {
+    if (!session) return;
+    // Deliberately a prompt rather than a silent default: the reason lands on
+    // the append-only audit trail and is the only thing telling the requester
+    // what to fix.
+    const reason = window.prompt("Why is this being returned to the requester?");
+    if (reason === null || reason.trim().length === 0) return;
+    setReturnPending(true);
+    try {
+      await returnFromQc(session.token, initiativeId, reason.trim());
+      toast.success("Returned to the requester with your reason on the audit trail.");
+      router.refresh();
+    } catch (err) {
+      toast.error(isApiError(err) ? apiErrorToMessage(err) : "Could not return the intake.");
+      if (isApiError(err) && err.status === 401) live?.logout();
+    } finally {
+      setReturnPending(false);
+    }
+  }
+
+  // QC is the gate before the fan-out. `submitted` can only go into QC;
+  // `in_qc` can pass (triage) or go back to the requester.
+  const showStartQc = state === "submitted";
+  const showTriage = state === "in_qc" && !triageResult;
   const showDecide = state === "in_review";
 
-  if (!showTriage && !triageResult && !showDecide) {
+  if (!showStartQc && !showTriage && !triageResult && !showDecide) {
     return null;
   }
 
@@ -98,6 +142,24 @@ export function LiveActionsBar({ slug, state }: { slug: string; state: Lifecycle
         <CardTitle className="text-sm">Live demo actions</CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
+        {showStartQc ? (
+          <div className="flex items-center gap-3">
+            <DisableWithTooltip
+              label="Open QC"
+              requiresRole="program"
+              onAction={() => void handleStartQc()}
+              pending={qcPending}
+              pendingLabel="Opening QC…"
+              data-slot="start-qc"
+            />
+            <span className="text-xs text-muted-foreground">
+              Quality check before any domain is asked. Triage opens every
+              required review at once, so this is the last point at which an
+              incomplete intake costs nobody else time.
+            </span>
+          </div>
+        ) : null}
+
         {showTriage ? (
           <div className="flex items-center gap-3">
             <DisableWithTooltip
@@ -107,8 +169,17 @@ export function LiveActionsBar({ slug, state }: { slug: string; state: Lifecycle
               pendingLabel="Running triage…"
               data-slot="run-triage"
             />
+            <DisableWithTooltip
+              label="Return to requester"
+              requiresRole="program"
+              onAction={() => void handleReturnFromQc()}
+              pending={returnPending}
+              pendingLabel="Returning…"
+              data-slot="qc-return"
+            />
             <span className="text-xs text-muted-foreground">
-              Deterministic tier + required-domain routing from the overlay flags.
+              Passing QC runs deterministic tier + required-domain routing and
+              opens all of them at once. Returning sends it back with a reason.
             </span>
           </div>
         ) : null}

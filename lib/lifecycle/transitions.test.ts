@@ -24,8 +24,18 @@ describe("transition — happy-path lifecycle graph", () => {
     expect(result.before).toBe("intake_draft");
   });
 
-  it("submitted -> triaged by system", () => {
-    const result = transition("submitted", "triage", actor("system"), {
+  // The QC gate sits between submission and the fan-out, so the happy path
+  // is now two hops. `submitted --triage-->` was removed deliberately —
+  // lib/lifecycle/qc-gate.test.ts asserts it stays gone.
+  it("submitted -> in_qc by the program office", () => {
+    const result = transition("submitted", "start_qc", actor("program"), {
+      ts: NOW,
+    });
+    expect(result.after).toBe("in_qc");
+  });
+
+  it("in_qc -> triaged by system", () => {
+    const result = transition("in_qc", "triage", actor("system"), {
       ts: NOW,
     });
     expect(result.after).toBe("triaged");

@@ -61,6 +61,12 @@ export type ActorRole =
 export type LifecycleState =
   | "intake_draft"
   | "submitted"
+  // Quality-control gate between submission and the review fan-out. triage()
+  // asks every required domain at once — eight for a Critical initiative —
+  // so a half-complete intake could otherwise spend eight reviewers' time
+  // before anyone looked at it. Nothing reaches `triaged` except through
+  // here: `submitted --triage-->` was removed deliberately.
+  | "in_qc"
   | "triaged"
   | "in_review"
   | "fast_lane_approved"

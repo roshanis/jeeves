@@ -1,6 +1,7 @@
 import {
   FilePlus2,
   FileClock,
+  ClipboardCheck,
   ListChecks,
   FileSearch,
   Zap,
@@ -19,6 +20,7 @@ import { cn } from "@/lib/utils";
 export const LIFECYCLE_LABEL: Record<LifecycleState, string> = {
   intake_draft: "Intake",
   submitted: "Submitted",
+  in_qc: "In QC",
   triaged: "Triaged",
   in_review: "In Review",
   fast_lane_approved: "Fast-Lane Approved",
@@ -42,6 +44,8 @@ type Tone = "good" | "neutral" | "serious" | "critical";
 const LIFECYCLE_META: Record<LifecycleState, { tone: Tone; icon: LucideIcon }> = {
   intake_draft: { tone: "neutral", icon: FilePlus2 },
   submitted: { tone: "neutral", icon: FileClock },
+  // Neutral, not serious: sitting in QC is normal progress, not a problem.
+  in_qc: { tone: "neutral", icon: ClipboardCheck },
   triaged: { tone: "neutral", icon: ListChecks },
   in_review: { tone: "neutral", icon: FileSearch },
   fast_lane_approved: { tone: "good", icon: Zap },

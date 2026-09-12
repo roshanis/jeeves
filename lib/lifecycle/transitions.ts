@@ -25,6 +25,8 @@ import type { Actor, ActorRole, LifecycleState } from "../domain/types";
 export type LifecycleAction =
   | "submit"
   | "triage"
+  | "start_qc"
+  | "return_to_requester"
   | "start_review"
   | "fast_lane_approve"
   | "approve"
@@ -109,7 +111,25 @@ const TRANSITIONS: TransitionTable = {
     submit: { to: "submitted", allowedRoles: ["requester"] },
   },
   submitted: {
+    // The QC gate. `triage` is deliberately NOT reachable from here — see
+    // in_qc below. Taking an intake into QC is a human judgment, so `system`
+    // is excluded: a gate an agent can open is not a gate.
+    start_qc: { to: "in_qc", allowedRoles: ["program", "admin"] },
+  },
+  in_qc: {
+    // Passing QC means choosing to route it, and routing is what opens the
+    // fan-out. `triage` itself stays system-only and unchanged — it is a
+    // deterministic computation (tier + required domains), not a judgment,
+    // exactly as app/api/initiatives/[id]/triage/route.ts documents. The
+    // human decision is which of these two actions to take.
     triage: { to: "triaged", allowedRoles: ["system"] },
+    // QC failed. Back to the requester to fix and resubmit, with the reason
+    // on the audit trail — the same shape as a returned domain review.
+    return_to_requester: {
+      to: "intake_draft",
+      allowedRoles: ["program", "admin"],
+      requiresReason: true,
+    },
   },
   triaged: {
     start_review: { to: "in_review", allowedRoles: ["reviewer", "system"] },

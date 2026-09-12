@@ -5,7 +5,7 @@
 // for domainsRequired counts. This file is UI-dev/test fixture data only —
 // lib/data/db-provider.ts (not yet built) will replace it once DATABASE_URL
 // is wired; both must satisfy the same DataProvider contract from provider.ts.
-import type { Domain, OverlayFlags, Tier } from "@/lib/domain/types";
+import type { Domain, LifecycleState, OverlayFlags, Tier } from "@/lib/domain/types";
 import { deriveTier } from "@/lib/triage/rules";
 import { requiredDomains } from "@/lib/triage/routing";
 import { actorMatches, displayNameFor } from "@/lib/services/actors";
@@ -163,19 +163,11 @@ const Q01_CRITICAL_THRESHOLD = 0.05;
 // Initiative fixture shape
 // ---------------------------------------------------------------------------
 
-type LifecycleStateName =
-  | "intake_draft"
-  | "submitted"
-  | "triaged"
-  | "in_review"
-  | "fast_lane_approved"
-  | "approved"
-  | "conditionally_approved"
-  | "rejected"
-  | "deployed"
-  | "paused"
-  | "re_review"
-  | "retired";
+// Aliased rather than re-listed. This was a hand-maintained copy of the
+// union, which is precisely the drift the parity test exists to catch —
+// adding `in_qc` to LifecycleState left this copy silently behind. An alias
+// cannot fall out of step.
+type LifecycleStateName = LifecycleState;
 
 interface InitiativeFixture {
   slug: string;
@@ -421,11 +413,13 @@ function reviewStatusFor(
 const PRE_TRIAGE_STATES: ReadonlySet<LifecycleStateName> = new Set([
   "intake_draft",
   "submitted",
+  "in_qc",
 ]);
 
 const PRE_DECISION_STATES: ReadonlySet<LifecycleStateName> = new Set([
   "intake_draft",
   "submitted",
+  "in_qc",
   "triaged",
   "in_review",
   "rejected",
