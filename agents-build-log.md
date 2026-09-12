@@ -815,3 +815,54 @@ says so at the top rather than implying otherwise.
 - First podman build is the remaining test.
 - TLS is out of scope — the app serves plain HTTP; put a proxy in front.
 - Authentication is unchanged by containerisation and still the blocker.
+
+## [AGENT: Claude] [2026-09-12T04:36Z]
+### Action: Make the intake submit path discoverable (the feature already worked)
+### Files changed:
+lib/client/session-context.tsx; components/jeeves/{demo-mode-chip,intake-form}.tsx;
+tests/ui/{intake-unlock-prompt.test.tsx (new),intake-form.test.tsx}
+
+### Diff summary:
+Asked to "make demo allow us to submit an intake". Checked before building:
+submitting ALREADY worked end to end. Verified against a live server —
+unlock live mode, Load champion example, Submit -> POST /api/initiatives 200,
+POST /api/initiatives/{id}/submit 200, redirect to the new detail page.
+
+The gap was discoverability, not capability. A visitor on /initiatives/new
+saw a disabled form and a notice ending "(use the chip in the header)" — an
+instruction to go hunting for a control elsewhere while looking at the thing
+they wanted to use.
+
+Fix: the notice now carries an "Enter the demo passcode" button that opens the
+SAME dialog the header chip owns. The dialog's open state moved from
+DemoModeChip's local useState onto LiveSessionContext (unlockPromptOpen /
+setUnlockPromptOpen / openUnlockPrompt), so anything that hits the read-only
+gate can offer the way past it without a second copy of the dialog.
+
+THE PASSCODE GATE IS UNCHANGED — hard rule, and re-verified: POST
+/api/initiatives with no session still returns 401, and the form's fieldset
+is still disabled without a session.
+
+Existing test asserted the old sentence; updated to assert the button, which
+preserves its intent ("read-only mode surfaces the passcode route") against
+the stronger affordance.
+
+ALSO ANSWERED (user's prior question, with live evidence): triage fans out to
+every required domain SIMULTANEOUSLY. Submitted a Critical initiative and ran
+triage; review_decisions showed all 8 domains — clinical-safety,
+data-governance, legal, privacy-hipaa, procurement, responsible-ai, security,
+tech-architecture — all 'pending' at once, header reading "0/8 signed, 8 open
+blockers". signReview() is scoped to one (cycle, domain) with a compare-and-set,
+so domains are independent and order-free.
+
+CORRECTION to an earlier statement in this session: I described submit ->
+triage -> 'triaged' -> review as separate. Running it shows triage lands the
+initiative directly in 'in_review' with all reviews open.
+
+### Recommendations / Next steps:
+- No notification transport exists (grepped: no SMTP/SendGrid/Slack/webhook).
+  "Sent to Legal" means a row appears in Legal's queue; nobody is told. That
+  is the gap between "Legal has been asked" and "Legal knows", and the state
+  transition that opens the reviews is the natural hook for it.
+- A hosted demo with no DEMO_PASSCODE set cannot accept submissions at all,
+  regardless of the UI.

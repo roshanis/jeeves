@@ -270,7 +270,7 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
   initialSlug?: string;
 } = {}) {
   const router = useRouter();
-  const { session, logout } = useLiveSession();
+  const { session, logout, openUnlockPrompt } = useLiveSession();
 
   const [internalPayload, setInternalPayload] = React.useState<IntakePayload>(initialPayload ?? EMPTY_PAYLOAD);
   const payload = initialPayload ?? internalPayload;
@@ -395,10 +395,24 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
         {!session ? (
           <Alert>
             <AlertTitle>Read-only mode</AlertTitle>
-            <AlertDescription>
-              Enter demo passcode to create a new initiative — the form below
-              is visible but non-interactive until a live demo session is
-              active (use the chip in the header).
+            <AlertDescription className="flex flex-col items-start gap-2.5">
+              <span>
+                The form below is visible but non-interactive. Submitting an
+                initiative needs a live demo session, which runs in its own
+                isolated workspace with a daily token budget and rate limits
+                enforced server-side.
+              </span>
+              {/* The button, not a pointer to one. This used to read "(use the
+                  chip in the header)", which is an instruction to go hunting.
+                  Opens the same dialog the header chip owns. */}
+              <Button
+                type="button"
+                size="sm"
+                onClick={openUnlockPrompt}
+                data-slot="intake-unlock"
+              >
+                Enter the demo passcode
+              </Button>
             </AlertDescription>
           </Alert>
         ) : !isRequester ? (

@@ -41,8 +41,12 @@ const ROLE_GROUPS: LivePersona["role"][] = [
 ];
 
 export function DemoModeChip() {
-  const { session, login, logout } = useLiveSession();
-  const [open, setOpen] = React.useState(false);
+  // The dialog's open state lives on the session context, not here, so any
+  // component that runs into the read-only gate can open THIS dialog rather
+  // than telling the reader to come find this chip. The chip still owns the
+  // dialog itself — there is one implementation, not a copy per caller.
+  const { session, login, logout, unlockPromptOpen: open, setUnlockPromptOpen: setOpen } =
+    useLiveSession();
   const [passcode, setPasscode] = React.useState("");
   const [personaKey, setPersonaKey] = React.useState(LIVE_PERSONAS[0]!.personaKey);
   const [error, setError] = React.useState<string | null>(null);

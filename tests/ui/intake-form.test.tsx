@@ -107,8 +107,9 @@ describe("IntakeForm — read-only public mode (no live session)", () => {
       'fieldset[data-slot="intake-fieldset"]',
     );
     expect(fieldset?.disabled).toBe(true);
-    expect(
-      screen.getByText(/Enter demo passcode to create a new initiative/),
-    ).toBeTruthy();
+    // The banner now carries the way in rather than describing it — it used
+    // to end "(use the chip in the header)", pointing the reader at a control
+    // elsewhere on the page. Same gate, discoverable affordance.
+    expect(screen.getByRole("button", { name: /enter the demo passcode/i })).toBeTruthy();
   });
 });
