@@ -379,6 +379,32 @@ export function postSession(passcode: string, personaKey: string): Promise<Sessi
   });
 }
 
+/**
+ * POST /api/public-session — a passcode-free session for public intake.
+ *
+ * Takes no arguments, because there is no credential to take. The session it
+ * returns carries the `public` role, which the server denies on every route
+ * except the three intake ones (create / edit draft / submit).
+ */
+export function postPublicSession(): Promise<SessionResult> {
+  return request<SessionResult>("/api/public-session", { method: "POST" });
+}
+
+export interface PublicSubmissionRow {
+  initiativeId: string;
+  slug: string;
+  title: string;
+  requester: string;
+  state: string;
+  submittedAt: string | null;
+  createdAt: string;
+}
+
+/** GET /api/public-intake — Program Office / Admin view of public submissions. */
+export function listPublicSubmissions(token: string): Promise<PublicSubmissionRow[]> {
+  return request<PublicSubmissionRow[]>("/api/public-intake", { method: "GET", token });
+}
+
 /** New per-editor creation key; callers retain it for every retry of that draft creation. */
 export function createIntakeRequestId(): string {
   return globalThis.crypto.randomUUID();

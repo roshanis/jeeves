@@ -104,6 +104,57 @@ stale and contradicted §3(b). Now corrected.)
 
 ---
 
+### 1.3 Public submission is open — ADDED 2026-09-13 by explicit decision
+
+Anyone can now submit a request without the demo passcode. This was a
+deliberate product decision that overrides the earlier "public visitors are
+read-only" rule; it is recorded here because it is the largest single change
+to this app's exposure.
+
+**What an anonymous caller can do.** Mint a session at
+`POST /api/public-session`, then create an intake draft, edit it, and submit
+it. That is the entire list.
+
+**What holds the line.** The public session carries a `public` role that is
+NOT `requester`, and `runMutationGuard` rejects it unless a route explicitly
+passes `allowPublic: true`. Deny-by-default, so a route added next month is
+closed without its author knowing this feature exists. Three routes opt in.
+
+This matters more than it first looks. `requester` is not merely "may
+submit" — it already unlocks `POST /api/chat/intake` and the 8-domain
+`draft-run`, both budget-gated against the shared OpenAI cap. Minting public
+sessions as requesters would have let anonymous callers spend money. Two
+further routes (`triage`, `monitor/run`) have no role check at all because
+they substitute a `system` actor and let the lifecycle decide, and
+`agents/health` has none while being budget-gated; their "any authenticated
+persona" rationale was written when authenticated meant passcode-holding.
+The guard-level default is what closes all three.
+
+**Cost exposure.** The public path invokes no LLM. Spend is unchanged.
+
+**What is NOT protected.**
+- No captcha. `POST /api/public-session` is rate-limited per client (10
+  tokens, one refill per 60s) and bodies are capped at 64KB, but a determined
+  actor with many IPs can still fill the `initiatives` table. If that
+  matters, Turnstile/hCaptcha in front of the session mint is the next step.
+- No email verification. The name and address on a public submission are
+  whatever was typed.
+- Strangers may enter real personal or health information despite the
+  warning on the form. Consider a retention policy for public-workspace rows.
+
+**Where submissions go.** Each public session gets its own isolated
+workspace, so visitors cannot reach each other's drafts — and, for the same
+reason, the server-rendered console cannot see them either (it scopes reads
+by the workspace cookie, which carries no role). The Program Office reads
+them through `GET /api/public-intake`, surfaced as the "Public submissions"
+panel on the Reviews page. Deliberately role-gated on the session token
+rather than widened at the workspace filter, which would have shown every
+stranger's submission to every other stranger.
+
+**Governance is unchanged.** A public submission stops at `submitted`. QC,
+triage, the review fan-out and every decision still require a named,
+passcode-holding human.
+
 ## 2. Should fix before a pilot
 
 ### 2.1 No backup or restore procedure — DOCUMENTED 2026-09-12, not yet exercised

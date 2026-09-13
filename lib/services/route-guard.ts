@@ -15,7 +15,7 @@ import { verifyPasscode } from "../security/passcode";
 import { issueSession } from "../security/session";
 import { DbBudgetStore, reserve, type BudgetStore } from "../security/budget";
 import { validateInputSize, type FieldLimit, type InputGap } from "../security/input-limits";
-import { resolveActor } from "./actors";
+import { PUBLIC_PERSONA_PREFIX, resolveActor } from "./actors";
 import type { Actor } from "../domain/types";
 import { eq } from "drizzle-orm";
 import { getDb } from "../db/client";
@@ -33,6 +33,15 @@ import { sessions } from "../db/schema";
  * ---------------------------------------------------------------------- */
 
 const SESSION_TTL_MS = 60 * 60 * 1000; // 1 hour demo session
+/** Long enough to fill in one intake form, short enough not to be a handle. */
+const PUBLIC_SESSION_TTL_MS = 30 * 60 * 1000;
+/**
+ * Marks a workspace as belonging to a public submitter. Read-scoping uses
+ * this to let the Program Office see public submissions; mutation does NOT
+ * (workspaceMismatch stays an exact match), so visitors stay isolated from
+ * each other.
+ */
+export const PUBLIC_WORKSPACE_PREFIX = "public-";
 const rateLimiter = new DbTokenBucketRateLimiter(
   { capacity: 20, refillPerSecond: 0.5 },
   getDb,
@@ -50,6 +59,56 @@ const sessionAttemptLimiter = new DbTokenBucketRateLimiter(
   getDb,
   () => Date.now(),
 );
+
+/**
+ * Public (passcode-free) intake sessions — POST /api/public-session.
+ *
+ * There is no passcode to brute-force here, so this bucket is not about
+ * guessing: it is the ceiling on how fast one client can mint identities
+ * and therefore how fast it can write rows. Deliberately tighter and
+ * slower-refilling than the authenticated mutation limiter, because the
+ * caller is anonymous and the only cost of asking is a request.
+ */
+const publicSessionLimiter = new DbTokenBucketRateLimiter(
+  { capacity: 10, refillPerSecond: 1 / 60 },
+  getDb,
+  () => Date.now(),
+);
+
+/**
+ * A public submitter's session: no passcode, `public` role, its own
+ * workspace.
+ *
+ * The role is the safety property (see lib/domain/types.ts). It is enforced
+ * in `runMutationGuard` below, not by each route's own role check: several
+ * routes deliberately have none, so per-route checks would have left holes
+ * (see MutationGuardOptions.allowPublic for which, and why). This session
+ * therefore holds nothing except what the three intake routes opt it into.
+ * The TTL is short — a visitor fills one form; they do not need an hour.
+ */
+export async function issuePublicSession(
+  clientKey: string,
+): Promise<IssueSessionResult | { rateLimited: true; retryAfterSeconds: number }> {
+  const attempt = await publicSessionLimiter.checkAndConsume(clientKey);
+  if (!attempt.allowed) {
+    return { rateLimited: true, retryAfterSeconds: attempt.retryAfterSeconds };
+  }
+
+  const session = issueSession({ ttlMs: PUBLIC_SESSION_TTL_MS }, () => Date.now());
+  // Prefixed so the workspace is identifiable as a public submission later,
+  // without changing what it MEANS for mutation: workspaceMismatch() still
+  // demands an exact match, so one visitor cannot touch another's draft.
+  const workspaceId = `${PUBLIC_WORKSPACE_PREFIX}${session.workspaceId}`;
+  const personaKey = `${PUBLIC_PERSONA_PREFIX}${session.token.slice(0, 32)}`;
+
+  await getDb().insert(sessions).values({
+    token: session.token,
+    personaKey,
+    workspaceId,
+    expiresAt: session.expiresAt,
+  });
+  return { token: session.token, workspaceId, expiresAt: session.expiresAt };
+}
 
 /** Pre-session brute-force gate for POST /api/session. */
 export async function checkSessionAttempt(
@@ -72,7 +131,7 @@ export type GuardFailureKind = "unauthorized" | "rate_limited" | "invalid_input"
 
 export interface GuardFailure {
   kind: GuardFailureKind;
-  status: 401 | 429 | 400;
+  status: 401 | 403 | 429 | 400;
   message: string;
   gaps?: InputGap[];
   retryAfterSeconds?: number;
@@ -201,6 +260,26 @@ export function clientKeyFor(req: Request): string {
  * ---------------------------------------------------------------------- */
 
 export interface MutationGuardOptions {
+  /**
+   * Opt this route in for passcode-free `public` sessions. Defaults to
+   * FALSE, which is the entire safety model for public submission: the
+   * guard — not each route's own role check — is the boundary, so a route
+   * added tomorrow is closed to anonymous callers without its author having
+   * to know this feature exists.
+   *
+   * Per-route role checks are not sufficient on their own here. Several
+   * routes deliberately have none, because they substitute a different
+   * actor and let the lifecycle decide: `triage` passes SYSTEM_ACTOR, and
+   * `monitor/run` runs as `system`. Their "any authenticated persona may
+   * trigger this" rationale was written when authenticated meant
+   * passcode-holding. `agents/health` has no role check either and is
+   * budget-gated, so it would have let an anonymous caller invoke the
+   * AgentPort.
+   *
+   * Exactly three routes set this: create initiative, edit intake draft,
+   * submit intake.
+   */
+  allowPublic?: boolean;
   /** Field-level input caps to validate `body` against (skipped if omitted). */
   inputLimits?: FieldLimit[];
   inputTotalCap?: number;
@@ -238,6 +317,20 @@ export async function runMutationGuard(
   const { actor, workspaceId } = await resolveSession(token);
   if (!actor) {
     return { ok: false, failure: { kind: "unauthorized", status: 401, message: "invalid or missing session" } };
+  }
+
+  // Deny-by-default for public sessions — see MutationGuardOptions.allowPublic.
+  // Placed before the rate-limit consume so a rejected anonymous caller does
+  // not spend another session's budget of tokens.
+  if (actor.role === "public" && !options.allowPublic) {
+    return {
+      ok: false,
+      failure: {
+        kind: "unauthorized",
+        status: 403,
+        message: "this action requires a demo session",
+      },
+    };
   }
 
   const clientKey = clientKeyFor(req);

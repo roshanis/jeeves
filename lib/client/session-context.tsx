@@ -24,7 +24,7 @@
  * Must be mounted INSIDE RoleProvider (it calls useRole()).
  */
 import * as React from "react";
-import { postSession } from "./api";
+import { postPublicSession, postSession } from "./api";
 import { findPersona, type LivePersona } from "./personas";
 import { useRole } from "@/components/jeeves/role-context";
 
@@ -34,12 +34,22 @@ export interface LiveSession {
   expiresAt: number;
   personaKey: string;
   personaLabel: string;
-  role: LivePersona["role"];
+  /**
+   * `public` is a real session with almost no authority — an anonymous
+   * visitor filling in the intake form. It is not a demo persona and never
+   * appears in the persona picker.
+   */
+  role: LivePersona["role"] | "public";
 }
+
+/** Marks a session as a passcode-free public submitter's. */
+export const PUBLIC_PERSONA_KEY = "public";
 
 export interface LiveSessionContextValue {
   session: LiveSession | null;
   login: (passcode: string, personaKey: string) => Promise<LiveSession>;
+  /** Passcode-free session for a public visitor submitting a request. */
+  startPublicSession: () => Promise<LiveSession>;
   logout: () => void;
   /**
    * Whether the passcode dialog is open. Lives here rather than inside
@@ -71,16 +81,26 @@ function loadStoredSession(): LiveSession | null {
     const raw = window.sessionStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as LiveSession;
-    const persona = findPersona(parsed?.personaKey);
-    if (
-      typeof parsed?.token !== "string" ||
-      typeof parsed?.workspaceId !== "string" ||
-      typeof parsed?.expiresAt !== "number" ||
-      typeof parsed?.personaKey !== "string" ||
-      !persona ||
-      parsed.personaLabel !== persona.label ||
-      parsed.role !== persona.role
-    ) {
+    const shapeOk =
+      typeof parsed?.token === "string" &&
+      typeof parsed?.workspaceId === "string" &&
+      typeof parsed?.expiresAt === "number" &&
+      typeof parsed?.personaKey === "string";
+    // A public session has no persona to validate against — checking it
+    // against the directory (as every other session is checked) would throw
+    // it away on the first reload, mid-form.
+    const identityOk =
+      parsed?.personaKey === PUBLIC_PERSONA_KEY
+        ? parsed.role === "public"
+        : (() => {
+            const persona = findPersona(parsed?.personaKey);
+            return (
+              !!persona &&
+              parsed.personaLabel === persona.label &&
+              parsed.role === persona.role
+            );
+          })();
+    if (!shapeOk || !identityOk) {
       window.sessionStorage.removeItem(STORAGE_KEY);
       return null;
     }
@@ -155,7 +175,13 @@ export function LiveSessionProvider({ children }: { children: React.ReactNode })
 
   React.useEffect(() => {
     if (!session) return;
-    setPersonaKey(session.personaKey);
+    // A public submitter is not a persona. Pushing their key into the role
+    // context would hit findLivePersona's defensive fallback and quietly
+    // present them as the Program Office — a stranger shown an identity with
+    // authority they do not have.
+    if (session.personaKey !== PUBLIC_PERSONA_KEY) {
+      setPersonaKey(session.personaKey);
+    }
     const remainingMs = session.expiresAt - Date.now();
     if (remainingMs <= 0) {
       setStoredSession(null);
@@ -187,6 +213,24 @@ export function LiveSessionProvider({ children }: { children: React.ReactNode })
     [setPersonaKey],
   );
 
+  /**
+   * Begin a passcode-free public session. No credential, no persona — just
+   * an identity to hang one submission and one isolated workspace on.
+   */
+  const startPublicSession = React.useCallback(async (): Promise<LiveSession> => {
+    const result = await postPublicSession();
+    const next: LiveSession = {
+      token: result.token,
+      workspaceId: result.workspaceId,
+      expiresAt: result.expiresAt,
+      personaKey: PUBLIC_PERSONA_KEY,
+      personaLabel: "Public visitor",
+      role: "public",
+    };
+    setStoredSession(next);
+    return next;
+  }, []);
+
   const logout = React.useCallback(() => {
     setStoredSession(null);
   }, []);
@@ -195,8 +239,16 @@ export function LiveSessionProvider({ children }: { children: React.ReactNode })
   const openUnlockPrompt = React.useCallback(() => setUnlockPromptOpen(true), []);
 
   const value = React.useMemo(
-    () => ({ session, login, logout, unlockPromptOpen, setUnlockPromptOpen, openUnlockPrompt }),
-    [session, login, logout, unlockPromptOpen, openUnlockPrompt],
+    () => ({
+      session,
+      login,
+      startPublicSession,
+      logout,
+      unlockPromptOpen,
+      setUnlockPromptOpen,
+      openUnlockPrompt,
+    }),
+    [session, login, startPublicSession, logout, unlockPromptOpen, openUnlockPrompt],
   );
 
   return <LiveSessionContext.Provider value={value}>{children}</LiveSessionContext.Provider>;

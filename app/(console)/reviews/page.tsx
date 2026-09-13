@@ -5,6 +5,7 @@ import {
   type ReviewQueueRow,
 } from "@/components/jeeves/review-workbench";
 import { ReviewRequestQueue } from "@/components/jeeves/review-request-queue";
+import { PublicIntakeQueue } from "@/components/jeeves/public-intake-queue";
 import {
   deliveryTransportStatus,
   undeliveredNotifications,
@@ -64,6 +65,9 @@ export default async function ReviewsPage() {
       </div>
       <ReviewWorkbench rows={rows} />
       <ReviewRequestQueue notifications={requests} transport={deliveryTransportStatus()} />
+      {/* Renders nothing unless the viewer holds a Program Office or Admin
+          session — public submissions are not the portfolio's to show. */}
+      <PublicIntakeQueue />
     </div>
   );
 }

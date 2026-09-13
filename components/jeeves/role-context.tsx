@@ -40,6 +40,11 @@ export const ROLE_PERSONAS: Record<ActorRole | "audit", RolePersona> = {
   admin: { role: "admin", label: "Admin", actorName: "Ray Chen" },
   approver: { role: "approver", label: "Audit / Leadership", actorName: "Angela Torres" },
   system: { role: "system", label: "System", actorName: "system" },
+  // Not a pickable persona — `public` never appears in the role switcher
+  // (it is absent from RoleKey and ROLE_ORDER below). It exists here only
+  // because this map is exhaustive over ActorRole, which is what forced
+  // this decision into the open when the role was added.
+  public: { role: "public", label: "Public visitor", actorName: "Public submitter" },
 };
 
 export type RoleKey = "requester" | "reviewer" | "program" | "audit" | "admin";

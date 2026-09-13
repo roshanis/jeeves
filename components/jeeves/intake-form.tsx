@@ -270,7 +270,8 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
   initialSlug?: string;
 } = {}) {
   const router = useRouter();
-  const { session, logout, openUnlockPrompt } = useLiveSession();
+  const { session, logout, openUnlockPrompt, startPublicSession } = useLiveSession();
+  const [startingPublic, setStartingPublic] = React.useState(false);
 
   const [internalPayload, setInternalPayload] = React.useState<IntakePayload>(initialPayload ?? EMPTY_PAYLOAD);
   const payload = initialPayload ?? internalPayload;
@@ -325,7 +326,24 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
   const gapsByLevel = (level: CompletenessGap["level"]) =>
     completeness.gaps.filter((g) => g.level === level);
 
-  const isRequester = session?.role === "requester";
+  // Who may author an intake. `public` is a passcode-free visitor: they can
+  // fill in and submit this form and nothing else — QC, triage, the review
+  // fan-out and every decision still belong to named, passcode-holding
+  // humans, enforced server-side in lib/services/route-guard.ts.
+  const canAuthorIntake = session?.role === "requester" || session?.role === "public";
+  const isRequester = canAuthorIntake;
+
+  async function handleStartPublic() {
+    setStartingPublic(true);
+    setError(null);
+    try {
+      await startPublicSession();
+    } catch {
+      setError("Could not start a request just now. Please try again in a moment.");
+    } finally {
+      setStartingPublic(false);
+    }
+  }
 
   async function handleSubmit() {
     if (!session) return;
@@ -394,25 +412,52 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
       <div className="flex flex-col gap-4">
         {!session ? (
           <Alert>
-            <AlertTitle>Read-only mode</AlertTitle>
+            <AlertTitle>Submit a governance request</AlertTitle>
             <AlertDescription className="flex flex-col items-start gap-2.5">
               <span>
-                The form below is visible but non-interactive. Submitting an
-                initiative needs a live demo session, which runs in its own
-                isolated workspace with a daily token budget and rate limits
-                enforced server-side.
+                Anyone can send a request in. Your submission goes to the
+                Program Office, who check it before any review is opened —
+                nothing is routed, reviewed or decided automatically.
               </span>
-              {/* The button, not a pointer to one. This used to read "(use the
-                  chip in the header)", which is an instruction to go hunting.
-                  Opens the same dialog the header chip owns. */}
-              <Button
-                type="button"
-                size="sm"
-                onClick={openUnlockPrompt}
-                data-slot="intake-unlock"
-              >
-                Enter the demo passcode
-              </Button>
+              {/* Said plainly because strangers are about to type into a form
+                  themed as a healthcare payer's intake. This is a synthetic
+                  demo and the cheapest control available is telling them. */}
+              <span className="font-medium">
+                Do not enter real personal, member or health information —
+                this is a demonstration system holding synthetic data.
+              </span>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={() => void handleStartPublic()}
+                  disabled={startingPublic}
+                  data-slot="start-public-request"
+                >
+                  {startingPublic ? "Starting…" : "Start a request"}
+                </Button>
+                {/* The passcode path stays exactly where it was: it is what a
+                    demo walkthrough uses, and the only way to reach anything
+                    past submission. */}
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={openUnlockPrompt}
+                  data-slot="intake-unlock"
+                >
+                  Enter the demo passcode
+                </Button>
+              </div>
+            </AlertDescription>
+          </Alert>
+        ) : session.role === "public" ? (
+          <Alert>
+            <AlertTitle>Submitting as a public visitor</AlertTitle>
+            <AlertDescription>
+              Fill in what you can and submit — the Program Office will check
+              it and come back to you. Do not enter real personal, member or
+              health information. This is a demonstration system.
             </AlertDescription>
           </Alert>
         ) : !isRequester ? (

@@ -181,7 +181,8 @@ full v1 breadth, 1–2 week budget, fast-lane autonomy reframe confirmed.
 
 ### Hard Rules (from Codex review)
 - Agents draft/recommend/route — they NEVER approve. Fast-lane = deterministic policy + named accountable approver.
-- Public visitors are read-only; every mutation endpoint requires the demo passcode + isolated workspace + atomic budget check.
+- Public visitors may submit an intake and NOTHING else (human decision, 2026-09-13, overriding the earlier read-only rule). The passcode-free session carries the `public` role, and `runMutationGuard` denies it by DEFAULT — a route is closed to anonymous callers unless it passes `allowPublic: true`. Exactly three do: create initiative, edit intake draft, submit intake. Never widen that set without re-reading app/api/__tests__/public-submission.test.ts, and never mint public sessions as `requester` (that role already unlocks the LLM-spending chat and draft-run routes).
+- Every other mutation endpoint still requires the demo passcode + isolated workspace + atomic budget check.
 - `AuditEvent` is append-only at the DB level. State transitions live in app code + Postgres, never in agent adapters.
 - All synthetic telemetry labeled "Synthetic data — demo"; no fake integrations or dead deep links.
 

@@ -108,7 +108,11 @@ type TransitionTable = Partial<
  */
 const TRANSITIONS: TransitionTable = {
   intake_draft: {
-    submit: { to: "submitted", allowedRoles: ["requester"] },
+    // `public` submits its own intake and stops there. It is the only
+    // lifecycle action an unauthenticated visitor holds: everything past
+    // this point — QC, triage, the fan-out, any decision — still needs a
+    // named, passcode-holding human.
+    submit: { to: "submitted", allowedRoles: ["requester", "public"] },
   },
   submitted: {
     // The QC gate. `triage` is deliberately NOT reachable from here — see

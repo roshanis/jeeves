@@ -1052,3 +1052,67 @@ disabled until something is typed, so an empty reason never reaches the 400.
   fast-lane initiative carries orphaned pending reviews.
 - `formatShortDate` is duplicated privately in three chart components; the
   review-request queue slices ISO strings rather than adding a fourth copy.
+
+## [AGENT: Claude] [2026-09-13T16:30Z]
+### Action: Open intake submission to the public, without opening anything else
+### Files changed:
+- lib/domain/types.ts, lib/lifecycle/transitions.ts, lib/services/actors.ts
+- lib/services/route-guard.ts, lib/services/intake-author-roles.ts (new)
+- lib/services/public-intake-service.ts (new)
+- app/api/public-session/route.ts (new), app/api/public-intake/route.ts (new)
+- app/api/initiatives/route.ts, .../[id]/intake/route.ts, .../[id]/submit/route.ts
+- lib/client/api.ts, lib/client/session-context.tsx
+- components/jeeves/intake-form.tsx, public-intake-queue.tsx (new), role-context.tsx
+- app/(console)/reviews/page.tsx
+- .claude/CLAUDE.md, docs/production-readiness.md
+- 4 new test files (lifecycle, API, two UI)
+
+### Diff summary:
+HUMAN DECISION, overriding this file's own "public visitors are read-only"
+hard rule. §1 of CLAUDE.md and docs/production-readiness.md §1.3 now say what
+the code does, rather than contradicting it.
+
+THE WHOLE SAFETY ARGUMENT IS ONE DESIGN CHOICE: the public session carries a
+NEW `public` role, not `requester`. `requester` is not merely "may submit" —
+it already unlocks POST /api/chat/intake and the 8-domain draft-run, both
+budget-gated against the shared OpenAI cap. The obvious implementation would
+have handed anonymous callers the ability to spend money.
+
+PER-ROUTE ROLE CHECKS WERE NOT ENOUGH, and finding out why was the most
+useful part of this work. Writing the tests surfaced that `triage` has NO
+role check — it substitutes SYSTEM_ACTOR and lets the lifecycle decide — so a
+public caller could have fired the 8-domain fan-out on their own initiative,
+stepping straight over the Program Office. `monitor/run` is the same shape,
+and `agents/health` has no role check while being budget-gated. All three
+were written when "any authenticated persona" meant "holds the passcode".
+So the boundary moved into runMutationGuard: `allowPublic` defaults to FALSE
+and exactly three routes opt in. A route added next month is closed to
+anonymous callers without its author knowing this feature exists.
+
+THE QUEUE IS NOT A WIDENED READ FILTER. Each public session gets its own
+workspace (that is what stops one visitor reaching another's draft), which
+also makes submissions invisible to the console — it renders server-side from
+the workspace COOKIE, which carries no role. Widening the filter there would
+have shown every stranger's submission to every other stranger, the console
+being public too. So the queue is a role-gated route read client-side from
+the session token, and the panel renders nothing for anyone else.
+
+GOVERNANCE IS UNCHANGED: a public submission stops dead at `submitted`. The
+QC gate added last week is what makes this defensible — there was already a
+named human standing between an arriving intake and eight reviewers' time.
+
+### Verified:
+- 32 new tests, all written failing first
+- The decisive ones: a public session gets 403 on chat/intake, draft-run,
+  auditor chat, monitor/run and agents/health — every route that can spend
+  the OpenAI budget
+- Full suite green; typecheck + lint clean
+
+### Recommendations / Next steps:
+- NO CAPTCHA. Rate limit (10 mints per client, 1 per 60s) + the 64KB body cap
+  are the only ceiling; many IPs can still fill the table. Turnstile in front
+  of /api/public-session is the next step if that matters.
+- No retention policy on public-workspace rows. Strangers may type real
+  personal data in despite the warning on the form.
+- Still open from earlier: seed an `in_qc` initiative; fast-lane's orphaned
+  pending reviews.

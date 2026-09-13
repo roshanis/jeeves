@@ -30,16 +30,17 @@ import {
   submitIntake,
 } from "@/lib/services/initiative-service";
 import { runMutationGuard } from "@/lib/services/route-guard";
+import { INTAKE_AUTHOR_ROLES } from "@/lib/services/intake-author-roles";
 
 export async function POST(
   req: Request,
   context: { params: Promise<{ id: string }> },
 ): Promise<Response> {
-  const guard = await runMutationGuard(req, undefined);
+  const guard = await runMutationGuard(req, undefined, { allowPublic: true });
   if (!guard.ok) {
     return Response.json({ error: guard.failure.message }, { status: guard.failure.status });
   }
-  if (guard.actor.role !== "requester") {
+  if (!INTAKE_AUTHOR_ROLES.has(guard.actor.role)) {
     return Response.json({ error: "only requesters may submit an intake" }, { status: 403 });
   }
 

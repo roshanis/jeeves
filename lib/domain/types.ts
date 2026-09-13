@@ -52,6 +52,15 @@ export type ActorRole =
   | "approver"
   | "admin"
   | "program"
+  // An unauthenticated visitor submitting a request through the public
+  // intake form. Deliberately NOT `requester`: that role already unlocks
+  // POST /api/chat/intake and the 8-domain draft-run, both of which spend
+  // the shared OpenAI budget, so a public session carrying it would let
+  // anonymous callers spend money. Kept separate, `public` is denied by
+  // every existing `role !== "requester"` gate by default and holds only
+  // what is granted to it explicitly — see lib/lifecycle/public-submission
+  // .test.ts for the lock on that.
+  | "public"
   | "system";
 
 /**

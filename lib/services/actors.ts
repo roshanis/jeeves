@@ -47,6 +47,18 @@ export const ACTOR_DIRECTORY: Record<PersonaKey, ActorDirectoryEntry> = {
   "nia-okafor": { id: "nia-okafor", name: "Nia Okafor", role: "program" },
 };
 
+/**
+ * Reserved persona-key prefix for passcode-free public submitters. Stored
+ * in `sessions.personaKey` like any other key (text column, no migration),
+ * but resolving to the `public` role rather than a directory entry.
+ */
+export const PUBLIC_PERSONA_PREFIX = "public:";
+
+/** Type guard: is `value` a public submitter's session key? */
+export function isPublicPersonaKey(value: string): boolean {
+  return value.startsWith(PUBLIC_PERSONA_PREFIX) && value.length > PUBLIC_PERSONA_PREFIX.length;
+}
+
 /** Type guard: is `value` a known persona key? */
 export function isPersonaKey(value: string): value is PersonaKey {
   return Object.prototype.hasOwnProperty.call(ACTOR_DIRECTORY, value);
@@ -58,6 +70,14 @@ export function isPersonaKey(value: string): value is PersonaKey {
  * unknown key so callers can 401/400 rather than default to a role.
  */
 export function resolveActor(personaKey: string): Actor | null {
+  if (isPublicPersonaKey(personaKey)) {
+    // Public submitters have no directory entry — they are not demo
+    // personas, they are strangers. The id is per-SESSION, not per-person,
+    // which is deliberate: two visitors who both type the same name still
+    // get separate ids (and separate workspaces), so neither can reach the
+    // other's draft.
+    return { id: personaKey, role: "public" };
+  }
   if (!isPersonaKey(personaKey)) return null;
   const entry = ACTOR_DIRECTORY[personaKey];
   return { id: entry.id, role: entry.role };

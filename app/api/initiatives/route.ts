@@ -16,15 +16,16 @@ import { ConflictError, createDraft } from "@/lib/services/initiative-service";
 import { intakePayloadSchema } from "@/lib/services/intake-payload-schema";
 import { runMutationGuard } from "@/lib/services/route-guard";
 import { ACTOR_DIRECTORY, isPersonaKey } from "@/lib/services/actors";
+import { INTAKE_AUTHOR_ROLES } from "@/lib/services/intake-author-roles";
 import type { PersonaKey } from "@/lib/services/actors";
 
 export async function POST(req: Request): Promise<Response> {
-  const guard = await runMutationGuard(req, undefined);
+  const guard = await runMutationGuard(req, undefined, { allowPublic: true });
   if (!guard.ok) {
     return Response.json({ error: guard.failure.message }, { status: guard.failure.status });
   }
 
-  if (guard.actor.role !== "requester") {
+  if (!INTAKE_AUTHOR_ROLES.has(guard.actor.role)) {
     return Response.json({ error: "only requesters may create an intake draft" }, { status: 403 });
   }
 
@@ -49,9 +50,14 @@ export async function POST(req: Request): Promise<Response> {
     return Response.json({ error: "invalid intake payload", issues: parsed.error.issues }, { status: 400 });
   }
 
+  // A public submitter has no directory entry — they are a stranger, not a
+  // demo persona — so the name on the record is the one they typed into the
+  // form. Validated by the payload schema like every other field.
   const requesterName = isPersonaKey(guard.actor.id)
     ? ACTOR_DIRECTORY[guard.actor.id as PersonaKey].name
-    : guard.actor.id;
+    : guard.actor.role === "public"
+      ? parsed.data.basics.requesterName
+      : guard.actor.id;
 
   const db = getDb();
   let result;

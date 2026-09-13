@@ -2,6 +2,7 @@ import { getDb } from "@/lib/db/client";
 import { intakePayloadSchema } from "@/lib/services/intake-payload-schema";
 import { ConflictError, IllegalTransitionError, NotFoundError, getIntakeDraft, updateIntakeDraft } from "@/lib/services/initiative-service";
 import { extractSessionToken, resolveSession, runMutationGuard } from "@/lib/services/route-guard";
+import { INTAKE_AUTHOR_ROLES } from "@/lib/services/intake-author-roles";
 
 function failure(error: unknown): Response {
   if (error instanceof NotFoundError) return Response.json({ error: error.message }, { status: 404 });
@@ -13,15 +14,15 @@ function failure(error: unknown): Response {
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }): Promise<Response> {
   const session = await resolveSession(extractSessionToken(req));
   if (!session.actor) return Response.json({ error: "invalid or missing session" }, { status: 401 });
-  if (session.actor.role !== "requester") return Response.json({ error: "only requesters may edit an intake draft" }, { status: 403 });
+  if (!INTAKE_AUTHOR_ROLES.has(session.actor.role)) return Response.json({ error: "only requesters may edit an intake draft" }, { status: 403 });
   try { return Response.json(await getIntakeDraft(getDb(), (await params).id, session.actor, session.workspaceId)); }
   catch (error) { return failure(error); }
 }
 
 export async function PUT(req: Request, { params }: { params: Promise<{ id: string }> }): Promise<Response> {
-  const guard = await runMutationGuard(req, undefined);
+  const guard = await runMutationGuard(req, undefined, { allowPublic: true });
   if (!guard.ok) return Response.json({ error: guard.failure.message }, { status: guard.failure.status });
-  if (guard.actor.role !== "requester") return Response.json({ error: "only requesters may edit an intake draft" }, { status: 403 });
+  if (!INTAKE_AUTHOR_ROLES.has(guard.actor.role)) return Response.json({ error: "only requesters may edit an intake draft" }, { status: 403 });
   let body: unknown;
   try {
     const raw = await req.text();
