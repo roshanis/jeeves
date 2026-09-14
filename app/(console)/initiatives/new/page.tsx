@@ -3,9 +3,14 @@
 // (live tier preview + completeness meter recompute on every change / chat
 // state); this page provides the static shell.
 import { IntakeModeToggle } from "@/components/jeeves/intake-mode-toggle";
+import type { Metadata } from "next";
 
-export const metadata = {
-  title: "New Initiative — Jeeves",
+export const metadata: Metadata = {
+  // Was "New Initiative — Jeeves": the suffix is now the root layout's
+  // title template, so repeating it here produced "... — Jeeves · Jeeves".
+  title: "New initiative",
+  description:
+    "Start an AI initiative intake: what it does, what data it touches, and who it affects. Completeness and a live risk-tier preview update as you type.",
 };
 
 export default function NewInitiativePage() {

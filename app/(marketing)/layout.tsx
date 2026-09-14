@@ -3,6 +3,8 @@ import { ShieldCheck } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { DEMO_BANNER_TEXT } from "@/lib/demo-banner";
 import { FRAMEWORK_DISCLAIMER } from "@/lib/marketing/framework-mappings";
+import { CookieNotice } from "@/components/jeeves/cookie-notice";
+import { StickyMobileCta } from "@/components/jeeves/sticky-mobile-cta";
 
 // Shared marketing chrome for the public site (app/(marketing)/*: "/",
 // "/frameworks", "/frameworks/[slug]", "/pilot") — NOT the operations
@@ -68,7 +70,16 @@ export default function MarketingLayout({
 
       {children}
 
-      <footer className="border-t px-5 py-4 text-center text-xs text-muted-foreground">
+      {/* Sticky only on phones, and only past the hero — see the component.
+          Extra bottom padding on the footer so the bar never covers the
+          last line of it. */}
+      <StickyMobileCta
+        href="/inbox"
+        label="Open the live demo"
+        hint="Read-only — no sign-up"
+      />
+
+      <footer className="border-t px-5 py-4 pb-24 text-center text-xs text-muted-foreground sm:pb-4">
         <p>
           Fictional demo. Synthetic data only. Not affiliated with any real
           organization.
@@ -76,7 +87,23 @@ export default function MarketingLayout({
         <p className="mt-1 text-[11px] text-muted-foreground/70">
           {FRAMEWORK_DISCLAIMER}
         </p>
+        <nav
+          className="mt-2.5 flex flex-wrap items-center justify-center gap-x-4 gap-y-1"
+          aria-label="Legal"
+        >
+          <Link href="/privacy" className="touch-min inline-flex items-center hover:text-foreground">
+            Privacy
+          </Link>
+          <Link href="/terms" className="touch-min inline-flex items-center hover:text-foreground">
+            Terms
+          </Link>
+          <Link href="/frameworks" className="touch-min inline-flex items-center hover:text-foreground">
+            Frameworks
+          </Link>
+        </nav>
       </footer>
+
+      <CookieNotice />
     </div>
   );
 }

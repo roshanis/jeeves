@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import { SITE_URL } from "@/lib/marketing/site-config";
 import localFont from "next/font/local";
 import "./globals.css";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -42,9 +43,35 @@ const fontMono = localFont({
 });
 
 export const metadata: Metadata = {
-  title: "Jeeves — AI Governance Gateway (Meridian Health demo)",
+  // metadataBase makes every relative OG/twitter image URL below resolve to
+  // an absolute one. Without it Next warns at build time and social
+  // crawlers, which do not resolve relative paths, silently show no image.
+  metadataBase: new URL(SITE_URL),
+  title: {
+    // Per-page `title` strings are slotted into this template, so a tab
+    // reads "Portfolio · Jeeves" rather than the same site-wide string on
+    // all 18 pages. A page that owns its own branding (the landing page)
+    // opts out with `title: { absolute }`.
+    template: "%s · Jeeves",
+    default: "Jeeves — AI Governance Gateway (Meridian Health demo)",
+  },
   description:
     "Fictional demo — synthetic data. AI governance workflow demo for a fictional healthcare payer.",
+  applicationName: "Jeeves",
+  openGraph: {
+    type: "website",
+    siteName: "Jeeves",
+    title: "Jeeves — AI Governance Gateway",
+    description:
+      "Intake, risk tiering, domain review, approval and continuous monitoring for AI initiatives — demonstrated end to end on a fictional healthcare payer.",
+    url: SITE_URL,
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Jeeves — AI Governance Gateway",
+    description:
+      "Intake, risk tiering, domain review, approval and continuous monitoring for AI initiatives — demonstrated on a fictional healthcare payer.",
+  },
 };
 
 /**

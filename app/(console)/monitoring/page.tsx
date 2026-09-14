@@ -25,6 +25,13 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = {
+  title: "Deployed model health",
+  description:
+    "Eval quality, cost and utilization across every deployed model, with incidents raised against breached controls. Synthetic telemetry — demo data.",
+};
 
 /** Portfolio-wide daily cost: sums each operating deployment's cost_tokens_usd_day
  * series by timestamp. Pure aggregation over data the page already loaded. */

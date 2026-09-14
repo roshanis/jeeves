@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import Link from "next/link";
+import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { ShieldAlert } from "lucide-react";
 import { GOVERNANCE_AGENTS, AGENT_GUARDRAIL } from "@/lib/agents/registry";
@@ -36,6 +37,22 @@ function readInstructionsFile(repoRelativePath: string): string | null {
     return null;
   }
   return readFileSync(absolutePath, "utf-8");
+}
+
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}): Promise<Metadata> {
+  const { id } = await params;
+  const agent = GOVERNANCE_AGENTS.find((a) => a.id === id);
+  if (!agent) {
+    return { title: "Agent not found", description: "No such governance agent." };
+  }
+  return {
+    title: agent.name,
+    description: `${agent.name} — ${agent.summary} Agents draft and recommend; they never approve.`,
+  };
 }
 
 export default async function AgentDetailPage({

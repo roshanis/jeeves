@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { getInitiativeDetailCoherent } from "@/app/_lib/data-provider";
 import { TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -5,8 +6,8 @@ import { InitiativeTabs } from "@/components/jeeves/initiative-tabs";
 // MinusCircle: the neutral "nothing is being counted here" blockers chip.
 import { AlertOctagon, AlertTriangle, CheckCircle2, MinusCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { TierBadge } from "@/components/jeeves/tier-badge";
-import { LifecycleBadge } from "@/components/jeeves/lifecycle-badge";
+import { TierBadge, TIER_LABEL } from "@/components/jeeves/tier-badge";
+import { LifecycleBadge, LIFECYCLE_LABEL } from "@/components/jeeves/lifecycle-badge";
 import { AccountableApproverChip } from "@/components/jeeves/accountable-approver-chip";
 import { OverlayFlagChips } from "@/components/jeeves/overlay-flag-chips";
 import { LiveActionsBar } from "@/components/jeeves/live-actions-bar";
@@ -51,6 +52,28 @@ function ReviewProgressBar({ signed, total }: { signed: number; total: number })
       </span>
     </div>
   );
+}
+
+/**
+ * Per-initiative title and description. Every case file shared a single
+ * generic title before this, so a tab strip of eight open initiatives was
+ * eight identical labels, and a pasted link previewed as the site name.
+ */
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ slug: string }>;
+}): Promise<Metadata> {
+  const { slug } = await params;
+  const detail = await getInitiativeDetailCoherent(slug).catch(() => null);
+  if (!detail) {
+    return { title: "Initiative not found", description: "No such initiative." };
+  }
+  const { title, tier, state } = detail.summary;
+  return {
+    title,
+    description: `${title} — ${TIER_LABEL[tier] ?? tier} tier, ${LIFECYCLE_LABEL[state] ?? state}. Risk tiering, domain reviews, decisions, controls and audit trail for this AI initiative. Synthetic demo data.`,
+  };
 }
 
 export default async function InitiativeDetailPage({

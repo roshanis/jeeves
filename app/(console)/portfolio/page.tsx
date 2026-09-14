@@ -3,6 +3,14 @@ import { OutcomeMetricsStrip } from "@/components/jeeves/outcome-metrics-strip";
 import { RiskHeatmap } from "@/components/jeeves/risk-heatmap";
 import { PortfolioView } from "@/components/jeeves/portfolio-view";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import type { Metadata } from "next";
+
+
+export const metadata: Metadata = {
+  title: "Portfolio",
+  description:
+    "Every Meridian Health AI initiative with its risk tier, lifecycle state, review progress and next action. Sortable, with saved views per role.",
+};
 
 export default async function PortfolioPage() {
   const provider = getAppProvider();

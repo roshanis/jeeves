@@ -1116,3 +1116,72 @@ named human standing between an arriving intake and eight reviewers' time.
   personal data in despite the warning on the form.
 - Still open from earlier: seed an `in_qc` initiative; fast-lane's orphaned
   pending reviews.
+
+## [AGENT: Claude] [2026-09-14T13:45Z]
+### Action: The 20-item "real and safe" checklist — audited first, then closed
+### Files changed:
+- app/layout.tsx (title template, metadataBase, OG/Twitter), app/not-found.tsx (new)
+- app/icon.svg, app/apple-icon.tsx, app/opengraph-image.tsx, app/manifest.ts (new)
+- app/sitemap.ts (lastModified/priority/changeFrequency + legal routes)
+- 13 pages gained metadata; 2 dynamic pages gained generateMetadata
+- app/(console)/loading.tsx, app/(marketing)/loading.tsx (new)
+- app/(marketing)/thank-you|privacy|terms/page.tsx (new)
+- components/jeeves/{legal-page,cookie-notice,sticky-mobile-cta}.tsx (new)
+- app/(marketing)/layout.tsx (footer legal nav, cookie notice, sticky CTA)
+- components/jeeves/intake-form.tsx (public submit -> /thank-you)
+- lib/marketing/site-config.ts, docs/production-readiness.md §1.4
+- tests/seo/page-metadata.test.ts, tests/ui/site-essentials.test.tsx (new)
+
+### Diff summary:
+AUDITED BEFORE BUILDING, which changed the job. Six of the twenty already
+existed (robots.txt, sitemap.xml, mobile breakpoints, form error states, CTA
+above the fold, and a console 404) and two were vacuous: there are no raster
+images in this project at all, so "alt text on every image" and "compressed
+images" had nothing to act on. Reporting those as "added" would have been a
+lie; they are recorded as verified instead.
+
+THE 404 WAS THE INTERESTING ONE. app/(console)/not-found.tsx existed and I
+had assumed it covered the site. It does not — a route-group not-found only
+catches routes inside that group, so every mistyped marketing URL was still
+hitting Next's stock unstyled screen. Fixed with a root app/not-found.tsx.
+
+METADATA IS A SWEEP, NOT A LIST. tests/seo/page-metadata.test.ts walks the
+route tree and asserts every page.tsx exports a title and description, so a
+page added tomorrow is covered without anyone remembering to update a
+checklist. It found 13 pages sharing one site-wide title, plus a stale
+"New Initiative — Jeeves" that would have rendered "... — Jeeves · Jeeves"
+once the root template landed.
+
+THE THANK-YOU PAGE IS A REAL BUG FIX, not decoration. Submitting pushed
+straight to the console case file — right for a demo persona walking the
+flow, wrong for the member of the public that last week's change let in, who
+got dropped into an operations console with no idea whether their request
+went anywhere. Public submitters now land on /thank-you.
+
+THE COOKIE NOTICE DELIBERATELY IS NOT A CONSENT GATE. This site sets one
+cookie, HttpOnly and strictly necessary. A blocking Accept/Reject would be
+theatre: a choice that changes nothing, training people to dismiss a control
+that elsewhere matters. It states what is stored and gets out of the way.
+The file's own header records that adding cookie-setting analytics REQUIRES
+turning it into a real gate.
+
+LEGAL PAGES ARE WRITTEN FROM THE CODE, not from a template — every claim
+(the jeeves_workspace cookie, the sessionStorage token, the OpenAI call, the
+append-only trail) cites the file it is true of, with a note that if that
+file changes the page is wrong.
+
+### Verified:
+- 55 new tests (43 metadata sweep + 12 site essentials)
+- Full suite green; typecheck, lint and `next build` clean — the build
+  registers /privacy, /terms, /thank-you, /manifest.webmanifest,
+  /opengraph-image, /icon.svg and /apple-icon
+- Two react-hooks/set-state-in-effect violations fixed properly
+  (useSyncExternalStore) rather than suppressed
+
+### Recommendations / Next steps:
+- Analytics: none, by decision. If one is added later and it sets cookies,
+  the notice must become a real consent gate first.
+- No postal address on the legal pages, by decision. Fine for a demo; not
+  fine for a production service marketed to EU/UK visitors.
+- public/ still holds 5 unused Next starter SVGs. Not deleted — that needs
+  explicit approval per §1 — but they are referenced nowhere.

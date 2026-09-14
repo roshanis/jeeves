@@ -6,6 +6,14 @@ import { deploymentHistory, type DeploymentHistoryEntry } from "@/lib/services/p
 import { getAppProvider, getCurrentWorkspaceId } from "@/app/_lib/data-provider";
 import type { TelemetrySeries } from "@/lib/data/dto";
 import { PromotionsPageClient } from "./promotions-page-client";
+import type { Metadata } from "next";
+
+
+export const metadata: Metadata = {
+  title: "Promotion queue",
+  description:
+    "Checkpoint promotions awaiting a decision, with deployment history and eval trend for each candidate model version.",
+};
 
 export interface InitiativeHistoryContext {
   history: DeploymentHistoryEntry[];

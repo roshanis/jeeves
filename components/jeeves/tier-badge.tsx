@@ -1,7 +1,7 @@
 import type { Tier } from "@/lib/domain/types";
 import { cn } from "@/lib/utils";
 
-const TIER_LABEL: Record<Tier, string> = {
+export const TIER_LABEL: Record<Tier, string> = {
   low: "Low",
   medium: "Medium",
   high: "High",

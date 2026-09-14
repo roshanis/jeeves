@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Jeeves">
+  <rect width="32" height="32" rx="7" fill="#0d2b33"/>
+  <path d="M16 6.5 25 10v6.4c0 5.3-3.6 9.4-9 11.1-5.4-1.7-9-5.8-9-11.1V10l9-3.5Z"
+        fill="none" stroke="#4db6ac" stroke-width="2.1" stroke-linejoin="round"/>
+  <path d="m11.7 16.2 3 3.1 5.6-6"
+        fill="none" stroke="#4db6ac" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

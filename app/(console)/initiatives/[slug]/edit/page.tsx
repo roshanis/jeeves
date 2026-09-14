@@ -1,6 +1,14 @@
 import { notFound } from "next/navigation";
 import { getInitiativeDetailCoherent } from "@/app/_lib/data-provider";
 import { IntakeDraftEditor } from "@/components/jeeves/intake-draft-editor";
+import type { Metadata } from "next";
+
+
+export const metadata: Metadata = {
+  title: "Continue intake",
+  description:
+    "Resume an in-progress AI initiative intake. Changes are saved as a new draft version on submit.",
+};
 
 export default async function EditInitiativeDraftPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;

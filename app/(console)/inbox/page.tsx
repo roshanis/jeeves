@@ -4,6 +4,14 @@ import { IncidentDataNotice } from "@/components/jeeves/incident-data-notice";
 import { getAppProvider, getCurrentWorkspaceId } from "@/app/_lib/data-provider";
 import type { InitiativeSummary } from "@/lib/data/dto";
 import { RoleAwareInbox } from "@/components/jeeves/role-aware-inbox";
+import type { Metadata } from "next";
+
+
+export const metadata: Metadata = {
+  title: "Inbox",
+  description:
+    "What needs attention right now across the AI governance portfolio, filtered to the role you are viewing as.",
+};
 
 // Eval-quality telemetry kinds that feed the Responsible AI reviewer's
 // side panel — compare the latest recorded reading with its threshold.

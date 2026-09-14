@@ -6,6 +6,13 @@ import {
 } from "@/components/jeeves/review-workbench";
 import { ReviewRequestQueue } from "@/components/jeeves/review-request-queue";
 import { PublicIntakeQueue } from "@/components/jeeves/public-intake-queue";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = {
+  title: "Review workbench",
+  description:
+    "All domain reviews across the portfolio, with the outbound review-request queue. Agents draft; humans sign — signing authority never sits with agents or Admin.",
+};
 import {
   deliveryTransportStatus,
   undeliveredNotifications,

@@ -4,6 +4,14 @@ import { getDb } from "@/lib/db/client";
 import { listExceptions, type ExceptionRow } from "@/lib/services/exception-service";
 import { ControlCatalog } from "@/components/jeeves/control-catalog";
 import { ExceptionsPanel } from "@/components/jeeves/exceptions-panel";
+import type { Metadata } from "next";
+
+
+export const metadata: Metadata = {
+  title: "Control catalog",
+  description:
+    "Every governance control Meridian Health enforces, across all eight domains — policy source, status and evidence, read-only.",
+};
 
 // Control catalog (plan §6): the full ControlDefinition catalog across all 8
 // governance domains plus the one live-enforced runtime control (Q-01),

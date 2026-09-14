@@ -2,6 +2,14 @@ import { getAppProvider, getCurrentWorkspaceId } from "@/app/_lib/data-provider"
 import type { AuditQueryRow, CannedAuditQueryId } from "@/lib/data/dto";
 import { AuditConsole } from "@/components/jeeves/audit-console";
 import { AuditorChat } from "@/components/jeeves/auditor-chat";
+import type { Metadata } from "next";
+
+
+export const metadata: Metadata = {
+  title: "Audit query console",
+  description:
+    "Query the append-only audit trail behind every governance claim. Read-only for every role — no gated actions exist here.",
+};
 
 export default async function AuditPage() {
   const provider = getAppProvider();

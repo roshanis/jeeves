@@ -376,10 +376,19 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
       rememberInitiative(created.slug, created.initiativeId);
       const submitted = await submitIntake(session.token, created.initiativeId);
       if (submitted.submitted) {
-        toast.success(
-          `Intake submitted — completeness ${submitted.completenessPct}%. Running the governance flow from here.`,
-        );
-        router.push(`/initiatives/${created.slug}`);
+        // A public submitter goes to the confirmation page, not the case
+        // file: the case file is an operations console full of internal
+        // governance state, and dropping a member of the public into it
+        // answers none of the questions they actually have.
+        if (session.role === "public") {
+          toast.success("Request received — the Program Office will check it.");
+          router.push("/thank-you");
+        } else {
+          toast.success(
+            `Intake submitted — completeness ${submitted.completenessPct}%. Running the governance flow from here.`,
+          );
+          router.push(`/initiatives/${created.slug}`);
+        }
       } else {
         // BLOCKING gaps server-side (should match the client meter, which
         // already gates submit — but the server stays the source of truth).

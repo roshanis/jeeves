@@ -155,6 +155,35 @@ stranger's submission to every other stranger.
 triage, the review fan-out and every decision still require a named,
 passcode-holding human.
 
+### 1.4 Site essentials — ADDED 2026-09-13/14, two gaps accepted
+
+The public-facing basics (404, per-page metadata, icon set, Open Graph,
+loading states, confirmation page, legal pages, cookie notice) are in place
+and covered by `tests/seo/page-metadata.test.ts` and
+`tests/ui/site-essentials.test.tsx`. Two decisions left deliberate gaps:
+
+**No analytics.** Decided 2026-09-13. The site loads no third-party scripts
+at all, so the privacy page's "no advertising, no tracking pixel and no
+third-party analytics" is simply true, and the cookie notice stays
+informational rather than becoming a consent gate. If analytics are added
+later and they set cookies, the notice MUST become a real consent gate with
+a working reject path, and the script must not load before consent —
+`components/jeeves/cookie-notice.tsx` documents that at its head. A
+cookieless provider (Vercel Analytics, Plausible, Fathom) avoids that work.
+
+**No postal address on the legal pages.** Decided 2026-09-13: email is the
+sole contact point, and no address is invented. This is honest, and adequate
+for a demonstration. It is NOT adequate for a production service marketed to
+EU/UK visitors, where a controller's identity and address are generally
+expected on a privacy notice. Set a real entity and address before this is
+used commercially.
+
+Also outstanding, and smaller: `public/` still holds five unused SVGs from
+the Next.js starter (`file`, `globe`, `next`, `vercel`, `window` — about 3KB
+total, referenced nowhere). They are harmless but they are not ours; worth
+deleting. There are no raster images in the project at all, so there is
+nothing to compress.
+
 ## 2. Should fix before a pilot
 
 ### 2.1 No backup or restore procedure — DOCUMENTED 2026-09-12, not yet exercised

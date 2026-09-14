@@ -17,6 +17,14 @@ import { RunMonitorPanel } from "@/components/jeeves/run-monitor-panel";
 import { ThresholdEditAction } from "@/components/jeeves/threshold-edit-action";
 import { DeploymentActionButton } from "@/components/jeeves/deployment-action-button";
 import type { ThresholdInitiativeOption } from "@/components/jeeves/threshold-edit-dialog";
+import type { Metadata } from "next";
+
+
+export const metadata: Metadata = {
+  title: "Administration",
+  description:
+    "Threshold edits and deployment pause/resume for Meridian Health's AI governance demo — both logged, and deliberately narrow: Admin never approves, signs, or returns.",
+};
 
 // The Admin console (ui-spec §7) is the narrowest screen by design: exactly
 // two mutable action shapes (Q-01 threshold edit, pause/resume) plus "Run

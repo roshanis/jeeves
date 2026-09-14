@@ -13,6 +13,14 @@ import { DOMAIN_LABEL } from "@/components/jeeves/domain-labels";
 import { AgentConnectionTest } from "@/components/jeeves/agent-connection-test";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import type { Metadata } from "next";
+
+
+export const metadata: Metadata = {
+  title: "Governance agents",
+  description:
+    "The AI agents behind Jeeves — one review agent per governance domain plus the lifecycle and oversight agents. Agents draft and recommend; they never approve.",
+};
 
 // Governance Agents catalog (the "suite of agents" behind the console): the 8
 // per-domain review agents plus the lifecycle + oversight agents, surfaced as
