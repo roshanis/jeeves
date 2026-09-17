@@ -8,6 +8,9 @@ import AdminPage from "@/app/(console)/admin/page";
 import MonitoringPage from "@/app/(console)/monitoring/page";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
+vi.mock("@/app/_lib/incident-data", () => ({
+  loadIncidentsForViewer: async () => ({ status: "unavailable", reason: "preview", incidents: null }),
+}));
 vi.mock("@/components/jeeves/role-aware-inbox", () => ({
   RoleAwareInbox: ({ evalBreaches, incidentCount }: { evalBreaches: unknown[]; incidentCount: number | null }) => <div data-testid="inbox-signals" data-eval-count={evalBreaches.length} data-incident-count={incidentCount ?? "unavailable"} />,
 }));
@@ -43,12 +46,13 @@ describe("Monitoring truthfulness", () => {
     renderWithProviders(await InboxPage());
     expect(screen.getByTestId("inbox-signals").getAttribute("data-eval-count")).toBe("0");
     expect(screen.getByTestId("inbox-signals").getAttribute("data-incident-count")).toBe("unavailable");
-    expect(screen.getByText(/Incident data unavailable/i)).toBeTruthy();
+    expect(screen.queryByText(/Incident data unavailable/i)).toBeNull();
+    expect(screen.queryByRole("status")).toBeNull();
   });
 
   it("keeps unavailable incident data explicit in Administration", async () => {
     renderWithProviders(await AdminPage());
-    expect(screen.getByText(/Incident data unavailable/i)).toBeTruthy();
+    expect(screen.getByRole("status").textContent).toBe("Incident records are not included in this preview.");
     expect(screen.queryByText(/No incidents recorded/i)).toBeNull();
     expect(screen.queryByText(/Last changed 30 days ago/i)).toBeNull();
   });
@@ -61,6 +65,6 @@ describe("Monitoring truthfulness", () => {
   it("distinguishes preview incident data from a verified empty incident list", async () => {
     renderWithProviders(await MonitoringPage());
     expect(screen.queryByText(/No incidents recorded/)).toBeNull();
-    expect(screen.getByText(/Incident data unavailable/i)).toBeTruthy();
+    expect(screen.getByRole("status").textContent).toBe("Incident records are not included in this preview.");
   });
 });

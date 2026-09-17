@@ -815,3 +815,9 @@ says so at the top rather than implying otherwise.
 - First podman build is the remaining test.
 - TLS is out of scope — the app serves plain HTTP; put a proxy in front.
 - Authentication is unchanged by containerisation and still the blocker.
+
+## [AGENT: Codex] [2026-09-17T11:04:13Z]
+### Action: Implemented the requested removal of the incident-data banner after Luna approved the bounded plan and reviewed the final diff.
+### Files changed: In the isolated jeeves-incident-banner-codex-worktree: app/(console)/inbox/page.tsx; components/jeeves/incident-data-notice.tsx; tests/ui/monitoring-state.test.tsx; agents-build-log.md. Original checkout: agents-build-log.md append only.
+### Diff summary: Removed the page-wide Inbox banner and replaced amber incident notices in Monitoring and Administration with neutral section text. Preserved nullable incident counts, distinct preview/load-failure states, and role=status. Base is the existing local origin/main cd0311e on branch codex/remove-incident-banner-20260917. All unrelated dirty work preserved.
+### Recommendations / Next steps: Focused monitoring UI tests demonstrated three expected failures before implementation and all four passing afterward; five existing Inbox tests also passed. Focused ESLint and git diff --check passed. Luna implementation review approved; React checklist found no applicable additional changes. No application/data/auth logic changed. No commit, merge, deployment, or live-site verification. Full build/typecheck/browser suite not run; current installed dependency tree lacks newer base dependencies pg and @openai/agents. Test data loader is mocked at the UI boundary. The isolated worktree has an untracked node_modules symlink to existing local dependencies, which must stay out of any commit.
