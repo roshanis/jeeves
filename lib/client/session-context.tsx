@@ -41,6 +41,19 @@ export interface LiveSessionContextValue {
   session: LiveSession | null;
   login: (passcode: string, personaKey: string) => Promise<LiveSession>;
   logout: () => void;
+  /**
+   * Whether the passcode dialog is open. Lives here rather than inside
+   * DemoModeChip so that anything which runs into the read-only gate can
+   * offer the way past it — the intake form's read-only notice used to end
+   * "(use the chip in the header)", sending the reader off to hunt for a
+   * control instead of giving them one. The chip still OWNS the dialog; this
+   * is only the open state, so there is one implementation rather than a
+   * copy per caller.
+   */
+  unlockPromptOpen: boolean;
+  setUnlockPromptOpen: (open: boolean) => void;
+  /** Convenience for the common case: "let me in from here". */
+  openUnlockPrompt: () => void;
 }
 
 /* -------------------------------------------------------------------------
@@ -178,7 +191,13 @@ export function LiveSessionProvider({ children }: { children: React.ReactNode })
     setStoredSession(null);
   }, []);
 
-  const value = React.useMemo(() => ({ session, login, logout }), [session, login, logout]);
+  const [unlockPromptOpen, setUnlockPromptOpen] = React.useState(false);
+  const openUnlockPrompt = React.useCallback(() => setUnlockPromptOpen(true), []);
+
+  const value = React.useMemo(
+    () => ({ session, login, logout, unlockPromptOpen, setUnlockPromptOpen, openUnlockPrompt }),
+    [session, login, logout, unlockPromptOpen, openUnlockPrompt],
+  );
 
   return <LiveSessionContext.Provider value={value}>{children}</LiveSessionContext.Provider>;
 }
