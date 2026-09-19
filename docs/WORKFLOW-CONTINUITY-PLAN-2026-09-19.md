@@ -8,7 +8,7 @@ Every open obligation has a named accountable owner, a concrete next action, a d
 
 The measurable promise is that unfinished work cannot silently disappear or remain unowned. Software cannot guarantee that a person responds or that infrastructure never fails. Overdue work and failed recovery must remain visible, owned, and escalatable. Timers never approve initiatives, sign reviews, accept evidence, or waive controls.
 
-## What the current source shows
+## Source findings at inspected baseline 8c7c0a0
 
 - `components/jeeves/queue-age.tsx` and `lib/format/aging.ts` display age. Five-day and ten-day thresholds are demo display values, not enforced operational deadlines. The client clock is cached rather than continuously updated.
 - `lib/db/schema.ts` stores review status and a nullable reviewer, but no distinct work assignment, acknowledgement, next-action deadline, escalation record, or worker lease. Domain authority comes from the static directory in `lib/services/actors.ts`; that is not per-item accepted ownership.

@@ -102,6 +102,15 @@ describe("lib/data/db-provider", () => {
   });
 
   describe("getInitiativeDetail", () => {
+    it("binds each displayed draft to its actual review cycle", async () => {
+      const detail = await provider.getInitiativeDetail("provider-dedup-agent");
+      const [initiative] = await db.select().from(initiatives).where(eq(initiatives.slug, "provider-dedup-agent"));
+      const cycles = await db.select().from(reviewCycles).where(eq(reviewCycles.initiativeId, initiative.id));
+      expect(cycles).toHaveLength(1);
+      expect(detail!.reviews.length).toBeGreaterThan(0);
+      expect(new Set(detail!.reviews.map((review) => review.cycleId))).toEqual(new Set([cycles[0].id]));
+    });
+
     it("returns null for an unknown slug", async () => {
       expect(await provider.getInitiativeDetail("does-not-exist")).toBeNull();
     });
