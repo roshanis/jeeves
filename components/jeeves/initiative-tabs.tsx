@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Tabs } from "@/components/ui/tabs";
 
-const TAB_IDS = ["overview", "intake", "reviews", "decisions", "controls", "evals", "deployments", "audit"];
+const TAB_IDS = ["overview", "intake", "evidence", "reviews", "decisions", "controls", "evals", "deployments", "audit"];
 
 function validTab(value: string | null | undefined): string {
   if (value === "operate") return "evals";

@@ -5,6 +5,7 @@ import { runBudget, sessions } from "../db/schema";
 import { reserve } from "../security/budget";
 import {
   clientKeyFor,
+  checkSessionAttempt,
   extractSessionToken,
   getBudgetStoreForTests,
   issueDemoSession,
@@ -34,7 +35,23 @@ describe("lib/services/route-guard", () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     await closeTestDb(testDb);
+  });
+
+  it.each(["session", "mutation"])("exhausting %s allowance does not consume the other limiter", async (first) => {
+    vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-09-19T20:00:00Z"));
+    const session = (await issueDemoSession(PASSCODE, PASSCODE, "priya-raman"))!;
+    const key = "independent-limiters";
+    const sessionAttempt = async () => (await checkSessionAttempt(key)).allowed;
+    const mutation = async () => (await runMutationGuard(reqWithBearer(session.token, key), undefined)).ok;
+    const checks = first === "session"
+      ? [[sessionAttempt, 5], [mutation, 20]] as const
+      : [[mutation, 20], [sessionAttempt, 5]] as const;
+    for (const [check, capacity] of checks) {
+      for (let i = 0; i < capacity; i++) expect(await check()).toBe(true);
+      expect(await check()).toBe(false);
+    }
   });
 
   describe("issueDemoSession", () => {

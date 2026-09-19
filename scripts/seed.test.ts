@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createTestDb, closeTestDb, type TestDb } from "../lib/db/test-client";
 import { seedDatabase, INITIATIVE_SEEDS, BASE_DATE_MS } from "./seed";
@@ -5,6 +6,9 @@ import { deriveTier } from "../lib/triage/rules";
 import { evaluateControl } from "../lib/controls/evaluate";
 import {
   auditEvents,
+  evidenceDocuments,
+  evidencePackets,
+  reviewCycles,
   deploymentVersions,
   initiatives,
   intakeVersions,
@@ -21,6 +25,28 @@ describe("scripts/seed.ts", () => {
 
   afterEach(async () => {
     await closeTestDb(db);
+  });
+
+  it.each(['document', 'draft packet'])('refuses a reset with %s evidence before changing any history', async (kind) => {
+    await seedDatabase(db);
+    const [initiative] = await db.select().from(initiatives);
+    const beforeAudit = await db.select().from(auditEvents).orderBy(auditEvents.id);
+    const beforeInitiatives = await db.select().from(initiatives).orderBy(initiatives.id);
+    if (kind === 'document') {
+      await db.insert(evidenceDocuments).values({id:'protected-doc',initiativeId:initiative.id,requestId:'seed-test-document',fileName:'fictional.pdf',mediaType:'application/pdf',byteSize:1,content:Buffer.from('x'),sha256:'test',version:1,uploadedBy:'priya-raman',createdAt:new Date()});
+    } else {
+      const [cycle] = await db.select().from(reviewCycles);
+      await db.insert(evidencePackets).values({id:'protected-packet',initiativeId:cycle.initiativeId,cycleId:cycle.id,version:1,revision:1,status:'draft',entries:[],createdAt:new Date()});
+    }
+    await expect(seedDatabase(db)).rejects.toThrow(/preserve evidence/i);
+    expect(await db.select().from(auditEvents).orderBy(auditEvents.id)).toEqual(beforeAudit);
+    expect(await db.select().from(initiatives).orderBy(initiatives.id)).toEqual(beforeInitiatives);
+    if (kind === 'document') {
+      expect(await db.select().from(evidenceDocuments).where(eq(evidenceDocuments.id, 'protected-doc'))).toHaveLength(1);
+    } else {
+      expect(await db.select().from(evidencePackets).where(eq(evidencePackets.id, 'protected-packet'))).toHaveLength(1);
+    }
+    await expect(db.delete(auditEvents)).rejects.toThrow();
   });
 
   it("seeds all 12 initiatives with tiers matching deriveTier(flags) (seed-spec §2 golden fixture)", async () => {

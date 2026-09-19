@@ -2,7 +2,7 @@ import Link from "next/link";
 import { ChevronRight, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-export type EvidenceTarget = "overview" | "intake" | "reviews" | "decisions" | "controls" | "operate" | "audit";
+export type EvidenceTarget = "overview" | "evidence" | "intake" | "reviews" | "decisions" | "controls" | "operate" | "audit";
 
 /**
  * Deep-links from Audit results / Home SLA callouts into a specific

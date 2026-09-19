@@ -204,7 +204,14 @@ test.describe("champion storyline: read-only golden path", () => {
 test.describe("live demo loop: create → triage → draft run → sign → decide", () => {
   /** Log in through the demo-mode chip dialog as the given persona. */
   async function loginAs(page: import("@playwright/test").Page, personaKey: string) {
-    await page.locator('[data-slot="demo-mode-chip"]').click();
+    // The first click can precede client hydration on a cold production page.
+    // Retry only opening the dialog, never submitting the passcode.
+    await expect(async () => {
+      if (!await page.getByRole('dialog').isVisible()) {
+        await page.locator('[data-slot="demo-mode-chip"]:visible').first().click();
+      }
+      await expect(page.getByRole('dialog')).toBeVisible({timeout:500});
+    }).toPass({timeout:10_000});
     await page.locator('[data-slot="passcode-input"]').fill(E2E_DEMO_PASSCODE);
     await page.locator('[data-slot="persona-select"]').selectOption(personaKey);
     await page.locator('[data-slot="live-login-submit"]').click();
@@ -289,7 +296,11 @@ test.describe("live demo loop: create → triage → draft run → sign → deci
     await expect(draftPanel.locator('[data-slot="start-draft-run"]')).toContainText(
       "8 domains",
     );
+    const draftResponsePromise = page.waitForResponse(response => response.url().includes('/draft-run') && response.request().method() === 'POST');
     await draftPanel.locator('[data-slot="start-draft-run"]').click();
+    const draftResponse = await draftResponsePromise;
+    const draftBody = await draftResponse.text();
+    expect(draftResponse.status(), draftBody).toBe(200);
 
     // The synchronous run returns after the deterministic mock adapter has
     // drafted every selected domain; the refreshed rows must show all 8.
@@ -364,4 +375,78 @@ test.describe("live demo loop: create → triage → draft run → sign → deci
     await expect(controlsTab).toBeVisible({ timeout: 30_000 });
     await expect(controlsTab.locator("tbody tr").first()).toBeVisible();
   });
+});
+
+// A real browser -> authenticated API -> private DB document loop; no LLM calls.
+test('requester evidence: upload, return, revision, acceptance and download history', async ({page}) => {
+  test.setTimeout(120_000);
+  await page.setExtraHTTPHeaders({'x-forwarded-for':'evidence-browser-test'});
+  async function login(persona:string) {
+    await expect(async () => {
+      if (!await page.getByRole('dialog').isVisible()) {
+        await page.locator('[data-slot="demo-mode-chip"]:visible').first().click();
+      }
+      await expect(page.getByRole('dialog')).toBeVisible({timeout:500});
+    }).toPass({timeout:10_000});
+    await page.locator('[data-slot="passcode-input"]').fill(E2E_DEMO_PASSCODE);
+    await page.locator('[data-slot="persona-select"]').selectOption(persona);
+    await page.locator('[data-slot="live-login-submit"]').click();
+    await expect(page.getByText('Live demo (session workspace)')).toBeVisible();
+  }
+  async function switchPersona(persona:string) {
+    await page.locator('[data-slot="live-reset"]').click();
+    await expect(page.getByText('Read-only (public)')).toBeVisible();
+    await login(persona);
+  }
+  await page.goto('/initiatives/new');await login('priya-raman');
+  await page.locator('[data-slot="load-champion"]').click();
+  await page.getByRole('textbox',{name:'Initiative title'}).fill('Evidence browser journey');
+  await page.locator('[data-slot="submit-intake"]').click();
+  await expect(page).toHaveURL(/\/initiatives\/evidence-browser-journey-/,{timeout:30000});
+  await page.locator('[data-slot="run-triage"]').click();
+  await expect(page.locator('[data-slot="triage-result"]')).toBeVisible({timeout:30000});
+  await page.getByRole('tab',{name:'Evidence',exact:true}).click();
+  const panel=page.locator('[data-slot="evidence-tab"]');
+  const pdf=Buffer.from('%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF\n');
+  async function upload(name:string) {
+    await panel.getByLabel('Choose document',{exact:true}).setInputFiles({name,mimeType:'application/pdf',buffer:pdf});
+    await panel.getByRole('checkbox',{name:/This document is fictional/}).check();
+    await panel.getByRole('button',{name:'Upload document',exact:true}).click();
+    await expect(panel.getByRole('status')).toContainText('Document saved privately');
+  }
+  await upload('retention-v1.pdf');
+  const requirement=panel.getByRole('article',{name:/^H-01 /});
+  await requirement.getByRole('combobox',{name:'Document for H-01',exact:true}).selectOption({label:'retention-v1.pdf · v1'});
+  await requirement.getByLabel('Relevant pages for H-01 (optional)').fill('1–2');
+  await requirement.getByLabel('What this demonstrates for H-01').fill('Fictional retention policy for review.');
+  await panel.getByRole('button',{name:'Save evidence draft',exact:true}).click();
+  await expect(panel.getByRole('status')).toContainText('Draft saved');
+  await page.reload();
+  await expect(requirement.getByLabel('What this demonstrates for H-01')).toHaveValue('Fictional retention policy for review.');
+  await panel.getByRole('button',{name:'Submit evidence for review',exact:true}).click();
+  await expect(panel.getByRole('status')).toContainText('Evidence submitted');
+  await switchPersona('marcus-webb');
+  await requirement.getByLabel('Reviewer reason for H-01').fill('Specify the retention duration.');
+  await requirement.getByRole('button',{name:'Request changes',exact:true}).click();
+  await expect(requirement).toContainText('Changes requested');
+  await switchPersona('priya-raman');
+  await panel.getByLabel('Document version',{exact:true}).selectOption({label:'New version of retention-v1.pdf (v1)'});
+  await upload('retention-v2.pdf');
+  await requirement.getByLabel('What this demonstrates for H-01').fill('Retention duration is 30 days for this fictional example.');
+  await panel.getByRole('button',{name:'Submit revised evidence',exact:true}).click();
+  await expect(panel.getByRole('status')).toContainText('Evidence submitted');
+  await switchPersona('marcus-webb');
+  await requirement.getByLabel('Reviewer reason for H-01').fill('The duration and scope are documented.');
+  await requirement.getByRole('button',{name:'Accept evidence',exact:true}).click();
+  await expect(requirement).toContainText('Reviewer accepted');
+  await panel.getByText('Document library and version history (2)',{exact:true}).click();
+  const downloaded=page.waitForEvent('download');
+  await panel.getByRole('button',{name:'Download retention-v1.pdf v1',exact:true}).click();
+  expect((await downloaded).suggestedFilename()).toBe('retention-v1.pdf');
+  await panel.getByText('Submission history (2)',{exact:true}).click();
+  await expect(panel).toContainText('Specify the retention duration.');
+  await page.setViewportSize({width:390,height:844});
+  await expect(panel.getByRole('heading',{name:'Evidence',exact:true})).toBeVisible();
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1)).toBe(true);
+  await page.screenshot({path:'test-results/evidence-mobile.png',fullPage:true});
 });
