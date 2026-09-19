@@ -18,6 +18,7 @@
 // initiatives + latest risk assessment + latest deployment, not a table.
 import { sql } from "drizzle-orm";
 import {
+  customType,
   bigint,
   boolean,
   doublePrecision,
@@ -419,3 +420,49 @@ export const rateLimitBuckets = pgTable("rate_limit_buckets", {
  * migration authors / future join tables without re-importing drizzle-orm).
  * ---------------------------------------------------------------------- */
 export { primaryKey };
+
+const evidenceBytes = customType<{ data: Buffer; driverData: Buffer }>({
+  dataType: () => 'bytea',
+  toDriver: value => value,
+  fromDriver: value => Buffer.from(value),
+});
+
+/* Evidence: private bytes, immutable versions and submitted review snapshots. */
+export const evidenceDocuments = pgTable('evidence_documents', {
+  id: text('id').primaryKey(),
+  initiativeId: text('initiative_id').notNull().references(() => initiatives.id),
+  requestId: text('request_id').notNull(),
+  fileName: text('file_name').notNull(),
+  mediaType: text('media_type').notNull(),
+  byteSize: integer('byte_size').notNull(),
+  sha256: text('sha256').notNull(),
+  content: evidenceBytes('content').notNull(),
+  scanStatus: text('scan_status').notNull().default('not_scanned'),
+  version: integer('version').notNull(),
+  supersedesId: text('supersedes_id'),
+  uploadedBy: text('uploaded_by').notNull(),
+  createdAt: timestamp('created_at', {withTimezone:true}).notNull(),
+}, t => [uniqueIndex('evidence_documents_request_uq').on(t.initiativeId,t.requestId)]);
+
+export const evidencePackets = pgTable('evidence_packets', {
+  id: text('id').primaryKey(),
+  initiativeId: text('initiative_id').notNull().references(() => initiatives.id),
+  cycleId: text('cycle_id').notNull().references(() => reviewCycles.id),
+  version: integer('version').notNull(),
+  revision: integer('revision').notNull(),
+  status: text('status').notNull(),
+  entries: jsonb('entries').$type<import('../evidence/types').EvidenceEntry[]>().notNull(),
+  submittedBy: text('submitted_by'),
+  submittedAt: timestamp('submitted_at',{withTimezone:true}),
+  createdAt: timestamp('created_at',{withTimezone:true}).notNull(),
+}, t => [uniqueIndex('evidence_packets_version_uq').on(t.cycleId,t.version), uniqueIndex('evidence_packets_draft_uq').on(t.cycleId).where(sql`${t.status} = 'draft'`)]);
+
+export const evidenceAssessments = pgTable('evidence_assessments', {
+  id:text('id').primaryKey(),
+  packetId:text('packet_id').notNull().references(()=>evidencePackets.id),
+  controlId:text('control_id').notNull().references(()=>controlDefinitions.id),
+  decision:text('decision').notNull(),
+  reason:text('reason').notNull(),
+  reviewer:text('reviewer').notNull(),
+  reviewedAt:timestamp('reviewed_at',{withTimezone:true}).notNull(),
+},t=>[uniqueIndex('evidence_assessments_control_uq').on(t.packetId,t.controlId)]);

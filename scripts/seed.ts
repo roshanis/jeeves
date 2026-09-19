@@ -16,6 +16,8 @@ import {
   controlExceptions,
   deploymentVersions,
   effectiveControls,
+  evidenceDocuments,
+  evidencePackets,
   incidents,
   initiativeDecisions,
   initiatives,
@@ -548,8 +550,10 @@ function flatCostSeries(slug: string, low: number, high: number): ObservationSee
  * AuditEvents so no state is orphaned (seed-spec §5).
  * ---------------------------------------------------------------------- */
 
+type SeedDb = Pick<Db, "select" | "insert" | "update" | "delete" | "execute">;
+
 interface SeedContext {
-  db: Db;
+  db: SeedDb;
   now: Date;
 }
 
@@ -649,6 +653,15 @@ async function insertRiskAssessment(
  * ---------------------------------------------------------------------- */
 
 export async function seedDatabase(db: Db): Promise<RowCounts> {
+  return db.transaction((tx) => seedInTransaction(tx));
+}
+
+async function seedInTransaction(db: SeedDb): Promise<RowCounts> {
+  const documents = await db.select({ id: evidenceDocuments.id }).from(evidenceDocuments).limit(1);
+  const packets = await db.select({ id: evidencePackets.id }).from(evidencePackets).limit(1);
+  if (documents.length || packets.length) {
+    throw new Error("Refusing reset to preserve evidence history. Use a fresh disposable database.");
+  }
   resetIdCounters();
   const now = new Date(BASE_DATE_MS);
   const ctx: SeedContext = { db, now };

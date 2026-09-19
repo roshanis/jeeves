@@ -55,7 +55,7 @@ const sessionAttemptLimiter = new DbTokenBucketRateLimiter(
 export async function checkSessionAttempt(
   clientKey: string,
 ): Promise<{ allowed: boolean; retryAfterSeconds: number }> {
-  return sessionAttemptLimiter.checkAndConsume(clientKey);
+  return sessionAttemptLimiter.checkAndConsume(`session:${clientKey}`);
 }
 
 /** Test-only: reset all module-scoped guard state between test files/cases. */
@@ -241,7 +241,8 @@ export async function runMutationGuard(
   }
 
   const clientKey = clientKeyFor(req);
-  const rl = await rateLimiter.checkAndConsume(clientKey);
+  // Independent policies must not share a persisted token balance.
+  const rl = await rateLimiter.checkAndConsume(`mutation:${clientKey}`);
   if (!rl.allowed) {
     return {
       ok: false,
