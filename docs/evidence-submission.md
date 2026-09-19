@@ -19,6 +19,14 @@ For this small demo, private PostgreSQL BYTEA storage keeps document bytes and a
 
 Uploads retain their retry identity after a lost response. An uncertain submission locks edits until reconciliation and retries the same saved packet. Sign-in attempts and authenticated actions now use separate persisted rate-limit buckets with their existing limits unchanged.
 
+## Evidence-led review workbench
+
+Open a domain review from **Reviews** to work across three panels: evidence sources, the selected source, and your assessment. The source panel displays the exact submitted document version, requester-supplied page reference and note, authenticated download, and the assigned reviewer's acceptance or change request. These notes are not extracted document contents. AI drafts are expandable aids; the human assessment and domain signature remain separate from evidence acceptance.
+
+Source switching preserves human edits. Edits are scoped to the session, initiative, domain and review cycle. A newer cycle blocks actions and hides mismatched evidence until refresh. Missing or unaccepted requirements and unsent revisions block signing once evidence packets exist; existing no-packet reviews keep their prior contract. If evidence cannot load, **Open initiative reviews** returns to the existing domain review surface, whose API still enforces all signature requirements.
+
+Arize evaluations and W&B training provenance appear as **Not connected** sources. No external results, lineage, live integration, policy text, inline document rendering or new document processing is supplied by this layout.
+
 ## Deployment
 
 Apply migration `0011_evidence_submission.sql` using the existing `npm run db:migrate` path against the intended database before enabling this release. Do not use `db:seed` to migrate an existing database. The migration is additive and introduces immutable document/assessment records and immutable submitted packets. If application rollback is necessary, deploy the previous application version and retain the new tables and history; do not drop evidence tables.
