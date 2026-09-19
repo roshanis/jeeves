@@ -1,8 +1,8 @@
 "use client";
 
-// Review workbench (ui-spec §5): queue across all initiatives + two-pane
-// drafting surface (agent draft + citations left, editable assessment +
-// verdict right). Sign/Return are approve-style actions (hidden for Admin,
+// Review workbench: queue across initiatives, then evidence sources, the
+// selected submitted source, and the human assessment. Sign/Return are
+// domain-review actions (hidden for Admin,
 // disabled-with-tooltip without a live session — see role-gate.tsx).
 //
 // Live mode: for an initiative created during this live demo session (the
@@ -57,6 +57,7 @@ import {
   getReviewActionEligibility,
   performReviewMutation,
 } from "@/lib/client/review-actions";
+import { ReviewEvidenceWorkspace } from "./review-evidence-workspace";
 
 export interface ReviewQueueRow {
   slug: string;
@@ -100,8 +101,11 @@ function DomainIcon({ domain, className }: { domain: Domain; className?: string 
 
 export function ReviewWorkbench({ rows }: { rows: ReviewQueueRow[] }) {
   const { reviewerDomain } = useRole();
+  const live = useLiveSessionOptional();
+  const sessionKey = live?.session?.token ?? "public";
   const [selected, setSelected] = React.useState<{ slug: string; domain: Domain } | null>(null);
   const [drafts, setDrafts] = React.useState<Record<string, string>>({});
+  const [queueOpen, setQueueOpen] = React.useState(true);
   const [override, setOverride] = React.useState<Domain | "all" | null>(null);
   // Queue aging clock — null on server/first render (placeholder), then the
   // cached client time. See useClientNow above for the hydration rationale.
@@ -127,10 +131,18 @@ export function ReviewWorkbench({ rows }: { rows: ReviewQueueRow[] }) {
         (row) => row.slug === selected.slug && row.review.domain === selected.domain,
       ) ?? null
     : null;
+  const draftKey = visibleSelected
+    ? `${sessionKey}:${visibleSelected.slug}:${visibleSelected.review.domain}:${visibleSelected.review.cycleId ?? visibleSelected.review.createdAt}`
+    : "";
 
   return (
     <div className="flex flex-col gap-6" data-slot="review-workbench">
-      <Card>
+      {visibleSelected && !queueOpen ? (
+        <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
+          <p className="text-muted-foreground">Reviewer queue · {filteredRows.length} reviews in this view</p>
+          <button type="button" onClick={() => setQueueOpen(true)} className="touch-min rounded-md border bg-card px-3 py-2 font-medium hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">Change review</button>
+        </div>
+      ) : <Card>
         <CardHeader>
           <CardTitle>Reviewer queue</CardTitle>
         </CardHeader>
@@ -224,7 +236,10 @@ export function ReviewWorkbench({ rows }: { rows: ReviewQueueRow[] }) {
                   <TableCell>
                     <button
                       type="button"
-                      onClick={() => setSelected({ slug: row.slug, domain: row.review.domain })}
+                      onClick={() => {
+                        setSelected({ slug: row.slug, domain: row.review.domain });
+                        setQueueOpen(false);
+                      }}
                       aria-label={`Open ${DOMAIN_LABEL[row.review.domain]} review for ${row.title}`}
                       className="text-left hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     >
@@ -263,15 +278,15 @@ export function ReviewWorkbench({ rows }: { rows: ReviewQueueRow[] }) {
             </TableBody>
           </Table>
         </CardContent>
-      </Card>
+      </Card>}
 
       {visibleSelected ? (
         <div>
-          <div className="mb-3 flex items-center gap-2 text-sm">
-            <span className="flex items-center gap-1.5 font-semibold">
+          <div className="mb-5 flex flex-wrap items-center gap-2 text-sm">
+            <h2 className="flex items-center gap-2 text-xl font-semibold">
               <DomainIcon domain={visibleSelected.review.domain} className="size-4 shrink-0 text-muted-foreground" />
               {DOMAIN_LABEL[visibleSelected.review.domain]} review
-            </span>
+            </h2>
             <span className="text-muted-foreground">·</span>
             <Link
               href={`/initiatives/${visibleSelected.slug}?tab=reviews`}
@@ -283,71 +298,40 @@ export function ReviewWorkbench({ rows }: { rows: ReviewQueueRow[] }) {
             <ReviewStatusBadge status={visibleSelected.review.status} />
           </div>
 
-          {/* Signature screen: evidence & policy · agent draft · reviewer sign-off */}
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-3" data-slot="review-columns">
-            <Card className="overflow-hidden">
-              <CardHeader className="border-b bg-muted/40 py-2.5">
-                <CardTitle className="kicker">
-                  1 · Evidence &amp; policy sources
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3 pt-4">
-                {visibleSelected.review.citations.length > 0 ? (
-                  <ul className="space-y-1.5">
-                    {visibleSelected.review.citations.map((c) => (
-                      <li key={c} className="flex items-start gap-2 text-sm">
-                        <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
-                        <span className="font-mono text-xs">{c}</span>
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p className="text-sm text-muted-foreground">
-                    No policy sources cited yet.
-                  </p>
-                )}
-                <p className="border-t pt-3 text-xs text-muted-foreground">
-                  The drafting agent may cite only sources supplied to it. Required
-                  evidence surfaces as conditions on approval — see the initiative&rsquo;s
-                  Controls tab.
-                </p>
-              </CardContent>
-            </Card>
-
-            <Card className="overflow-hidden">
-              <CardHeader className="border-b bg-muted/40 py-2.5">
-                <CardTitle className="kicker">
-                  2 · Agent-drafted assessment
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="pt-4">
-                <p className="whitespace-pre-wrap text-sm text-muted-foreground">
-                  {visibleSelected.review.draftMd ?? "No draft yet for this domain."}
-                </p>
-              </CardContent>
-            </Card>
-
+          <ReviewEvidenceWorkspace
+            slug={visibleSelected.slug}
+            domain={visibleSelected.review.domain}
+            citations={visibleSelected.review.citations}
+            reviewStatus={visibleSelected.review.status}
+            reviewCycleId={visibleSelected.review.cycleId}
+          >
+            {({ signingBlock, cycleId, cycleChanged }) => (
             <AssessmentPane
+              key={draftKey}
               row={visibleSelected}
+              signingBlock={signingBlock}
+              evidenceCycleId={cycleId}
+              cycleChanged={cycleChanged}
               editedText={
-                drafts[`${visibleSelected.slug}:${visibleSelected.review.domain}`] ??
+                drafts[draftKey] ??
                 visibleSelected.review.draftMd ??
                 ""
               }
               onEditedTextChange={(value) =>
                 setDrafts((current) => ({
                   ...current,
-                  [`${visibleSelected.slug}:${visibleSelected.review.domain}`]: value,
+                  [draftKey]: value,
                 }))
               }
             />
-          </div>
+            )}
+          </ReviewEvidenceWorkspace>
         </div>
       ) : (
         <p className="rounded-lg border border-dashed bg-muted/30 px-4 py-8 text-center text-sm text-muted-foreground">
           {rows.length === 0
             ? "Nothing is awaiting signature. Drafts that have not started remain available from the initiative’s Reviews tab."
-            : "Select a review from the queue to open the three-column workbench — evidence & policy, the agent draft, and your findings."}
+            : "Select a review to inspect its evidence, verify the sources, and record your assessment."}
         </p>
       )}
     </div>
@@ -362,16 +346,22 @@ function AssessmentPane({
   row,
   editedText,
   onEditedTextChange,
+  signingBlock,
+  evidenceCycleId,
+  cycleChanged,
 }: {
   row: ReviewQueueRow;
   editedText: string;
   onEditedTextChange: (value: string) => void;
+  signingBlock: string | null;
+  evidenceCycleId: string | null;
+  cycleChanged: boolean;
 }) {
   const router = useRouter();
   const live = useLiveSessionOptional();
   const session = live?.session ?? null;
   const liveInfo = useLiveInfo(row.slug);
-  const cycleId = liveInfo?.cycleId ?? null;
+  const cycleId = cycleChanged ? null : row.review.cycleId ?? evidenceCycleId ?? liveInfo?.cycleId ?? null;
 
   const [pending, setPending] = React.useState(false);
   const [running, setRunning] = React.useState(false);
@@ -407,7 +397,7 @@ function AssessmentPane({
   }
 
   async function handleSign() {
-    if (!session || !cycleId) return;
+    if (!session || !cycleId || signingBlock || pending || running) return;
     setPending(true);
     try {
       await performReviewMutation(
@@ -450,13 +440,16 @@ function AssessmentPane({
   }
 
   return (
-    <Card className="overflow-hidden">
-      <CardHeader className="border-b bg-muted/40 py-2.5">
-        <CardTitle className="kicker">
-          3 · Reviewer findings &amp; sign-off
-        </CardTitle>
+    <Card className="min-w-0 overflow-hidden" data-slot="review-assessment">
+      <CardHeader className="border-b py-4">
+        <CardTitle>Your assessment</CardTitle>
+        <p className="text-xs text-muted-foreground">{DOMAIN_LABEL[row.review.domain]} · Human domain review</p>
       </CardHeader>
       <CardContent className="space-y-3 pt-4">
+        <details className="rounded-lg border bg-primary/5 p-3">
+          <summary className="cursor-pointer rounded-sm text-xs font-semibold text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">AI draft · verify against evidence</summary>
+          <p className="mt-3 max-h-64 overflow-y-auto whitespace-pre-wrap break-words text-sm leading-relaxed text-muted-foreground">{row.review.draftMd ?? "No draft yet for this domain."}</p>
+        </details>
         {eligibility.canRunAgent ? (
           <div className="flex flex-col gap-1.5 border-b pb-3" data-slot="run-agent">
             <button
@@ -464,7 +457,7 @@ function AssessmentPane({
               onClick={() => void handleRunAgent()}
               disabled={running || alreadySigned}
               data-slot="run-agent-button"
-              className="inline-flex items-center justify-center gap-2 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
+              className="inline-flex items-center justify-center gap-2 rounded-md border px-3 py-2 text-sm font-medium text-primary transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
             >
               <Bot className="h-4 w-4" aria-hidden />
               {running ? "Running agent…" : hasDraft ? "Re-run agent" : "Run agent to draft"}
@@ -477,7 +470,7 @@ function AssessmentPane({
           </div>
         ) : null}
         <textarea
-          className="min-h-40 w-full rounded-md border border-input bg-transparent p-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
+          className="min-h-56 w-full rounded-md border border-input bg-transparent p-3 text-sm leading-relaxed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
           value={editedText}
           onChange={(e) => onEditedTextChange(e.target.value)}
           disabled={!eligibility.canEdit}
@@ -485,12 +478,14 @@ function AssessmentPane({
           aria-label="Assessment text"
           data-slot="assessment-textarea"
         />
-        <div className="flex gap-2">
+        {signingBlock && !alreadySigned ? <p role="status" className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">{signingBlock}</p> : null}
+        {alreadySigned ? <p className="rounded-lg border bg-muted/30 p-3 text-sm">Signed by {row.review.reviewer ?? "the assigned reviewer"}{row.review.signedAt ? ` on ${row.review.signedAt.slice(0, 10)}` : ""}. This domain review is read-only.</p> : null}
+        <div className="flex flex-wrap gap-2">
           <GatedActionButton
             label="Sign"
             requiresRole="reviewer"
-            pending={pending}
-            pendingLabel="Signing…"
+            pending={pending || running || Boolean(signingBlock)}
+            pendingLabel={pending ? "Signing…" : "Sign"}
             onAction={eligibility.canSignOrReturn ? () => void handleSign() : undefined}
           />
           <GatedActionButton
@@ -502,8 +497,8 @@ function AssessmentPane({
           />
         </div>
         <p className="text-xs text-muted-foreground">
-          Returning requires a mandatory reason; both actions write an
-          audit event. Agents draft — humans decide.
+          Sign records this domain’s review, not overall initiative approval.
+          Return requires a reason. Both actions write an audit event.
         </p>
       </CardContent>
 

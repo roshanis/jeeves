@@ -30,6 +30,8 @@ export interface InitiativeSummary {
 }
 
 export interface ReviewRow {
+  /** Exact cycle owning this draft; omitted only by legacy/static fixtures. */
+  cycleId?: string;
   domain: Domain;
   status: "pending" | "drafted" | "signed" | "returned";
   reviewer: string | null;
