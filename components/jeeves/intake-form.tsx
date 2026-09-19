@@ -22,6 +22,7 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import type { IntakePayload } from "@/lib/intake/types";
+import { ADDITIONAL_INTAKE_QUESTIONS, ADDITIONAL_ANSWER_MAX_LENGTH } from "@/lib/intake/additional-questions";
 import {
   evaluateCompleteness,
   type CompletenessGap,
@@ -137,7 +138,7 @@ export const EMPTY_PAYLOAD: IntakePayload = {
     requesterEmail: "",
     businessProblem: "",
   },
-  useCase: { primaryUsers: "", decisionInformed: "", expectedVolume: null },
+  useCase: { primaryUsers: "", decisionInformed: "", expectedVolume: null, currentWorkflow: null, successMetrics: null },
   data: {
     dataSources: [],
     phiCategories: [],
@@ -145,10 +146,11 @@ export const EMPTY_PAYLOAD: IntakePayload = {
     retentionIntent: null,
     retentionIntentNote: null,
     trainingVsInference: null,
+    vendorDataReuse: null,
   },
   modelVendor: { buildOrBuy: null, vendorName: null, hosting: null, modelType: null },
-  populationImpact: { affectedPopulations: [], expectedBenefits: null, expectedHarms: null },
-  deployment: { integrationPoints: [], rolloutPlan: null },
+  populationImpact: { affectedPopulations: [], expectedBenefits: null, expectedHarms: null, evaluationPlan: null },
+  deployment: { integrationPoints: [], rolloutPlan: null, operationalOwner: null, humanReviewProcess: null, monitoringPlan: null, fallbackPlan: null },
   overlay: {
     touchesPHI: null,
     memberFacing: null,
@@ -214,6 +216,31 @@ function TextAreaField({
       {hint ? <span className="text-xs text-muted-foreground">{hint}</span> : null}
     </label>
   );
+}
+
+function AdditionalQuestions<K extends string>({ questions, values, onChange }: {
+  questions: readonly { key: K; question: string; hint: string }[];
+  values: Partial<Record<K, string | null>>;
+  onChange: (key: K, value: string | null) => void;
+}) {
+  const id = React.useId();
+  return <div className="col-span-full flex flex-col gap-3">
+    <p className="text-xs text-muted-foreground">Additional questions (optional). Share what you know; you can leave unanswered questions blank.</p>
+    {questions.map(({ key, question, hint }) => (
+      <div key={key} className="flex flex-col gap-1 text-sm">
+        <label htmlFor={`${id}-${key}`} className="font-medium">{question}</label>
+        <textarea
+          id={`${id}-${key}`}
+          aria-describedby={`${id}-${key}-hint`}
+          value={values[key] ?? ""}
+          maxLength={ADDITIONAL_ANSWER_MAX_LENGTH}
+          onChange={(event) => onChange(key, event.target.value.trim() === "" ? null : event.target.value)}
+          className={textareaClass}
+        />
+        <span id={`${id}-${key}-hint`} className="text-xs text-muted-foreground">{hint} Optional, up to {ADDITIONAL_ANSWER_MAX_LENGTH} characters.</span>
+      </div>
+    ))}
+  </div>;
 }
 
 function SelectField<T extends string>({
@@ -508,6 +535,11 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
                   patch((p) => ({ ...p, useCase: { ...p.useCase, expectedVolume: v } }))
                 }
               />
+              <AdditionalQuestions
+                questions={ADDITIONAL_INTAKE_QUESTIONS.useCase}
+                values={payload.useCase}
+                onChange={(key, value) => patch((p) => ({ ...p, useCase: { ...p.useCase, [key]: value } }))}
+              />
             </CardContent>
           </Card>
 
@@ -588,6 +620,11 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
                 onChange={(v) =>
                   patch((p) => ({ ...p, data: { ...p.data, trainingVsInference: v } }))
                 }
+              />
+              <AdditionalQuestions
+                questions={ADDITIONAL_INTAKE_QUESTIONS.data}
+                values={payload.data}
+                onChange={(key, value) => patch((p) => ({ ...p, data: { ...p.data, [key]: value } }))}
               />
             </CardContent>
           </Card>
@@ -677,6 +714,11 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
                   }))
                 }
               />
+              <AdditionalQuestions
+                questions={ADDITIONAL_INTAKE_QUESTIONS.populationImpact}
+                values={payload.populationImpact}
+                onChange={(key, value) => patch((p) => ({ ...p, populationImpact: { ...p.populationImpact, [key]: value } }))}
+              />
             </CardContent>
           </Card>
 
@@ -705,6 +747,11 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
                     deployment: { ...p.deployment, rolloutPlan: v === "" ? null : v },
                   }))
                 }
+              />
+              <AdditionalQuestions
+                questions={ADDITIONAL_INTAKE_QUESTIONS.deployment}
+                values={payload.deployment}
+                onChange={(key, value) => patch((p) => ({ ...p, deployment: { ...p.deployment, [key]: value } }))}
               />
             </CardContent>
           </Card>

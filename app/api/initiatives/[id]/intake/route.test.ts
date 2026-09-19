@@ -3,6 +3,8 @@ import { closeTestDb, createTestDb, type TestDb } from "@/lib/db/test-client";
 import { CHAMPION_PREFILL_PAYLOAD } from "@/lib/intake/champion-prefill";
 import { createDraft } from "@/lib/services/initiative-service";
 import { ACTOR_DIRECTORY } from "@/lib/services/actors";
+import { intakePayloadSchema } from "@/lib/services/intake-payload-schema";
+import { EXPANDED_INTAKE } from "@/tests/fixtures/expanded-intake";
 
 const state = vi.hoisted(() => ({
   db: null as TestDb | null,
@@ -82,6 +84,27 @@ describe("GET/PUT /api/initiatives/[id]/intake", () => {
     state.workspaceId = "ws-foreign";
     const response = await GET(new Request("http://localhost"), context(initiativeId));
     expect(response.status).toBe(404);
+  });
+
+  it("saves and reloads the additional answers without dropping any", async () => {
+    const update = await PUT(putRequest({ payload: EXPANDED_INTAKE, expectedVersion: 1 }), context(initiativeId));
+    expect(update.status).toBe(200);
+    const read = await GET(new Request("http://localhost"), context(initiativeId));
+    expect(read.status).toBe(200);
+    expect(await read.json()).toMatchObject({ version: 2, payload: EXPANDED_INTAKE });
+  });
+
+  it("reopens historical drafts with unanswered optional fields and accepts create retries", async () => {
+    const read = await GET(new Request("http://localhost"), context(initiativeId));
+    expect(await read.json()).toMatchObject({ payload: { deployment: { fallbackPlan: null } } });
+    const retried = await createDraft(db, {
+      payload: intakePayloadSchema.parse(CHAMPION_PREFILL_PAYLOAD),
+      requesterActor: owner,
+      requesterName: owner.name,
+      workspaceId: "ws-owner",
+      requestId: "route-intake-test-key-0001",
+    });
+    expect(retried.initiativeId).toBe(initiativeId);
   });
 
   it("treats shared seed-style drafts as read-only for a live workspace", async () => {

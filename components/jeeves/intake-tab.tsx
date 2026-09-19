@@ -2,6 +2,7 @@
 // Intake tab (ui-spec §3.2): read-only rendering of the submitted
 // IntakeVersion, or the "Draft — not yet submitted" state for the champion.
 import type { InitiativeDetail } from "@/lib/data/dto";
+import { ADDITIONAL_INTAKE_QUESTIONS } from "@/lib/intake/additional-questions";
 import { AlertTriangle } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -28,9 +29,69 @@ const FIELD_LABEL: Record<string, string> = {
   humanInLoop: "5. Does a qualified human review each output before it takes effect?",
   individualImpact: "6. Does it affect individuals' opportunities, rights, or services?",
   "data.retentionIntent": "Data retention",
+  "basics.title": "Title",
+  "basics.sponsorOrg": "Sponsor organization",
+  "basics.requesterName": "Requester name",
+  "basics.requesterEmail": "Requester email",
+  "basics.businessProblem": "Business problem",
+  "useCase.primaryUsers": "Who uses it",
+  "useCase.decisionInformed": "Decision it informs",
+  "useCase.expectedVolume": "Expected volume",
+  "data.dataSources": "Data sources",
+  "data.phiCategories": "PHI categories touched",
+  "data.phiCategoriesOtherText": "Other PHI category",
+  "data.retentionIntentNote": "Retention note",
+  "data.trainingVsInference": "Training vs. inference use",
+  "modelVendor.buildOrBuy": "Build or buy",
+  "modelVendor.vendorName": "Vendor name",
+  "modelVendor.hosting": "Hosting",
+  "modelVendor.modelType": "Model type",
+  "populationImpact.affectedPopulations": "Affected populations",
+  "populationImpact.expectedBenefits": "Expected benefits",
+  "populationImpact.expectedHarms": "Expected harms / risks",
+  "deployment.integrationPoints": "Integration points",
+  "deployment.rolloutPlan": "Rollout plan",
+  "overlay.touchesPHI": "1. Does it access PHI?",
+  "overlay.memberFacing": "2. Do members interact with or receive its output directly?",
+  "overlay.careCoverageInfluence": "3. Does it influence care or coverage decisions?",
+  "overlay.vendorHosted": "4. Is the model vendor-hosted?",
+  "overlay.humanInTheLoop": "5. Does a qualified human review each output before it takes effect?",
+  "overlay.individualImpact": "6. Does it affect individuals' opportunities, rights, or services (members, providers, or employees)?",
 };
 
-function renderValue(value: string | boolean | null): React.ReactNode {
+const ADDITIONAL_FIELD_LABELS = Object.fromEntries(
+  Object.entries(ADDITIONAL_INTAKE_QUESTIONS).flatMap(([section, questions]) =>
+    questions.map(({ key, question }) => [`${section}.${key}`, question]),
+  ),
+);
+
+/** Live drafts use nested sections; older seeded examples use flat fields. */
+function answerRows(fields: Record<string, unknown>): [string, string | boolean | null][] {
+  const rows: [string, string | boolean | null][] = [];
+  function visit(key: string, value: unknown) {
+    if (Array.isArray(value)) {
+      if (value.every((entry) => typeof entry === "string")) rows.push([key, value.join("\n")]);
+      else value.forEach((entry, index) => visit(`${key}.${index + 1}`, entry));
+    } else if (value && typeof value === "object") {
+      Object.entries(value).forEach(([child, answer]) => visit(`${key}.${child}`, answer));
+    } else {
+      rows.push([key, typeof value === "boolean" || typeof value === "string" ? value : value == null ? null : String(value)]);
+    }
+  }
+  Object.entries(fields).forEach(([key, value]) => visit(key, value));
+  if (fields.basics && typeof fields.basics === "object") {
+    const present = new Set(rows.map(([key]) => key));
+    for (const key of Object.keys(ADDITIONAL_FIELD_LABELS)) {
+      if (!present.has(key)) rows.push([key, null]);
+    }
+  }
+  return rows;
+}
+
+function renderValue(value: string | boolean | null, optional: boolean): React.ReactNode {
+  if (optional && (value === null || (typeof value === "string" && value.trim() === ""))) {
+    return <span className="text-muted-foreground">Not provided (optional)</span>;
+  }
   if (value === null) {
     return (
       <Badge variant="destructive" className="bg-status-critical-bg text-status-critical-fg">
@@ -82,12 +143,12 @@ export function IntakeTab({ intake, summary }: {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {Object.entries(intake.fields).map(([key, value]) => (
+            {answerRows(intake.fields).map(([key, value]) => (
               <TableRow key={key}>
                 <TableCell className="whitespace-normal font-medium">
-                  {FIELD_LABEL[key] ?? key}
+                  {ADDITIONAL_FIELD_LABELS[key] ?? FIELD_LABEL[key] ?? key}
                 </TableCell>
-                <TableCell className="whitespace-normal">{renderValue(value)}</TableCell>
+                <TableCell className="whitespace-pre-wrap">{renderValue(value, key in ADDITIONAL_FIELD_LABELS)}</TableCell>
               </TableRow>
             ))}
           </TableBody>

@@ -91,7 +91,7 @@ function coerceToIntakePayload(portPayload: Readonly<Record<string, unknown>>): 
       requesterEmail: "",
       businessProblem: "",
     },
-    useCase: { primaryUsers: "", decisionInformed: "", expectedVolume: null },
+    useCase: { primaryUsers: "", decisionInformed: "", expectedVolume: null, currentWorkflow: null, successMetrics: null },
     data: {
       dataSources: [],
       phiCategories: [],
@@ -99,10 +99,11 @@ function coerceToIntakePayload(portPayload: Readonly<Record<string, unknown>>): 
       retentionIntent: null,
       retentionIntentNote: null,
       trainingVsInference: null,
+      vendorDataReuse: null,
     },
     modelVendor: { buildOrBuy: null, vendorName: null, hosting: null, modelType: null },
-    populationImpact: { affectedPopulations: [], expectedBenefits: null, expectedHarms: null },
-    deployment: { integrationPoints: [], rolloutPlan: null },
+    populationImpact: { affectedPopulations: [], expectedBenefits: null, expectedHarms: null, evaluationPlan: null },
+    deployment: { integrationPoints: [], rolloutPlan: null, operationalOwner: null, humanReviewProcess: null, monitoringPlan: null, fallbackPlan: null },
     overlay: {
       touchesPHI: null,
       memberFacing: null,

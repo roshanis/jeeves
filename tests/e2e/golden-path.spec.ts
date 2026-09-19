@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { E2E_DEMO_PASSCODE } from "./constants";
+import { ADDITIONAL_ANSWERS, EXPANDED_INTAKE } from "../fixtures/expanded-intake";
 
 // plan.md §8 test 12 — Playwright golden path (required, AGENTS.md hard rule
 // 8): a read-only champion storyline covering the public landing page, the
@@ -204,10 +205,17 @@ test.describe("champion storyline: read-only golden path", () => {
 test.describe("live demo loop: create → triage → draft run → sign → decide", () => {
   /** Log in through the demo-mode chip dialog as the given persona. */
   async function loginAs(page: import("@playwright/test").Page, personaKey: string) {
-    await page.locator('[data-slot="demo-mode-chip"]').click();
-    await page.locator('[data-slot="passcode-input"]').fill(E2E_DEMO_PASSCODE);
-    await page.locator('[data-slot="persona-select"]').selectOption(personaKey);
-    await page.locator('[data-slot="live-login-submit"]').click();
+    const dialog = page.getByRole("dialog", { name: "Enter live demo mode" });
+    // A cold streamed page can expose its shell before the client handlers attach.
+    await expect(async () => {
+      if (!(await dialog.isVisible())) {
+        await page.getByRole("button", { name: "Read-only (public)", exact: true }).click();
+      }
+      await expect(dialog).toBeVisible({ timeout: 1000 });
+    }).toPass({ timeout: 10_000 });
+    await dialog.locator('[data-slot="passcode-input"]').fill(E2E_DEMO_PASSCODE);
+    await dialog.locator('[data-slot="persona-select"]').selectOption(personaKey);
+    await dialog.locator('[data-slot="live-login-submit"]').click();
     await expect(page.getByText("Live demo (session workspace)")).toBeVisible();
   }
 
@@ -215,6 +223,69 @@ test.describe("live demo loop: create → triage → draft run → sign → deci
     await page.locator('[data-slot="live-reset"]').click();
     await expect(page.getByText("Read-only (public)")).toBeVisible();
   }
+
+  test("additional intake answers survive reopening, editing, and submission", async ({ page }) => {
+    test.setTimeout(60_000);
+    const errors: { phase: string; message: string }[] = [];
+    let phase = "new intake";
+    page.on("pageerror", (error) => errors.push({ phase, message: error.message }));
+    await page.goto("/initiatives/new");
+    const sessionResponse = page.waitForResponse((response) => response.url().endsWith("/api/session") && response.request().method() === "POST");
+    await loginAs(page, "priya-raman");
+    const { token } = await (await sessionResponse).json();
+    const created = await page.request.post("/api/initiatives", {
+      headers: { authorization: `Bearer ${token}` },
+      data: { payload: { ...EXPANDED_INTAKE, basics: { ...EXPANDED_INTAKE.basics, title: "Optional intake review example" } }, requestId: "e2e-optional-intake-questions" },
+    });
+    expect(created.ok()).toBe(true);
+    const { slug } = await created.json();
+    phase = "reopen draft";
+    await page.goto(`/initiatives/${slug}/edit`);
+    for (const [question, answer] of ADDITIONAL_ANSWERS) {
+      await expect(page.getByRole("textbox", { name: question, exact: true })).toHaveValue(answer);
+    }
+    await page.getByRole("textbox", { name: ADDITIONAL_ANSWERS[0][0], exact: true })
+      .locator('xpath=ancestor::*[@data-slot="card"][1]')
+      .screenshot({ path: test.info().outputPath("intake-use-case-desktop.png") });
+    await page.getByRole("textbox", { name: ADDITIONAL_ANSWERS[2][0], exact: true })
+      .locator('xpath=ancestor::*[@data-slot="card"][1]')
+      .screenshot({ path: test.info().outputPath("intake-data-desktop.png") });
+    await page.setViewportSize({ width: 393, height: 852 });
+    const fallback = page.getByRole("textbox", { name: ADDITIONAL_ANSWERS[7][0], exact: true });
+    await fallback.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: test.info().outputPath("intake-mobile.png") });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    const revisedFallback = "The on-call team pauses generation and restores the manual queue.";
+    await fallback.fill(revisedFallback);
+    phase = "submit draft";
+    await page.locator('[data-slot="submit-intake"]').click();
+    await expect(page).toHaveURL(new RegExp(`/initiatives/${slug}$`));
+    phase = "open intake tab";
+    await page.getByRole("tab", { name: "Intake", exact: true }).click();
+    await expect(page).toHaveURL(/\?tab=intake$/);
+    await expect(page.getByRole("tabpanel", { name: "Intake", exact: true })).toBeVisible();
+    phase = "reload submitted intake";
+    await page.reload();
+    for (const [question, answer] of ADDITIONAL_ANSWERS) {
+      const row = page.locator('[data-slot="intake-tab"]').getByRole("row").filter({ hasText: question });
+      await expect(row).toContainText(question === ADDITIONAL_ANSWERS[7][0] ? revisedFallback : answer);
+    }
+    // Authenticated detail-page hydration also emits #418 on unchanged main,
+    // including Overview without ever opening Intake. Keep that existing issue
+    // visible in the report while failing new errors and checking every answer.
+    const baselineHydrationWarnings = errors.filter(
+      (error) => error.phase === "reload submitted intake" && error.message.startsWith("Minified React error #418;"),
+    );
+    expect(baselineHydrationWarnings.length).toBeLessThanOrEqual(1);
+    if (baselineHydrationWarnings.length > 0) {
+      test.info().annotations.push({ type: "known-baseline-issue", description: "React #418 on authenticated detail reload also reproduces on unchanged main." });
+      await test.info().attach("baseline-detail-hydration-warning", {
+        body: JSON.stringify(baselineHydrationWarnings, null, 2),
+        contentType: "application/json",
+      });
+    }
+    expect(errors.filter((error) => !baselineHydrationWarnings.includes(error))).toEqual([]);
+  });
 
   test("full live loop across requester, reviewer, and approver personas", async ({
     page,
@@ -228,6 +299,10 @@ test.describe("live demo loop: create → triage → draft run → sign → deci
     await loginAs(page, "priya-raman");
 
     await page.locator('[data-slot="load-champion"]').click();
+
+    for (const [question, answer] of ADDITIONAL_ANSWERS) {
+      await page.getByRole("textbox", { name: question, exact: true }).fill(answer);
+    }
 
     // Exercise the real mocked chat route and the shared payload handoff.
     // The structured champion answers must survive a Chat round-trip and
@@ -247,6 +322,9 @@ test.describe("live demo loop: create → triage → draft run → sign → deci
     await expect(page.getByRole("textbox", { name: "Initiative title" })).toHaveValue(
       "Prior-Auth Clinical Summarizer",
     );
+    for (const [question, answer] of ADDITIONAL_ANSWERS) {
+      await expect(page.getByRole("textbox", { name: question, exact: true })).toHaveValue(answer);
+    }
 
     // Live tier preview: rule 1 -> Critical, all 8 domains.
     const preview = page.locator('[data-slot="tier-preview"]');
@@ -271,6 +349,11 @@ test.describe("live demo loop: create → triage → draft run → sign → deci
     ).toBeVisible();
 
     // --- Triage: Critical, 8 required domains, review branch -------------
+    await page.getByRole("tab", { name: "Intake", exact: true }).click();
+    for (const [question, answer] of ADDITIONAL_ANSWERS) {
+      const row = page.locator('[data-slot="intake-tab"]').getByRole("row").filter({ hasText: question });
+      await expect(row).toContainText(answer);
+    }
     await page.locator('[data-slot="run-triage"]').click();
     const triageResult = page.locator('[data-slot="triage-result"]');
     await expect(triageResult).toBeVisible({ timeout: 30_000 });

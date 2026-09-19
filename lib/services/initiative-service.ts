@@ -48,6 +48,7 @@ import { runSingleDomainDraft } from "../workflow/review-run";
 import type { AgentPort } from "../agents/ports";
 import { evaluateCompleteness } from "../intake/completeness";
 import type { IntakePayload } from "../intake/types";
+import { normalizeAdditionalAnswers } from "../intake/additional-questions";
 import { deriveTier } from "../triage/rules";
 import { requiredDomains } from "../triage/routing";
 import { fastLaneEligibility } from "../approval/eligibility";
@@ -372,7 +373,7 @@ export async function createDraft(db: Db, input: CreateDraftInput): Promise<Crea
         assertWorkspaceAccess(existing[0].workspaceId, workspaceId ?? null, "initiative", initiativeId);
         requireRequesterOwnership(requesterActor, existing[0]);
         const firstIntake = await firstIntakeVersion(tx, initiativeId);
-        if (!firstIntake || canonicalJson(firstIntake.fields) !== canonicalJson(payload)) {
+        if (!firstIntake || canonicalJson(normalizeAdditionalAnswers(firstIntake.fields as unknown as IntakePayload)) !== canonicalJson(normalizeAdditionalAnswers(payload))) {
           throw new ConflictError("idempotency key was already used with a different intake payload");
         }
         return { initiativeId, slug: existing[0].slug, intakeVersionId: firstIntake.id, version: firstIntake.version };
@@ -397,7 +398,7 @@ export async function createDraft(db: Db, input: CreateDraftInput): Promise<Crea
       assertWorkspaceAccess(existing.workspaceId, workspaceId ?? null, "initiative", initiativeId);
       requireRequesterOwnership(requesterActor, existing);
       const firstIntake = await firstIntakeVersion(tx, initiativeId);
-      if (!firstIntake || canonicalJson(firstIntake.fields) !== canonicalJson(payload)) {
+      if (!firstIntake || canonicalJson(normalizeAdditionalAnswers(firstIntake.fields as unknown as IntakePayload)) !== canonicalJson(normalizeAdditionalAnswers(payload))) {
         throw new ConflictError("idempotency key was already used with a different intake payload");
       }
       return { initiativeId, slug: existing.slug, intakeVersionId: firstIntake.id, version: firstIntake.version };
@@ -449,7 +450,7 @@ export async function getIntakeDraft(
   if (initiative.state !== "intake_draft") throw new ConflictError("intake is no longer editable");
   const intake = await latestIntakeVersion(db as Tx, initiativeId);
   if (!intake || intake.submitted) throw new ConflictError("intake is no longer editable");
-  return { initiativeId, slug: initiative.slug, intakeVersionId: intake.id, version: intake.version, payload: intake.fields as unknown as IntakePayload };
+  return { initiativeId, slug: initiative.slug, intakeVersionId: intake.id, version: intake.version, payload: normalizeAdditionalAnswers(intake.fields as unknown as IntakePayload) };
 }
 
 export async function updateIntakeDraft(
