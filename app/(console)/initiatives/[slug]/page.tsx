@@ -1,3 +1,4 @@
+import { EvidenceTab } from "@/components/jeeves/evidence-tab";
 import { notFound } from "next/navigation";
 import { getInitiativeDetailCoherent } from "@/app/_lib/data-provider";
 import { TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -212,6 +213,7 @@ export default async function InitiativeDetailPage({
           <TabsList className="scroll-thin scroll-x-pane max-w-full flex-nowrap justify-start overflow-x-auto [&>*]:shrink-0">
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="intake">Intake</TabsTrigger>
+            <TabsTrigger value="evidence">Evidence</TabsTrigger>
             <TabsTrigger value="reviews">Reviews</TabsTrigger>
             <TabsTrigger value="decisions">Decisions</TabsTrigger>
             <TabsTrigger value="controls">Controls</TabsTrigger>
@@ -225,6 +227,7 @@ export default async function InitiativeDetailPage({
           <TabsContent value="intake">
             <IntakeTab intake={detail.intake} summary={summary} />
           </TabsContent>
+          <TabsContent value="evidence"><EvidenceTab slug={summary.slug} /></TabsContent>
           <TabsContent value="reviews">
             <ReviewsTab reviews={detail.reviews} slug={summary.slug} />
           </TabsContent>

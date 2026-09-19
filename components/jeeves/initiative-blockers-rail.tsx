@@ -1,3 +1,4 @@
+import Link from "next/link";
 // Blockers / required-evidence right rail (case-file reshape): a compact,
 // sticky sidebar next to an initiative's tabs that surfaces what is
 // currently blocking progress and what evidence is still outstanding, so a
@@ -272,6 +273,7 @@ export function InitiativeBlockersRail({ detail }: { detail: InitiativeDetail })
           ) : null}
         </div>
         <div className="scroll-thin max-h-80 space-y-3 overflow-y-auto p-4">
+          <Link className="inline-flex min-h-11 items-center text-sm underline underline-offset-4" href={`/initiatives/${detail.summary.slug}?tab=evidence`}>Open document checklist and reviewer feedback</Link>
           {evidence.length === 0 ? (
             <p className="text-sm text-muted-foreground">
               {noOutstandingEvidenceMessage(detail)}

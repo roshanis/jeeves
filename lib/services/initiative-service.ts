@@ -1,3 +1,4 @@
+import { evidenceForSignature, EvidenceError } from './evidence-service';
 /**
  * Transactional domain operations for the initiative lifecycle (plan.md §2
  * champion storyline steps 1-4; task brief deliverable 1).
@@ -842,7 +843,7 @@ export async function signReview(
       const [initiative] = await tx
         .select({ workspaceId: initiatives.workspaceId })
         .from(initiatives)
-        .where(eq(initiatives.id, initiativeId));
+        .where(eq(initiatives.id, initiativeId)).for("update");
       if (initiative) {
         assertWorkspaceAccess(
           initiative.workspaceId,
@@ -851,6 +852,12 @@ export async function signReview(
           `${cycleId}/${domain}`,
         );
       }
+    }
+
+    let evidenceSnapshot = null;
+    if (initiativeId) {
+      try { evidenceSnapshot = await evidenceForSignature(tx, initiativeId, cycleId, domain); }
+      catch (error) { if (error instanceof EvidenceError) throw new ValidationError(error.message); throw error; }
     }
 
     if (decision.status === "signed") {
@@ -884,7 +891,7 @@ export async function signReview(
       detail: `Signed ${domain} review for cycle ${cycleId}.`,
       before: decision.status,
       after: "signed",
-      metadata: { domain, cycleId },
+      metadata: { domain, cycleId, evidenceSnapshot },
     });
 
     return { cycleId, domain, status: "signed" };
