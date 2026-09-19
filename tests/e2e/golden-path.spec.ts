@@ -226,6 +226,10 @@ test.describe("live demo loop: create → triage → draft run → sign → deci
 
   test("additional intake answers survive reopening, editing, and submission", async ({ page }) => {
     test.setTimeout(60_000);
+    // This is a separate client journey. Keep its requests (and retries) out
+    // of the existing full-loop test's shared, persistent rate-limit bucket.
+    const clientHeaders = { "x-forwarded-for": `192.0.2.${10 + test.info().retry}` };
+    await page.context().setExtraHTTPHeaders(clientHeaders);
     const errors: { phase: string; message: string }[] = [];
     let phase = "new intake";
     page.on("pageerror", (error) => errors.push({ phase, message: error.message }));
@@ -234,7 +238,7 @@ test.describe("live demo loop: create → triage → draft run → sign → deci
     await loginAs(page, "priya-raman");
     const { token } = await (await sessionResponse).json();
     const created = await page.request.post("/api/initiatives", {
-      headers: { authorization: `Bearer ${token}` },
+      headers: { ...clientHeaders, authorization: `Bearer ${token}` },
       data: { payload: { ...EXPANDED_INTAKE, basics: { ...EXPANDED_INTAKE.basics, title: "Optional intake review example" } }, requestId: "e2e-optional-intake-questions" },
     });
     expect(created.ok()).toBe(true);
