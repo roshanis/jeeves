@@ -471,6 +471,44 @@ function intakeInput(
 }
 
 describe("createMockAgentPort — intakeInterview", () => {
+  it.each(["review and submit", "submit", "continue"])("does not store the navigation command %s as an answer", async (command) => {
+    const port = createMockAgentPort();
+    const partialPayload = { overlay: { touchesPHI: false, memberFacing: false, careCoverageInfluence: false, vendorHosted: false, humanInTheLoop: true, individualImpact: false }, useCase: { currentWorkflow: null } };
+    const result = await port.intakeInterview(intakeInput({
+      partialPayload,
+      conversation: [{ role: "assistant", content: "Optional: How is this work handled today? You can say skip or review and submit when ready." }, { role: "user", content: command }],
+    }));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.payload).toEqual(partialPayload);
+    expect(result.value.followUpQuestions.join(" ")).toContain("Review and submit");
+  });
+  it("collects optional context after overlay questions and lets requesters skip", async () => {
+    const port = createMockAgentPort();
+    const partialPayload = { overlay: { touchesPHI: false, memberFacing: false, careCoverageInfluence: false, vendorHosted: false, humanInTheLoop: true, individualImpact: false } };
+    const first = await port.intakeInterview(intakeInput({ partialPayload, conversation: [] }));
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+    expect(first.value.followUpQuestions[0]).toContain("How is this work handled today?");
+    const conversation = [
+      { role: "assistant" as const, content: first.value.followUpQuestions.join(" ") },
+      { role: "user" as const, content: "A coordinator checks each fictional packet by hand." },
+    ];
+    const second = await port.intakeInterview(intakeInput({ partialPayload: first.value.payload, conversation }));
+    expect(second.ok).toBe(true);
+    if (!second.ok) return;
+    expect(second.value.payload).toMatchObject({ useCase: { currentWorkflow: conversation[1].content } });
+    expect(second.value.followUpQuestions[0]).toContain("How will success be measured");
+    const skipped = await port.intakeInterview(intakeInput({
+      partialPayload: second.value.payload,
+      conversation: [...conversation, { role: "assistant", content: second.value.followUpQuestions.join(" ") }, { role: "user", content: "I don't know" }],
+    }));
+    expect(skipped.ok).toBe(true);
+    if (!skipped.ok) return;
+    expect(skipped.value.payload).toMatchObject({ useCase: { currentWorkflow: conversation[1].content, successMetrics: null } });
+    expect(skipped.value.followUpQuestions[0]).toContain("Can the vendor retain");
+    expect(skipped.value.gaps).toEqual([]);
+  });
   const port = createMockAgentPort();
 
   it("asks the first overlay question (touchesPHI) verbatim, with its helper line, when overlay is entirely null", async () => {
@@ -502,7 +540,7 @@ describe("createMockAgentPort — intakeInterview", () => {
     }
   });
 
-  it("returns a deterministic closing acknowledgment once all six overlay questions are answered", async () => {
+  it("offers optional context once all six overlay questions are answered", async () => {
     const overlay = {
       touchesPHI: true,
       memberFacing: false,

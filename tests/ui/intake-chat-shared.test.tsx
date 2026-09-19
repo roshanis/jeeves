@@ -1,7 +1,7 @@
 import * as React from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { CHAMPION_PREFILL_PAYLOAD } from "@/lib/intake/champion-prefill";
+import { EXPANDED_INTAKE as CHAMPION_PREFILL_PAYLOAD } from "@/tests/fixtures/expanded-intake";
 
 const { intakeChatMock } = vi.hoisted(() => ({ intakeChatMock: vi.fn() }));
 vi.mock("@/lib/client/api", async (importOriginal) => ({

@@ -8,6 +8,9 @@
  * needs it rather than there.
  */
 import { z } from "zod";
+import { ADDITIONAL_ANSWER_MAX_LENGTH } from "@/lib/intake/additional-questions";
+
+const optionalIntakeAnswer = z.string().max(ADDITIONAL_ANSWER_MAX_LENGTH).nullable().default(null);
 
 const expectedVolume = z
   .enum(["<100/mo", "100-1k/mo", "1k-10k/mo", "10k-100k/mo", ">100k/mo"])
@@ -47,6 +50,8 @@ export const intakePayloadSchema = z.object({
     primaryUsers: z.string().max(200),
     decisionInformed: z.string().max(300),
     expectedVolume,
+    currentWorkflow: optionalIntakeAnswer,
+    successMetrics: optionalIntakeAnswer,
   }),
   data: z.object({
     dataSources: z.array(z.string().max(200)),
@@ -55,6 +60,7 @@ export const intakePayloadSchema = z.object({
     retentionIntent,
     retentionIntentNote: z.string().max(300).nullable(),
     trainingVsInference,
+    vendorDataReuse: optionalIntakeAnswer,
   }),
   modelVendor: z.object({
     buildOrBuy,
@@ -66,10 +72,15 @@ export const intakePayloadSchema = z.object({
     affectedPopulations: z.array(z.string().max(200)),
     expectedBenefits: z.string().max(1000).nullable(),
     expectedHarms: z.string().max(1000).nullable(),
+    evaluationPlan: optionalIntakeAnswer,
   }),
   deployment: z.object({
     integrationPoints: z.array(z.string().max(200)),
     rolloutPlan: z.string().max(1000).nullable(),
+    operationalOwner: optionalIntakeAnswer,
+    humanReviewProcess: optionalIntakeAnswer,
+    monitoringPlan: optionalIntakeAnswer,
+    fallbackPlan: optionalIntakeAnswer,
   }),
   overlay: z.object({
     touchesPHI: z.boolean().nullable(),

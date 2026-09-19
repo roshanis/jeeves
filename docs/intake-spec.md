@@ -3,7 +3,7 @@
 Authoritative spec for the structured intake form (plan §2 step 1) and its backing domain object,
 `IntakeVersion` (plan §5). All content is fictional (Meridian Health). This document defines what an
 engineer needs to implement the form, its validation/completeness rules, and the JSON payload shape —
-no chat-based intake is in scope for M1 (plan §11 defers conversational intake).
+M2 conversational intake uses the same shape (plan §13 and agents/intake/instructions.md).
 
 ---
 
@@ -108,6 +108,33 @@ Intake evidence upload field: `evidenceAttachments` — `array of { controlId: s
 
 ---
 
+### (i) Additional review context (optional)
+
+These eight questions supplement the existing sections in both structured and conversational
+intake. Every answer is `string | null`, capped at 1000 characters. Legacy clients may omit
+these keys: API validation and draft reads normalize omission to `null`. Unknown or declined
+answers stay unanswered, and chat permits skipping a question without repeating it.
+
+| Payload key | Question |
+|---|---|
+| `useCase.currentWorkflow` | How is this work handled today? |
+| `useCase.successMetrics` | How will success be measured against today's baseline? |
+| `data.vendorDataReuse` | Can the vendor retain inputs or outputs or reuse them for training? |
+| `populationImpact.evaluationPlan` | How will accuracy and performance across affected groups be tested? |
+| `deployment.operationalOwner` | Which role or team owns the system after launch? |
+| `deployment.humanReviewProcess` | Who reviews outputs, and how can they override or escalate them? |
+| `deployment.monitoringPlan` | What will be monitored after launch, and who handles alerts? |
+| `deployment.fallbackPlan` | What happens if the system fails or produces unsafe output? |
+
+`vendorDataReuse` concerns vendor retention and training of its own/shared models, separately
+from Meridian's training/inference use. `operationalOwner` names a role or team, not personal
+contact details. Monitoring and fallback describe post-launch operation, separate from rollout.
+
+The answers persist in versioned intake JSON and appear in the reviewer's intake table.
+Unanswered optional fields display "Not provided (optional)". They create no completeness
+gaps or score changes, and they never set overlay flags, change tier/routing, or grant approval.
+The champion prefill remains a valid legacy payload with these fields omitted.
+
 ## 2. Completeness model
 
 Three levels, evaluated in this order. Implement as a rules table in `lib/intake/completeness.ts` —
@@ -197,7 +224,9 @@ audit (seed-spec §5 — every state must be reachable through `AuditEvent`s, in
     "useCase": {
       "primaryUsers": "string",
       "decisionInformed": "string",
-      "expectedVolume": "<100/mo" | "100-1k/mo" | "1k-10k/mo" | "10k-100k/mo" | ">100k/mo" | null
+      "expectedVolume": "<100/mo" | "100-1k/mo" | "1k-10k/mo" | "10k-100k/mo" | ">100k/mo" | null,
+      "currentWorkflow": "string" | null,
+      "successMetrics": "string" | null
     },
     "data": {
       "dataSources": ["string", "..."],
@@ -205,7 +234,8 @@ audit (seed-spec §5 — every state must be reachable through `AuditEvent`s, in
       "phiCategoriesOtherText": "string" | null,
       "retentionIntent": "Session-only (no persistence)" | "<=30 days" | "<=1 year" | ">1 year" | "Indefinite/per-record-schedule" | null,
       "retentionIntentNote": "string" | null,
-      "trainingVsInference": "Inference-only" | "Fine-tuning/training" | "Both" | null
+      "trainingVsInference": "Inference-only" | "Fine-tuning/training" | "Both" | null,
+      "vendorDataReuse": "string" | null
     },
     "modelVendor": {
       "buildOrBuy": "Build (internal)" | "Buy (vendor)" | "Hybrid" | null,
@@ -216,11 +246,16 @@ audit (seed-spec §5 — every state must be reachable through `AuditEvent`s, in
     "populationImpact": {
       "affectedPopulations": ["string", "..."],
       "expectedBenefits": "string" | null,
-      "expectedHarms": "string" | null
+      "expectedHarms": "string" | null,
+      "evaluationPlan": "string" | null
     },
     "deployment": {
       "integrationPoints": ["string", "..."],
-      "rolloutPlan": "string" | null
+      "rolloutPlan": "string" | null,
+      "operationalOwner": "string" | null,
+      "humanReviewProcess": "string" | null,
+      "monitoringPlan": "string" | null,
+      "fallbackPlan": "string" | null
     },
     "overlay": {
       "touchesPHI": true | false | null,

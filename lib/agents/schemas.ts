@@ -18,6 +18,9 @@
  * richer shape down to the port's DraftReviewOutput").
  */
 import { z } from "zod";
+import { ADDITIONAL_ANSWER_MAX_LENGTH } from "@/lib/intake/additional-questions";
+
+const optionalIntakeAnswer = z.string().max(ADDITIONAL_ANSWER_MAX_LENGTH).nullable().default(null);
 import type { DraftReviewOutput, GovernanceDomain } from "./ports";
 
 /* -------------------------------------------------------------------------
@@ -171,6 +174,8 @@ const intakeBasicsSchema = z.object({
 });
 
 const intakeUseCaseSchema = z.object({
+  currentWorkflow: optionalIntakeAnswer,
+  successMetrics: optionalIntakeAnswer,
   primaryUsers: z.string(),
   decisionInformed: z.string(),
   expectedVolume: z
@@ -179,6 +184,7 @@ const intakeUseCaseSchema = z.object({
 });
 
 const intakeDataSchema = z.object({
+  vendorDataReuse: optionalIntakeAnswer,
   dataSources: z.array(z.string()),
   phiCategories: z.array(
     z.enum([
@@ -224,12 +230,17 @@ const intakeModelVendorSchema = z.object({
 });
 
 const intakePopulationImpactSchema = z.object({
+  evaluationPlan: optionalIntakeAnswer,
   affectedPopulations: z.array(z.string()),
   expectedBenefits: z.string().nullable(),
   expectedHarms: z.string().nullable(),
 });
 
 const intakeDeploymentSchema = z.object({
+  operationalOwner: optionalIntakeAnswer,
+  humanReviewProcess: optionalIntakeAnswer,
+  monitoringPlan: optionalIntakeAnswer,
+  fallbackPlan: optionalIntakeAnswer,
   integrationPoints: z.array(z.string()),
   rolloutPlan: z.string().nullable(),
 });

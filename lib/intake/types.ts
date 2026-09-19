@@ -66,6 +66,9 @@ export interface IntakeUseCase {
   primaryUsers: string;
   decisionInformed: string;
   expectedVolume: ExpectedVolume | null;
+  /** Optional reviewer context; omitted by historical drafts. Max 1000 characters each. */
+  currentWorkflow?: string | null;
+  successMetrics?: string | null;
 }
 
 /** intake-spec §1(c) "Data" section. */
@@ -76,6 +79,7 @@ export interface IntakeData {
   retentionIntent: RetentionIntent | null;
   retentionIntentNote: string | null;
   trainingVsInference: TrainingVsInference | null;
+  vendorDataReuse?: string | null;
 }
 
 /** intake-spec §1(d) "Model & vendor" section. */
@@ -91,12 +95,17 @@ export interface IntakePopulationImpact {
   affectedPopulations: string[];
   expectedBenefits: string | null;
   expectedHarms: string | null;
+  evaluationPlan?: string | null;
 }
 
 /** intake-spec §1(f) "Deployment" section. */
 export interface IntakeDeployment {
   integrationPoints: string[];
   rolloutPlan: string | null;
+  operationalOwner?: string | null;
+  humanReviewProcess?: string | null;
+  monitoringPlan?: string | null;
+  fallbackPlan?: string | null;
 }
 
 /**

@@ -1,3 +1,4 @@
+import { ADDITIONAL_INTAKE_QUESTIONS, ADDITIONAL_ANSWER_MAX_LENGTH } from "@/lib/intake/additional-questions";
 /**
  * Deterministic, offline `AgentPort` implementation (plan.md §8: "LLM calls
  * mocked" in tests/demo-safe paths). No network calls, no API key required.
@@ -569,6 +570,40 @@ function buildMockIntakeGaps(
   }));
 }
 
+const OPTIONAL_QUESTIONS = Object.entries(ADDITIONAL_INTAKE_QUESTIONS).flatMap(([section, questions]) =>
+  questions.map((question) => ({ section, ...question })),
+);
+
+/** The offline interviewer only copies an answer to the question it just asked. */
+function optionalIntakeFollowUp(input: IntakeInterviewInput, payload: Record<string, unknown>): string {
+  const lastTurn = input.conversation.at(-1);
+  const lastAssistant = input.conversation.findLast((turn) => turn.role === "assistant");
+  const answered = OPTIONAL_QUESTIONS.find((q) => lastAssistant?.content.includes(q.question));
+  if (answered && lastTurn?.role === "user") {
+    const answer = lastTurn.content.trim();
+    if (/^(?:please\s+)?(?:review(?: and submit)?|submit|continue(?: to review)?)[.!]?$/i.test(answer)) {
+      return "Your answers are unchanged. Use Review and submit to check them and submit when ready.";
+    }
+    if (answer.length > ADDITIONAL_ANSWER_MAX_LENGTH) {
+      return `Please keep this answer to ${ADDITIONAL_ANSWER_MAX_LENGTH} characters or fewer. ${answered.question} You can also say skip.`;
+    }
+    const unknown = /^(?:skip|unknown|not sure|i(?: don't| do not) know|prefer not to answer)[.!]?$/i.test(answer);
+    const current = payload[answered.section];
+    payload[answered.section] = {
+      ...(current && typeof current === "object" ? current : {}),
+      [answered.key]: unknown || answer === "" ? null : answer,
+    };
+  }
+  const next = OPTIONAL_QUESTIONS.find((q) => {
+    const section = payload[q.section] as Record<string, unknown> | undefined;
+    const answer = section?.[q.key];
+    const hasAnswer = typeof answer === "string" && answer.trim().length > 0;
+    const alreadyAsked = input.conversation.some((turn) => turn.role === "assistant" && turn.content.includes(q.question));
+    return !hasAnswer && !alreadyAsked;
+  });
+  return next ? `Optional: ${next.question} You can say skip, or use Review and submit when ready.` : CLOSING_ACKNOWLEDGMENT;
+}
+
 function buildIntakeInterviewOutput(
   input: IntakeInterviewInput,
 ): IntakeInterviewOutput {
@@ -594,7 +629,7 @@ function buildIntakeInterviewOutput(
   const pendingAfterAnswer = nextPendingOverlayQuestion(overlay);
   const followUpQuestions = pendingAfterAnswer
     ? [pendingAfterAnswer.text]
-    : [CLOSING_ACKNOWLEDGMENT];
+    : [optionalIntakeFollowUp(input, payload)];
 
   return {
     payload,
