@@ -56,6 +56,7 @@ import { runMutationGuard } from "@/lib/services/route-guard";
 import { workspaceMismatch } from "@/lib/services/workspace-guard";
 import { resolveViewerWorkspaceId } from "@/lib/services/viewer-workspace";
 import type { Domain } from "@/lib/domain/types";
+import { agentInitializationResponse } from "@/lib/services/agent-error-response";
 
 /** See file-level comment: only these roles trigger draft-run in any real flow. */
 const DRAFT_RUN_ALLOWED_ROLES = new Set(["requester", "admin"]);
@@ -158,7 +159,9 @@ export async function POST(
   try {
     const result = await startDraftRun(db, id, [...parsed.data.domains] as Domain[]);
     return Response.json(result, { status: 200 });
-  } catch {
+  } catch (error) {
+    const unavailable = agentInitializationResponse(error);
+    if (unavailable) return unavailable;
     // Security review finding #6: never echo raw error internals (this
     // catch-all previously leaked any thrown message, incl. DB errors).
     return Response.json({ error: "initiative or review cycle not found" }, { status: 404 });
