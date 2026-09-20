@@ -32,6 +32,8 @@ export interface InitiativeSummary {
 export interface ReviewRow {
   /** Exact cycle owning this draft; omitted only by legacy/static fixtures. */
   cycleId?: string;
+  /** Exact displayed revision; absent legacy fixtures remain read-only. */
+  revision?: number;
   domain: Domain;
   status: "pending" | "drafted" | "signed" | "returned";
   reviewer: string | null;
@@ -39,7 +41,11 @@ export interface ReviewRow {
   createdAt: string; // ISO
   signedAt: string | null; // ISO
   draftMd: string | null;
-  citations: string[]; // MP-§ anchors
+  /** Agent-supplied or legacy references; never verified source evidence. */
+  citations: string[];
+  citationProvenance?: "agent-supplied" | "legacy-unverified";
+  missingEvidence?: string[];
+  evidenceRequests?: { controlId: string; description: string }[];
 }
 
 export interface DecisionRow {

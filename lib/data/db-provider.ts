@@ -430,6 +430,7 @@ export class DbDataProvider implements DataProvider {
       .sort((a, b) => a.domain.localeCompare(b.domain))
       .map((rd) => ({
         cycleId: rd.cycleId,
+        revision: rd.revision,
         domain: rd.domain as Domain,
         status: rd.status as ReviewRow["status"],
         reviewer: rd.reviewer,
@@ -437,6 +438,9 @@ export class DbDataProvider implements DataProvider {
         signedAt: rd.signedAt ? toIso(rd.signedAt) : null,
         draftMd: rd.draftMd,
         citations: rd.citations,
+        citationProvenance: rd.citationProvenance as ReviewRow["citationProvenance"],
+        missingEvidence: rd.missingEvidence,
+        evidenceRequests: rd.evidenceRequests,
       }));
 
     const decisions: DecisionRow[] = snap.decisions

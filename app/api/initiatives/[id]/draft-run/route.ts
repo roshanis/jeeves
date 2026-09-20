@@ -1,53 +1,8 @@
-/**
- * POST /api/initiatives/[id]/draft-run — start the domain draft-review
- * fan-out (task brief deliverable 2/3). Invokes the AgentPort per domain,
- * so it is budget-checked via `lib/security/budget` reserve() even though
- * the mock adapter (tests/demo-safe default) costs 0 tokens — this
- * exercises the budget-gate path per the task brief ("reserve anyway").
- *
- * Security-hardening pass (external-review finding #6, partial — "draft-run
- * has weak authorization"): this route used to accept ANY authenticated
- * persona. Evidence for the allowed-role set below: tests/e2e/golden-path.spec.ts
- * (the only place the app actually triggers this endpoint end-to-end) logs
- * in as the REQUESTER persona ("priya-raman") and drives create -> submit ->
- * triage -> draft-run all in that one session — components/jeeves/reviews-tab.tsx's
- * "Start draft run" panel renders for whichever live session created the
- * initiative (no separate in-component role gate), matching the champion
- * storyline where the requester kicks off the review fan-out right after
- * triage, distinct from a reviewer's own per-domain "Run agent" button
- * (POST /api/reviews/[cycleId]/[domain]/run, gated to that reviewer's
- * assigned domain already). Allowed set: `requester` (the only role any
- * real flow uses to trigger this) + `admin` (operational override, matching
- * this codebase's convention elsewhere of admin having operational reach
- * without approval authority). Every other role — including reviewer/
- * approver/program, who have no legitimate reason to kick off another
- * initiative's fan-out — is rejected with 403.
- *
- * Also now enforces workspace authorization (finding #1): the initiative is
- * loaded and its `workspaceId` compared to the session's before doing
- * anything else — a cross-workspace id 404s exactly like an unknown one.
- *
- * Body:  { domains: Domain[] }
- * 200:   { runId, cycleId, outcomes: DraftRunDomainOutcome[] }
- * 401/403/429/400/404: as other mutating routes.
- *
- * GET /api/initiatives/[id]/draft-run?cycleId=... — progress polling.
- * Public read-only (no session required, per task brief "GET routes stay
- * public read-only"); requires ?cycleId= since progress is keyed by cycle,
- * not initiative, in `getRunProgress`.
- *
- * Read isolation (P0 pass, external-review finding 2): the cycle's owning
- * initiative is resolved and checked against the viewer (session, else
- * signed `jeeves_workspace` cookie, else anonymous/seeded-only) BEFORE
- * calling `getRunProgress` — a cycle belonging to a foreign workspace
- * returns the EXACT same shape/status `getRunProgress` itself returns for
- * an unknown cycleId (`{ cycleId, rows: [], complete: true }`, 200), so
- * there is no existence leak distinguishing "wrong workspace" from
- * "unknown id".
- * 200: { cycleId, rows: DraftRunProgressRow[], complete: boolean }
- * 400: { error: string }  (missing cycleId)
- */
+/** Draft review commands reserve estimated capacity only after authorization and a database claim. */
 import { z } from "zod";
+import { randomUUID } from "node:crypto";
+import { draftBudgetPolicy } from "@/lib/workflow/draft-execution-policy";
+import { ReviewIntegrityError } from "@/lib/services/review-integrity";
 import { eq } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
 import { initiatives, reviewCycles } from "@/lib/db/schema";
@@ -75,38 +30,6 @@ const bodySchema = z.object({
   domains: z.array(z.enum(DOMAINS)).min(1).max(8),
 });
 
-/** Rough per-domain token estimate for the budget reserve — the mock adapter costs 0 for real, this only sizes the reservation. */
-const ESTIMATED_TOKENS_PER_DOMAIN = 1500;
-
-/**
- * Deep-review budget multiplier (`JEEVES_DEEP_REVIEW=1`).
- *
- * A standard draft is ONE structured model call per domain, which is what
- * `ESTIMATED_TOKENS_PER_DOMAIN` is sized for. A deep draft is an
- * Agents-SDK tool loop: the reviewer agent reads policy files and searches
- * the corpus, so a single domain becomes many model calls, each carrying a
- * growing transcript (instructions + every prior tool call and its file
- * contents). Reserving the standard amount for a deep run would make the
- * atomic per-day RunBudget (plan.md §3) a fiction — the cap would be
- * announced as 500k while real spend ran far past it.
- *
- * 10x is a deliberately conservative judgment call, not a measurement:
- * the adapter caps a deep draft at ~15 turns, so 10x sits below the
- * theoretical worst case while being far closer to reality than 1x. It is
- * better for the demo to refuse a deep run it cannot afford than to
- * under-reserve and overspend silently.
- *
- * This lives in the ROUTE, not the adapter: hard rule 4 — adapters return
- * data and never touch authoritative state, and the budget is authoritative
- * state (lib/security/budget.ts, reserved through runMutationGuard).
- */
-const DEEP_REVIEW_BUDGET_MULTIPLIER = 10;
-
-/** True when the deep, tool-using reviewer path is enabled for this deployment. */
-function deepReviewEnabled(): boolean {
-  return process.env.JEEVES_DEEP_REVIEW === "1";
-}
-
 export async function POST(
   req: Request,
   context: { params: Promise<{ id: string }> },
@@ -119,14 +42,7 @@ export async function POST(
   }
   const parsed = bodySchema.safeParse(json);
 
-  const guard = await runMutationGuard(req, undefined, {
-    requiresBudget: true,
-    estimatedTokens: parsed.success
-      ? parsed.data.domains.length *
-        ESTIMATED_TOKENS_PER_DOMAIN *
-        (deepReviewEnabled() ? DEEP_REVIEW_BUDGET_MULTIPLIER : 1)
-      : 0,
-  });
+  const guard = await runMutationGuard(req, undefined);
   if (!guard.ok) {
     return Response.json({ error: guard.failure.message }, { status: guard.failure.status });
   }
@@ -156,12 +72,18 @@ export async function POST(
   }
 
   try {
-    const result = await startDraftRun(db, id, [...parsed.data.domains] as Domain[]);
+    const result = await startDraftRun(db, id, [...parsed.data.domains] as Domain[], undefined, {
+      actor: guard.actor, sessionWorkspaceId: guard.workspaceId, budget: draftBudgetPolicy(), signal: req.signal,
+    });
+    if (result.outcomes.every((outcome) => outcome.error?.kind === "budget-exhausted")) {
+      return Response.json({ ...result, error: "Demo token reservation budget exhausted for today." }, { status: 429 });
+    }
     return Response.json(result, { status: 200 });
-  } catch {
-    // Security review finding #6: never echo raw error internals (this
-    // catch-all previously leaked any thrown message, incl. DB errors).
-    return Response.json({ error: "initiative or review cycle not found" }, { status: 404 });
+  } catch (error) {
+    if (error instanceof ReviewIntegrityError) {
+      return Response.json({ error: error.message }, { status: error.kind === "not_found" ? 404 : 409 });
+    }
+    return Response.json({ error: "Draft execution could not be completed. Refresh its status before retrying.", requestId: randomUUID() }, { status: 500 });
   }
 }
 
@@ -185,10 +107,8 @@ export async function GET(req: Request): Promise<Response> {
       .from(initiatives)
       .where(eq(initiatives.id, cycle.initiativeId));
     if (initiative && workspaceMismatch(initiative.workspaceId, viewerWorkspaceId)) {
-      // No existence leak: identical shape/status to an unknown cycleId
-      // (see getRunProgress — an empty reviewDecisions match vacuously
-      // produces rows: [], complete: true).
-      return Response.json({ cycleId, rows: [], complete: true }, { status: 200 });
+      // Preserve identical results for unknown and foreign-workspace cycles.
+      return Response.json({ cycleId, rows: [], complete: false }, { status: 200 });
     }
   }
 

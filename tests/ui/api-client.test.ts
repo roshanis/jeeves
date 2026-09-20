@@ -98,12 +98,12 @@ describe("authenticated helpers send the Bearer token", () => {
     ],
     [
       "signReview",
-      () => signReview("tok", "cycle-1", "privacy-hipaa"),
+      () => signReview("tok", "cycle-1", "privacy-hipaa", { expectedRevision: 0, expectedEvidencePacketId: null }),
       "/api/reviews/cycle-1/privacy-hipaa/sign",
     ],
     [
       "returnReview",
-      () => returnReview("tok", "cycle-1", "legal", "needs work"),
+      () => returnReview("tok", "cycle-1", "legal", "needs work", 0),
       "/api/reviews/cycle-1/legal/return",
     ],
     [
@@ -254,7 +254,7 @@ describe("error mapping", () => {
         gaps: [{ field: "reason", maxChars: 2000 }],
       }),
     );
-    const err = await returnReview("tok", "c1", "legal", "x".repeat(3000)).catch((e) => e);
+    const err = await returnReview("tok", "c1", "legal", "x".repeat(3000), 0).catch((e) => e);
     expect(err.status).toBe(400);
     expect(err.gaps).toHaveLength(1);
     expect(apiErrorToMessage(err)).toBe("input validation failed");

@@ -10,11 +10,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTestDb, closeTestDb, type TestDb } from "@/lib/db/test-client";
 import { resetGuardStateForTests } from "@/lib/services/route-guard";
-import { controlDefinitions, initiatives } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { controlDefinitions, initiatives, reviewDecisions, auditEvents, reviewCycles } from "@/lib/db/schema";
+import { and, eq, sql } from "drizzle-orm";
+import { createMockAgentPort } from "@/lib/agents/mock-adapter";
 import { CONTROL_SEEDS } from "@/scripts/seed";
 
 let testDb: TestDb;
+const portMocks = vi.hoisted(() => ({ getAgentPort: vi.fn() }));
+vi.mock("@/lib/agents", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@/lib/agents")>(),
+  getAgentPort: portMocks.getAgentPort,
+}));
 
 vi.mock("@/lib/db/client", () => ({
   getDb: () => testDb,
@@ -26,14 +32,23 @@ beforeEach(async () => {
   process.env.DEMO_PASSCODE = PASSCODE;
   testDb = await createTestDb();
   resetGuardStateForTests();
+  portMocks.getAgentPort.mockReset().mockReturnValue(createMockAgentPort());
+  vi.stubEnv("JEEVES_AGENT_RUNTIME", "ai-sdk");
+  vi.stubEnv("JEEVES_DEEP_REVIEW", "0");
 });
 
 afterEach(async () => {
+  vi.unstubAllEnvs();
   await closeTestDb(testDb);
 });
 
 function bearer(token: string, ip = "1.1.1.1"): HeadersInit {
   return { authorization: `Bearer ${token}`, "x-forwarded-for": ip, "content-type": "application/json" };
+}
+
+async function reservedTokens(): Promise<number> {
+  const { getBudgetStoreForTests } = await import("@/lib/services/route-guard");
+  return getBudgetStoreForTests().getUsed(new Date().toISOString().slice(0, 10));
 }
 
 async function issueSessionFor(personaKey: string): Promise<string> {
@@ -347,11 +362,14 @@ describe("full champion route chain: submit -> triage -> draft-run -> sign -> de
     expect(progressJson.rows.length).toBeGreaterThan(0);
 
     const { POST: signPost } = await import("../reviews/[cycleId]/[domain]/sign/route");
+    const displayedReviews = await testDb.select().from(reviewDecisions).where(eq(reviewDecisions.cycleId, cycleId));
+    const clinicalRevision = displayedReviews.find((review) => review.domain === "clinical-safety")!.revision;
+    const legalRevision = displayedReviews.find((review) => review.domain === "legal")!.revision;
     const signRes = await signPost(
       new Request(`http://localhost/api/reviews/${cycleId}/clinical-safety/sign`, {
         method: "POST",
         headers: bearer(reviewerToken, "10.0.0.1"),
-        body: JSON.stringify({ editedDraftMd: "Reviewer-edited clinical safety draft." }),
+        body: JSON.stringify({ expectedRevision: clinicalRevision, expectedEvidencePacketId: null, editedDraftMd: "Reviewer-edited clinical safety draft." }),
       }),
       { params: Promise.resolve({ cycleId, domain: "clinical-safety" }) },
     );
@@ -362,6 +380,7 @@ describe("full champion route chain: submit -> triage -> draft-run -> sign -> de
       new Request(`http://localhost/api/reviews/${cycleId}/legal/sign`, {
         method: "POST",
         headers: bearer(requesterToken, "10.0.0.1"),
+        body: JSON.stringify({ expectedRevision: legalRevision, expectedEvidencePacketId: null }),
       }),
       { params: Promise.resolve({ cycleId, domain: "legal" }) },
     );
@@ -373,6 +392,7 @@ describe("full champion route chain: submit -> triage -> draft-run -> sign -> de
       new Request(`http://localhost/api/reviews/${cycleId}/legal/sign`, {
         method: "POST",
         headers: bearer(reviewerToken, "10.0.0.1"),
+        body: JSON.stringify({ expectedRevision: legalRevision, expectedEvidencePacketId: null }),
       }),
       { params: Promise.resolve({ cycleId, domain: "legal" }) },
     );
@@ -468,15 +488,8 @@ describe("requester ownership authz on submit", () => {
 });
 
 describe("deep-review budget multiplier on draft-run", () => {
-  // JEEVES_DEEP_REVIEW=1 makes each domain a tool-using Agents-SDK loop
-  // (many model calls), so the route reserves DEEP_REVIEW_BUDGET_MULTIPLIER
-  // (10x) the standard per-domain estimate. Proven by leaving exactly enough
-  // headroom for the standard reservation but not the deep one: same
-  // request, same domains, different outcome purely from the env flag.
-  //
-  // Runs BEFORE the exhaustion suite below on purpose — that one poisons the
-  // shared day bucket with 10M tokens and every later reservation would 429
-  // regardless of the multiplier, which would make this test pass vacuously.
+  // The actual Agents SDK runtime plus deep-review flag selects 15,000
+  // estimated tokens per attempt. The agent port is always mocked here.
   const DAILY_TOKEN_CAP = 500_000;
   const STANDARD_RESERVE = 8 * 1500; // 8 domains x ESTIMATED_TOKENS_PER_DOMAIN
   const ALL_DOMAINS = [
@@ -542,21 +555,19 @@ describe("deep-review budget multiplier on draft-run", () => {
     return res.status;
   }
 
-  afterEach(() => {
-    delete process.env.JEEVES_DEEP_REVIEW;
-  });
-
   it("reserves the standard estimate when deep review is off", async () => {
-    delete process.env.JEEVES_DEEP_REVIEW;
-    // Headroom sits between the standard reserve and the 10x deep reserve.
-    await leaveHeadroom(STANDARD_RESERVE * 4);
+    vi.stubEnv("JEEVES_AGENT_RUNTIME", "agents-sdk");
+    vi.stubEnv("JEEVES_DEEP_REVIEW", "0");
+    await leaveHeadroom(STANDARD_RESERVE);
     const { id, token } = await triagedInitiative("11.5.0.1");
     expect(await draftRun(id, token, "11.5.0.1")).not.toBe(429);
   });
 
   it("429s with the same request when JEEVES_DEEP_REVIEW=1 — the 10x reserve no longer fits", async () => {
-    process.env.JEEVES_DEEP_REVIEW = "1";
-    await leaveHeadroom(STANDARD_RESERVE * 4);
+    vi.stubEnv("JEEVES_AGENT_RUNTIME", "agents-sdk");
+    vi.stubEnv("JEEVES_DEEP_REVIEW", "1");
+    // 12,000 fits eight ordinary attempts, but cannot fund one deep attempt.
+    await leaveHeadroom(STANDARD_RESERVE);
     const { id, token } = await triagedInitiative("11.6.0.1");
     expect(await draftRun(id, token, "11.6.0.1")).toBe(429);
   });
@@ -658,6 +669,8 @@ describe("POST /api/reviews/[cycleId]/[domain]/run — on-demand agent run", () 
       { params: Promise.resolve({ cycleId, domain: "clinical-safety" }) },
     );
     expect(res.status).toBe(401);
+    expect(await reservedTokens()).toBe(0);
+    expect(portMocks.getAgentPort).not.toHaveBeenCalled();
   });
 
   it("200s and drafts when the assigned reviewer runs their own domain", async () => {
@@ -691,7 +704,105 @@ describe("POST /api/reviews/[cycleId]/[domain]/run — on-demand agent run", () 
       { params: Promise.resolve({ cycleId, domain: "privacy-hipaa" }) },
     );
     expect(res.status).toBe(403);
+    expect(await reservedTokens()).toBe(0);
+    expect(portMocks.getAgentPort).not.toHaveBeenCalled();
   });
+
+  async function runDomain(cycleId: string, token: string, expectedRevision?: number) {
+    const { POST } = await import("../reviews/[cycleId]/[domain]/run/route");
+    return POST(new Request(`http://localhost/api/reviews/${cycleId}/clinical-safety/run`, {
+      method: "POST", headers: bearer(token, "23.0.0.2"),
+      body: JSON.stringify(expectedRevision === undefined ? {} : { expectedRevision }),
+    }), { params: Promise.resolve({ cycleId, domain: "clinical-safety" }) });
+  }
+
+  it("uses the same 15,000-token deep runtime reservation for a reviewer", async () => {
+    vi.stubEnv("JEEVES_AGENT_RUNTIME", "agents-sdk");
+    vi.stubEnv("JEEVES_DEEP_REVIEW", "1");
+    const { cycleId, workspaceCookie } = await setUpCycle("23.0.0.1");
+    const { token } = await issueSessionInWorkspace("elena-vasquez", workspaceCookie);
+    const response = await runDomain(cycleId, token, 0);
+    expect(response.status).toBe(200);
+    expect((await response.json()).status).toBe("drafted");
+    expect(await reservedTokens()).toBe(15_000);
+    const receipts = await testDb.select().from(auditEvents).where(eq(auditEvents.action, "draft_budget_reserved"));
+    expect(receipts).toHaveLength(1);
+    expect(receipts[0].metadata).toMatchObject({ estimatedTokens: 15_000, attempt: 1 });
+    expect(portMocks.getAgentPort).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not enable deep budgeting for the AI SDK runtime alone", async () => {
+    vi.stubEnv("JEEVES_AGENT_RUNTIME", "ai-sdk");
+    vi.stubEnv("JEEVES_DEEP_REVIEW", "1");
+    const { cycleId, workspaceCookie } = await setUpCycle("23.1.0.1");
+    const { token } = await issueSessionInWorkspace("elena-vasquez", workspaceCookie);
+    expect((await runDomain(cycleId, token)).status).toBe(200);
+    expect(await reservedTokens()).toBe(1_500);
+  });
+
+  it("does not reserve for foreign workspaces, stale revisions, signed reviews, or an active duplicate", async () => {
+    const { cycleId, workspaceCookie } = await setUpCycle("23.2.0.1");
+    const { token } = await issueSessionInWorkspace("elena-vasquez", workspaceCookie);
+    const stranger = await issueSessionFor("elena-vasquez");
+    expect((await runDomain(cycleId, stranger)).status).toBe(404);
+    expect((await runDomain(cycleId, token, 9)).status).toBe(409);
+    await testDb.update(reviewDecisions).set({ status: "signed", draftMd: "Signed review" }).where(and(
+      eq(reviewDecisions.cycleId, cycleId), eq(reviewDecisions.domain, "clinical-safety"),
+    ));
+    expect((await runDomain(cycleId, token)).status).toBe(400);
+    await testDb.update(reviewDecisions).set({ status: "pending", activeAttemptId: "active-duplicate", activeAttemptExpiresAt: new Date(Date.now() + 60_000) }).where(and(
+      eq(reviewDecisions.cycleId, cycleId), eq(reviewDecisions.domain, "clinical-safety"),
+    ));
+    const duplicate = await runDomain(cycleId, token);
+    expect(duplicate.status).toBe(200);
+    expect(await duplicate.json()).toMatchObject({ status: "skipped", reason: "already running" });
+    expect(await reservedTokens()).toBe(0);
+    expect(portMocks.getAgentPort).not.toHaveBeenCalled();
+  });
+
+  it("returns a budget-specific 429 without invoking the reviewer provider", async () => {
+    vi.stubEnv("JEEVES_AGENT_RUNTIME", "agents-sdk");
+    vi.stubEnv("JEEVES_DEEP_REVIEW", "1");
+    const { cycleId, workspaceCookie } = await setUpCycle("23.3.0.1");
+    const { token } = await issueSessionInWorkspace("elena-vasquez", workspaceCookie);
+    const { getBudgetStoreForTests } = await import("@/lib/services/route-guard");
+    await getBudgetStoreForTests().addUsage(new Date().toISOString().slice(0, 10), 499_999);
+    const port = createMockAgentPort();
+    const draft = vi.spyOn(port, "draftReview");
+    portMocks.getAgentPort.mockReturnValue(port);
+    const response = await runDomain(cycleId, token);
+    expect(response.status).toBe(429);
+    expect(await response.json()).toMatchObject({ status: "failed", errorKind: "budget-exhausted" });
+    expect(draft).not.toHaveBeenCalled();
+    expect(await reservedTokens()).toBe(499_999);
+  });
+
+  it("returns 409 for a closed cycle without reserving capacity", async () => {
+    const { cycleId, workspaceCookie } = await setUpCycle("23.4.0.1");
+    const { token } = await issueSessionInWorkspace("elena-vasquez", workspaceCookie);
+    await testDb.update(reviewCycles).set({ closedAt: new Date() }).where(eq(reviewCycles.id, cycleId));
+    expect((await runDomain(cycleId, token)).status).toBe(409);
+    expect(await reservedTokens()).toBe(0);
+  });
+
+  it("returns a sanitized 500 and rolls back a draft when the audit receipt fails", async () => {
+    const { cycleId, workspaceCookie } = await setUpCycle("23.5.0.1");
+    const { token } = await issueSessionInWorkspace("elena-vasquez", workspaceCookie);
+    await testDb.execute(sql`CREATE FUNCTION reject_route_receipt() RETURNS trigger AS $$ BEGIN
+      IF NEW.action='review_agent_run' THEN RAISE EXCEPTION 'private database receipt failure'; END IF;
+      RETURN NEW; END; $$ LANGUAGE plpgsql`);
+    await testDb.execute(sql`CREATE TRIGGER reject_route_receipt BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION reject_route_receipt()`);
+    const response = await runDomain(cycleId, token);
+    expect(response.status).toBe(500);
+    const body = await response.json();
+    expect(body).toMatchObject({ requestId: expect.any(String), error: expect.stringMatching(/Refresh/) });
+    expect(JSON.stringify(body)).not.toContain("private database");
+    const [row] = await testDb.select().from(reviewDecisions).where(and(
+      eq(reviewDecisions.cycleId, cycleId), eq(reviewDecisions.domain, "clinical-safety"),
+    ));
+    expect(row).toMatchObject({ status: "pending", revision: 0, draftMd: null });
+  });
+
 });
 
 describe("POST /api/agents/health — connector probe", () => {
@@ -1080,6 +1191,8 @@ describe("POST /api/initiatives/[id]/draft-run — role + workspace authorizatio
       { params: Promise.resolve({ id: initiativeId }) },
     );
     expect(res.status).toBe(403);
+    expect(await reservedTokens()).toBe(0);
+    expect(portMocks.getAgentPort).not.toHaveBeenCalled();
   });
 
   it("200s an admin session (in the allowed role set) in the owning workspace", async () => {
@@ -1115,7 +1228,35 @@ describe("POST /api/initiatives/[id]/draft-run — role + workspace authorizatio
       { params: Promise.resolve({ id: initiativeId }) },
     );
     expect(res.status).toBe(404);
+    expect(await reservedTokens()).toBe(0);
+    expect(portMocks.getAgentPort).not.toHaveBeenCalled();
   });
+
+  it("does not reserve again for repeated or duplicate domains and signed no-ops", async () => {
+    const { token } = await issueSessionInWorkspace("priya-raman");
+    const initiativeId = await createSubmittedTriagedInitiative(token, "51.0.3.1");
+    const { POST } = await import("../initiatives/[id]/draft-run/route");
+    const run = () => POST(new Request(`http://localhost/api/initiatives/${initiativeId}/draft-run`, {
+      method: "POST", headers: bearer(token, "51.0.3.2"), body: JSON.stringify({ domains: ["legal", "legal"] }),
+    }), { params: Promise.resolve({ id: initiativeId }) });
+    const first = await run();
+    expect(first.status).toBe(200);
+    expect((await first.json()).outcomes).toHaveLength(1);
+    expect(await reservedTokens()).toBe(1_500);
+    const repeated = await run();
+    expect(repeated.status).toBe(200);
+    expect((await repeated.json()).outcomes).toEqual([{ domain: "legal", status: "skipped" }]);
+    const [cycle] = await testDb.select().from(reviewCycles).where(eq(reviewCycles.initiativeId, initiativeId));
+    await testDb.update(reviewDecisions).set({ status: "signed" }).where(and(
+      eq(reviewDecisions.cycleId, cycle.id), eq(reviewDecisions.domain, "legal"),
+    ));
+    const signed = await run();
+    expect(signed.status).toBe(200);
+    expect((await signed.json()).outcomes).toEqual([{ domain: "legal", status: "skipped", reason: "already signed" }]);
+    expect(await reservedTokens()).toBe(1_500);
+    expect(portMocks.getAgentPort).toHaveBeenCalledTimes(1);
+  });
+
 });
 
 /* ---------------------------------------------------------------------------
