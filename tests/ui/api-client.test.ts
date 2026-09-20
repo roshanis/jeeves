@@ -215,6 +215,14 @@ describe("authenticated helpers send the Bearer token", () => {
 });
 
 describe("error mapping", () => {
+  it("gives an actionable agent setup message only for the classified 503", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(503, { error: "private server detail", code: "AGENT_INITIALIZATION_FAILED" }));
+    const err = await startDraftRun("tok", "init-1", ["legal"]).catch((e) => e);
+    expect(apiErrorToMessage(err)).toBe("Agents could not start. Test the connection on the Agents page, then retry.");
+    fetchMock.mockResolvedValueOnce(jsonResponse(503, { error: "private unrelated failure" }));
+    const other = await startDraftRun("tok", "init-1", ["legal"]).catch((e) => e);
+    expect(apiErrorToMessage(other)).toBe("Something went wrong — please try again.");
+  });
   it("maps 401 to a typed ApiError and re-auth message", async () => {
     fetchMock.mockResolvedValueOnce(
       jsonResponse(401, { error: "invalid or missing session" }),

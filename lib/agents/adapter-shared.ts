@@ -13,7 +13,6 @@
  * `openai-adapter.ts`).
  */
 import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { z } from "zod";
 import type {
@@ -79,35 +78,13 @@ export function tierFromAnswers(
 }
 
 /**
- * Resolves the repo-root `agents/` directory relative to *this module's own
- * file location* (`import.meta.url` -> `fileURLToPath` -> `dirname`), rather
- * than `process.cwd()`.
- *
- * Empirically verified while writing this adapter's tests: `vitest run`
- * from the repo root does set `process.cwd()` to the repo root, so
- * `path.join(process.cwd(), "agents", ...)` *would* have worked for the
- * `npm test` path. But `process.cwd()` is a property of the process that
- * invokes the test runner, not of this module — any future caller that
- * imports this adapter from a different working directory (a script run
- * from a subdirectory, a bundled serverless function, etc.) would silently
- * resolve the wrong path. Resolving from `import.meta.url` instead ties the
- * path to this file's fixed position in the repo (`lib/agents/` ->
- * `../../agents/`), which is invariant under the caller's cwd. This module
- * lives at `<repo-root>/lib/agents/openai-adapter.ts`, so `../../agents` is
- * exactly `<repo-root>/agents`.
- *
- * Moved here verbatim from `lib/agents/openai-adapter.ts` (pure refactor,
- * see agents/README.md "adapter-shared" note): this function still lives at
- * `<repo-root>/lib/agents/adapter-shared.ts` — same directory as before, just
- * a different filename in it — so `import.meta.url`'s directory component is
- * unchanged and `../../agents` still resolves to exactly `<repo-root>/agents`.
- * Verified by inspection (no other file in `lib/agents/` moved) rather than
- * relying on any behavior change, since this refactor changes zero behavior.
+ * Next runs from the application root (standalone server.js also chdirs to
+ * its own directory). Resolve packaged assets there, not from import.meta.url:
+ * webpack embeds the build machine's absolute source path in that expression.
+ * next.config.ts explicitly traces these files into the relevant API bundles.
  */
 export function repoAgentsDir(): string {
-  const thisFile = fileURLToPath(import.meta.url);
-  const thisDir = path.dirname(thisFile);
-  return path.join(thisDir, "..", "..", "agents");
+  return path.join(process.cwd(), "agents");
 }
 
 export function readAgentFile(...segments: string[]): string {

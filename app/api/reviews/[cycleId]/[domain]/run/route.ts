@@ -13,6 +13,7 @@ import {
 } from "@/lib/services/initiative-service";
 import { runMutationGuard } from "@/lib/services/route-guard";
 import type { Domain } from "@/lib/domain/types";
+import { agentInitializationResponse } from "@/lib/services/agent-error-response";
 
 const DOMAINS = [
   "legal",
@@ -55,6 +56,8 @@ export async function POST(
     if (result.errorKind === "budget-exhausted") return Response.json(result, { status: 429 });
     return Response.json(result, { status: 200 });
   } catch (err) {
+    const unavailable = agentInitializationResponse(err);
+    if (unavailable) return unavailable;
     if (err instanceof ConflictError) return Response.json({ error: err.message }, { status: 409 });
     if (err instanceof IllegalTransitionError) {
       return Response.json({ error: err.message }, { status: 403 });

@@ -1,8 +1,8 @@
 # Jeeves robustness fixes — 2026-09-19
 
 Implementation branch: `codex/robustness-fixes-20260919`.
-Base: cached `main` at `f71b6bc62ab40d95e14d1d729d0c838e0fca12a9`.
-Scope: R1–R8 of the Astra robustness review prompted by *The Pragmatic Programmer* and *Designing Data-Intensive Applications*. User authorized fixes; Astra extra-high plan review approved the bounded implementation. No commit, merge, deployment, hosted migration, or live provider call was performed.
+Initial base: `f71b6bc62ab40d95e14d1d729d0c838e0fca12a9`. Merge integration incorporates current `main` at `ac9404e`, including runtime-packaging PR #13.
+Scope: R1–R8 of the Astra robustness review prompted by *The Pragmatic Programmer* and *Designing Data-Intensive Applications*. User authorized fixes; Astra extra-high plan review approved the bounded implementation. The user subsequently authorized merging the fixes. Hosted migration and live-provider verification remain outside this operation.
 
 ## Behavior and evidence
 
@@ -29,6 +29,12 @@ All model responses are mocked or synthetic. The browser harness uses disposable
 
 Independent Astra extra-high implementation reviews found and resolved additional deadline/reservation/error-reporting and skipped-outcome UI issues. These checks establish local behavior, not hosted readiness.
 
+## Merge integration
+
+Current main's runtime-packaging fix initially conflicted with the new workflow: the factory exception became an ordinary failed result and a missing policy became a generic 500. Both route regressions were reproduced and fixed. Five additional workflow tests verify typed initialization failures, no unused reservation, preservation of the visible review, cleanup after final policy loss, and protection of a replacement attempt.
+
+The integrated branch passed all 28 existing Playwright cases and all 9 real Postgres tests; typecheck, lint and production dependency audit passed (zero reported vulnerabilities). Independent Astra extra-high integration review approved the resolved behavior. Full coverage and remote PR CI remain merge gates; their final outcomes are attached to the PR. The validation counts above describe the preceding implementation snapshot.
+
 ## Schema and deployment boundary
 
 `drizzle/0012_review_integrity.sql` adds revision, active-attempt, signature receipt, evidence-gap and provenance fields. Existing records receive revision 0 and `legacy-unverified`; no historical signer or evidence truth is fabricated. The existing append-only audit protection is retained.
@@ -41,7 +47,7 @@ Apply the additive migration using the project’s reviewed migration procedure 
 - Provider execution and result acceptance are deadline-fenced. Database connection/lock waits do not have a hard total HTTP deadline.
 - Token reservations are estimates, not measured provider usage or a hard dollar spending cap. Capacity may remain reserved after a request was dispatched but its outcome became uncertain; there is no unsafe automatic refund/replay.
 - Evidence grounding uses submitted document metadata and recorded assessments. It does not read document contents or certify sufficiency. Deep prompt hashes cover initial input, not an unrecorded tool transcript.
-- Runtime packaging/readiness R9 is owned by the separate active demo-agent task. Its uncommitted changes were not copied into this branch.
+- Runtime packaging/readiness R9 arrived through current-main PR #13. Integration preserves its sanitized 503 response and packaged-asset checks; initialization failures release only their own claim and do not spend unused reservations.
 - The original dirty monetization checkout and the separate demo-agent worktree are preserved.
 
 ## Reproducing the Postgres checks

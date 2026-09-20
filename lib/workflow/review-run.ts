@@ -5,6 +5,7 @@ import type { Db } from "../db/client";
 import { auditEvents, reviewCycles, reviewDecisions, runBudget } from "../db/schema";
 import type { Actor, Domain } from "../domain/types";
 import { getAgentPort } from "../agents";
+import { AgentInitializationError } from "../agents/initialization-error";
 import type { AgentPort, DraftReviewOutput, PortFailure, PortResult } from "../agents/ports";
 import { lockCurrentReviewCycle, ReviewIntegrityError, type ReviewTx } from "../services/review-integrity";
 import { loadReviewContext } from "./review-context";
@@ -181,12 +182,12 @@ function acceptedOutcome(outcome: RunSingleDomainResult, result: DraftResult, op
   if (!result.ok && result.error.kind === outcome.errorKind) return {outcome, failure: result.error};
   return {outcome, failure: outcome.errorKind === "cancelled" ? cancelled() : timeout(bounded(options.runTimeoutMs,90_000,180_000))};
 }
-async function execute(db: Db, claim: Claim, port: AgentPort | undefined, options: StartDraftRunOptions, deadline: number): Promise<{outcome:RunSingleDomainResult; failure?:PortFailure}> {
+async function executeClaim(db: Db, claim: Claim, port: AgentPort | undefined, options: StartDraftRunOptions, deadline: number): Promise<{outcome:RunSingleDomainResult; failure?:PortFailure}> {
   let result: DraftResult = {ok:false,error:timeout(0)};
   const attempts = bounded(options.maxAttempts,2,3);
   let agent: AgentPort;
   try { agent = port ?? getAgentPort(); }
-  catch { result = {ok:false,error:{kind:"provider",message:"The agent runtime is unavailable. Contact the demo operator.",retryable:false}}; return acceptedOutcome(await finish(db,claim,options,result,deadline),result,options); }
+  catch (cause) { throw cause instanceof AgentInitializationError ? cause : new AgentInitializationError(cause); }
   for(let attempt=1;attempt<=attempts;attempt++) {
     if(options.signal?.aborted) { result={ok:false,error:cancelled()}; break; }
     const remaining=deadline-Date.now();
@@ -206,6 +207,30 @@ async function execute(db: Db, claim: Claim, port: AgentPort | undefined, option
     await delay(Math.min(Math.max(0,deadline-Date.now()),base*2**(attempt-1)*(0.75+Math.random()*0.5)),options.signal);
   }
   return acceptedOutcome(await finish(db,claim,options,result,deadline),result,options);
+}
+
+
+/** Initialization failures are operational errors, not generated assessments. */
+async function execute(db: Db, claim: Claim, port: AgentPort | undefined, options: StartDraftRunOptions, deadline: number) {
+  try {
+    return await executeClaim(db, claim, port, options, deadline);
+  } catch (error) {
+    if (error instanceof AgentInitializationError) {
+      // Do not read the missing assets during cleanup or erase another attempt.
+      await db.transaction(async (tx) => {
+        try { await lockCurrentReviewCycle(tx, claim.row.cycleId, options.sessionWorkspaceId); }
+        catch (failure) {
+          if (failure instanceof ReviewIntegrityError && failure.kind === "conflict") return;
+          throw failure;
+        }
+        const [current] = await tx.select().from(reviewDecisions).where(eq(reviewDecisions.id, claim.row.id));
+        if (!current || current.activeAttemptId !== claim.id || current.revision !== claim.row.revision) return;
+        await tx.update(reviewDecisions).set({ activeAttemptId: null, activeAttemptExpiresAt: null }).where(eq(reviewDecisions.id, current.id));
+        await receipt(tx, claim, options, "draft_attempt_initialization_failed", current.status, { code: "AGENT_INITIALIZATION_FAILED" });
+      });
+    }
+    throw error;
+  }
 }
 
 export async function startDraftRun(db:Db,initiativeId:string,domains:Domain[],port?:AgentPort,options:StartDraftRunOptions={}):Promise<StartDraftRunResult> {

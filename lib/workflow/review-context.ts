@@ -4,6 +4,7 @@ import type { Db } from "../db/client";
 import { controlDefinitions, evidenceAssessments, evidenceDocuments, evidencePackets, intakeVersions, reviewCycles, riskAssessments } from "../db/schema";
 import type { GovernanceDomain, IntakeSnapshot } from "../agents/ports";
 import { readPolicyFileSafe } from "../agents/policy-corpus";
+import { AgentInitializationError } from "../agents/initialization-error";
 import type { OverlayFlags, Tier } from "../domain/types";
 import { applicabilityApplies } from "../services/applicability";
 
@@ -53,11 +54,15 @@ export async function loadReviewContext(
   if (!intakeRow) throw new Error("Review cycle intake version not found for grounding.");
 
   const policyPath = POLICY_FILES[domain];
-  const policyText = readPolicyFileSafe(policyPath);
-  if (!policyText.trim()) throw new Error(`Review policy is empty: ${policyPath}`);
-  // The corpus reader appends a marker beyond its 64 KiB cap. A draft
-  // requires the complete domain policy, so a capped read must fail closed.
-  if (Buffer.byteLength(policyText, "utf8") > 64 * 1024) throw new Error(`Review policy exceeds the complete-read limit: ${policyPath}`);
+  let policyText: string;
+  try {
+    policyText = readPolicyFileSafe(policyPath);
+    if (!policyText.trim()) throw new Error(`Review policy is empty: ${policyPath}`);
+    // A capped read cannot support a claim of complete policy grounding.
+    if (Buffer.byteLength(policyText, "utf8") > 64 * 1024) throw new Error(`Review policy exceeds the complete-read limit: ${policyPath}`);
+  } catch (cause) {
+    throw new AgentInitializationError(cause);
+  }
   const catalog = await db.select().from(controlDefinitions).where(eq(controlDefinitions.domain, domain)).orderBy(asc(controlDefinitions.id));
   const controls = catalog.filter((control) => applicabilityApplies(control.applicability, risk.tier as Tier, risk.flags as unknown as OverlayFlags));
   const controlIds = new Set(controls.map((control) => control.id));

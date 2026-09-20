@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTestDb, closeTestDb, type TestDb } from "../db/test-client";
 import { controlDefinitions, evidenceAssessments, evidenceDocuments, evidencePackets, initiatives, intakeVersions, reviewCycles, riskAssessments } from "../db/schema";
 import * as corpus from "../agents/policy-corpus";
+import { AgentInitializationError } from "../agents/initialization-error";
 import { loadReviewContext } from "./review-context";
 
 let db: TestDb;
@@ -88,13 +89,13 @@ describe("review grounding", () => {
   it("fails before generation when the cycle or required policy cannot be read", async () => {
     await expect(loadReviewContext(db, "missing", "privacy-hipaa")).rejects.toThrow(/cycle/i);
     vi.spyOn(corpus, "readPolicyFileSafe").mockImplementation(() => { throw new Error("missing policy"); });
-    await expect(loadReviewContext(db, "cycle", "privacy-hipaa")).rejects.toThrow(/policy/i);
+    await expect(loadReviewContext(db, "cycle", "privacy-hipaa")).rejects.toThrow(AgentInitializationError);
   });
 
   it("refuses an empty or truncated domain policy instead of claiming complete grounding", async () => {
     const read = vi.spyOn(corpus, "readPolicyFileSafe").mockReturnValue("");
-    await expect(loadReviewContext(db, "cycle", "privacy-hipaa")).rejects.toThrow(/empty/);
+    await expect(loadReviewContext(db, "cycle", "privacy-hipaa")).rejects.toMatchObject({ name: "AgentInitializationError", cause: expect.objectContaining({ message: expect.stringMatching(/empty/) }) });
     read.mockReturnValue("x".repeat(64 * 1024 + 1));
-    await expect(loadReviewContext(db, "cycle", "privacy-hipaa")).rejects.toThrow(/complete-read limit/);
+    await expect(loadReviewContext(db, "cycle", "privacy-hipaa")).rejects.toMatchObject({ name: "AgentInitializationError", cause: expect.objectContaining({ message: expect.stringMatching(/complete-read limit/) }) });
   });
 });

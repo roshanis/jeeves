@@ -24,7 +24,8 @@
  */
 import { z } from "zod";
 import { getAgentPort } from "@/lib/agents";
-import type { PortFailure } from "@/lib/agents/ports";
+import type { AgentPort, PortFailure } from "@/lib/agents/ports";
+import { agentInitializationResponse } from "@/lib/services/agent-error-response";
 import { evaluateCompleteness } from "@/lib/intake/completeness";
 import type { IntakePayload } from "@/lib/intake/types";
 import { runMutationGuard } from "@/lib/services/route-guard";
@@ -203,7 +204,14 @@ export async function POST(req: Request): Promise<Response> {
     return Response.json({ error: "invalid request body" }, { status: 400 });
   }
 
-  const port = getAgentPort();
+  let port: AgentPort;
+  try {
+    port = getAgentPort();
+  } catch (error) {
+    const unavailable = agentInitializationResponse(error);
+    if (unavailable) return unavailable;
+    throw error;
+  }
   const result = await port.intakeInterview(
     {
       conversation: parsed.data.conversation,

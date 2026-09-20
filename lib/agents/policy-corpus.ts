@@ -15,10 +15,10 @@
  * instructions/schema/track overlays) — both repo-root-relative.
  */
 import { readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { z } from "zod";
 import { tool } from "@openai/agents";
+import { KNOWN_DOMAINS } from "./adapter-shared";
 
 export class PolicyCorpusPathError extends Error {
   constructor(message: string) {
@@ -27,22 +27,17 @@ export class PolicyCorpusPathError extends Error {
   }
 }
 
-/**
- * Resolves the repo root relative to *this module's own file location*
- * (`import.meta.url` -> `fileURLToPath` -> `dirname`), mirroring
- * `lib/agents/adapter-shared.ts`'s `repoAgentsDir()` approach and rationale
- * verbatim rather than using `process.cwd()`: `process.cwd()` is a property
- * of whatever process invoked the caller (test runner, script, bundled
- * serverless function), not of this file's fixed position in the repo.
- * Resolving from `import.meta.url` ties corpus-root resolution to this
- * file's location instead, which is invariant under the caller's cwd. This
- * module lives at `<repo-root>/lib/agents/policy-corpus.ts`, so `../..` is
- * exactly `<repo-root>`.
- */
+/** Runtime application root; see adapter-shared.ts and Next asset tracing. */
 function repoRootDir(): string {
-  const thisFile = fileURLToPath(import.meta.url);
-  const thisDir = path.dirname(thisFile);
-  return path.join(thisDir, "..", "..");
+  return process.cwd();
+}
+
+/** Fail before a paid deep-review run if its packaged policy corpus is incomplete. */
+export function assertPolicyCorpusAvailable(): void {
+  for (const name of ["INDEX", "fast-lane-policy", ...KNOWN_DOMAINS]) {
+    readPolicyFileSafe(`docs/policies/${name}.md`);
+  }
+  readPolicyFileSafe("agents/reviewer/schema.md");
 }
 
 /** Repo-root-relative corpus roots, e.g. ["docs/policies", "agents/reviewer"]. */

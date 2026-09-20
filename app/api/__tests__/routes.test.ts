@@ -14,6 +14,11 @@ import { controlDefinitions, initiatives, reviewDecisions, auditEvents, reviewCy
 import { and, eq, sql } from "drizzle-orm";
 import { createMockAgentPort } from "@/lib/agents/mock-adapter";
 import { CONTROL_SEEDS } from "@/scripts/seed";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import * as agentsModule from "@/lib/agents";
+import { AgentInitializationError } from "@/lib/agents/initialization-error";
 
 let testDb: TestDb;
 const portMocks = vi.hoisted(() => ({ getAgentPort: vi.fn() }));
@@ -563,6 +568,29 @@ describe("deep-review budget multiplier on draft-run", () => {
     expect(await draftRun(id, token, "11.5.0.1")).not.toBe(429);
   });
 
+  it("returns a safe 503 for missing agent assets while keeping unknown IDs private", async () => {
+    const { id, token } = await triagedInitiative("11.7.0.1");
+    const { POST } = await import("../initiatives/[id]/draft-run/route");
+    const cwd = vi.spyOn(process, "cwd").mockReturnValue(mkdtempSync(path.join(tmpdir(), "jeeves-missing-prompts-")));
+    vi.stubEnv("OPENAI_API_KEY", "test-placeholder-never-sent");
+    const fetch = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Network forbidden in asset regression"));
+    try {
+      const request = () => new Request("http://localhost/api/initiatives/test/draft-run", {
+        method: "POST", headers: bearer(token, "11.7.0.1"), body: JSON.stringify({ domains: ["legal"] }),
+      });
+      const response = await POST(request(), { params: Promise.resolve({ id }) });
+      expect(response.status).toBe(503);
+      expect(await response.json()).toEqual({ error: "Agent runtime could not initialize. Check the deployed prompts and policies.", code: "AGENT_INITIALIZATION_FAILED" });
+      const missing = await POST(request(), { params: Promise.resolve({ id: "unknown" }) });
+      expect(missing.status).toBe(404);
+      expect(await missing.json()).toEqual({ error: "initiative or review cycle not found" });
+    } finally {
+      cwd.mockRestore();
+      fetch.mockRestore();
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("429s with the same request when JEEVES_DEEP_REVIEW=1 — the 10x reserve no longer fits", async () => {
     vi.stubEnv("JEEVES_AGENT_RUNTIME", "agents-sdk");
     vi.stubEnv("JEEVES_DEEP_REVIEW", "1");
@@ -690,6 +718,24 @@ describe("POST /api/reviews/[cycleId]/[domain]/run — on-demand agent run", () 
     const json = await res.json();
     expect(json.status).toBe("drafted");
     expect(json.draftMd).toBeTruthy();
+  });
+
+  it("returns a safe 503 when an authorized reviewer's agent cannot initialize", async () => {
+    const { cycleId, workspaceCookie } = await setUpCycle("21.8.0.1");
+    const { token } = await issueSessionInWorkspace("elena-vasquez", workspaceCookie);
+    const { POST } = await import("../reviews/[cycleId]/[domain]/run/route");
+    const factory = vi.spyOn(agentsModule, "getAgentPort").mockImplementationOnce(() => {
+      throw new AgentInitializationError(new Error("ENOENT /private/build/prompts"));
+    });
+    try {
+      const response = await POST(new Request(`http://localhost/api/reviews/${cycleId}/clinical-safety/run`, {
+        method: "POST", headers: bearer(token, "21.8.0.2"),
+      }), { params: Promise.resolve({ cycleId, domain: "clinical-safety" }) });
+      expect(response.status).toBe(503);
+      expect(await response.json()).toEqual({ error: "Agent runtime could not initialize. Check the deployed prompts and policies.", code: "AGENT_INITIALIZATION_FAILED" });
+    } finally {
+      factory.mockRestore();
+    }
   });
 
   it("403s when a reviewer runs a domain they are not assigned to", async () => {

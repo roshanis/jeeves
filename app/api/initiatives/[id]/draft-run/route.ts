@@ -11,6 +11,7 @@ import { runMutationGuard } from "@/lib/services/route-guard";
 import { workspaceMismatch } from "@/lib/services/workspace-guard";
 import { resolveViewerWorkspaceId } from "@/lib/services/viewer-workspace";
 import type { Domain } from "@/lib/domain/types";
+import { agentInitializationResponse } from "@/lib/services/agent-error-response";
 
 /** See file-level comment: only these roles trigger draft-run in any real flow. */
 const DRAFT_RUN_ALLOWED_ROLES = new Set(["requester", "admin"]);
@@ -80,6 +81,8 @@ export async function POST(
     }
     return Response.json(result, { status: 200 });
   } catch (error) {
+    const unavailable = agentInitializationResponse(error);
+    if (unavailable) return unavailable;
     if (error instanceof ReviewIntegrityError) {
       return Response.json({ error: error.message }, { status: error.kind === "not_found" ? 404 : 409 });
     }
