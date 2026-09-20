@@ -8,6 +8,8 @@ import { createMockAgentPort } from "./mock-adapter";
 import { createOpenAIAgentPort } from "./openai-adapter";
 import { createOpenAiAgentsAdapter } from "./openai-agents-adapter";
 import type { AgentPort } from "./ports";
+import { AgentInitializationError } from "./initialization-error";
+import { assertPolicyCorpusAvailable } from "./policy-corpus";
 
 /**
  * Which real adapter to use when a key IS present. Two runtimes behind one
@@ -43,9 +45,15 @@ export function resolveAgentRuntime(
 export function getAgentPort(): AgentPort {
   const apiKey = process.env.OPENAI_API_KEY;
   if (apiKey && apiKey.trim().length > 0) {
-    return resolveAgentRuntime() === "agents-sdk"
-      ? createOpenAiAgentsAdapter()
-      : createOpenAIAgentPort();
+    try {
+      if (resolveAgentRuntime() === "agents-sdk") {
+        if (process.env.JEEVES_DEEP_REVIEW === "1") assertPolicyCorpusAvailable();
+        return createOpenAiAgentsAdapter();
+      }
+      return createOpenAIAgentPort();
+    } catch (cause) {
+      throw new AgentInitializationError(cause);
+    }
   }
   return createMockAgentPort();
 }

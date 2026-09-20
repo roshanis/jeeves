@@ -376,6 +376,16 @@ test.describe("live demo loop: create → triage → draft run → sign → deci
     await expect(draftPanel.locator('[data-slot="start-draft-run"]')).toContainText(
       "8 domains",
     );
+    // A packaging/configuration failure must give the presenter a concrete
+    // recovery action, leave the domains selected and allow a clean retry.
+    await page.route("**/api/initiatives/*/draft-run", route => route.fulfill({
+      status: 503,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "Agent runtime could not initialize.", code: "AGENT_INITIALIZATION_FAILED" }),
+    }), { times: 1 });
+    await draftPanel.locator('[data-slot="start-draft-run"]').click();
+    await expect(page.getByText("Agents could not start. Test the connection on the Agents page, then retry.")).toBeVisible();
+    await expect(draftPanel.locator('[data-slot="start-draft-run"]')).toBeEnabled();
     const draftResponsePromise = page.waitForResponse(response => response.url().includes('/draft-run') && response.request().method() === 'POST');
     await draftPanel.locator('[data-slot="start-draft-run"]').click();
     const draftResponse = await draftResponsePromise;

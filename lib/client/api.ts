@@ -26,12 +26,14 @@ import type { CompletenessGap } from "@/lib/intake/completeness";
 export class ApiError extends Error {
   readonly status: number;
   readonly gaps?: unknown[];
+  readonly code?: string;
 
-  constructor(status: number, message: string, gaps?: unknown[]) {
+  constructor(status: number, message: string, gaps?: unknown[], code?: string) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.gaps = gaps;
+    this.code = code;
   }
 }
 
@@ -45,6 +47,9 @@ export function isApiError(value: unknown): value is ApiError {
  *   400 -> surface the server's own validation message; else generic.
  */
 export function apiErrorToMessage(err: ApiError): string {
+  if (err.status === 503 && err.code === "AGENT_INITIALIZATION_FAILED") {
+    return "Agents could not start. Test the connection on the Agents page, then retry.";
+  }
   switch (err.status) {
     case 401:
       return "Session expired or invalid — enter the demo passcode again.";
@@ -324,6 +329,7 @@ export interface ConnectorHealth {
   reachable: boolean;
   adapter: "openai" | "mock";
   model: string;
+  assetsReady: boolean | null;
   latencyMs?: number;
   detail: string;
 }
@@ -332,11 +338,11 @@ export interface ConnectorHealth {
  * Core request helper
  * ---------------------------------------------------------------------- */
 
-async function parseErrorBody(res: Response): Promise<{ message: string; gaps?: unknown[] }> {
+async function parseErrorBody(res: Response): Promise<{ message: string; gaps?: unknown[]; code?: string }> {
   try {
-    const body = (await res.json()) as { error?: unknown; gaps?: unknown[] };
+    const body = (await res.json()) as { error?: unknown; gaps?: unknown[]; code?: unknown };
     const message = typeof body?.error === "string" ? body.error : `request failed (${res.status})`;
-    return { message, gaps: Array.isArray(body?.gaps) ? body.gaps : undefined };
+    return { message, gaps: Array.isArray(body?.gaps) ? body.gaps : undefined, code: typeof body?.code === "string" ? body.code : undefined };
   } catch {
     return { message: `request failed (${res.status})` };
   }
@@ -361,8 +367,8 @@ async function request<T>(
   });
 
   if (!res.ok) {
-    const { message, gaps } = await parseErrorBody(res);
-    throw new ApiError(res.status, message, gaps);
+    const { message, gaps, code } = await parseErrorBody(res);
+    throw new ApiError(res.status, message, gaps, code);
   }
   return (await res.json()) as T;
 }
