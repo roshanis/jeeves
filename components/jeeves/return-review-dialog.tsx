@@ -24,12 +24,14 @@ function ReturnReasonForm({
   pending,
   onCancel,
   onConfirm,
+  initialReason = "",
 }: {
   pending: boolean;
   onCancel: () => void;
   onConfirm: (reason: string) => void;
+  initialReason?: string;
 }) {
-  const [reason, setReason] = React.useState("");
+  const [reason, setReason] = React.useState(initialReason);
   const [error, setError] = React.useState<string | null>(null);
 
   function handleConfirm() {
@@ -82,12 +84,14 @@ export function ReturnReviewDialog({
   domainLabel,
   pending,
   onConfirm,
+  initialReason = "",
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   domainLabel: string;
   pending: boolean;
   onConfirm: (reason: string) => void;
+  initialReason?: string;
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -104,6 +108,7 @@ export function ReturnReviewDialog({
             pending={pending}
             onCancel={() => onOpenChange(false)}
             onConfirm={onConfirm}
+            initialReason={initialReason}
           />
         ) : null}
       </DialogContent>

@@ -25,6 +25,7 @@
  * verbatim. This file keeps only what is genuinely AI-SDK-specific:
  * `callStructured`, `mapCallErrorToPortFailure`, and the factories.
  */
+import { createHash } from "node:crypto";
 import { APICallError, generateText, Output } from "ai";
 import { openai } from "@ai-sdk/openai";
 import type { LanguageModel } from "ai";
@@ -249,7 +250,16 @@ export function createOpenAIAgentPortWithModel(model: LanguageModel): AgentPort 
 
       return {
         ok: true,
-        value: mapReviewerDraftToPortOutput(input.domain, parsed.data),
+        value: {
+          ...mapReviewerDraftToPortOutput(input.domain, parsed.data),
+          generationMetadata: {
+            adapter: "vercel-ai-sdk",
+            configuredModelId: typeof model === "string" ? model : model.modelId,
+            systemPromptHash: createHash("sha256").update(system).digest("hex"),
+            userPromptHash: createHash("sha256").update(userPrompt).digest("hex"),
+            promptHashScope: "initial-input",
+          },
+        },
       };
     },
 

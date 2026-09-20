@@ -323,8 +323,7 @@ export type IntakeInterviewOutput = z.infer<typeof intakeInterviewOutputSchema>;
  *    non-empty. This keeps the human-editable draft self-contained (a
  *    reviewer editing `draftMarkdown` alone still sees the gaps) without
  *    duplicating the full structured `evidenceRequests` data model inside
- *    the markdown — the port's own `missingEvidence` array remains the
- *    structured source of truth for gaps.
+ *    the markdown. The port preserves evidenceRequests with control IDs.
  *
  * 3. `recommendation` mapping:
  *      - "ready-for-signature"  -> "recommend-sign-off"
@@ -346,13 +345,9 @@ export type IntakeInterviewOutput = z.infer<typeof intakeInterviewOutputSchema>;
  *    rather than concatenated into the text (keeps each condition string
  *    exactly what a human approver would read/adopt verbatim).
  *
- * 5. `missingEvidence` (port: `string[]`) = `rich.evidenceRequests` mapped
- *    to just `.description`, dropping `controlId` for the same reason as
- *    (4) — the port's `missingEvidence` is documented as "Evidence the
- *    agent could not find," a flat human-readable list, not a structured
- *    per-control record. `controlId` remains available on the rich shape
- *    (and, per (2), can still be surfaced in `draftMarkdown`'s prose) for
- *    any caller that wants it before mapping down to the port.
+ * 5. `missingEvidence` retains the flat description list for compatibility.
+ *    `evidenceRequests`, `citations`, and `confidenceNotes` are preserved
+ *    separately so persistence never mistakes an evidence gap for a citation.
  */
 export function mapReviewerDraftToPortOutput(
   domain: GovernanceDomain,
@@ -378,5 +373,8 @@ export function mapReviewerDraftToPortOutput(
     recommendation,
     suggestedConditions: rich.suggestedConditions.map((c) => c.text),
     missingEvidence: rich.evidenceRequests.map((r) => r.description),
+    citations: [...rich.citations],
+    evidenceRequests: rich.evidenceRequests.map((r) => ({ ...r })),
+    confidenceNotes: rich.confidenceNotes,
   };
 }

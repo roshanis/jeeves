@@ -9,6 +9,7 @@
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
+    "test:postgres": "vitest run --config vitest.postgres.config.ts",
     "test:e2e": "playwright test",
     "typecheck": "tsc --noEmit",
     "db:migrate": "tsx scripts/migrate.ts",

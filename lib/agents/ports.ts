@@ -152,6 +152,13 @@ export interface DraftReviewOutput {
   readonly suggestedConditions: readonly string[];
   /** Evidence the agent could not find — routed back to the requester. */
   readonly missingEvidence: readonly string[];
+  /** Policy references, never descriptions of missing evidence. */
+  readonly citations?: readonly string[];
+  /** Preserve the control linkage while older consumers use missingEvidence. */
+  readonly evidenceRequests?: readonly { readonly controlId: string; readonly description: string }[];
+  readonly confidenceNotes?: string;
+  /** Adapter-observed provenance; absent values are unknown, not inferred. */
+  readonly generationMetadata?: Readonly<Record<string, unknown>>;
 }
 
 export interface TriageAssistInput {

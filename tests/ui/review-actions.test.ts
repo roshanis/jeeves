@@ -15,20 +15,20 @@ const reviewer = {
 
 describe("review action eligibility", () => {
   it("allows only the authenticated reviewer's own actionable domain", () => {
-    expect(getReviewActionEligibility(reviewer, "cycle", "privacy-hipaa", "drafted").canEdit).toBe(true);
-    expect(getReviewActionEligibility(reviewer, "cycle", "legal", "drafted").canEdit).toBe(false);
+    expect(getReviewActionEligibility(reviewer, "cycle", "privacy-hipaa", "drafted", 0).canEdit).toBe(true);
+    expect(getReviewActionEligibility(reviewer, "cycle", "legal", "drafted", 0).canEdit).toBe(false);
   });
 
   it("does not allow pending or signed rows to be edited or acted on", () => {
     for (const status of ["pending", "signed"] as const) {
-      const eligibility = getReviewActionEligibility(reviewer, "cycle", "privacy-hipaa", status);
+      const eligibility = getReviewActionEligibility(reviewer, "cycle", "privacy-hipaa", status, 0);
       expect(eligibility.canEdit).toBe(false);
       expect(eligibility.canSignOrReturn).toBe(false);
     }
   });
 
   it("does not grant a different reviewer domain through preview state", () => {
-    const eligibility = getReviewActionEligibility(reviewer, "cycle", "clinical-safety", "returned");
+    const eligibility = getReviewActionEligibility(reviewer, "cycle", "clinical-safety", "returned", 0);
     expect(eligibility).toEqual({
       isOwnDomain: false,
       canEdit: false,

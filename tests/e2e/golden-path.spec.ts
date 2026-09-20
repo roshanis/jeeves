@@ -410,13 +410,26 @@ test.describe("live demo loop: create → triage → draft run → sign → deci
 
     const phiRow = page.locator('[data-slot="review-row"][data-domain="privacy-hipaa"]');
     const clinicalRow = page.locator('[data-slot="review-row"][data-domain="clinical-safety"]');
-    await expect(phiRow.getByRole("button", { name: "Sign" })).toBeEnabled({
+    await expect(phiRow.getByRole("button", { name: "Review & sign", exact: true })).toBeEnabled({
       timeout: 15_000,
     });
-    await expect(clinicalRow.getByRole("button", { name: "Sign" })).toBeDisabled({
+    await expect(clinicalRow.getByRole("button", { name: "Review & sign", exact: true })).toBeDisabled({
       timeout: 15_000,
     });
-    await phiRow.getByRole("button", { name: "Sign" }).click();
+    // Signing observes the evidence snapshot first. This case has no packet,
+    // so the wire request must explicitly bind that observed absence.
+    await phiRow.getByRole("button", { name: "Review & sign", exact: true }).click();
+    await expect(phiRow.getByText("No evidence submitted yet.")).toBeVisible();
+    const signButton = phiRow.getByRole("button", { name: "Sign", exact: true });
+    await expect(signButton).toBeEnabled();
+    const signResponsePromise = page.waitForResponse(response => response.url().endsWith('/privacy-hipaa/sign') && response.request().method() === 'POST');
+    await signButton.click();
+    const signResponse = await signResponsePromise;
+    const signRequest = signResponse.request().postDataJSON();
+    expect(Number.isSafeInteger(signRequest.expectedRevision)).toBe(true);
+    expect(signRequest.expectedRevision).toBeGreaterThanOrEqual(0);
+    expect(signRequest.expectedEvidencePacketId).toBeNull();
+    expect(signResponse.status(), await signResponse.text()).toBe(200);
     await expect(
       phiRow.locator('[data-slot="review-status"][data-status="signed"]'),
     ).toBeVisible({ timeout: 30_000 });

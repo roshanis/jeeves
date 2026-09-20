@@ -352,7 +352,7 @@ describe("GET /api/initiatives/[id]/draft-run — read isolation (progress polli
     expect(unknownRes.status).toBe(200);
     const unknownJson = (await unknownRes.json()) as { rows: unknown[]; complete: boolean };
     expect(unknownJson.rows).toEqual([]);
-    expect(unknownJson.complete).toBe(true);
+    expect(unknownJson.complete).toBe(false);
 
     const anonRes = await GET(
       new Request(`http://localhost/api/initiatives/x/draft-run?cycleId=${cycleId}`),
