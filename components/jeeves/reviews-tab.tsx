@@ -63,6 +63,7 @@ interface ReviewsTabProps {
 
 function unfinishedDomains(outcomes: DraftRunDomainOutcome[], reviews: ReviewRow[]): Domain[] {
   return outcomes.filter((outcome) => {
+    if (outcome.reason === "reviewer abstained" || reviews.some((review) => review.domain === outcome.domain && review.status === "abstained")) return false;
     if (outcome.status === "failed") return true;
     if (outcome.status !== "skipped" || outcome.reason === "already signed") return false;
     // An unqualified no-op can also mean a returned review. Only a known
@@ -101,7 +102,9 @@ function ReviewsTabContent({ reviews, slug, initiativeId, isSeeded }: {
   const selectedDomains = selectionState?.cycleId === cycleId
     ? selectionState.domains
     : null;
-  const checkedDomains = selectedDomains ?? pendingDomains;
+  const checkedDomains = (selectedDomains ?? pendingDomains).filter((domain) =>
+    reviews.some((review) => review.domain === domain && review.status !== "abstained" && review.status !== "signed"),
+  );
   const [running, setRunning] = React.useState(false);
   const [outcomeState, setOutcomeState] = React.useState<{
     cycleId: string | null;
@@ -135,6 +138,9 @@ function ReviewsTabContent({ reviews, slug, initiativeId, isSeeded }: {
       } else if (remainingDomains.length > 0) {
         setSelectionState({ cycleId: result.cycleId, domains: remainingDomains });
         toast.info(`${remainingDomains.length} domain${remainingDomains.length === 1 ? "" : "s"} did not complete. A run may still be active or the review changed. Refresh and review the current status before retrying.`);
+      } else if (result.outcomes.some((outcome) => outcome.reason === "reviewer abstained")) {
+        setSelectionState({ cycleId: result.cycleId, domains: [] });
+        toast.info("Abstained reviews remain incomplete. Their assigned reviewers must resume them before drafting.");
       } else {
         setSelectionState({ cycleId: result.cycleId, domains: [] });
         toast.success("Draft run finished — all requested domains completed.");
@@ -162,7 +168,7 @@ function ReviewsTabContent({ reviews, slug, initiativeId, isSeeded }: {
   const displayRows = reviews.map((review) => {
     const outcome = outcomeByDomain.get(review.domain);
     let status: ReviewRow["status"] | "failed" = review.status;
-    if (review.status !== "signed") {
+    if (review.status !== "signed" && review.status !== "abstained") {
       if (outcome?.status === "drafted" || outcome?.status === "failed") status = outcome.status;
     }
     return { review, status };

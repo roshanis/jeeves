@@ -39,7 +39,8 @@ export interface ReviewRow {
   /** Exact displayed revision; absent legacy fixtures remain read-only. */
   revision?: number;
   domain: Domain;
-  status: "pending" | "drafted" | "signed" | "returned";
+  status: "pending" | "drafted" | "signed" | "returned" | "abstained";
+  abstention?: { reason: string; reviewer: string; at: string };
   reviewer: string | null;
   /** When this review entered the queue (review_decision createdAt) — drives the workbench "Age" / queue-aging view. */
   createdAt: string; // ISO

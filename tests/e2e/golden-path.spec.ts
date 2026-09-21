@@ -438,6 +438,21 @@ test.describe("live demo loop: create → triage → draft run → sign → deci
     await page.goBack();
     await expect(page).toHaveURL(/domain=privacy-hipaa$/);
     await expect(assessment.getByRole("button", { name: "Sign", exact: true })).toBeEnabled();
+    // A domain reviewer can abstain with a reason, without completing the required review.
+    await assessment.getByRole("button", { name: "Abstain", exact: true }).click();
+    const abstentionDialog = page.getByRole("dialog", { name: "Abstain from Privacy/HIPAA review" });
+    await expect(abstentionDialog.getByRole("button", { name: "Record abstention" })).toBeDisabled();
+    await abstentionDialog.getByLabel("Reason (required)").fill("I contributed to this proposal and need to resolve a conflict of interest.");
+    await abstentionDialog.getByRole("button", { name: "Record abstention" }).click();
+    await expect(assessment).toContainText("Abstained · Required review incomplete");
+    await page.reload();
+    await expect(assessment).toContainText("I contributed to this proposal and need to resolve a conflict of interest.");
+    await expect(assessment.getByRole("button", { name: "Sign", exact: true })).toBeDisabled();
+    await expect(assessment.getByRole("button", { name: "Return", exact: true })).toBeDisabled();
+    await expect(assessment.getByRole("button", { name: "Re-run agent", exact: true })).toHaveCount(0);
+    await assessment.getByRole("button", { name: "Resume review", exact: true }).click();
+    await expect(assessment.getByRole("button", { name: "Sign", exact: true })).toBeEnabled();
+    await expect(assessment.getByRole("button", { name: "Abstain", exact: true })).toBeVisible();
     await assessment.getByLabel("Assessment text").fill("Privacy review completed against the recorded intake and policy requirements.");
     await expect(page.getByText("No evidence submitted yet.")).toBeVisible();
     const signResponsePromise = page.waitForResponse(response => response.url().endsWith('/privacy-hipaa/sign') && response.request().method() === 'POST');

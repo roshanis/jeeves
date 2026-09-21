@@ -143,7 +143,9 @@ function deriveBlockers(detail: InitiativeDetail): Blocker[] {
   }
 
   for (const review of detail.reviews) {
-    if (review.status === "returned") {
+    if (review.status === "abstained") {
+      blockers.push({ label: `Reviewer abstained: ${DOMAIN_LABEL[review.domain]} — required review incomplete`, severity: "amber" });
+    } else if (review.status === "returned") {
       blockers.push({
         label: `Review returned: ${DOMAIN_LABEL[review.domain]}`,
         severity: "high",

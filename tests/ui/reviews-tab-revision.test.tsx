@@ -81,3 +81,27 @@ describe("initiative review actions", () => {
     await waitFor(() => expect(mocks.mutation).toHaveBeenCalledWith("token", "cycle", "privacy-hipaa", { kind: "return", reason: "Missing policy", expectedRevision: 4 }));
   });
 });
+
+it("keeps refreshed abstention visible over an older successful draft outcome", async () => {
+  mocks.session.mockReturnValue({session:{token:"token",workspaceId:"workspace",role:"requester",personaKey:"priya-raman"}});
+  mocks.draftRun.mockResolvedValue({cycleId:"cycle",runId:"run",outcomes:[{domain:"privacy-hipaa",status:"drafted"}]});
+  function Harness() {
+    const [abstained,setAbstained] = useState(false);
+    return <><button onClick={() => setAbstained(true)}>Load current abstention</button><ReviewsTab slug="case-one" initiativeId="initiative" isSeeded={false} reviews={[{...review,status:abstained?"abstained":"pending"}]} /></>;
+  }
+  renderWithProviders(<Harness />);
+  fireEvent.click(screen.getByRole("button",{name:"Start draft run (1 domains)"}));
+  await screen.findByText("Drafted");
+  fireEvent.click(screen.getByRole("button",{name:"Load current abstention"}));
+  expect(screen.getByText("Abstained")).toBeTruthy();
+  expect(screen.queryByText("Drafted")).toBeNull();
+});
+it("does not retry abstained domains or claim their draft completed", async () => {
+  mocks.session.mockReturnValue({session:{token:"token",workspaceId:"workspace",role:"requester",personaKey:"priya-raman"}});
+  mocks.draftRun.mockResolvedValue({cycleId:"cycle",runId:"run",outcomes:[{domain:"privacy-hipaa",status:"skipped",reason:"reviewer abstained"}]});
+  renderWithProviders(<ReviewsTab slug="case-one" initiativeId="initiative" isSeeded={false} reviews={[{...review,status:"pending"}]} />);
+  fireEvent.click(screen.getByRole("button",{name:"Start draft run (1 domains)"}));
+  await waitFor(()=>expect(mocks.info).toHaveBeenCalledWith(expect.stringMatching(/Abstained reviews remain incomplete/)));
+  expect(mocks.success).not.toHaveBeenCalled();
+  expect(screen.queryByRole("button",{name:/Retry remaining/})).toBeNull();
+});

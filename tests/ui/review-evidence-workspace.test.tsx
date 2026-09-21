@@ -367,3 +367,29 @@ describe("review snapshot integrity", () => {
     expect(screen.getByText("H-01 · Supply the policy version")).toBeTruthy();
   });
 });
+
+ it("records a reason for abstention and keeps review commands blocked until explicit resume", async () => {
+   const row: ReviewQueueRow = {slug:"case",title:"Case",tier:"high",isSeeded:false,review:{cycleId:"cycle",revision:4,domain:"privacy-hipaa",status:"drafted",reviewer:null,createdAt:"2026-09-19T12:00:00Z",signedAt:null,draftMd:"Preserved draft",citations:[]}};
+   function Harness() {
+     const [abstained,setAbstained] = useState(false);
+     return <><button onClick={() => setAbstained(true)}>Load abstention</button><ReviewWorkbench rows={[{...row,review:{...row.review,...(abstained?{status:"abstained" as const,revision:5,reviewer:"marcus-webb",abstention:{reason:"Conflict of interest",reviewer:"marcus-webb",at:"2026-09-21T12:00:00Z"}}:{})}}]} selection={{slug:"case",domain:"privacy-hipaa"}} /></>;
+   }
+   renderWithProviders(<Harness />);
+   await screen.findByRole("heading",{name:"retention-v2.pdf"});
+   fireEvent.click(screen.getByRole("button",{name:"Abstain"}));
+   expect((screen.getByRole("button",{name:"Record abstention"}) as HTMLButtonElement).disabled).toBe(true);
+   fireEvent.change(screen.getByLabelText("Reason (required)"),{target:{value:"Conflict of interest"}});
+   fireEvent.click(screen.getByRole("button",{name:"Record abstention"}));
+   await waitFor(() => expect(mocks.mutate).toHaveBeenCalledWith("reviewer-token","cycle","privacy-hipaa",{kind:"abstain",reason:"Conflict of interest",expectedRevision:4}));
+   await waitFor(() => expect(screen.queryByRole("button",{name:"Record abstention"})).toBeNull());
+   fireEvent.click(screen.getByRole("button",{name:"Load abstention"}));
+   expect(screen.getByText("Conflict of interest")).toBeTruthy();
+   expect((screen.getByRole("button",{name:"Sign"}) as HTMLButtonElement).disabled).toBe(true);
+   expect((screen.getByRole("button",{name:"Return"}) as HTMLButtonElement).disabled).toBe(true);
+   expect(screen.queryByRole("button",{name:"Re-run agent"})).toBeNull();
+   expect(screen.queryByRole("button",{name:"Accept evidence"})).toBeNull();
+   expect((screen.getByLabelText("Assessment text") as HTMLTextAreaElement).value).toBe("Preserved draft");
+   expect((screen.getByLabelText("Assessment text") as HTMLTextAreaElement).disabled).toBe(true);
+   fireEvent.click(screen.getByRole("button",{name:"Resume review"}));
+   await waitFor(() => expect(mocks.mutate).toHaveBeenCalledWith("reviewer-token","cycle","privacy-hipaa",{kind:"resume",expectedRevision:5}));
+ });

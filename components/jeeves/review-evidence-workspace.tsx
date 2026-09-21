@@ -217,7 +217,7 @@ function EvidenceWorkspace({ slug, domain, citations, citationProvenance, missin
           key={`${selected.id}:${state.latest?.id}:${selected.requirement.assessment?.id ?? "unassessed"}`}
           requirement={selected.requirement}
           state={state}
-          canAssess={Boolean(!cycleChanged && session?.role === "reviewer" && domainForPersona(session.personaKey) === domain && state.reviewerDomain === domain && state.latest && !selected.requirement.signed && reviewStatus !== "signed" && selected.requirement.assessment?.packetId !== state.latest.id)}
+          canAssess={Boolean(!cycleChanged && session?.role === "reviewer" && domainForPersona(session.personaKey) === domain && state.reviewerDomain === domain && state.latest && !selected.requirement.signed && reviewStatus !== "signed" && reviewStatus !== "abstained" && selected.requirement.assessment?.packetId !== state.latest.id)}
           busy={pending || loading || Boolean(error)}
           onAssess={assess}
           onDownload={download}

@@ -43,6 +43,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { TierBadge } from "./tier-badge";
 import { DOMAIN_LABEL, ReviewStatusBadge } from "./domain-labels";
 import { GatedActionButton } from "./role-gate";
+import { ReasonDialog } from "./reason-dialog";
 import { ReturnReviewDialog } from "./return-review-dialog";
 import { useRole } from "./role-context";
 import {
@@ -413,6 +414,8 @@ function AssessmentPane({
   const [pending, setPending] = React.useState(false);
   const [running, setRunning] = React.useState(false);
   const [returnOpen, setReturnOpen] = React.useState(false);
+  const [abstainRevision, setAbstainRevision] = React.useState<number | null>(null);
+  const [abstainError, setAbstainError] = React.useState<string | null>(null);
   const mounted = React.useRef(false);
   React.useEffect(() => {
     mounted.current = true;
@@ -518,6 +521,31 @@ function AssessmentPane({
     }
   }
 
+  async function handleAbstention(kind: "abstain" | "resume", reason?: string) {
+    const expectedRevision = kind === "abstain" ? abstainRevision : row.review.revision;
+    if (!session || !cycleId || expectedRevision == null || pending ||
+      (kind === "abstain" ? !eligibility.canAbstain : !eligibility.canResume)) return;
+    setPending(true);
+    setAbstainError(null);
+    try {
+      await performReviewMutation(session.token, cycleId, row.review.domain,
+        kind === "abstain" ? { kind, reason: reason!, expectedRevision } : { kind, expectedRevision });
+      if (!mounted.current) return;
+      setAbstainRevision(null);
+      toast.success(kind === "abstain" ? "Abstention recorded. This required review remains incomplete." : "Review resumed. Complete the review before signing.");
+      router.refresh();
+    } catch (err) {
+      if (!mounted.current) return;
+      const message = isApiError(err) ? apiErrorToMessage(err) : "The review could not be updated.";
+      setAbstainError(message);
+      toast.error(message);
+      if (isApiError(err) && err.status === 409) router.refresh();
+      if (isApiError(err) && err.status === 401) live?.logout();
+    } finally {
+      if (mounted.current) setPending(false);
+    }
+  }
+
   return (
     <Card className="min-w-0 overflow-hidden" data-slot="review-assessment">
       <CardHeader className="border-b py-4">
@@ -566,7 +594,14 @@ function AssessmentPane({
         </div> : null}
         {signingBlock && !alreadySigned ? <p role="status" className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">{signingBlock}</p> : null}
         {alreadySigned ? <p className="rounded-lg border bg-muted/30 p-3 text-sm">Signed by {row.review.reviewer ?? "the assigned reviewer"}{row.review.signedAt ? ` on ${row.review.signedAt.slice(0, 10)}` : ""}. This domain review is read-only.</p> : null}
+        {row.review.status === "abstained" ? <div role="status" className="space-y-1 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
+          <p className="font-medium">Abstained · Required review incomplete</p>
+          {row.review.abstention ? <><p>{row.review.abstention.reason}</p><p className="text-xs">Recorded by {row.review.abstention.reviewer} on {row.review.abstention.at.slice(0, 10)}.</p></> : <p>Refresh to load the abstention record.</p>}
+          <p>The assigned reviewer must resume this review before assessing evidence, drafting, or signing.</p>
+        </div> : null}
         <div className="flex flex-wrap gap-2">
+          {eligibility.canAbstain ? <button type="button" className="rounded-md border px-3 py-2 text-sm font-medium disabled:opacity-50" disabled={pending} onClick={() => { setAbstainError(null); setAbstainRevision(row.review.revision!); }}>Abstain</button> : null}
+          {eligibility.canResume ? <button type="button" className="rounded-md border px-3 py-2 text-sm font-medium disabled:opacity-50" disabled={pending} onClick={() => void handleAbstention("resume")}>Resume review</button> : null}
           <GatedActionButton
             label="Sign"
             requiresRole="reviewer"
@@ -584,10 +619,21 @@ function AssessmentPane({
         </div>
         <p className="text-xs text-muted-foreground">
           Sign records this domain’s review, not overall initiative approval.
-          Return requires a reason. Both actions write an audit event.
+          Return and Abstain require a reason. Abstain leaves the required review incomplete. These actions write an audit event.
         </p>
       </CardContent>
 
+      <ReasonDialog
+        open={abstainRevision !== null}
+        onOpenChange={(open) => { if (!open && !pending) setAbstainRevision(null); }}
+        title={`Abstain from ${DOMAIN_LABEL[row.review.domain]} review`}
+        description="Record why you cannot provide this review. Abstention does not approve the initiative or complete this required review. You can explicitly resume it later."
+        confirmLabel="Record abstention"
+        pendingLabel="Recording abstention…"
+        pending={pending}
+        error={abstainError}
+        onConfirm={(reason) => void handleAbstention("abstain", reason)}
+      />
       <ReturnReviewDialog
         open={returnOpen}
         onOpenChange={setReturnOpen}

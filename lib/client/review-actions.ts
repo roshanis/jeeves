@@ -4,6 +4,8 @@ import type { ReviewRow } from "@/lib/data/dto";
 import type { Domain } from "@/lib/domain/types";
 import {
   returnReview,
+  abstainReview,
+  resumeReview,
   signReview,
   type DraftRunDomainOutcome,
   type SignReviewInput,
@@ -14,6 +16,8 @@ export interface ReviewActionEligibility {
   canEdit: boolean;
   canSignOrReturn: boolean;
   canRunAgent: boolean;
+  canAbstain: boolean;
+  canResume: boolean;
 }
 
 export function failedDraftRunDomains(outcomes: DraftRunDomainOutcome[]): Domain[] {
@@ -24,7 +28,8 @@ export function failedDraftRunDomains(outcomes: DraftRunDomainOutcome[]): Domain
 
 export type ReviewMutation =
   | ({ kind: "sign" } & SignReviewInput)
-  | { kind: "return"; reason: string; expectedRevision: number };
+  | { kind: "return" | "abstain"; reason: string; expectedRevision: number }
+  | { kind: "resume"; expectedRevision: number };
 
 export function performReviewMutation(
   token: string,
@@ -35,6 +40,8 @@ export function performReviewMutation(
   if (mutation.kind === "sign") {
     return signReview(token, cycleId, domain, { expectedRevision: mutation.expectedRevision, expectedEvidencePacketId: mutation.expectedEvidencePacketId, editedDraftMd: mutation.editedDraftMd });
   }
+  if (mutation.kind === "resume") return resumeReview(token, cycleId, domain, mutation.expectedRevision);
+  if (mutation.kind === "abstain") return abstainReview(token, cycleId, domain, mutation.reason, mutation.expectedRevision);
   return returnReview(token, cycleId, domain, mutation.reason, mutation.expectedRevision);
 }
 
@@ -54,6 +61,8 @@ export function getReviewActionEligibility(
     isOwnDomain,
     canEdit: isOwnDomain && hasLiveCycle && actionable,
     canSignOrReturn: isOwnDomain && hasLiveCycle && actionable,
-    canRunAgent: isOwnDomain && hasLiveCycle && status !== "signed",
+    canRunAgent: isOwnDomain && hasLiveCycle && status !== "signed" && status !== "abstained",
+    canAbstain: isOwnDomain && hasLiveCycle && ["pending", "drafted", "returned"].includes(status),
+    canResume: isOwnDomain && hasLiveCycle && status === "abstained",
   };
 }

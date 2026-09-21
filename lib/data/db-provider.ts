@@ -7,6 +7,7 @@
 // method loads the tables it needs in full and assembles the read model in
 // memory — simpler and more auditable than a lattice of joins, and well
 // within budget for a Neon/PGlite demo database.
+import { currentAbstention } from "@/lib/reviews/abstention";
 import { asc, eq, isNull, or, type SQL } from "drizzle-orm";
 import type { Domain, LifecycleState, OverlayFlags, Tier } from "@/lib/domain/types";
 import { currentControlRevisions } from "@/lib/controls/current-revisions";
@@ -431,20 +432,24 @@ export class DbDataProvider implements DataProvider {
       cycle ? snap.reviewDecisions.filter((rd) => rd.cycleId === cycle.id) : []
     )
       .sort((a, b) => a.domain.localeCompare(b.domain))
-      .map((rd) => ({
-        cycleId: rd.cycleId,
-        revision: rd.revision,
-        domain: rd.domain as Domain,
-        status: rd.status as ReviewRow["status"],
-        reviewer: rd.reviewer,
-        createdAt: toIso(rd.createdAt),
-        signedAt: rd.signedAt ? toIso(rd.signedAt) : null,
-        draftMd: rd.draftMd,
-        citations: rd.citations,
-        citationProvenance: rd.citationProvenance as ReviewRow["citationProvenance"],
-        missingEvidence: rd.missingEvidence,
-        evidenceRequests: rd.evidenceRequests,
-      }));
+      .map((rd) => {
+        const receipt = currentAbstention(rd, snap.auditEvents.filter((event) => event.initiativeId === init.id));
+        return {
+          ...(receipt ? { abstention: { reason: receipt.reason, reviewer: receipt.reviewer, at: receipt.at } } : {}),
+          cycleId: rd.cycleId,
+          revision: rd.revision,
+          domain: rd.domain as Domain,
+          status: rd.status as ReviewRow["status"],
+          reviewer: rd.reviewer,
+          createdAt: toIso(rd.createdAt),
+          signedAt: rd.signedAt ? toIso(rd.signedAt) : null,
+          draftMd: rd.draftMd,
+          citations: rd.citations,
+          citationProvenance: rd.citationProvenance as ReviewRow["citationProvenance"],
+          missingEvidence: rd.missingEvidence,
+          evidenceRequests: rd.evidenceRequests,
+        };
+      });
 
     const decisions: DecisionRow[] = snap.decisions
       .filter((d) => d.initiativeId === init.id)

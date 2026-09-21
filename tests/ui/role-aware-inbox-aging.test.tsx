@@ -205,3 +205,10 @@ describe("Role-aware Inbox rail section headings", () => {
     ).toBeDefined();
   });
 });
+
+it("keeps abstained reviews in the assigned reviewer queue", () => {
+  renderWithProviders(<PersonaHarness personaKey="marcus-webb"><RoleAwareInbox {...baseProps} domainReviews={[{...domainReviews[0],reviews:[{domain:"privacy-hipaa",status:"abstained",createdAt:OLD}]}]} /></PersonaHarness>);
+  fireEvent.click(screen.getByText("switch-persona"));
+  expect(screen.getByRole("link",{name:"Prior-Auth Summarizer"})).toBeTruthy();
+  expect(screen.getByText("Abstained")).toBeTruthy();
+});

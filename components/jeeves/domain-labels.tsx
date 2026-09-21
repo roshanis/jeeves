@@ -22,6 +22,7 @@ const STATUS_CLASS: Record<ReviewRow["status"], string> = {
   pending: "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300",
   drafted: "bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300",
   signed: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300",
+  abstained: "bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200",
   returned: "bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300",
 };
 
@@ -30,6 +31,7 @@ const STATUS_LABEL: Record<ReviewRow["status"], string> = {
   drafted: "Drafted",
   signed: "Signed",
   returned: "Returned",
+  abstained: "Abstained",
 };
 
 export function ReviewStatusBadge({ status }: { status: ReviewRow["status"] }) {
