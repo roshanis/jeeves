@@ -983,6 +983,34 @@ initiative directly in 'in_review' with all reviews open.
 ### Recommendations / Next steps: Local integrated production Playwright28/28, packaged runtime asset/network-denial check, typecheck/lint and production audit zero vulnerabilities pass. Shared-review API8 and malformed-cookie14 tests pass; independent caller/path review approves the correction. The initial full coverage run detected the corrected shared-sign issue; final focused/full and PR CI results must pass before merge. No hosted credentials, database migration or live model calls were performed. Preserve the original dirty checkout and untracked dependency symlink.
 
 
+## [AGENT: Codex] [2026-09-21T01:58:44Z]
+### Action: Removed the requested incident-data warning in isolated codex/incident-notice-20260920 from cached origin/main 7414d904d084873b0269d47cdf3736158a14d05e, with Luna plan approval before code edits and independent final approval.
+### Files changed: Isolated worktree app/(console)/inbox/page.tsx; components/jeeves/incident-data-notice.tsx; tests/ui/monitoring-state.test.tsx; agents-build-log.md (this append). Original checkout agents-build-log.md (append only).
+### Diff summary: Removed Inbox's page-wide incident notice and unused wrapper/import. Replaced shared amber warning with muted accessible status text in Monitoring and Administration, distinguishing preview from load failure. Retained nullable Inbox counts and successful-empty state guards. Added coverage for both unavailable reasons and verified empty results. Original dirty application/configuration files and earlier incident-banner branch remain preserved.
+### Recommendations / Next steps: Expected tests-first failure: 7 failed/4 passed. Final focused UI/incident-loader/security checks: 10 files/94 tests passed; independent reviewer reran 11 UI tests successfully. Full lint, typecheck and whitespace checks passed. Production-build Playwright golden path: 14/14 passed; navigation emitted a destination-stream-closed server message without test failure. Separate production mock-preview browser checks passed on Inbox, Monitoring and Administration; screenshots saved at /tmp/jeeves-incident-notice-inbox.png, /tmp/jeeves-incident-notice-monitoring.png and /tmp/jeeves-incident-notice-admin.png. Inbox/Monitoring screenshots visually inspected. Used disposable local PGlite and mocked providers; scoped test-owned servers exited. Browser log: /tmp/jeeves-incident-notice-browser.log. Local patch is ready for human-approved merge/publication; no remote refresh, commit, push, merge, deployment, hosted database/configuration or credential changes. Exclude the retained untracked node_modules dependency symlink from commits. This is local verification, not a deployed-preview update.
+
+
+## [AGENT: Codex] [2026-09-21T02:02:01Z]
+### Action: Prepared the incident-warning fix for merge and production deployment under the user's explicit request.
+### Files changed: agents-build-log.md (this append); previously reviewed Inbox page, shared incident notice and monitoring-state tests.
+### Diff summary: Fresh origin/main remains 7414d904d084873b0269d47cdf3736158a14d05e, matching the tested base and latest GitHub-recorded production deployment. No integration code changes needed. Saved the full reviewed patch before committing; excluded the task-owned node_modules symlink. Existing PR8 is an older unmerged version; this branch contains current-base regression coverage.
+### Recommendations / Next steps: Publish this exact scoped patch, wait for required full PR checks and independent review, then merge and verify GitHub-triggered production deployment and live pages. Prior local verification remains 94 focused/security tests, 14 production-browser tests, lint/typecheck and all three mock-preview page checks. Vercel connector returned no teams; GitHub integration provides deployment status. No dependency, credential, environment setting or database changes are required for this UI-only release.
+
+
+## [AGENT: Codex] [2026-09-21T02:23:07Z]
+### Action: Integrated visitor-playground main after PR16 passed its initial full CI and main advanced through PR15 during verification.
+### Files changed: agents-build-log.md conflict resolution (both complete append-only histories preserved). All upstream visitor changes were merged unchanged; the three incident-warning source/test files remain byte-identical to reviewed b646d6989fb78309be4b38748a30274297461d79.
+### Diff summary: Main is now 69d971c8ecf0677323bed52c3f674ef560ac0e9b. The only conflict was the build log. Initial PR16 CI passed 1289 tests/126 files with 88.77 percent line coverage, 28 browser tests, packaged-agent check, lint/typecheck and Vercel preview. No incident-warning logic changed during integration.
+### Recommendations / Next steps: Recheck affected UI/security tests and combined browser flow, obtain independent integration review, push the merge and require fresh PR checks before production merge. No credentials, hosted configuration, database or dependency edits are introduced by this task.
+
+
+## [AGENT: Codex] [2026-09-21T02:27:04Z]
+### Action: Corrected the inherited browser assertion exposed by integrating the new passwordless visitor flow, after independent Luna approval.
+### Files changed: tests/e2e/golden-path.spec.ts; agents-build-log.md (this append).
+### Diff summary: The first landing test starts a Priya requester session, navigates to Inbox, but previously expected the Program Office heading. Local browser context showed the correct persistent Priya session and RequesterView heading Your initiatives. The assertion now requires the retained Priya persona and exact level-1 requester heading. No application behavior changed and no test was skipped or weakened.
+### Recommendations / Next steps: Initial combined browser run was 27/28 with this incorrect heading expectation; failure context preserved at /tmp/jeeves-incident-notice-requester-heading-failure.md. Corrected scenario passes three consecutive runs. Combined focused UI/loader/security84, full lint and typecheck pass; rerun full browser and fresh PR CI before merge. Production remains pending. Main's visitor-access behavior and all other changes remain intact.
+
+
 ## [AGENT: Codex] [2026-09-21T02:43:06Z]
 ### Action: Diagnosed the user-supplied deployed-demo errors and prepared a reviewed repair in isolated codex/deployed-demo-errors-20260920 from main 69d971c.
 ### Files changed: Isolated .env.example, README.md, docs/deploy.md, docs/DEPLOYED-DEMO-REPAIR-2026-09-20.md; lib/db runtime/connection/client/migration helpers and tests; scripts/migrate.ts; lib/data/index.ts; app/_lib data-provider/incident loader and tests; app/api/session route and tests; lib/client/api.ts and UI tests; playwright.config.ts; agents-build-log.md. Original checkout: this log append only.
@@ -995,3 +1023,10 @@ initiative directly in 'in_review' with all reviews open.
 ### Files changed: docs/DEPLOYED-DEMO-REPAIR-2026-09-20.md; agents-build-log.md append; reviewed repair files prepared for commit. Hosted project: added sensitive production JEEVES_COOKIE_SECRET only.
 ### Diff summary: Refreshed origin/main and confirmed it remains69d971c. Rechecked hosted variable metadata, confirmed signing key absent, then generated a random server-only key and supplied it through stdin without printing, argv exposure or local persistence. Reviewed dry deployment manifest excludes local secrets, dependencies, PGlite, git, build output and test artifacts. Existing hosted database values and contents remain unchanged.
 ### Recommendations / Next steps: Commit the reviewed patch, stage with production environment and skip-domain, verify session/provider/schema behavior, then carry PR through CI and merge/publish only if live checks pass. User approval now covers the key, staged verification and merge/publication; missing-schema or data initialization must first be assessed without destructive seed/reset. Prior full local and affected-final regression results are recorded above.
+
+
+## [AGENT: Codex] [2026-09-21T02:54:10Z]
+### Action: Corrected the staged deployment archive record after reviewing the CLI dry-run contents.
+### Files changed: agents-build-log.md (this append only).
+### Diff summary: The initial Vercel CLI worktree dry-run included generated reports; no upload was made from that dry-run. A separate clean git archive contained 457 files (4 MB), excluded secrets, symlinks, and generated artifacts, and was the archive used for staging.
+### Recommendations / Next steps: Keep the clean archive as the staged source. No source files were changed in this correction.
