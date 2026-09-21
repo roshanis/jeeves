@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { getDb, localPgliteDirectory, resetDbForTests } from "./client";
+import { getDb, localPgliteDirectory } from "./client";
 
 const originalDirectory = process.env.JEEVES_PGLITE_DIR;
 const keys = ["DATABASE_URL", "POSTGRES_URL", "VERCEL"] as const;
@@ -13,7 +13,6 @@ afterEach(() => {
   }
   if (originalDirectory === undefined) delete process.env.JEEVES_PGLITE_DIR;
   else process.env.JEEVES_PGLITE_DIR = originalDirectory;
-  resetDbForTests();
 });
 
 describe("localPgliteDirectory", () => {

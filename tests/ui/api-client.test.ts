@@ -23,6 +23,7 @@ import {
   submitIntake,
 } from "@/lib/client/api";
 import { CHAMPION_PREFILL_PAYLOAD } from "@/lib/intake/champion-prefill";
+import { READ_ONLY_PREVIEW_MESSAGE } from "@/lib/data/provider-mode";
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -68,6 +69,14 @@ describe("postSession", () => {
       status: 401,
       message: "unauthorized",
     });
+  });
+
+  it("exchanges the current session when switching personas without sending a passcode", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { token: "reviewer-token", workspaceId: "same-workspace", expiresAt: 123 }));
+    await postSession("marcus-webb", "requester-token");
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(new Headers(init.headers).get("Authorization")).toBe("Bearer requester-token");
+    expect(JSON.parse(init.body as string)).toEqual({ personaKey: "marcus-webb" });
   });
 });
 
@@ -214,6 +223,10 @@ describe("authenticated helpers send the Bearer token", () => {
 });
 
 describe("error mapping", () => {
+  it("distinguishes unavailable passwordless entry from a read-only static preview", () => {
+    expect(apiErrorToMessage(new ApiError(503, "private configuration detail", undefined, "DEMO_NOT_CONFIGURED"))).toBe("The demo is temporarily unavailable. Please try again later.");
+    expect(apiErrorToMessage(new ApiError(403, READ_ONLY_PREVIEW_MESSAGE))).toBe(READ_ONLY_PREVIEW_MESSAGE);
+  });
   it("gives an actionable agent setup message only for the classified 503", async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse(503, { error: "private server detail", code: "AGENT_INITIALIZATION_FAILED" }));
     const err = await startDraftRun("tok", "init-1", ["legal"]).catch((e) => e);

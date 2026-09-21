@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { screen } from "@testing-library/react";
 import { renderWithProviders, installResizeObserverStub } from "./helpers";
-import { getProvider } from "@/lib/data";
+import { MockDataProvider } from "@/lib/data/mock-provider";
 import type { InitiativeDetail } from "@/lib/data/dto";
 import type { IncidentLoadResult } from "@/app/_lib/incident-data";
 import InboxPage from "@/app/(console)/inbox/page";
@@ -36,7 +36,7 @@ beforeEach(async () => {
   installResizeObserverStub();
   vi.stubEnv("DATA_PROVIDER", "mock");
   state.incidentResult = { status: "unavailable", reason: "preview", incidents: null };
-  const example = await getProvider().getInitiativeDetail("member-chat-copilot");
+  const example = await new MockDataProvider().getInitiativeDetail("member-chat-copilot");
   state.detail = {
     ...example!,
     telemetry: [{

@@ -121,11 +121,12 @@ governance domain, covering all 8 required review domains.
   production, or a persistent local **PGlite** instance as a zero-setup
   fallback for local dev and tests (same schema, same Drizzle API either
   way)
-- **Vercel AI SDK + Workflow SDK** behind app-owned capability ports —
-  `AgentPort` (draft review, triage assist, completeness check via
-  `generateText` + `Output.object`) and a `WorkflowPort`-shaped bounded-
-  concurrency fan-out for multi-domain drafts. Authoritative state
-  transitions live in application code + Postgres, never inside an adapter.
+- **Vercel AI SDK**, with an optional OpenAI Agents SDK adapter, behind the
+  app-owned `AgentPort`: review drafting, intake interview and grounded auditor
+  answers. Domain drafts use a bounded application worker pool; lifecycle and
+  review state live in Postgres. There is no installed Workflow SDK or durable
+  background job runner. Deterministic triage, completeness and monitoring
+  remain ordinary domain code.
 - **OpenAI GPT-5.x** as the runtime LLM (`OPENAI_MODEL`) — used only if
   `OPENAI_API_KEY` is set; otherwise a deterministic, keyless mock adapter is
   the default, so nothing ever calls a live provider without that key. All
@@ -134,6 +135,11 @@ governance domain, covering all 8 required review domains.
 ---
 
 ## Getting started
+
+`DATA_PROVIDER=mock` is a read-only preview, including session and cron writes.
+Use `DATA_PROVIDER=db` for an interactive local demo; without `DATABASE_URL`,
+it uses local PGlite. Pages and mutation endpoints must use the same mode.
+
 
 **Prerequisites:** Node.js (see `package.json`/`next` 16 for the supported
 range) and npm. No Docker, no external services required for local dev.

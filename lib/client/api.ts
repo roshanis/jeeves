@@ -18,6 +18,7 @@
 import type { Domain, LifecycleState, Tier } from "@/lib/domain/types";
 import type { IntakePayload } from "@/lib/intake/types";
 import type { CompletenessGap } from "@/lib/intake/completeness";
+import { READ_ONLY_PREVIEW_MESSAGE } from "@/lib/data/provider-mode";
 
 /* -------------------------------------------------------------------------
  * Error type
@@ -47,6 +48,9 @@ export function isApiError(value: unknown): value is ApiError {
  *   400 -> surface the server's own validation message; else generic.
  */
 export function apiErrorToMessage(err: ApiError): string {
+  if (err.status === 403 && err.message === READ_ONLY_PREVIEW_MESSAGE) {
+    return READ_ONLY_PREVIEW_MESSAGE;
+  }
   if (err.status === 503 && err.code === "DEMO_NOT_CONFIGURED") {
     return "The demo is temporarily unavailable. Please try again later.";
   }

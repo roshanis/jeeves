@@ -16,6 +16,8 @@ import {
   initiatives,
   observations,
   reviewCycles,
+  reviewDecisions,
+  riskAssessments,
 } from "../db/schema";
 import {
   runMonitor,
@@ -154,6 +156,13 @@ describe("lib/services/monitor-service", () => {
       const reassessment = cycles.find((c) => c.kind === "reassessment");
       expect(reassessment).toBeTruthy();
       expect(reassessment!.incidentId).toBe(incidentRows[0]!.id);
+      const [assessment] = await db.select().from(riskAssessments)
+        .where(eq(riskAssessments.id, reassessment!.riskAssessmentId));
+      const pending = await db.select().from(reviewDecisions)
+        .where(eq(reviewDecisions.cycleId, reassessment!.id));
+      expect(pending.map((row) => row.domain).sort()).toEqual([...assessment.requiredDomains].sort());
+      expect(pending.every((row) => row.status === "pending" && row.draftMd === null)).toBe(true);
+
 
       // Effective control flipped to breached.
       const ecRows = await db

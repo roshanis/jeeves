@@ -2,7 +2,7 @@
 
 ## Confirmed production diagnosis
 
-The supplied screenshot targets `https://jeeves-three.vercel.app`. Production is serving main `69d971c`. A direct session request returned HTTP 500. The matching runtime log reports `EROFS: read-only file system, mkdir '/var/task/.pglite'` from the database-backed session rate limiter.
+The supplied screenshot targets `https://jeeves-three.vercel.app`. At the initial diagnosis, production was serving main `69d971c`. A direct session request returned HTTP 500. The matching runtime log reports `EROFS: read-only file system, mkdir '/var/task/.pglite'` from the database-backed session rate limiter.
 
 Project environment metadata lists Supabase integration `POSTGRES_URL` variables, but no `DATABASE_URL` and no `JEEVES_COOKIE_SECRET`. The former name mismatch makes the API attempt local PGlite while page and incident selectors use the mock preview. Integration database values are marked sensitive and are deployment-only; they were not printed or copied into files.
 
@@ -10,15 +10,23 @@ Project environment metadata lists Supabase integration `POSTGRES_URL` variables
 
 - Resolve the trimmed explicit `DATABASE_URL`, then integration `POSTGRES_URL`, consistently for the DB client, pages, incident reads and migration tooling. Preserve explicit mock overrides for deliberate preview/tests.
 - Reject URL-free local PGlite in Vercel runtime. Preserve ordinary local development and Neon support; use PostgreSQL wire protocol and verified TLS for Supabase with a bounded pool.
-- Match migration driver to its connection and keep direct/session migration URLs separate from transaction-pooled runtime URLs. No migration has been run against a hosted database.
+- Match migration driver to its connection and keep direct/session migration URLs separate from transaction-pooled runtime URLs. Hosted initialization is recorded separately below.
 - Preflight signing before storage access. Session-store failures become a coded, retryable 503; diagnostics omit raw queries, private endpoints, credentials and client identifiers.
 - Keep all local/browser tests offline by blanking both runtime URL aliases.
 
-## Deployment work still pending
+## Hosted repair and staged verification
 
-The user approved configuration, staged verification and publication. A fresh server-only `JEEVES_COOKIE_SECRET` has now been added as a sensitive production variable through stdin, without printing or storing its value locally. The remaining steps are to create a staged deployment using the existing integration variables, inspect database/schema readiness and test session creation/persona switching before promoting it. Existing database state must be preserved. Do not run seed/reset to repair an existing database; any missing-schema or fresh-demo initialization work needs a separately scoped decision after inspecting the target.
+The user approved hosted configuration, staged verification and publication. A fresh server-only `JEEVES_COOKIE_SECRET` was supplied through stdin as a sensitive production variable without printing or storing its value locally. The official project Dashboard certificate was configured as `DATABASE_SSL_CA` after staging exposed an untrusted certificate chain. Certificate verification remains enabled. Only clean git archives were uploaded; the initial dry worktree manifest included generated reports and was never uploaded.
 
-The separate prepared incident-banner change has not been imported: fixing the shared provider selection addresses the source of the preview notice. No claim of hosted recovery is made before the staged checks pass.
+A read-only check then confirmed the configured Supabase database had zero public tables and no Drizzle journal. The user separately approved installing existing migrations `0000`–`0012`, restricting app access by public API roles, and testing entry. The reviewed SQL transaction guards against existing objects, records exact Drizzle hashes and timestamps, enables RLS on all 19 app tables, and revokes only app-object access from PUBLIC, anon and authenticated. An effective-privilege postcondition rolls back if inherited permissions remain. It preserves server-owner access and Supabase-managed objects.
+
+Root executed that exact transaction in the authenticated SQL Editor. Read-only verification returned 19 app tables, 19 RLS-enabled tables, 13 migration records, zero relations accessible by anon/authenticated, and zero initiative rows. No seed, reset or data deletion was run. The artifact SHA-256 is `9fa82f9fcf0652651c05545ad0a7c036c79d8316db4854dc8048efa61a74aaf2`. Independent audit and ephemeral PGlite tests cover successful initialization, existing-data guard preservation, inherited-access rejection, and absent API roles.
+
+On staged commit `bb2a38d`, database health and passwordless session entry returned HTTP 200. The secure signed workspace cookie was issued; persona switch and switch-back returned 200, preserved the workspace, and recognized persisted sessions across requests. These probes wrote only isolated demo session and rate-limit state. Business/catalog seed data and live LLM behavior are outside this verification.
+
+Main advanced through PR17 during release, so the repair now integrates its shared ESM provider factory and explicit read-only preview policy. Both the newly added mutation guard and layout capability must recognize POSTGRES_URL as well as DATABASE_URL. A regression reproduced the incorrect read-only denial under an integration-only configuration before that reconciliation was fixed. PR16's incident notice changes are also preserved.
+
+Canonical production recovery remains pending verification of the final integrated commit and deployment. PR18 and the release evidence record will contain the resulting deployment identifiers and public checks.
 
 ## Validation
 
@@ -28,7 +36,7 @@ TDD reproduced the POSTGRES_URL-only page/incident/coherent-detail failures (3 f
 
 Final review identified an additional migration edge case: a supplied PGlite handle must ignore an unrelated ambient Supabase transaction-pool URL. Its new regression failed before the fix, then all seven DB/migration suites passed 46 tests after the correction. Typecheck, scoped lint and whitespace checks passed again. The full 1,314-test run and browser build preceded this final migration-only correction; affected suites were rerun afterward. Browser navigation emitted a destination-stream-closed server warning without a test failure.
 
-All 95 fingerprinted original-checkout files were unchanged before the required append-only build log update. No live LLM request, hosted migration, seed/reset, commit, push, merge or repair deployment has occurred in this round.
+All 95 fingerprinted original-checkout files were unchanged before the required append-only build log update. The initial local checks preceded the separately approved hosted work recorded above. No seed/reset or live LLM request has been run.
 
 Evidence files:
 - `/tmp/jeeves-deployed-demo-provider-red.log` and `/tmp/jeeves-deployed-demo-provider-green.log`
@@ -38,4 +46,4 @@ Evidence files:
 - `/tmp/jeeves-deployed-demo-lint.log` and `/tmp/jeeves-deployed-demo-typecheck.log`
 - `/tmp/jeeves-deployed-demo-audit.json`
 
-Updated 2026-09-21T02:41:47Z.
+Updated 2026-09-21T03:20Z.

@@ -10,7 +10,7 @@ in the standard entry format. Default collaboration: Codex implements, Claude re
 
 ## Stack
 - Next.js (App Router) + TypeScript, Tailwind + shadcn/ui, Recharts
-- **Vercel AI SDK + Workflow SDK** (P0 gate DECIDED 2026-07-11: FALLBACK adopted — see build log 04:40Z/04:45Z entries; do not introduce eve). `agents/` directory-per-agent layout is our own convention.
+- **Vercel AI SDK** (default) + optional OpenAI Agents SDK behind `AgentPort`; application-owned bounded draft fan-out. Workflow SDK was proposed at P0 but is not implemented; do not introduce eve. `agents/` directory-per-agent layout is our own convention.
 - Neon Postgres + Drizzle ORM (one dev branch + isolated test schema; no Docker)
 - OpenAI GPT-5.x runtime LLM via env `OPENAI_MODEL`; ALL LLM calls mocked in tests
 
@@ -19,13 +19,13 @@ in the standard entry format. Default collaboration: Codex implements, Claude re
 - npm is the toolchain (pnpm is not installed on this host — decided at P0).
 
 ## Layout
-- `app/` Next.js routes · `agents/` eve agents-as-directories · `lib/` domain logic (>80% coverage target) · `scripts/seed.ts` · `tests/`
+- `app/` Next.js routes · `agents/` prompt directories · `lib/` domain logic (>80% coverage target) · `scripts/seed.ts` · `tests/`
 
 ## Hard Rules (from the Codex plan review — do not violate)
 1. Agents draft, recommend, route, and flag missing evidence — they NEVER approve. Low-risk fast-lane = deterministic pre-approved policy with a named accountable approver.
 2. Public visitors may start a passwordless demo session and choose fictional personas. Every mutation/LLM endpoint requires a valid session with a non-null isolated workspace, atomic `run_budget` check where applicable, rate limit and input length caps. Visitor sessions cannot mutate shared seed records or global control defaults. Human authorization: 2026-09-19, "lets visitors play".
 3. `AuditEvent` is append-only at the DB level (role permissions/trigger), not just in app code.
-4. Authoritative state transitions live in application code + Postgres — never inside eve/fallback adapters. Adapters implement app-owned `AgentPort`/`WorkflowPort` types only.
+4. Authoritative state transitions live in application code + Postgres — never inside eve/fallback adapters. Adapters implement app-owned `AgentPort` types only.
 5. Separation of duties: Admin cannot approve initiatives or sign reviews. Admin's two live actions (eval-threshold change, pause/resume) require a reason and write audit events.
 6. All synthetic telemetry labeled "Synthetic data — demo" with connector-status chips. No imitation third-party panels, no dead deep links.
 7. Idempotency: seed, sign-off retry, monitor re-runs — no duplicate incidents/reviews. Uniqueness constraints per plan §5.

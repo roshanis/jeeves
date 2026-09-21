@@ -21,12 +21,16 @@
  * clear the live-initiative registry (lib/client/live-registry.ts) — see
  * that module's header.
  *
+ * The root layout owns one provider with runtime liveModeAvailable, preserving
+ * pending entry across route groups. Previews neither read stored session data
+ * nor offer login; the stored value is preserved.
  * Must be mounted INSIDE RoleProvider (it calls useRole()).
  */
 import * as React from "react";
-import { apiErrorToMessage, isApiError, postSession } from "./api";
+import { ApiError, apiErrorToMessage, isApiError, postSession } from "./api";
 import { findPersona, type LivePersona } from "./personas";
 import { useRole } from "@/components/jeeves/role-context";
+import { READ_ONLY_PREVIEW_MESSAGE } from "@/lib/data/provider-mode";
 
 export interface LiveSession {
   token: string;
@@ -39,6 +43,7 @@ export interface LiveSession {
 
 export interface LiveSessionContextValue {
   session: LiveSession | null;
+  liveModeAvailable: boolean;
   login: (personaKey: string) => Promise<LiveSession>;
   logout: () => void;
   pending: boolean;
@@ -136,10 +141,13 @@ export function resetLiveSessionForTests(): void {
 
 const LiveSessionContext = React.createContext<LiveSessionContextValue | null>(null);
 
-export function LiveSessionProvider({ children }: { children: React.ReactNode }) {
+export function LiveSessionProvider({ children, liveModeAvailable = true }: {
+  children: React.ReactNode;
+  liveModeAvailable?: boolean;
+}) {
   const session = React.useSyncExternalStore(
     subscribeSession,
-    getSessionSnapshot,
+    liveModeAvailable ? getSessionSnapshot : getSessionServerSnapshot,
     getSessionServerSnapshot,
   );
   const { setPersonaKey } = useRole();
@@ -162,6 +170,10 @@ export function LiveSessionProvider({ children }: { children: React.ReactNode })
   const version = React.useRef(0);
 
   const login = React.useCallback((personaKey: string): Promise<LiveSession> => {
+    if (!liveModeAvailable) {
+      setStartError(READ_ONLY_PREVIEW_MESSAGE);
+      return Promise.reject(new ApiError(403, READ_ONLY_PREVIEW_MESSAGE));
+    }
     // All entry controls share one request, including rapid double clicks.
     if (entryRequest.current) return entryRequest.current;
     const persona = findPersona(personaKey);
@@ -196,7 +208,7 @@ export function LiveSessionProvider({ children }: { children: React.ReactNode })
     })();
     entryRequest.current = request;
     return request;
-  }, [setPersonaKey]);
+  }, [liveModeAvailable, setPersonaKey]);
 
   const logout = React.useCallback(() => {
     version.current++;
@@ -211,8 +223,8 @@ export function LiveSessionProvider({ children }: { children: React.ReactNode })
   }, [login]);
 
   const value = React.useMemo(
-    () => ({ session, login, logout, pending, startError, startDemo }),
-    [session, login, logout, pending, startError, startDemo],
+    () => ({ session, liveModeAvailable, login, logout, pending, startError, startDemo }),
+    [session, liveModeAvailable, login, logout, pending, startError, startDemo],
   );
 
   return <LiveSessionContext.Provider value={value}>{children}</LiveSessionContext.Provider>;

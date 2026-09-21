@@ -7,8 +7,11 @@ import { useState } from "react";
 const mocks = vi.hoisted(() => ({ session: vi.fn(), request: vi.fn(), download: vi.fn(), refresh: vi.fn(), mutate: vi.fn() }));
 vi.mock("@/lib/client/session-context", () => ({ useLiveSessionOptional: mocks.session }));
 vi.mock("@/lib/client/evidence-api", () => ({ evidenceRequest: mocks.request, downloadEvidenceFile: mocks.download }));
-vi.mock("@/lib/client/review-actions", async (importOriginal) => ({ ...await importOriginal<typeof import("@/lib/client/review-actions")>(), performReviewMutation: mocks.mutate }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: mocks.refresh }) }));
+vi.mock("@/lib/client/review-actions", async (original) => ({
+  ...await original<typeof import("@/lib/client/review-actions")>(),
+  performReviewMutation: mocks.mutate,
+}));
 import { ReviewEvidenceWorkspace } from "@/components/jeeves/review-evidence-workspace";
 import { ReviewWorkbench, type ReviewQueueRow } from "@/components/jeeves/review-workbench";
 import { renderWithProviders } from "./helpers";
@@ -36,6 +39,66 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
 
 describe("evidence-led review", () => {
+  it("keeps shared sample review commands read-only even with an assigned live reviewer", async () => {
+    const state = fixture();
+    state.requirements[0].status = "accepted";
+    mocks.request.mockResolvedValue(state);
+    const row: ReviewQueueRow = { slug: "sample", title: "Sample", tier: "high", isSeeded: true, review: { cycleId: "cycle", revision: 4, domain: "privacy-hipaa", status: "drafted", reviewer: null, createdAt: "2026-09-19T12:00:00Z", signedAt: null, draftMd: "Sample draft", citations: [] } };
+    renderWithProviders(<ReviewWorkbench rows={[row]} selection={{ slug: "sample", domain: "privacy-hipaa" }} />);
+    await screen.findByRole("heading", { name: "retention-v2.pdf" });
+    expect((screen.getByRole("button", { name: "Sign" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Return" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByLabelText("Assessment text") as HTMLTextAreaElement).disabled).toBe(true);
+    expect(screen.queryByRole("button", { name: "Re-run agent" })).toBeNull();
+  });
+
+  it("binds human edits to the original reviewed draft even when refreshed rows contain a replacement", async () => {
+    const state = fixture();
+    state.requirements[0].status = "accepted";
+    mocks.request.mockResolvedValue(state);
+    const row: ReviewQueueRow = { slug: "case", title: "Case", tier: "high", review: { cycleId: "cycle", revision: 4, domain: "privacy-hipaa", status: "drafted", reviewer: null, createdAt: "2026-09-19T12:00:00Z", signedAt: null, draftMd: "Original agent draft", citations: [] } };
+    function Harness() {
+      const [replaced, setReplaced] = useState(false);
+      return <><button onClick={() => setReplaced(true)}>Refresh replaced draft</button><ReviewWorkbench rows={[{ ...row, review: { ...row.review, revision: replaced ? 5 : 4, draftMd: replaced ? "Concurrent replacement" : "Original agent draft" } }]} selection={{ slug: "case", domain: "privacy-hipaa" }} /></>;
+    }
+    renderWithProviders(<Harness />);
+    await screen.findByRole("heading", { name: "retention-v2.pdf" });
+    fireEvent.change(screen.getByLabelText("Assessment text"), { target: { value: "My assessment of the original source" } });
+    fireEvent.click(screen.getByRole("button", { name: "Refresh replaced draft" }));
+    expect((screen.getByRole("button", { name: "Sign" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByLabelText("Assessment text") as HTMLTextAreaElement).value).toBe("My assessment of the original source");
+    expect(mocks.mutate).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Discard edits and load current draft" }));
+    expect((screen.getByLabelText("Assessment text") as HTMLTextAreaElement).value).toBe("Concurrent replacement");
+    expect((screen.getByRole("button", { name: "Sign" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "I reviewed the refreshed draft and evidence" }));
+    fireEvent.click(screen.getByRole("button", { name: "Sign" }));
+    await waitFor(() => expect(mocks.mutate).toHaveBeenCalledWith("reviewer-token", "cycle", "privacy-hipaa", {
+      kind: "sign", editedDraftMd: undefined, expectedRevision: 5, expectedEvidencePacketId: "packet-2",
+    }));
+  });
+
+  it("opens a supplied case/domain selection and preserves edits across URL-driven selection changes", async () => {
+    const rows: ReviewQueueRow[] = ["one", "two"].map((slug) => ({ slug, title: `Case ${slug}`, tier: "high", review: { cycleId: "cycle", revision: 4, domain: "privacy-hipaa", status: "drafted", reviewer: null, createdAt: "2026-09-19T12:00:00Z", signedAt: null, draftMd: "Agent draft", citations: [] } }));
+    const onSelectionChange = vi.fn();
+    function Harness() {
+      const [slug, setSlug] = useState("one");
+      return <><button onClick={() => setSlug("one")}>Browser Back</button><ReviewWorkbench rows={rows} selection={{ slug, domain: "privacy-hipaa" }} onSelectionChange={(next) => { onSelectionChange(next); if (next) setSlug(next.slug); }} /></>;
+    }
+    renderWithProviders(<Harness />);
+    await screen.findByRole("heading", { name: "retention-v2.pdf" });
+    expect((screen.getByLabelText("Assessment text") as HTMLTextAreaElement).disabled).toBe(false);
+    fireEvent.change(screen.getByLabelText("Assessment text"), { target: { value: "Human edits retained on Back" } });
+    fireEvent.click(screen.getByRole("button", { name: "Change review" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open Privacy/HIPAA review for Case two" }));
+    expect(onSelectionChange).toHaveBeenCalledWith({ slug: "two", domain: "privacy-hipaa" });
+    await screen.findByRole("heading", { name: "retention-v2.pdf" });
+    expect((screen.getByLabelText("Assessment text") as HTMLTextAreaElement).value).toBe("Agent draft");
+    fireEvent.click(screen.getByRole("button", { name: "Browser Back" }));
+    await screen.findByRole("heading", { name: "retention-v2.pdf" });
+    expect((screen.getByLabelText("Assessment text") as HTMLTextAreaElement).value).toBe("Human edits retained on Back");
+  });
+
   it("shows the submitted document and page references, never an unsubmitted replacement", async () => {
     const state = fixture();
     state.documents.push({ ...state.documents[0], id: "unsubmitted", fileName: "unsubmitted.pdf", version: 3 });
@@ -129,11 +192,11 @@ describe("evidence-led review", () => {
     await screen.findByRole("heading", { name: "retention-v2.pdf" });
   });
 
-  it("preserves a route to existing domain actions when the evidence service is unavailable", async () => {
+  it("preserves access to the case evidence history when evidence cannot be checked for signing", async () => {
     mocks.request.mockRejectedValue(new ApiError(503, "Evidence is temporarily unavailable. Please try again."));
     render(workspace());
     await screen.findByRole("alert");
-    expect(screen.getByRole("link", { name: "Open initiative reviews" }).getAttribute("href")).toBe("/initiatives/case-one?tab=reviews");
+    expect(screen.getByRole("link", { name: "Open initiative evidence" }).getAttribute("href")).toBe("/initiatives/case-one?tab=evidence");
   });
 
   it("does not bind an older visible review to evidence from a newer cycle", async () => {
@@ -177,6 +240,16 @@ describe("evidence-led review", () => {
     render(workspace());
     expect(screen.getByText(/Start the demo to view private submitted evidence/)).toBeTruthy();
     expect(mocks.request).not.toHaveBeenCalled();
+  });
+
+  it("starts the passwordless demo from the evidence workspace without fetching private evidence first", () => {
+    const startDemo = vi.fn();
+    mocks.session.mockReturnValue({ session: null, startDemo });
+    render(workspace());
+    fireEvent.click(screen.getByRole("button", { name: "Start demo" }));
+    expect(startDemo).toHaveBeenCalledOnce();
+    expect(mocks.request).not.toHaveBeenCalled();
+    expect(document.querySelector('input[type="password"]')).toBeNull();
   });
 
   it("preserves a human draft while switching sources and reviews", async () => {

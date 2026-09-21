@@ -2,6 +2,7 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { draftBudgetPolicy } from "@/lib/workflow/draft-execution-policy";
+import { resolveAgentRuntimeConfig, reviewInvocationLimits } from "@/lib/agents/runtime";
 import { ReviewIntegrityError } from "@/lib/services/review-integrity";
 import { getDb } from "@/lib/db/client";
 import {
@@ -49,9 +50,11 @@ export async function POST(
   const parsed = bodySchema.safeParse(json);
   if (!parsed.success) return Response.json({ error: "invalid draft request" }, { status: 400 });
   const db = getDb();
+  const limits = reviewInvocationLimits(resolveAgentRuntimeConfig());
   try {
     const result = await runReviewAgent(db, cycleId, domain as Domain, guard.actor, guard.workspaceId, undefined, {
       ...parsed.data, budget: draftBudgetPolicy(), signal: req.signal,
+      runTimeoutMs: limits.timeoutMs,
     });
     if (result.errorKind === "budget-exhausted") return Response.json(result, { status: 429 });
     return Response.json(result, { status: 200 });

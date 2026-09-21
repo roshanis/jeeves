@@ -20,7 +20,7 @@ export function RoleSwitcher() {
         disabled={live?.pending ?? false}
         className="h-9 min-w-0 max-w-40 rounded-md border border-input bg-background px-2 text-sm sm:max-w-56"
         onChange={(event) => {
-          if (live) void live.login(event.target.value).catch(() => { /* Error shown beside the demo controls. */ });
+          if (live && live.liveModeAvailable !== false) void live.login(event.target.value).catch(() => { /* Error shown beside the demo controls. */ });
           else setPersonaKey(event.target.value);
         }}
       >

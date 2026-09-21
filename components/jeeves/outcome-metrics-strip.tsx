@@ -68,7 +68,7 @@ export function OutcomeMetricsStrip({ metrics }: { metrics: OutcomeMetrics }) {
       />
       <OutcomeMetricCard
         label="Reviewer hours saved"
-        value={`~${metrics.reviewerHoursSaved}h`}
+        value={`~${metrics.reviewerHoursSavedPerReview}h`}
         subtext="per review, drafted vs. scratch"
       />
       <OutcomeMetricCard

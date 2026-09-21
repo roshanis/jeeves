@@ -1,7 +1,7 @@
 /** Public demo entry and persona switching. Every action still needs a
  * server-issued, workspace-bound session. No visitor password is required. */
 import { z } from "zod";
-import { checkSessionAttempt, clientKeyFor, issueDemoSession, extractSessionToken, resolveSession } from "@/lib/services/route-guard";
+import { checkReadOnlyMode, checkSessionAttempt, clientKeyFor, issueDemoSession, extractSessionToken, resolveSession } from "@/lib/services/route-guard";
 import { resolveActor } from "@/lib/services/actors";
 import {
   resolveWorkspaceCookieSecret,
@@ -80,6 +80,11 @@ function storageUnavailable(error: unknown): Response {
 }
 
 export async function POST(req: Request): Promise<Response> {
+  const readOnlyFailure = checkReadOnlyMode();
+  if (readOnlyFailure) {
+    return Response.json({ error: readOnlyFailure.message }, { status: readOnlyFailure.status });
+  }
+
   // Parse and validate the public input before any database-backed guards.
   let json: unknown;
   try {

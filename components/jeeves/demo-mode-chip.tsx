@@ -3,10 +3,11 @@
 import { Play } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useLiveSession } from "@/lib/client/session-context";
+import { READ_ONLY_PREVIEW_MESSAGE } from "@/lib/data/provider-mode";
 
 /** A visitor can start playing immediately; persona choice lives in the header. */
 export function DemoModeChip() {
-  const { session, logout, pending, startError, startDemo } = useLiveSession();
+  const { session, liveModeAvailable = true, logout, pending, startError, startDemo } = useLiveSession();
   return (
     <div className="flex flex-col items-start gap-1" data-slot="demo-mode-chip">
       {session ? (
@@ -21,9 +22,9 @@ export function DemoModeChip() {
           </Button>
         </div>
       ) : (
-        <Button type="button" size="sm" onClick={startDemo} disabled={pending}>
+        <Button type="button" size="sm" onClick={startDemo} disabled={!liveModeAvailable || pending} title={liveModeAvailable ? undefined : READ_ONLY_PREVIEW_MESSAGE}>
           <Play className="h-3.5 w-3.5" aria-hidden />
-          {pending ? "Starting…" : "Start demo"}
+          {!liveModeAvailable ? "Read-only preview" : pending ? "Starting…" : "Start demo"}
         </Button>
       )}
       {startError ? <p role="alert" className="max-w-64 text-xs text-destructive">{startError}</p> : null}

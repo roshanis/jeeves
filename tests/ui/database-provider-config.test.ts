@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ detail: vi.fn().mockResolvedValue(null), fallback: { kind: "mock" } }));
+const mocks = vi.hoisted(() => ({ detail: vi.fn().mockResolvedValue(null) }));
 vi.mock("next/headers", () => ({
   cookies: async () => ({ get: () => undefined }),
   headers: async () => new Headers({ host: "localhost:3117" }),
 }));
-vi.mock("@/lib/data", () => ({ getProvider: () => mocks.fallback }));
+vi.mock("@/lib/data/mock-provider", () => ({ MockDataProvider: class { kind = "mock"; } }));
 vi.mock("@/lib/data/db-provider", () => ({
   DbDataProvider: class { kind = "db"; getInitiativeDetail = mocks.detail; },
 }));
@@ -28,7 +28,7 @@ describe("hosted integration data selection", () => {
   it("preserves an explicit mock-provider override", async () => {
     vi.stubEnv("DATA_PROVIDER", "mock");
     const { getAppProvider } = await import("@/app/_lib/data-provider");
-    expect(getAppProvider()).toBe(mocks.fallback);
+    expect(getAppProvider()).toHaveProperty("kind", "mock");
   });
 
   it("does not route network database detail reads through the local PGlite HTTP workaround", async () => {

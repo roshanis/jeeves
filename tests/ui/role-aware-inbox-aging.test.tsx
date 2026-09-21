@@ -9,6 +9,7 @@ import {
 import { useRole } from "@/components/jeeves/role-context";
 import type { InitiativeSummary } from "@/lib/data/dto";
 import type { OverlayFlags } from "@/lib/domain/types";
+import { reviewDecisionReadiness } from "@/lib/approval/review-readiness";
 
 const OLD = "2020-01-01T00:00:00.000Z"; // far past -> "overdue"
 
@@ -52,6 +53,25 @@ const NO_OP_FLAGS: OverlayFlags = {
   humanInLoop: true,
   individualImpact: false,
 };
+
+it("routes drafted initial reviews and signed reassessments to the approval queue, excluding closed decisions", () => {
+  const cases: [string, InitiativeSummary["state"], string, boolean][] = [
+    ["conditional-ready", "in_review", "drafted", true],
+    ["reassessment-ready", "re_review", "signed", true],
+    ["pending", "in_review", "pending", true],
+    ["already-decided", "conditionally_approved", "signed", false],
+  ];
+  const initiatives = cases.map(([slug, state, status, cycleOpen]) => ({
+    ...makeDedupedAlert(slug), title: slug, state,
+    decisionReadiness: reviewDecisionReadiness({ state, cycleOpen, requiredDomains: ["legal"], reviews: [{ domain: "legal", status }] }),
+  }));
+  renderWithProviders(<PersonaHarness personaKey="angela-torres"><RoleAwareInbox {...baseProps} initiatives={initiatives} /></PersonaHarness>);
+  fireEvent.click(screen.getByText("switch-persona"));
+  expect(screen.getByRole("link", { name: "conditional-ready" })).toBeTruthy();
+  expect(screen.getByRole("link", { name: "reassessment-ready" })).toBeTruthy();
+  expect(screen.queryByRole("link", { name: "pending" })).toBeNull();
+  expect(screen.queryByRole("link", { name: "already-decided" })).toBeNull();
+});
 
 /** An initiative that is BOTH in the "needs attention" table (state
  * "in_review") and passed as an operational alert — the scenario where the

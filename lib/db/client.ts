@@ -93,11 +93,6 @@ export function getDb(): Db {
   return dbSlot.db;
 }
 
-/** Test-only: reset the memoized handle (used by test-client.ts between suites). */
-export function resetDbForTests(): void {
-  dbSlot.db = null;
-}
-
 /**
  * Close the underlying connection and drop the memoized handle. Needed by
  * short-lived CLI processes (scripts/seed.ts): the PGlite WASM runtime

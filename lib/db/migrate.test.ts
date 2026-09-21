@@ -13,12 +13,12 @@ import { auditEvents, initiatives } from "./schema";
  * append-only audit log. Applying a schema change to a live deployment
  * therefore meant destroying the compliance record the product exists to
  * keep. `applyMigrations()` is the non-destructive path, and the assertions
- * below are the properties that make it safe to point at a real database:
+ * below cover reruns against a fully migrated, disposable PGlite database:
  *
- *  1. it is idempotent (safe to re-run),
- *  2. it PRESERVES existing rows — the whole point,
- *  3. it leaves the `audit_events` append-only trigger ARMED afterwards, so
- *     a migration run can never silently leave the audit log writable.
+ *  1. re-running is idempotent,
+ *  2. existing rows survive the rerun,
+ *  3. the audit_events append-only trigger remains armed.
+ * Applying pending migrations to existing data needs separate upgrade tests.
  */
 describe("lib/db/migrate — non-destructive migration runner", () => {
   let db: TestDb;
@@ -120,7 +120,9 @@ describe("lib/db/migrate — non-destructive migration runner", () => {
     });
     expect(await db.select().from(auditEvents)).toHaveLength(1);
   });
+});
 
+describe("describeMigrationTarget", () => {
   it("describes configured migration targets opaquely", () => {
     expect(
       describeMigrationTarget(

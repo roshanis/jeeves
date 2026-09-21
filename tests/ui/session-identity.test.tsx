@@ -16,10 +16,10 @@ function IdentityProbe() {
   return <p>{`${personaKey}|${session?.personaKey ?? "public"}`}</p>;
 }
 
-function Harness() {
+function Harness({ liveModeAvailable = true }: { liveModeAvailable?: boolean }) {
   return (
     <RoleProvider>
-      <LiveSessionProvider>
+      <LiveSessionProvider liveModeAvailable={liveModeAvailable}>
         <IdentityProbe />
         <RoleSwitcher />
       </LiveSessionProvider>
@@ -82,5 +82,12 @@ describe("live session identity", () => {
     render(<Harness />);
     await vi.advanceTimersByTimeAsync(1_001);
     expect(screen.getByText("marcus-webb|public")).toBeTruthy();
+  });
+
+  it("lets static previews browse personas without attempting passwordless entry", () => {
+    render(<Harness liveModeAvailable={false} />);
+    fireEvent.change(screen.getByRole("combobox", { name: "Demo persona" }), { target: { value: "marcus-webb" } });
+    expect(screen.getByText("marcus-webb|public")).toBeTruthy();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

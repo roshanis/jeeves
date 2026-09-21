@@ -2,11 +2,9 @@ import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 import path from "node:path";
 
-// Test environment: 'jsdom' rather than 'node'. Even though today's suite
-// (smoke + ports type-tripwire tests) is DOM-free, plan.md §8 anticipates
-// component-level tests (React Testing Library is already installed) and a
-// jsdom environment is required for those. Paying the jsdom cost now avoids
-// a config churn later; pure-logic tests run identically under jsdom.
+// Component suites use jsdom by default. Verified DOM-free suites opt into
+// Node with a per-file environment directive; DB file parallelism remains
+// disabled below because separate PGlite instances still contend.
 export default defineConfig({
   plugins: [react()],
   resolve: {
@@ -16,6 +14,9 @@ export default defineConfig({
   },
   test: {
     environment: "jsdom",
+    // Mutation suites inject disposable PGlite databases and must explicitly
+    // opt into DB-backed reads. Preview tests override this via vi.stubEnv.
+    env: { DATA_PROVIDER: "db" },
     // Node >= 25 ships a non-functional `localStorage` global that blocks
     // jsdom's implementation — see tests/setup/web-storage.ts.
     setupFiles: ["tests/setup/web-storage.ts"],

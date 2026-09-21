@@ -1066,9 +1066,7 @@ function AuditView({
   recentDecisions: DecisionEntry[];
 }) {
   const awaitingDecision = initiatives.filter(
-    (i) =>
-      (i.state === "in_review" && i.domainsSigned === i.domainsRequired) ||
-      i.state === "conditionally_approved",
+    (i) => i.decisionReadiness?.canApprove || i.decisionReadiness?.canConditionallyApprove,
   );
   const approvedCount = recentDecisions.filter(
     (d) => d.dec.type === "approved" || d.dec.type === "fast_lane_approved",

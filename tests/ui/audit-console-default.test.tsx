@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { screen } from "@testing-library/react";
 import { AuditConsole } from "@/components/jeeves/audit-console";
-import { getProvider } from "@/lib/data";
+import { MockDataProvider } from "@/lib/data/mock-provider";
 import type { AuditQueryRow, CannedAuditQueryId } from "@/lib/data/dto";
 import { renderWithProviders } from "./helpers";
 
@@ -21,7 +21,7 @@ const IDS: CannedAuditQueryId[] = [
 ];
 
 async function loadResults(): Promise<Record<CannedAuditQueryId, AuditQueryRow[]>> {
-  const provider = getProvider();
+  const provider = new MockDataProvider();
   const entries = await Promise.all(
     IDS.map(async (id) => [id, await provider.auditQuery(id)] as const),
   );

@@ -23,6 +23,16 @@ beforeEach(async () => {
 afterEach(async () => { await closeTestDb(db); vi.unstubAllEnvs(); });
 
 describe("public demo entry", () => {
+  it("starts through an integration-only hosted database configuration", async () => {
+    vi.stubEnv("DATA_PROVIDER", "");
+    vi.stubEnv("DATABASE_URL", "");
+    vi.stubEnv("POSTGRES_URL", "postgresql://fixture.invalid/hosted");
+    const response = await enter();
+    expect(response.status).toBe(200);
+    expect(response.headers.get("set-cookie")).toContain("HttpOnly");
+    expect(await db.select().from(sessions)).toHaveLength(1);
+  });
+
   it("starts without a password and gives different visitors different workspaces", async () => {
     const first = await enter();
     expect(first.status).toBe(200);
