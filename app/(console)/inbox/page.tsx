@@ -1,6 +1,5 @@
 import { loadPortfolioDetails } from "@/app/_lib/portfolio-data";
 import { loadIncidentsForViewer } from "@/app/_lib/incident-data";
-import { IncidentDataNotice } from "@/components/jeeves/incident-data-notice";
 import { getAppProvider, getCurrentWorkspaceId } from "@/app/_lib/data-provider";
 import type { InitiativeSummary } from "@/lib/data/dto";
 import { RoleAwareInbox } from "@/components/jeeves/role-aware-inbox";
@@ -70,8 +69,6 @@ export default async function InboxPage() {
   );
 
   return (
-    <>
-    {incidentResult.status === "unavailable" ? <IncidentDataNotice reason={incidentResult.reason} /> : null}
     <RoleAwareInbox
       initiatives={initiatives}
       recentDecisions={recentDecisions}
@@ -82,6 +79,5 @@ export default async function InboxPage() {
       controls={controls}
       evalBreaches={evalBreaches}
     />
-    </>
   );
 }
