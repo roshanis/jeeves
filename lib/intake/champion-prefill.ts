@@ -76,3 +76,44 @@ export const CHAMPION_PREFILL_PAYLOAD: IntakePayload = {
   },
   evidenceAttachments: [],
 };
+
+/**
+ * Complete, editable example for "Use a sample initiative". These fictional
+ * plans and targets are proposed answers, not verified results, vendor terms
+ * or accepted evidence. Keep the original partial champion above for the
+ * seeded storyline and missing-answer regression tests.
+ */
+export const SAMPLE_INITIATIVE_PAYLOAD: IntakePayload = {
+  ...CHAMPION_PREFILL_PAYLOAD,
+  useCase: {
+    ...CHAMPION_PREFILL_PAYLOAD.useCase,
+    currentWorkflow:
+      "Prior-auth nurses read clinical notes, visit summaries, lab results and claims history, then manually assemble a coverage-decision packet and route unclear evidence to a clinician.",
+    successMetrics:
+      "Synthetic baseline: 18 minutes to prepare a packet and a 4.5-day backlog. Proposed targets: 6 minutes per packet and a 2-day backlog, with no increase in omitted clinically relevant facts or incorrect determinations.",
+  },
+  data: {
+    ...CHAMPION_PREFILL_PAYLOAD.data,
+    retentionIntent: "<=30 days",
+    retentionIntentNote:
+      "Synthetic proposal: delete vendor-held inputs and outputs within 30 days; retain the source clinical record under Meridian's existing record schedule. Privacy and Procurement must verify the terms before launch.",
+    vendorDataReuse:
+      "The proposal prohibits shared-model training or other vendor reuse of inputs and outputs and requests deletion within 30 days. Actual vendor retention, backup deletion and reuse rights remain unconfirmed pending Procurement and Privacy review; these are proposed terms, not an executed agreement.",
+  },
+  populationImpact: {
+    ...CHAMPION_PREFILL_PAYLOAD.populationImpact,
+    evaluationPlan:
+      "Clinical reviewers will compare 200 fictional packets with source notes, including age, language and complex-condition groups. Proposed acceptance: at least 95% factual agreement, no critical omissions and no group more than 5 percentage points below the overall result. No completed evaluation is claimed.",
+  },
+  deployment: {
+    ...CHAMPION_PREFILL_PAYLOAD.deployment,
+    operationalOwner:
+      "Clinical Operations owns the service, with the prior-authorization operations lead accountable for support and the clinical safety lead handling safety escalation.",
+    humanReviewProcess:
+      "The proposed pilot has nurse review of each summary. The wider proposed workflow does not yet guarantee qualified review of every output before it affects a coverage packet, so human-in-the-loop remains No. Nurses can correct a packet or escalate disputed evidence to the clinical safety lead.",
+    monitoringPlan:
+      "The Clinical Operations quality team will review factual omissions, corrections, packet time and backlog weekly. Critical clinical errors trigger immediate escalation to the clinical safety lead and platform on-call team.",
+    fallbackPlan:
+      "Pause summarization after a critical clinical error, suspected PHI exposure or vendor outage. Nurses return to manual source-document review; the operational owner requests restart only after remediation and the required human review.",
+  },
+};

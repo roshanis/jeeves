@@ -9,9 +9,9 @@
  * - Completeness meter: calls the REAL evaluateCompleteness
  *   (lib/intake/completeness.ts) on every change; BLOCKING gaps gate the
  *   submit button, REQUIRED-FOR-TIER/ADVISORY gaps render as warnings only
- *   (the champion case submits WITH its RFT-02 retention gap by design).
+ *   (existing incomplete drafts can still submit with tier-level gaps).
  * - "Use a sample initiative" populates the whole form from
- *   CHAMPION_PREFILL_PAYLOAD (intake-spec §4).
+ *   SAMPLE_INITIATIVE_PAYLOAD, including optional context and retention.
  * - Read-only public mode (no live session): fields render but are
  *   non-interactive (one <fieldset disabled> wrapper) and Submit is the
  *   standard disabled-with-tooltip gate (ui-spec §4 states / §8.4).
@@ -28,7 +28,7 @@ import {
   evaluateCompleteness,
   type CompletenessGap,
 } from "@/lib/intake/completeness";
-import { CHAMPION_PREFILL_PAYLOAD } from "@/lib/intake/champion-prefill";
+import { SAMPLE_INITIATIVE_PAYLOAD } from "@/lib/intake/champion-prefill";
 import { previewTier } from "@/lib/client/tier-preview";
 import {
   createInitiative,
@@ -312,8 +312,8 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
   }
 
   function loadChampion() {
-    if (onPayloadChange) onPayloadChange(CHAMPION_PREFILL_PAYLOAD);
-    else setInternalPayload(CHAMPION_PREFILL_PAYLOAD);
+    if (onPayloadChange) onPayloadChange(SAMPLE_INITIATIVE_PAYLOAD);
+    else setInternalPayload(SAMPLE_INITIATIVE_PAYLOAD);
   }
 
   const preview = previewTier(payload.overlay);

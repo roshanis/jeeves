@@ -1,5 +1,7 @@
 import { test, expect } from "@playwright/test";
 import { ADDITIONAL_ANSWERS, EXPANDED_INTAKE } from "../fixtures/expanded-intake";
+import { SAMPLE_INITIATIVE_PAYLOAD } from "../../lib/intake/champion-prefill";
+import { ADDITIONAL_INTAKE_QUESTIONS } from "../../lib/intake/additional-questions";
 
 // plan.md §8 test 12 — Playwright golden path (required, AGENTS.md hard rule
 // 8): a champion storyline covering passwordless entry, the public
@@ -297,9 +299,18 @@ test.describe("live demo loop: create → triage → draft run → sign → deci
 
     await page.locator('[data-slot="load-champion"]').click();
 
-    for (const [question, answer] of ADDITIONAL_ANSWERS) {
-      await page.getByRole("textbox", { name: question, exact: true }).fill(answer);
+    const sampleAnswers = Object.entries(ADDITIONAL_INTAKE_QUESTIONS).flatMap(([section, questions]) =>
+      questions.map(({ key, question }) => [
+        question,
+        (SAMPLE_INITIATIVE_PAYLOAD[section as keyof typeof ADDITIONAL_INTAKE_QUESTIONS] as Record<string, unknown>)[key] as string,
+      ] as const),
+    );
+    for (const [question, answer] of sampleAnswers) {
+      expect(answer.trim()).not.toBe("");
+      await expect(page.getByRole("textbox", { name: question, exact: true })).toHaveValue(answer);
     }
+    await expect(page.getByRole("combobox", { name: "Data retention intent", exact: true })).toHaveValue("<=30 days");
+    await expect(page.getByRole("textbox", { name: "Retention note (optional)", exact: true })).toHaveValue(SAMPLE_INITIATIVE_PAYLOAD.data.retentionIntentNote!);
 
     // Exercise the real mocked chat route and the shared payload handoff.
     // The structured champion answers must survive a Chat round-trip and
@@ -319,7 +330,7 @@ test.describe("live demo loop: create → triage → draft run → sign → deci
     await expect(page.getByRole("textbox", { name: "Initiative title" })).toHaveValue(
       "Prior-Auth Clinical Summarizer",
     );
-    for (const [question, answer] of ADDITIONAL_ANSWERS) {
+    for (const [question, answer] of sampleAnswers) {
       await expect(page.getByRole("textbox", { name: question, exact: true })).toHaveValue(answer);
     }
 
@@ -328,11 +339,12 @@ test.describe("live demo loop: create → triage → draft run → sign → deci
     await expect(preview).toContainText("Critical");
     await expect(preview).toContainText("8 required domains");
 
-    // Completeness meter: RFT-02 retention gap flagged, submit not blocked.
+    // All form answers are filled; evidence still requires separate submission.
     const meter = page
       .locator('[data-slot="intake-form"]')
       .locator('[data-slot="completeness-meter"]');
-    await expect(meter).toContainText("RFT-02");
+    await expect(meter).not.toContainText("RFT-02");
+    await expect(meter).toContainText("No evidence pre-attached");
     await expect(meter).toContainText("Submission is not blocked");
 
     // Submit: create -> submit -> redirect to the new initiative's page
@@ -348,8 +360,17 @@ test.describe("live demo loop: create → triage → draft run → sign → deci
     const caseUrl = new URL(page.url()).pathname;
     // --- Triage: Critical, 8 required domains, review branch -------------
     await page.getByRole("tab", { name: "Intake", exact: true }).click();
-    for (const [question, answer] of ADDITIONAL_ANSWERS) {
+    for (const [question, answer] of sampleAnswers) {
       const row = page.locator('[data-slot="intake-tab"]').getByRole("row").filter({ hasText: question });
+      await expect(row).toContainText(answer);
+    }
+    for (const [label, answer] of [
+      ["Data retention", SAMPLE_INITIATIVE_PAYLOAD.data.retentionIntent!],
+      ["Retention note", SAMPLE_INITIATIVE_PAYLOAD.data.retentionIntentNote!],
+    ]) {
+      const row = page.locator('[data-slot="intake-tab"]').getByRole("row").filter({
+        has: page.getByRole("cell", { name: label, exact: true }),
+      });
       await expect(row).toContainText(answer);
     }
     await page.locator('[data-slot="run-triage"]').click();
