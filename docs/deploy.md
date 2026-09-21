@@ -75,25 +75,28 @@ npm run start        # next start (after build)
    auto-detected; framework preset "Next.js", no custom build command
    needed — `next build` / `next start` are the defaults and match
    `package.json`).
-2. **Provision a Neon Postgres database** (or use an existing Neon project)
-   and copy its **pooled** connection string.
+2. **Connect a hosted PostgreSQL database.** Neon remains supported; the Vercel
+   Supabase integration supplies `POSTGRES_URL`. Use the transaction pooler for
+   serverless runtime traffic and a direct/session connection for migrations.
 3. **Set environment variables** in the Vercel project settings:
 
    | Variable | Required | Notes |
    |---|---|---|
-   | `DATABASE_URL` | Yes | Neon Postgres connection string. Use the **pooled** connection string form (`...neon.tech/...?sslmode=require`), matching `.env.example`. Read by `lib/db/client.ts` via `@neondatabase/serverless` (`neon-serverless` WebSocket `Pool` driver — real interactive transactions) whenever it is set. |
-   | `DATA_PROVIDER` | Yes | Set to `db`. Without `DATABASE_URL` this would fall back to PGlite/mock — you want the Neon-backed provider in production. |
+   | `DATABASE_URL` or `POSTGRES_URL` | Yes | Explicit nonblank `DATABASE_URL` wins; otherwise the Vercel integration `POSTGRES_URL` is used consistently for runtime, pages and incident reads. Neon hosts use the Neon driver; other PostgreSQL hosts use `pg`. Vercel refuses local PGlite fallback. |
+   | `DATABASE_MIGRATION_URL` | For Supabase migrations | Direct or session-pooler connection on port 5432. Runtime transaction-pooler URLs on port 6543 cannot run migrations. |
+   | `DATABASE_SSL_CA` | Optional | Project CA if required; recognized Supabase connections verify certificates and use a bounded pool. |
+   | `DATA_PROVIDER` | Optional | Defaults to DB when either runtime URL exists. `db` makes this explicit; `mock` deliberately shows the read-only preview dataset. |
    | `JEEVES_COOKIE_SECRET` | Yes for new deployments | Random server-only signing key for browser workspace continuity. Visitor entry is passwordless. Existing DEMO_PASSCODE can serve only as a deprecated signing fallback. |
    | `OPENAI_API_KEY` | Optional | Only set this if you want **live** LLM-drafted reviews during the demo. Omit it and the app runs entirely on the keyless mock adapter — safe default for a public URL. |
    | `OPENAI_MODEL` | Optional (only meaningful with `OPENAI_API_KEY`) | Model id for the real adapter, e.g. the value in `.env.example` (`gpt-5.1`). Unused when `OPENAI_API_KEY` is unset. |
 
-4. **Migrate Neon first.** There is no migrate or seed step that runs on
+4. **Migrate the selected database first.** There is no migrate or seed step that runs on
    Vercel itself — Vercel serves the app, it does not run one-off scripts.
    Run this from your local machine, pointed at the same database Vercel
    uses:
 
    ```bash
-   DATABASE_URL="<your Neon pooled connection string>" npm run db:migrate
+   DATABASE_MIGRATION_URL="<direct/session connection to the same database>" npm run db:migrate
    ```
 
    `npm run db:migrate` (`scripts/migrate.ts` -> `lib/db/migrate.ts`) applies
@@ -103,9 +106,10 @@ npm run start        # next start (after build)
      asserts that existing rows (including `audit_events`) survive a run;
    - **idempotent** — safe to re-run; drizzle's migrations journal table
      skips anything already applied;
-   - **driver-matched** — it selects the neon-serverless or PGlite migrator
-     off `DATABASE_URL` exactly as `getDb()` does, so the migrator always
-     matches the handle the app itself uses.
+   - **driver-matched** — it selects the Neon, node-postgres or PGlite migrator to match
+     the selected connection. `DATABASE_MIGRATION_URL` selects a separate
+     operator connection; absent that, the runtime URL precedence applies.
+     Supabase transaction-pooler connections on port 6543 are rejected for migrations.
 
    This is the command to use against a database that holds real data, and
    it is the only one on this page that is safe to point at production.
@@ -117,7 +121,7 @@ npm run start        # next start (after build)
    > to `npm run db:migrate` but needs the `drizzle-kit` devDependency and
    > `drizzle.config.ts` (which throws unless `DATABASE_URL` is set).
 
-5. **Seed Neon before the demo — DESTRUCTIVE, never against real data.**
+5. **Seed only an explicitly approved disposable demo database.**
 
    ```bash
    DATABASE_URL="<your Neon pooled connection string>" npm run db:seed
@@ -138,12 +142,12 @@ npm run start        # next start (after build)
    currently serving a live demo audience mid-session.
 
 6. **Playwright is NOT run on Vercel.** `npm run test:e2e` boots its own
-   `next dev` server on a fixed local port (3117) and is a local/CI-only
+   production build/server on a fixed local port (3117) and is a local/CI-only
    check (see `playwright.config.ts`). Vercel's build step only runs
    `next build`; do not wire Playwright into the Vercel build or deploy
    pipeline.
 
-7. **Deploy.** Once env vars are set and Neon is migrated + seeded, trigger
+7. **Deploy.** Once env vars and the hosted schema are verified, trigger
    the Vercel deploy (push to the connected branch, or deploy from the
    Vercel dashboard/CLI). Visit the deployed URL and confirm the portfolio
    board renders the 12 seeded initiatives before sharing the link further.

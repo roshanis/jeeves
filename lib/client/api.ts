@@ -54,6 +54,9 @@ export function apiErrorToMessage(err: ApiError): string {
   if (err.status === 503 && err.code === "DEMO_NOT_CONFIGURED") {
     return "The demo is temporarily unavailable. Please try again later.";
   }
+  if (err.status === 503 && err.code === "DEMO_STORAGE_UNAVAILABLE") {
+    return "Demo storage is temporarily unavailable. Please try again shortly.";
+  }
   if (err.status === 503 && err.code === "AGENT_INITIALIZATION_FAILED") {
     return "Agents could not start. Test the connection on the Agents page, then retry.";
   }

@@ -235,6 +235,15 @@ describe("error mapping", () => {
     const other = await startDraftRun("tok", "init-1", ["legal"]).catch((e) => e);
     expect(apiErrorToMessage(other)).toBe("Something went wrong — please try again.");
   });
+  it("maps demo storage failures to retryable copy without exposing server details", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(503, {
+      error: "private database detail", code: "DEMO_STORAGE_UNAVAILABLE", requestId: "req-safe",
+    }));
+    const err = await postSession("priya-raman").catch((e) => e);
+    expect(err).toMatchObject({ status: 503, code: "DEMO_STORAGE_UNAVAILABLE" });
+    expect(apiErrorToMessage(err)).toBe("Demo storage is temporarily unavailable. Please try again shortly.");
+    expect(apiErrorToMessage(err)).not.toContain("private database detail");
+  });
   it("maps 401 to a typed ApiError and re-auth message", async () => {
     fetchMock.mockResolvedValueOnce(
       jsonResponse(401, { error: "invalid or missing session" }),

@@ -38,6 +38,32 @@ describe("lib/db/migrate — non-destructive migration runner", () => {
     await expect(applyMigrations(db)).resolves.toBeUndefined();
   });
 
+  it("selects the migrator from the actual PGlite handle even when a network URL exists", async () => {
+    const previous = process.env.DATABASE_URL;
+    process.env.DATABASE_URL = "postgresql://unused.example/db";
+    try {
+      await expect(applyMigrations(db)).resolves.toBeUndefined();
+    } finally {
+      if (previous === undefined) delete process.env.DATABASE_URL;
+      else process.env.DATABASE_URL = previous;
+    }
+  });
+
+  it("does not validate a Supabase runtime pool URL when migrating a supplied PGlite handle", async () => {
+    const previousDatabaseUrl = process.env.DATABASE_URL;
+    const previousPostgresUrl = process.env.POSTGRES_URL;
+    delete process.env.DATABASE_URL;
+    process.env.POSTGRES_URL = "postgresql://u:p@aws-0-example.pooler.supabase.com:6543/postgres";
+    try {
+      await expect(applyMigrations(db)).resolves.toBeUndefined();
+    } finally {
+      if (previousDatabaseUrl === undefined) delete process.env.DATABASE_URL;
+      else process.env.DATABASE_URL = previousDatabaseUrl;
+      if (previousPostgresUrl === undefined) delete process.env.POSTGRES_URL;
+      else process.env.POSTGRES_URL = previousPostgresUrl;
+    }
+  });
+
   it("preserves existing rows, including the append-only audit log", async () => {
     await db.insert(initiatives).values({
       id: "init-survives",
@@ -97,21 +123,19 @@ describe("lib/db/migrate — non-destructive migration runner", () => {
 });
 
 describe("describeMigrationTarget", () => {
-  it("describes a Neon target by host and database, without credentials", () => {
+  it("describes configured migration targets opaquely", () => {
     expect(
       describeMigrationTarget(
         "postgres://someuser:sup3rs3cret@ep-cool-name-123.eu-central-1.aws.neon.tech/jeeves?sslmode=require",
       ),
-    ).toBe("Neon Postgres — ep-cool-name-123.eu-central-1.aws.neon.tech/jeeves");
+    ).toBe("Postgres (configured migration connection)");
   });
 
   it("names plain Postgres as Postgres, not Neon", () => {
     // It said "Neon Postgres — 127.0.0.1/jeeves" against a real PostgreSQL 16
     // container, which is the vendor confusion driver-select.ts exists to
     // stop. The label now follows the driver that will actually be used.
-    expect(describeMigrationTarget("postgres://postgres:test@db:5432/jeeves")).toBe(
-      "Postgres — db/jeeves",
-    );
+    expect(describeMigrationTarget("postgres://postgres:test@db:5432/jeeves")).toBe("Postgres (configured migration connection)");
   });
 
   it("describes the local store when DATABASE_URL is unset", () => {
@@ -130,6 +154,6 @@ describe("describeMigrationTarget", () => {
     // Never print something we could not parse — it may still hold secrets.
     const described = describeMigrationTarget("not-a-url-but-maybe-secret");
     expect(described).not.toContain("not-a-url-but-maybe-secret");
-    expect(described).toBe("Postgres (DATABASE_URL set, host unparseable)");
+    expect(described).toBe("Postgres (configured migration connection)");
   });
 });

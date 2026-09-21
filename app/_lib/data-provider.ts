@@ -1,3 +1,4 @@
+import { runtimeDatabaseUrl } from "@/lib/db/runtime-config";
 /** Viewer-scoped server reads over the shared provider factory. */
 import { cookies, headers } from "next/headers";
 import type { DataProvider } from "@/lib/data/provider";
@@ -56,7 +57,7 @@ export async function getInitiativeDetailForViewer(
 export async function getInitiativeDetailCoherent(
   slug: string,
 ): Promise<InitiativeDetail | null> {
-  const hasDatabaseUrl = !!process.env.DATABASE_URL;
+  const hasDatabaseUrl = !!runtimeDatabaseUrl();
   const pgliteDbMode = resolveDataProviderMode(process.env.DATA_PROVIDER, hasDatabaseUrl) === "db" && !hasDatabaseUrl;
   if (!pgliteDbMode) {
     return getInitiativeDetailForViewer(slug);

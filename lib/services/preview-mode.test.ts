@@ -8,10 +8,10 @@ vi.mock("@/lib/db/client", () => ({ getDb }));
 
 import { POST } from "@/app/api/session/route";
 import { GET as runScheduledMonitor } from "@/app/api/cron/monitor/route";
-import { issueDemoSession, runMutationGuard } from "./route-guard";
+import { checkReadOnlyMode, issueDemoSession, runMutationGuard } from "./route-guard";
 
 afterEach(() => vi.unstubAllEnvs());
-beforeEach(() => { getDb.mockClear(); });
+beforeEach(() => { getDb.mockClear(); vi.stubEnv("POSTGRES_URL", ""); });
 
 describe.each([
   ["mock", ""],
@@ -58,6 +58,18 @@ describe.each([
     }));
     expect(authorized.status).toBe(403);
     expect(await authorized.json()).toMatchObject({ error: expect.stringContaining("preview is read-only") });
+    expect(getDb).not.toHaveBeenCalled();
+  });
+});
+
+describe("hosted integration mutation mode", () => {
+  it("allows an integration-only hosted database without weakening an explicit preview override", () => {
+    vi.stubEnv("DATA_PROVIDER", "");
+    vi.stubEnv("DATABASE_URL", "");
+    vi.stubEnv("POSTGRES_URL", "postgresql://fixture.invalid/hosted");
+    expect(checkReadOnlyMode()).toBeNull();
+    vi.stubEnv("DATA_PROVIDER", "mock");
+    expect(checkReadOnlyMode()).toMatchObject({ kind: "read_only", status: 403 });
     expect(getDb).not.toHaveBeenCalled();
   });
 });

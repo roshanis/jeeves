@@ -1,3 +1,4 @@
+import { runtimeDatabaseUrl } from "../db/runtime-config";
 import type { DataProvider } from "./provider";
 import { MockDataProvider } from "./mock-provider";
 import { DbDataProvider } from "./db-provider";
@@ -11,6 +12,6 @@ import { resolveDataProviderMode } from "./provider-mode";
  * Facades are short-lived; getDb owns the shared underlying connection.
  */
 export function getProvider(): DataProvider {
-  const mode = resolveDataProviderMode(process.env.DATA_PROVIDER, !!process.env.DATABASE_URL);
+  const mode = resolveDataProviderMode(process.env.DATA_PROVIDER, !!runtimeDatabaseUrl());
   return mode === "db" ? new DbDataProvider() : new MockDataProvider();
 }

@@ -12,28 +12,26 @@
  * non-destructive by construction (see lib/db/migrate.ts and its tests),
  * and running it against production is the intended use.
  */
-import { applyMigrations, describeMigrationTarget } from "../lib/db/migrate";
+import { describeMigrationTarget, runMigrations } from "../lib/db/migrate";
 
 async function main() {
-  const { getDb, closeDb } = await import("../lib/db/client");
+  const runtimeUrl = process.env.DATABASE_URL?.trim() || process.env.POSTGRES_URL?.trim();
+  const migrationUrl = process.env.DATABASE_MIGRATION_URL?.trim() || runtimeUrl;
+  console.log(`Applying migrations to ${describeMigrationTarget(migrationUrl || undefined)}`);
+  await runMigrations();
 
-  // Safe to print: reconstructed from the parsed host + database name only,
-  // never echoing the connection string (it carries a password).
-  console.log(`Applying migrations to ${describeMigrationTarget(process.env.DATABASE_URL)}`);
+  console.log("Migrations up to date. No seed or reset was run.");
 
-  const db = getDb();
-  await applyMigrations(db);
-
-  console.log("Migrations up to date. No rows were modified.");
-
-  // Release the PGlite handle so the CLI process exits promptly.
-  await closeDb();
 }
 
 // Only run when executed directly (not when imported by tests).
 if (import.meta.url === `file://${process.argv[1]}`) {
   main().catch((err) => {
-    console.error(err);
-    process.exit(1);
+    const code = typeof err === "object" && err !== null && "code" in err &&
+      typeof err.code === "string" && /^[A-Z0-9_]+$/.test(err.code)
+      ? ` (${err.code})`
+      : "";
+    console.error(`Migration failed${code}. Check the database configuration and migration connection.`);
+    process.exitCode = 1;
   });
 }

@@ -1,5 +1,6 @@
 import { resolveDataProviderMode } from "@/lib/data/provider-mode";
 import { getDb, type Db } from "@/lib/db/client";
+import { runtimeDatabaseUrl } from "@/lib/db/runtime-config";
 import { listIncidents, type IncidentListRow } from "@/lib/services/monitor-service";
 import {
   deploymentWorkspaceMap,
@@ -22,7 +23,7 @@ export async function loadIncidentsForViewer(
   options: IncidentLoadOptions = {},
 ): Promise<IncidentLoadResult> {
   const providerMode = options.providerMode ?? process.env.DATA_PROVIDER;
-  const hasDatabaseUrl = options.hasDatabaseUrl ?? !!process.env.DATABASE_URL;
+  const hasDatabaseUrl = options.hasDatabaseUrl ?? !!runtimeDatabaseUrl();
   const mode = resolveDataProviderMode(providerMode, hasDatabaseUrl);
   if (mode !== "db") {
     return { status: "unavailable", reason: "preview", incidents: null };

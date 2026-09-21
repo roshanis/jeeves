@@ -1,3 +1,4 @@
+import { runtimeDatabaseUrl } from "@/lib/db/runtime-config";
 import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
 import "./globals.css";
@@ -118,7 +119,7 @@ export default function RootLayout({
           Skip to content
         </a>
         <RoleProvider>
-          <LiveSessionProvider liveModeAvailable={resolveDataProviderMode(process.env.DATA_PROVIDER, !!process.env.DATABASE_URL) === "db"}>
+          <LiveSessionProvider liveModeAvailable={resolveDataProviderMode(process.env.DATA_PROVIDER, !!runtimeDatabaseUrl()) === "db"}>
             <TooltipProvider>
               {/* Console chrome (sidebar/top bar/mobile nav/footer) moved to
                   app/(console)/layout.tsx so the public marketing site at

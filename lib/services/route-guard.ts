@@ -1,3 +1,4 @@
+import { runtimeDatabaseUrl } from "../db/runtime-config";
 /**
  * Shared request-guard pipeline for `app/api/**` mutating route handlers
  * (task brief deliverable 3): writable mode -> session (server-issued) -> rate-limit ->
@@ -66,7 +67,7 @@ export interface GuardFailure {
 
 /** Static preview reads cannot reflect writes, so reject before any DB access. */
 export function checkReadOnlyMode(): GuardFailure | null {
-  return resolveDataProviderMode(process.env.DATA_PROVIDER, !!process.env.DATABASE_URL) === "mock"
+  return resolveDataProviderMode(process.env.DATA_PROVIDER, !!runtimeDatabaseUrl()) === "mock"
     ? { kind: "read_only", status: 403, message: READ_ONLY_PREVIEW_MESSAGE }
     : null;
 }

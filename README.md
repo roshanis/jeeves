@@ -172,8 +172,11 @@ persona** picker lets you become a reviewer or approver while keeping the
 same workspace. You can also click **Start demo** from the console. Shared
 examples and global defaults remain read-only; play with your own records.
 Use a random server signing key (for example, generate one with
-`openssl rand -hex 32`); visitors never enter this key. Point `DATABASE_URL` at a
-real Neon Postgres connection string to run against Neon instead of PGlite;
+`openssl rand -hex 32`); visitors never enter this key. Configure `DATABASE_URL`
+or Vercel's integration-provided `POSTGRES_URL` for a hosted PostgreSQL database.
+An explicit nonblank `DATABASE_URL` takes precedence. On Vercel, a hosted database
+and signing key are required; local PGlite is not a serverless fallback. Keep
+`DATA_PROVIDER=mock` only for an intentional read-only preview, and
 set `OPENAI_API_KEY` (+ optionally `OPENAI_MODEL`) only if you want genuinely
 live-generated draft text — see `.env.example` for the full variable list.
 
