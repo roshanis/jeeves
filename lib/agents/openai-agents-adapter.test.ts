@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { MaxTurnsExceededError } from "@openai/agents";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
@@ -9,7 +10,6 @@ import type {
   DraftReviewInput,
   IntakeInterviewInput,
   IntakeSnapshot,
-  TriageAssistInput,
 } from "@/lib/agents/ports";
 
 /**
@@ -81,34 +81,24 @@ const VALID_REVIEWER_OBJECT = {
 it.each([false, true])("preserves review provenance in Agents SDK deep mode=%s", async (deep) => {
   process.env.OPENAI_TERRA_MODEL = "configured-review-model";
   process.env.JEEVES_DEEP_REVIEW = deep ? "1" : "0";
-  const port = createOpenAiAgentsAdapterWithRunner(async () => ({ finalOutput: VALID_REVIEWER_OBJECT }));
-  const result = await port.draftReview(draftInput());
+  let capturedInstructions = "";
+  let capturedPrompt = "";
+  const policyContext = ["Policy source: synthetic-policy-v2", "Submitted evidence metadata: synthetic-packet-revision-4"];
+  const port = createOpenAiAgentsAdapterWithRunner(async (agent, prompt) => {
+    capturedInstructions = String(agent.instructions);
+    capturedPrompt = prompt;
+    return { finalOutput: VALID_REVIEWER_OBJECT };
+  });
+  const result = await port.draftReview({ ...draftInput(), policyContext });
   expect(result.ok).toBe(true);
   if (!result.ok) return;
   expect(result.value.citations).toEqual(VALID_REVIEWER_OBJECT.citations);
   expect(result.value.generationMetadata).toMatchObject({ adapter: "openai-agents-sdk", configuredModelId: "configured-review-model", mode: deep ? "deep" : "standard", promptHashScope: "initial-input" });
-  expect(result.value.generationMetadata?.systemPromptHash).toMatch(/^[a-f0-9]{64}$/);
-  expect(result.value.generationMetadata?.userPromptHash).toMatch(/^[a-f0-9]{64}$/);
+  expect(JSON.parse(capturedPrompt).policyContext).toEqual(policyContext);
+  expect(result.value.generationMetadata?.systemPromptHash).toBe(createHash("sha256").update(capturedInstructions).digest("hex"));
+  expect(result.value.generationMetadata?.userPromptHash).toBe(createHash("sha256").update(capturedPrompt).digest("hex"));
   expect(result.value.generationMetadata).not.toHaveProperty("servedModelId");
 });
-
-const RICH_TRIAGE_OBJECT = {
-  rationaleMd:
-    "This initiative influences a coverage decision with no human review before it takes effect.",
-  flagExplanations: [
-    {
-      flag: "careCoverageInfluence",
-      answer: "Yes",
-      why: "Coverage influence drives the highest routing weight.",
-    },
-  ],
-};
-
-const VALID_COMPLETENESS_OBJECT = {
-  complete: false,
-  missingFields: ["retentionIntent"],
-  notes: { retentionIntent: "Please provide a retention answer." },
-};
 
 const VALID_AUDITOR_OBJECT = {
   answerMd: "Member Chat Copilot is member-facing and touches PHI.",
@@ -143,7 +133,7 @@ const EMPTY_INTAKE_PAYLOAD = {
     requesterEmail: "",
     businessProblem: "",
   },
-  useCase: { primaryUsers: "", decisionInformed: "", expectedVolume: null },
+  useCase: { primaryUsers: "", decisionInformed: "", expectedVolume: null, currentWorkflow: null, successMetrics: null },
   data: {
     dataSources: [],
     phiCategories: [],
@@ -151,6 +141,7 @@ const EMPTY_INTAKE_PAYLOAD = {
     retentionIntent: null,
     retentionIntentNote: null,
     trainingVsInference: null,
+    vendorDataReuse: null,
   },
   modelVendor: {
     buildOrBuy: null,
@@ -162,8 +153,9 @@ const EMPTY_INTAKE_PAYLOAD = {
     affectedPopulations: [],
     expectedBenefits: null,
     expectedHarms: null,
+    evaluationPlan: null,
   },
-  deployment: { integrationPoints: [], rolloutPlan: null },
+  deployment: { integrationPoints: [], rolloutPlan: null, operationalOwner: null, humanReviewProcess: null, monitoringPlan: null, fallbackPlan: null },
   overlay: {
     touchesPHI: null,
     memberFacing: null,
@@ -197,12 +189,6 @@ function intakeInterviewInput(
     },
     ...overrides,
   };
-}
-
-function triageInput(
-  answers: Readonly<Record<string, unknown>> = {},
-): TriageAssistInput {
-  return { intake: intake(answers) };
 }
 
 /* -------------------------------------------------------------------------
@@ -260,15 +246,6 @@ function providerErrorWithStatus(status: number, message = "boom"): Error {
  * ---------------------------------------------------------------------- */
 
 describe("openai-agents-adapter — model routing", () => {
-  it("routes checkCompleteness, intakeInterview, triageAssist, and auditorAnswer to the Luna default", async () => {
-    const captured: CapturedAgent[] = [];
-    const runFn = succeedingRun(VALID_COMPLETENESS_OBJECT, (a) =>
-      captured.push(a),
-    );
-    const port = createOpenAiAgentsAdapterWithRunner(runFn);
-    await port.checkCompleteness({ intake: intake() });
-    expect(captured[0]?.model).toBe("gpt-5.6-luna");
-  });
 
   it("routes draftReview to the Terra default", async () => {
     const captured: CapturedAgent[] = [];
@@ -280,20 +257,17 @@ describe("openai-agents-adapter — model routing", () => {
     expect(captured[0]?.model).toBe("gpt-5.6-terra");
   });
 
-  it("routes triageAssist to Luna and auditorAnswer/intakeInterview to Luna", async () => {
+  it("routes auditorAnswer and intakeInterview to Luna", async () => {
     const captured: CapturedAgent[] = [];
     const runFn: AgentsRunFn = async (agent) => {
       captured.push(agent as unknown as CapturedAgent);
-      if (captured.length === 1) return { finalOutput: RICH_TRIAGE_OBJECT };
-      if (captured.length === 2) return { finalOutput: VALID_AUDITOR_OBJECT };
+      if (captured.length === 1) return { finalOutput: VALID_AUDITOR_OBJECT };
       return { finalOutput: VALID_INTAKE_INTERVIEW_OBJECT };
     };
     const port = createOpenAiAgentsAdapterWithRunner(runFn);
-    await port.triageAssist(triageInput());
     await port.auditorAnswer(auditorInput());
     await port.intakeInterview(intakeInterviewInput());
     expect(captured.map((c) => c.model)).toEqual([
-      "gpt-5.6-luna",
       "gpt-5.6-luna",
       "gpt-5.6-luna",
     ]);
@@ -311,21 +285,21 @@ describe("openai-agents-adapter — model routing", () => {
     await port.draftReview(draftInput());
     expect(captured[0]?.model).toBe("custom-terra-v9");
 
-    const runFn2 = succeedingRun(VALID_COMPLETENESS_OBJECT, (a) =>
+    const runFn2 = succeedingRun(VALID_AUDITOR_OBJECT, (a) =>
       captured.push(a),
     );
     const port2 = createOpenAiAgentsAdapterWithRunner(runFn2);
-    await port2.checkCompleteness({ intake: intake() });
+    await port2.auditorAnswer(auditorInput());
     expect(captured[1]?.model).toBe("custom-luna-v9");
   });
 
   it("defaults reasoning effort to low and honors OPENAI_REASONING_EFFORT, falling back on an unrecognised value", async () => {
     const captured: CapturedAgent[] = [];
-    const runFn = succeedingRun(VALID_COMPLETENESS_OBJECT, (a) =>
+    const runFn = succeedingRun(VALID_AUDITOR_OBJECT, (a) =>
       captured.push(a),
     );
     const port = createOpenAiAgentsAdapterWithRunner(runFn);
-    await port.checkCompleteness({ intake: intake() });
+    await port.auditorAnswer(auditorInput());
     expect(
       (captured[0]?.modelSettings as { reasoning?: { effort?: string } })
         ?.reasoning?.effort,
@@ -333,9 +307,9 @@ describe("openai-agents-adapter — model routing", () => {
 
     process.env.OPENAI_REASONING_EFFORT = "high";
     const port2 = createOpenAiAgentsAdapterWithRunner(
-      succeedingRun(VALID_COMPLETENESS_OBJECT, (a) => captured.push(a)),
+      succeedingRun(VALID_AUDITOR_OBJECT, (a) => captured.push(a)),
     );
-    await port2.checkCompleteness({ intake: intake() });
+    await port2.auditorAnswer(auditorInput());
     expect(
       (captured[1]?.modelSettings as { reasoning?: { effort?: string } })
         ?.reasoning?.effort,
@@ -343,9 +317,9 @@ describe("openai-agents-adapter — model routing", () => {
 
     process.env.OPENAI_REASONING_EFFORT = "not-a-real-effort-level";
     const port3 = createOpenAiAgentsAdapterWithRunner(
-      succeedingRun(VALID_COMPLETENESS_OBJECT, (a) => captured.push(a)),
+      succeedingRun(VALID_AUDITOR_OBJECT, (a) => captured.push(a)),
     );
-    await port3.checkCompleteness({ intake: intake() });
+    await port3.auditorAnswer(auditorInput());
     expect(
       (captured[2]?.modelSettings as { reasoning?: { effort?: string } })
         ?.reasoning?.effort,
@@ -368,43 +342,6 @@ describe("openai-agents-adapter — output mapping", () => {
       expect(result.value.domain).toBe("privacy-hipaa");
       expect(result.value.recommendation).toBe("recommend-sign-off");
       expect(result.value.draftMarkdown).toContain("H-01");
-    }
-  });
-
-  it("triageAssist takes suggestedTier from intake.answers.tier, never from the model", async () => {
-    const port = createOpenAiAgentsAdapterWithRunner(
-      succeedingRun(RICH_TRIAGE_OBJECT),
-    );
-    const result = await port.triageAssist(
-      triageInput({ phi: true, tier: "critical" }),
-    );
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.value.suggestedTier).toBe("critical");
-      expect(result.value.rationale).toBe(RICH_TRIAGE_OBJECT.rationaleMd);
-      expect(result.value.signals).toEqual(["careCoverageInfluence"]);
-    }
-  });
-
-  it("triageAssist falls back to medium when no tier is present", async () => {
-    const port = createOpenAiAgentsAdapterWithRunner(
-      succeedingRun(RICH_TRIAGE_OBJECT),
-    );
-    const result = await port.triageAssist(triageInput({ phi: true }));
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.value.suggestedTier).toBe("medium");
-    }
-  });
-
-  it("checkCompleteness round-trips through the fake runner", async () => {
-    const port = createOpenAiAgentsAdapterWithRunner(
-      succeedingRun(VALID_COMPLETENESS_OBJECT),
-    );
-    const result = await port.checkCompleteness({ intake: intake() });
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.value).toEqual(VALID_COMPLETENESS_OBJECT);
     }
   });
 
@@ -605,19 +542,15 @@ describe("openai-agents-adapter — deep review mode", () => {
     }
   });
 
-  it("a non-conforming final output in deep mode is a validation failure with issue paths", async () => {
+  it("a non-conforming final output in deep mode is a non-retryable provider failure", async () => {
     process.env.JEEVES_DEEP_REVIEW = "1";
     const malformed = JSON.stringify({ assessmentMd: "only this field" });
     const port = createOpenAiAgentsAdapterWithRunner(succeedingRun(malformed));
     const result = await port.draftReview(draftInput());
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.error.kind).toBe("validation");
-      if (result.error.kind === "validation") {
-        expect(result.error.issues).toEqual(
-          expect.arrayContaining(["citations", "recommendation"]),
-        );
-      }
+      expect(result.error).toMatchObject({ kind: "provider", retryable: false });
+      expect("message" in result.error && result.error.message).toContain("schema validation");
     }
   });
 

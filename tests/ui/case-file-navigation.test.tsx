@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, screen } from "@testing-library/react";
 import { renderWithProviders } from "./helpers";
-import { getProvider } from "@/lib/data";
+import { MockDataProvider } from "@/lib/data/mock-provider";
 import type { InitiativeDetail } from "@/lib/data/dto";
 import InitiativeDetailPage from "@/app/(console)/initiatives/[slug]/page";
 
@@ -20,7 +20,7 @@ vi.mock("@/app/_lib/data-provider", () => ({
 beforeEach(async () => {
   navigation.push.mockReset();
   navigation.query = "";
-  const sample = await getProvider().getInitiativeDetail("member-chat-copilot");
+  const sample = await new MockDataProvider().getInitiativeDetail("member-chat-copilot");
   data.detail = {
     ...sample!,
     summary: { ...sample!.summary, state: "paused", slug: "manual-pause" },

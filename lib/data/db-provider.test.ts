@@ -95,7 +95,8 @@ describe("lib/data/db-provider", () => {
       const details = await provider.listInitiativeDetails({ viewerWorkspaceId: null });
 
       expect(details).toHaveLength(12);
-      expect(select).toHaveBeenCalledTimes(11);
+      // Bound the query budget without fixing its exact implementation count.
+      expect(select.mock.calls.length).toBeLessThanOrEqual(11);
       expect(details.find((detail) => detail.summary.slug === "member-chat-copilot"))
         .toEqual(await provider.getInitiativeDetail("member-chat-copilot", { viewerWorkspaceId: null }));
       select.mockRestore();
@@ -115,6 +116,33 @@ describe("lib/data/db-provider", () => {
         const stored = storedReviews.find((candidate) => candidate.domain === review.domain)!;
         expect(review).toMatchObject({ revision: stored.revision, citations: stored.citations, missingEvidence: stored.missingEvidence, evidenceRequests: stored.evidenceRequests, citationProvenance: stored.citationProvenance });
         expect(review.citationProvenance).toBe("legacy-unverified");
+      }
+    });
+
+    it("reloads the displayed revision and agent evidence context from the stored review", async () => {
+      const slug = "provider-dedup-agent";
+      const before = (await provider.getInitiativeDetail(slug))!;
+      const [stored] = await db.select().from(reviewDecisions)
+        .where(eq(reviewDecisions.cycleId, before.reviews[0].cycleId!));
+      const updated = {
+        revision: stored.revision + 1,
+        draftMd: "Revised synthetic review awaiting a human signature.",
+        citations: ["MP-S v3 §2"],
+        citationProvenance: "agent-supplied",
+        missingEvidence: ["Synthetic access-control evidence is missing."],
+        evidenceRequests: [{ controlId: "S-01", description: "Supply the synthetic access-control assessment." }],
+      };
+      try {
+        await db.update(reviewDecisions).set(updated).where(eq(reviewDecisions.id, stored.id));
+        const after = (await provider.getInitiativeDetail(slug))!;
+        expect(after.reviews.find((review) => review.domain === stored.domain))
+          .toMatchObject({ cycleId: stored.cycleId, ...updated });
+      } finally {
+        await db.update(reviewDecisions).set({
+          revision: stored.revision, draftMd: stored.draftMd, citations: stored.citations,
+          citationProvenance: stored.citationProvenance, missingEvidence: stored.missingEvidence,
+          evidenceRequests: stored.evidenceRequests,
+        }).where(eq(reviewDecisions.id, stored.id));
       }
     });
 
@@ -245,8 +273,7 @@ describe("lib/data/db-provider", () => {
       expect(m.firstPassCompletenessPct).toBeGreaterThanOrEqual(55);
       expect(m.firstPassCompletenessPct).toBeLessThanOrEqual(65);
       // Drafted-vs-scratch estimate at ~4h/review.
-      expect(m.reviewerHoursSaved).toBeGreaterThan(0);
-      expect(m.reviewerHoursSaved % 4).toBe(0);
+      expect(m.reviewerHoursSavedPerReview).toBe(4);
       // Evidence freshness 10/12 (#10 and #11 stale).
       expect(m.evidenceTotal).toBe(12);
       expect(m.evidenceFresh).toBe(10);

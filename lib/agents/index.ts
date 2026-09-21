@@ -10,6 +10,7 @@ import { createOpenAiAgentsAdapter } from "./openai-agents-adapter";
 import type { AgentPort } from "./ports";
 import { AgentInitializationError } from "./initialization-error";
 import { assertPolicyCorpusAvailable } from "./policy-corpus";
+import { resolveAgentRuntimeConfig } from "./runtime";
 
 /**
  * Which real adapter to use when a key IS present. Two runtimes behind one
@@ -25,13 +26,7 @@ import { assertPolicyCorpusAvailable } from "./policy-corpus";
  * never silently disable the LLM or crash a request; it degrades to the
  * previously-shipping runtime.
  */
-export type AgentRuntime = "ai-sdk" | "agents-sdk";
-
-export function resolveAgentRuntime(
-  raw: string | undefined = process.env.JEEVES_AGENT_RUNTIME,
-): AgentRuntime {
-  return raw?.trim() === "agents-sdk" ? "agents-sdk" : "ai-sdk";
-}
+export { resolveAgentRuntime, type AgentRuntime } from "./runtime";
 
 /**
  * Returns a real OpenAI-backed adapter when `OPENAI_API_KEY` is set and
@@ -43,11 +38,11 @@ export function resolveAgentRuntime(
  * public visitor — can never reach a paid runtime.
  */
 export function getAgentPort(): AgentPort {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (apiKey && apiKey.trim().length > 0) {
+  const runtime = resolveAgentRuntimeConfig();
+  if (runtime.configured) {
     try {
-      if (resolveAgentRuntime() === "agents-sdk") {
-        if (process.env.JEEVES_DEEP_REVIEW === "1") assertPolicyCorpusAvailable();
+      if (runtime.runtime === "agents-sdk") {
+        if (runtime.deepReviewEnabled) assertPolicyCorpusAvailable();
         return createOpenAiAgentsAdapter();
       }
       return createOpenAIAgentPort();

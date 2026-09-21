@@ -9,6 +9,10 @@
 // within budget for a Neon/PGlite demo database.
 import { asc, eq, isNull, or, type SQL } from "drizzle-orm";
 import type { Domain, LifecycleState, OverlayFlags, Tier } from "@/lib/domain/types";
+import { currentControlRevisions } from "@/lib/controls/current-revisions";
+import { operationalDeployment, latestDeployment } from "@/lib/deployments/selection";
+import { reviewDecisionReadiness } from "@/lib/approval/review-readiness";
+import { overlayFromStoredIntake } from "@/lib/intake/stored-overlay";
 import { resolveThreshold } from "@/lib/controls/evaluate";
 import { actorMatches, displayNameFor } from "@/lib/services/actors";
 import { getDb, type Db } from "@/lib/db/client";
@@ -83,18 +87,6 @@ function flagsFromRecord(record: Record<string, boolean>): OverlayFlags {
     vendorHosted: !!record.vendorHosted,
     humanInLoop: !!record.humanInLoop,
     individualImpact: !!record.individualImpact,
-  };
-}
-
-/** Fallback for pre-triage initiatives (#1): overlay flags live in intake fields. */
-function flagsFromIntakeFields(fields: Record<string, string | boolean | null>): OverlayFlags {
-  return {
-    phi: fields["overlay.phi"] === true,
-    memberFacing: fields["overlay.memberFacing"] === true,
-    careCoverageInfluence: fields["overlay.careCoverageInfluence"] === true,
-    vendorHosted: fields["overlay.vendorHosted"] === true,
-    humanInLoop: fields["overlay.humanInLoop"] === true,
-    individualImpact: fields["overlay.individualImpact"] === true,
   };
 }
 
@@ -243,7 +235,7 @@ export class DbDataProvider implements DataProvider {
   private latestCycle(snap: PortfolioSnapshot, initiativeId: string): ReviewCycleRecord | null {
     const rows = snap.cycles
       .filter((c) => c.initiativeId === initiativeId)
-      .sort((a, b) => b.openedAt.getTime() - a.openedAt.getTime());
+      .sort((a, b) => b.openedAt.getTime() - a.openedAt.getTime() || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0));
     return rows[0] ?? null;
   }
 
@@ -254,21 +246,26 @@ export class DbDataProvider implements DataProvider {
   }
 
   /**
-   * The operational deployment: latest 'deployed'/'paused' version (controls
-   * and telemetry attach here), falling back to the latest of any status.
+   * Detail pages retain a historical/candidate fallback when no operational
+   * deployment exists. Current portfolio metrics deliberately do not.
    */
-  private operationalDeployment(
+  private displayDeployment(
     snap: PortfolioSnapshot,
     initiativeId: string,
   ): DeploymentRecord | null {
     const all = this.deploymentsOf(snap, initiativeId);
-    const operational = all.filter((d) => d.status === "deployed" || d.status === "paused");
-    return operational[operational.length - 1] ?? all[all.length - 1] ?? null;
+    return operationalDeployment(all) ?? latestDeployment(all);
   }
 
   private controlsOf(snap: PortfolioSnapshot, initiativeId: string): EffectiveControlRecord[] {
-    const depIds = new Set(this.deploymentsOf(snap, initiativeId).map((d) => d.id));
-    return snap.effectiveControls.filter((ec) => depIds.has(ec.deploymentId));
+    const deployment = operationalDeployment(this.deploymentsOf(snap, initiativeId));
+    return deployment ? currentControlRevisions(
+      snap.effectiveControls.filter((ec) => ec.deploymentId === deployment.id),
+    ) : [];
+  }
+
+  private currentControls(snap: PortfolioSnapshot): EffectiveControlRecord[] {
+    return snap.initiatives.flatMap((initiative) => this.controlsOf(snap, initiative.id));
   }
 
   private resolvedQ01Threshold(
@@ -342,7 +339,7 @@ export class DbDataProvider implements DataProvider {
     const flags: OverlayFlags = ra
       ? flagsFromRecord(ra.flags)
       : intake
-        ? flagsFromIntakeFields(intake.fields)
+        ? overlayFromStoredIntake(intake.fields)
         : {
             phi: false,
             memberFacing: false,
@@ -371,6 +368,12 @@ export class DbDataProvider implements DataProvider {
       accountableApprover: init.accountableApprover,
       domainsRequired: ra ? ra.requiredDomains.length : 0,
       domainsSigned: cycleDecisions.filter((rd) => rd.status === "signed").length,
+      decisionReadiness: reviewDecisionReadiness({
+        state: init.state as LifecycleState,
+        cycleOpen: Boolean(cycle && !cycle.closedAt),
+        requiredDomains: snap.riskAssessments.find((row) => row.id === cycle?.riskAssessmentId && row.initiativeId === init.id)?.requiredDomains ?? null,
+        reviews: cycleDecisions,
+      }),
       overdue: ecs.some((ec) => ec.status === "overdue"),
       storyline: this.storylineOf(snap, init),
       updatedAt: toIso(init.updatedAt),
@@ -454,12 +457,10 @@ export class DbDataProvider implements DataProvider {
         citations: d.citations,
       }));
 
-    const operationalDep = this.operationalDeployment(snap, init.id);
+    const operationalDep = this.displayDeployment(snap, init.id);
     const defById = new Map(snap.controlDefs.map((d) => [d.id, d]));
-    const controls: ControlRow[] = (
-      operationalDep
-        ? snap.effectiveControls.filter((ec) => ec.deploymentId === operationalDep.id)
-        : []
+    const controls: ControlRow[] = currentControlRevisions(
+      operationalDep ? snap.effectiveControls.filter((ec) => ec.deploymentId === operationalDep.id) : [],
     )
       .sort((a, b) => a.controlId.localeCompare(b.controlId))
       .map((ec) => {
@@ -513,6 +514,7 @@ export class DbDataProvider implements DataProvider {
     }
 
     const deployments: DeploymentRow[] = this.deploymentsOf(snap, init.id).map((d) => ({
+      id: d.id,
       version: d.version,
       status: d.status as DeploymentRow["status"],
       at: toIso(d.deployedAt),
@@ -557,13 +559,13 @@ export class DbDataProvider implements DataProvider {
     // Reviewer hours saved: drafted-vs-scratch estimate, ~4h per drafted
     // review (seed-spec §6) — a review counts once a draft exists.
     const draftedReviews = snap.reviewDecisions.filter((rd) => rd.draftMd !== null).length;
-    const reviewerHoursSaved = draftedReviews * 4;
+    const reviewerHoursSavedPerReview = draftedReviews > 0 ? 4 : 0;
 
     // Evidence freshness per initiative: stale when any effective control
     // is overdue or has a pending exception (seed-spec §6: #10, #11 stale).
     const staleInitiatives = new Set<string>();
     const depById = new Map(snap.deployments.map((d) => [d.id, d]));
-    for (const ec of snap.effectiveControls) {
+    for (const ec of this.currentControls(snap)) {
       if (ec.status === "overdue" || ec.status === "exception_requested") {
         const dep = depById.get(ec.deploymentId);
         if (dep) staleInitiatives.add(dep.initiativeId);
@@ -577,8 +579,8 @@ export class DbDataProvider implements DataProvider {
     //   2. effective controls with a pending exception on their cadence  -> #11
     //   3. gate controls blocked on missing evidence via a returned
     //      domain review                                                 -> #9
-    const overdueEcs = snap.effectiveControls.filter((ec) => ec.status === "overdue").length;
-    const exceptionEcs = snap.effectiveControls.filter(
+    const overdueEcs = this.currentControls(snap).filter((ec) => ec.status === "overdue").length;
+    const exceptionEcs = this.currentControls(snap).filter(
       (ec) => ec.status === "exception_requested",
     ).length;
     const initiativesWithReturnedReview = new Set(
@@ -592,7 +594,7 @@ export class DbDataProvider implements DataProvider {
     return {
       medianReviewCycleDays,
       firstPassCompletenessPct,
-      reviewerHoursSaved,
+      reviewerHoursSavedPerReview,
       evidenceFresh,
       evidenceTotal,
       overdueControls,
@@ -618,7 +620,7 @@ export class DbDataProvider implements DataProvider {
     // (worst) status per control, so remediationOwner/evidenceAt/dueAt on
     // the catalog row reflect that same instance rather than an arbitrary one.
     const worstEcByControl = new Map<string, EffectiveControlRecord>();
-    for (const ec of snap.effectiveControls) {
+    for (const ec of this.currentControls(snap)) {
       const current = statusByControl.get(ec.controlId);
       const incoming = ec.status as ControlRow["status"];
       if (!current || severity.indexOf(incoming) < severity.indexOf(current)) {
@@ -673,7 +675,7 @@ export class DbDataProvider implements DataProvider {
             const flags = ra
               ? flagsFromRecord(ra.flags)
               : intake
-                ? flagsFromIntakeFields(intake.fields)
+                ? overlayFromStoredIntake(intake.fields)
                 : null;
             return !!flags && flags.phi && flags.memberFacing;
           })
@@ -736,7 +738,7 @@ export class DbDataProvider implements DataProvider {
         const initById = new Map(snap.initiatives.map((i) => [i.id, i]));
         const defById = new Map(snap.controlDefs.map((d) => [d.id, d]));
 
-        for (const ec of snap.effectiveControls) {
+        for (const ec of this.currentControls(snap)) {
           if (ec.status !== "overdue" && ec.status !== "exception_requested") continue;
           const dep = depById.get(ec.deploymentId);
           const init = dep ? initById.get(dep.initiativeId) : undefined;

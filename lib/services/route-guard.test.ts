@@ -3,14 +3,13 @@ import { eq, sql } from "drizzle-orm";
 import { closeTestDb, createTestDb, type TestDb } from "../db/test-client";
 import { runBudget, sessions } from "../db/schema";
 import { reserve } from "../security/budget";
+import { DbTokenBucketRateLimiter } from "../security/db-rate-limit";
 import {
   clientKeyFor,
   checkSessionAttempt,
   extractSessionToken,
   getBudgetStoreForTests,
-  getRateLimiterForTests,
   issueDemoSession,
-  resetGuardStateForTests,
   resolveSessionActor,
   runMutationGuard,
 } from "./route-guard";
@@ -31,12 +30,23 @@ function reqWithBearer(token: string, forwardedFor = "1.2.3.4"): Request {
 describe("lib/services/route-guard", () => {
   beforeEach(async () => {
     testDb = await createTestDb();
-    resetGuardStateForTests();
   });
 
   afterEach(async () => {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
     await closeTestDb(testDb);
+  });
+
+  it.each([
+    ["db", ""],
+    [undefined, "postgresql://unused.invalid/injected-test-db"],
+  ] as const)("keeps provider %s interactive with database %s", async (mode, databaseUrl) => {
+    vi.stubEnv("DATA_PROVIDER", mode);
+    vi.stubEnv("DATABASE_URL", databaseUrl);
+    const session = await issueDemoSession("priya-raman");
+    expect(session).not.toBeNull();
+    expect(await runMutationGuard(reqWithBearer(session!.token), undefined)).toMatchObject({ ok: true });
   });
 
   it.each(["session", "mutation"])("exhausting %s allowance does not consume the other limiter", async (first) => {
@@ -110,8 +120,7 @@ describe("lib/services/route-guard", () => {
     // Current schema forbids null; emulate a legacy database only in this disposable test.
     await testDb.execute(sql`ALTER TABLE sessions ALTER COLUMN workspace_id DROP NOT NULL`);
     await testDb.execute(sql`UPDATE sessions SET workspace_id = NULL WHERE token = ${issued.token}`);
-    const limiter = getRateLimiterForTests();
-    const check = vi.spyOn(limiter, "checkAndConsume");
+    const check = vi.spyOn(DbTokenBucketRateLimiter.prototype, "checkAndConsume");
     const result = await runMutationGuard(reqWithBearer(issued.token), undefined, { requiresBudget: true, estimatedTokens: 100 });
     expect(result).toMatchObject({ ok: false, failure: { status: 401 } });
     expect(check).not.toHaveBeenCalled();

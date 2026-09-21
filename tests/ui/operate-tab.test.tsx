@@ -1,7 +1,7 @@
 import { describe, expect, it, beforeAll } from "vitest";
 import { screen } from "@testing-library/react";
 import { EvalsTab } from "@/components/jeeves/operate-tab";
-import { getProvider } from "@/lib/data";
+import { MockDataProvider } from "@/lib/data/mock-provider";
 import { installResizeObserverStub, renderWithProviders } from "./helpers";
 
 beforeAll(() => {
@@ -10,7 +10,7 @@ beforeAll(() => {
 
 describe("EvalsTab — breach initiative (#4 member-chat-copilot)", () => {
   it("renders the Q-01 threshold value 0.08", async () => {
-    const detail = await getProvider().getInitiativeDetail("member-chat-copilot");
+    const detail = await new MockDataProvider().getInitiativeDetail("member-chat-copilot");
     expect(detail).not.toBeNull();
 
     renderWithProviders(
@@ -21,7 +21,7 @@ describe("EvalsTab — breach initiative (#4 member-chat-copilot)", () => {
   });
 
   it('labels every telemetry panel "Synthetic data — demo" with the Arize connector chip', async () => {
-    const detail = await getProvider().getInitiativeDetail("member-chat-copilot");
+    const detail = await new MockDataProvider().getInitiativeDetail("member-chat-copilot");
     const { container } = renderWithProviders(
       <EvalsTab slug={detail!.summary.slug} telemetry={detail!.telemetry} />,
     );
@@ -36,7 +36,7 @@ describe("EvalsTab — breach initiative (#4 member-chat-copilot)", () => {
   });
 
   it("only claims-ocr-coder gets a GPU panel", async () => {
-    const provider = getProvider();
+    const provider = new MockDataProvider();
     const gpu = await provider.getInitiativeDetail("claims-ocr-coder");
     const chat = await provider.getInitiativeDetail("member-chat-copilot");
 
@@ -54,7 +54,7 @@ describe("EvalsTab — breach initiative (#4 member-chat-copilot)", () => {
 
 describe("EvalsTab — breach marker (review P3)", () => {
   it("marks the eval panel Threshold exceeded when #4's series crosses Q-01", async () => {
-    const detail = await getProvider().getInitiativeDetail("member-chat-copilot");
+    const detail = await new MockDataProvider().getInitiativeDetail("member-chat-copilot");
     const { container } = renderWithProviders(
       <EvalsTab slug={detail!.summary.slug} telemetry={detail!.telemetry} />,
     );
@@ -64,7 +64,7 @@ describe("EvalsTab — breach marker (review P3)", () => {
   });
 
   it("shows no breach marker for a healthy initiative (#12 callcenter-qa-scorer)", async () => {
-    const detail = await getProvider().getInitiativeDetail("callcenter-qa-scorer");
+    const detail = await new MockDataProvider().getInitiativeDetail("callcenter-qa-scorer");
     const { container } = renderWithProviders(
       <EvalsTab slug={detail!.summary.slug} telemetry={detail!.telemetry} />,
     );

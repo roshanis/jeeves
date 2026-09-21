@@ -104,6 +104,7 @@ describe("draft attempt reservations", () => {
     { runtime: "agents-sdk", deep: "0", estimate: 1_500 },
     { runtime: "agents-sdk", deep: "1", estimate: 15_000 },
   ])("reserves each retry before invocation with $runtime deep=$deep estimate=$estimate", async ({ runtime, deep, estimate }) => {
+    vi.stubEnv("OPENAI_API_KEY", "test-placeholder-never-sent");
     vi.stubEnv("JEEVES_AGENT_RUNTIME", runtime);
     vi.stubEnv("JEEVES_DEEP_REVIEW", deep);
     const policy = draftBudgetPolicy(at);

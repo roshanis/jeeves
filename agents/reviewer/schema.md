@@ -1,8 +1,8 @@
 # Reviewer agent — output schema
 
 This is the structured object every `reviewer` invocation must return via `Output.object`. The
-authoritative type is the Zod schema in `lib/agents/` (owned by a separate worktree at the time
-this document was written); this file is the human-readable spec that schema must match.
+authoritative validator is `reviewerDraftOutputSchema` in `lib/agents/schemas.ts`;
+this file is its human-readable specification.
 
 ```ts
 interface ReviewerDraftOutput {
@@ -81,3 +81,7 @@ interface ReviewerDraftOutput {
   or an invented id.
 - Keep `confidenceNotes` short (a few sentences) — it is a signal to the human reviewer, not a
   second assessment.
+
+The port keeps policy anchors in `citations`. The persisted draft Markdown also
+includes evidence/condition control IDs and confidence notes so those fields are
+available to the human reviewer, rather than discarded during mapping.

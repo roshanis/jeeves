@@ -2,12 +2,11 @@ import { test, expect } from "@playwright/test";
 import { ADDITIONAL_ANSWERS, EXPANDED_INTAKE } from "../fixtures/expanded-intake";
 
 // plan.md §8 test 12 — Playwright golden path (required, AGENTS.md hard rule
-// 8): a read-only champion storyline covering the public landing page, the
+// 8): a champion storyline covering passwordless entry, the public
 // home pipeline board, an initiative detail page's Intake/Evals tabs, the
-// audit query console, and the control catalog. This suite is read-only end
-// to end — it never submits, signs, approves, or mutates anything
-// (AGENTS.md hard rule 2: the public/demo surfaces this test drives are
-// read-only for every role).
+// audit query console, and the control catalog. These cases create no
+// initiatives, signatures or decisions; later journeys exercise mutations
+// inside the visitor's isolated workspace.
 test.describe("champion storyline: read-only golden path", () => {
   test("landing page shows the hero and routes into the console", async ({
     page,
@@ -346,6 +345,7 @@ test.describe("live demo loop: create → triage → draft run → sign → deci
       page.getByRole("heading", { name: "Prior-Auth Clinical Summarizer" }),
     ).toBeVisible();
 
+    const caseUrl = new URL(page.url()).pathname;
     // --- Triage: Critical, 8 required domains, review branch -------------
     await page.getByRole("tab", { name: "Intake", exact: true }).click();
     for (const [question, answer] of ADDITIONAL_ANSWERS) {
@@ -402,30 +402,35 @@ test.describe("live demo loop: create → triage → draft run → sign → deci
     await loginAs(page, "marcus-webb");
 
     const phiRow = page.locator('[data-slot="review-row"][data-domain="privacy-hipaa"]');
-    const clinicalRow = page.locator('[data-slot="review-row"][data-domain="clinical-safety"]');
-    await expect(phiRow.getByRole("button", { name: "Review & sign", exact: true })).toBeEnabled({
+    await phiRow.getByRole("link", { name: "Open Privacy/HIPAA review", exact: true }).click();
+    await expect(page).toHaveURL(/\/reviews\?initiative=.+&domain=privacy-hipaa$/);
+    const assessment = page.locator('[data-slot="review-assessment"]');
+    await expect(assessment.getByRole("button", { name: "Sign", exact: true })).toBeEnabled({
       timeout: 15_000,
     });
-    await expect(clinicalRow.getByRole("button", { name: "Review & sign", exact: true })).toBeDisabled({
-      timeout: 15_000,
-    });
-    // Signing observes the evidence snapshot first. This case has no packet,
-    // so the wire request must explicitly bind that observed absence.
-    await phiRow.getByRole("button", { name: "Review & sign", exact: true }).click();
-    await expect(phiRow.getByText("No evidence submitted yet.")).toBeVisible();
-    const signButton = phiRow.getByRole("button", { name: "Sign", exact: true });
-    await expect(signButton).toBeEnabled();
+    // Domain authority still applies when a copied link selects another review.
+    await page.getByRole("button", { name: "Change review", exact: true }).click();
+    await page.getByRole("button", { name: /^Clinical Safety/ }).click();
+    await page.getByRole("button", { name: "Open Clinical Safety review for Prior-Auth Clinical Summarizer", exact: true }).click();
+    await expect(assessment.getByRole("button", { name: "Sign", exact: true })).toBeDisabled();
+    await page.goBack();
+    await page.goBack();
+    await expect(page).toHaveURL(/domain=privacy-hipaa$/);
+    await expect(assessment.getByRole("button", { name: "Sign", exact: true })).toBeEnabled();
+    await assessment.getByLabel("Assessment text").fill("Privacy review completed against the recorded intake and policy requirements.");
+    await expect(page.getByText("No evidence submitted yet.")).toBeVisible();
     const signResponsePromise = page.waitForResponse(response => response.url().endsWith('/privacy-hipaa/sign') && response.request().method() === 'POST');
-    await signButton.click();
+    await assessment.getByRole("button", { name: "Sign", exact: true }).click();
     const signResponse = await signResponsePromise;
     const signRequest = signResponse.request().postDataJSON();
     expect(Number.isSafeInteger(signRequest.expectedRevision)).toBe(true);
     expect(signRequest.expectedRevision).toBeGreaterThanOrEqual(0);
     expect(signRequest.expectedEvidencePacketId).toBeNull();
     expect(signResponse.status(), await signResponse.text()).toBe(200);
-    await expect(
-      phiRow.locator('[data-slot="review-status"][data-status="signed"]'),
-    ).toBeVisible({ timeout: 30_000 });
+    await expect(assessment).toContainText("Signed by", { timeout: 30_000 });
+    await page.getByRole("link", { name: "Prior-Auth Clinical Summarizer", exact: true }).click();
+    await expect(page).toHaveURL(`${caseUrl}?tab=reviews`);
+    await expect(phiRow.locator('[data-slot="review-status"][data-status="signed"]')).toBeVisible();
 
     // --- Approver: conditionally approve with one condition --------------
     await loginAs(page, "angela-torres");
@@ -524,6 +529,10 @@ test('requester evidence: upload, return, revision, acceptance and download hist
   await panel.getByLabel('Document version',{exact:true}).selectOption({label:'New version of retention-v1.pdf (v1)'});
   await upload('retention-v2.pdf');
   await requirement.getByLabel('What this demonstrates for H-01').fill('Retention duration is 30 days for this fictional example.');
+  const privacyRequirement = panel.getByRole('article', {name:/^H-02 /});
+  await privacyRequirement.getByRole('combobox', {name:'Document for H-02', exact:true}).selectOption({label:'retention-v2.pdf · v2'});
+  await privacyRequirement.getByLabel('Relevant pages for H-02 (optional)').fill('3');
+  await privacyRequirement.getByLabel('What this demonstrates for H-02').fill('The same synthetic document supports the second privacy requirement.');
   await panel.getByRole('button',{name:'Submit revised evidence',exact:true}).click();
   await expect(panel.getByRole('status')).toContainText('Evidence submitted');
   await switchPersona('marcus-webb');
@@ -540,6 +549,9 @@ test('requester evidence: upload, return, revision, acceptance and download hist
   await expect(selectedSource).toContainText('1–2');
   await workbench.getByRole('button', {name:'Run agent to draft', exact:true}).click();
   await expect(workbench.getByLabel('Assessment text')).toBeEnabled({timeout:30_000});
+  // The completed draft remounts its evidence workspace. Observe the loaded
+  // packet before binding human edits to that draft/evidence snapshot.
+  await expect(workbench.getByText('Submitted packet · v2', {exact:true})).toBeVisible();
   await workbench.getByLabel('Assessment text').fill('Human finding based on the submitted retention policy.');
   await workbench.getByRole('button', {name:/Arize evaluations/}).click();
   await expect(selectedSource.getByRole('heading', {name:'Evaluation evidence is not connected'})).toBeVisible();
@@ -550,7 +562,7 @@ test('requester evidence: upload, return, revision, acceptance and download hist
   await selectedSource.getByLabel('Evidence assessment reason').fill('The duration and scope are documented.');
   await selectedSource.getByRole('button', {name:'Accept evidence', exact:true}).click();
   await expect(selectedSource.getByRole('region', {name:'Recorded evidence assessment'})).toContainText('Reviewer accepted');
-  // H-02 is still missing: accepting this document never signs the domain.
+  // H-02 still awaits its own acceptance: accepting H-01 never signs the domain.
   await expect(workbench.getByRole('button', {name:'Sign', exact:true})).toBeDisabled();
   const submittedDownload = page.waitForEvent('download');
   await selectedSource.getByRole('button', {name:'Download submitted document', exact:true}).click();
@@ -563,6 +575,38 @@ test('requester evidence: upload, return, revision, acceptance and download hist
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
   await page.evaluate(() => window.scrollTo(0, 0));
   await page.screenshot({path:'test-results/review-evidence-mobile.png', fullPage:true});
+  // Complete the evidence-backed signature through the same canonical surface.
+  // Reusing one document never implies acceptance of its other requirement.
+  await workbench.getByRole('button', {name:/H-02 ·/}).click();
+  await expect(selectedSource).toContainText('The same synthetic document supports the second privacy requirement.');
+  await selectedSource.getByLabel('Evidence assessment reason').fill('Reviewed the second requirement against its submitted source and page reference.');
+  const finalAssessmentResponse = page.waitForResponse(response => response.url().endsWith('/evidence') && response.request().method() === 'POST' && response.request().postDataJSON().controlId === 'H-02');
+  await selectedSource.getByRole('button', {name:'Accept evidence', exact:true}).click();
+  const acceptedResponse = await finalAssessmentResponse;
+  expect(acceptedResponse.status()).toBe(200);
+  const acceptedPacketId = acceptedResponse.request().postDataJSON().packetId;
+  expect(typeof acceptedPacketId).toBe('string');
+  await expect(selectedSource.getByRole('region', {name:'Recorded evidence assessment'})).toContainText('Reviewer accepted');
+  await expect(workbench.getByLabel('Assessment text')).toHaveValue('Human finding based on the submitted retention policy.');
+  // If a refreshed source arrived while editing, complete the same explicit
+  // re-review required of a human; evidence acceptance does not bypass it.
+  const acknowledge = workbench.getByRole('button', {name:'I reviewed the refreshed draft and evidence', exact:true});
+  if (await acknowledge.isVisible()) {
+    await expect(workbench.getByRole('button', {name:'Sign', exact:true})).toBeDisabled();
+    await expect(acknowledge).toBeEnabled();
+    await acknowledge.click();
+    await expect(workbench.getByLabel('Assessment text')).toHaveValue('Human finding based on the submitted retention policy.');
+  }
+  await expect(workbench.getByRole('button', {name:'Sign', exact:true})).toBeEnabled();
+  const signResponse = page.waitForResponse(response => response.url().includes('/privacy-hipaa/sign') && response.request().method() === 'POST');
+  await workbench.getByRole('button', {name:'Sign', exact:true}).click();
+  const signedResponse = await signResponse;
+  expect(signedResponse.status(), await signedResponse.text()).toBe(200);
+  const signature = signedResponse.request().postDataJSON();
+  expect(Number.isSafeInteger(signature.expectedRevision)).toBe(true);
+  expect(signature.expectedEvidencePacketId).toBe(acceptedPacketId);
+  await expect(workbench).toContainText('Signed by', {timeout:30_000});
+  await expect(workbench.getByLabel('Assessment text')).toBeDisabled();
   page.off('pageerror', recordReviewError);
   expect(reviewErrors).toEqual([]);
   await page.goto(`${caseUrl}?tab=evidence`);

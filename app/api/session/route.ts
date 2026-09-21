@@ -1,7 +1,7 @@
 /** Public demo entry and persona switching. Every action still needs a
  * server-issued, workspace-bound session. No visitor password is required. */
 import { z } from "zod";
-import { checkSessionAttempt, clientKeyFor, issueDemoSession, extractSessionToken, resolveSession } from "@/lib/services/route-guard";
+import { checkReadOnlyMode, checkSessionAttempt, clientKeyFor, issueDemoSession, extractSessionToken, resolveSession } from "@/lib/services/route-guard";
 import {
   resolveWorkspaceCookieSecret,
   signWorkspaceId,
@@ -57,6 +57,11 @@ const bodySchema = z.object({
 });
 
 export async function POST(req: Request): Promise<Response> {
+  const readOnlyFailure = checkReadOnlyMode();
+  if (readOnlyFailure) {
+    return Response.json({ error: readOnlyFailure.message }, { status: readOnlyFailure.status });
+  }
+
   // Validate any supplied parent session before applying its switch allowance.
   const token = extractSessionToken(req);
   const parent = token ? await resolveSession(token) : null;

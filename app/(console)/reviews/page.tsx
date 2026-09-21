@@ -1,9 +1,7 @@
 import { loadPortfolioDetails } from "@/app/_lib/portfolio-data";
 import { getAppProvider, getCurrentWorkspaceId } from "@/app/_lib/data-provider";
-import {
-  ReviewWorkbench,
-  type ReviewQueueRow,
-} from "@/components/jeeves/review-workbench";
+import type { ReviewQueueRow } from "@/components/jeeves/review-workbench";
+import { ReviewWorkbenchRoute } from "./review-workbench-route";
 
 export default async function ReviewsPage() {
   const provider = getAppProvider();
@@ -19,6 +17,7 @@ export default async function ReviewsPage() {
         slug: detail.summary.slug,
         title: detail.summary.title,
         tier: detail.summary.tier,
+        isSeeded: detail.summary.isSeeded,
         review,
       });
     }
@@ -41,7 +40,7 @@ export default async function ReviewsPage() {
           decide — signing authority never sits with agents or Admin.
         </p>
       </div>
-      <ReviewWorkbench rows={rows} />
+      <ReviewWorkbenchRoute rows={rows} />
     </div>
   );
 }

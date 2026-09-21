@@ -1,13 +1,10 @@
-// Deterministic mock DataProvider — fixtures encode docs/seed-spec.md by hand.
-// No randomness, no Date.now(), no file/network I/O. Every tier below is
-// hand-verified against lib/triage/rules.ts#deriveTier (see the comment above
-// each initiative) and cross-checked with lib/triage/routing.ts#requiredDomains
-// for domainsRequired counts. This file is UI-dev/test fixture data only —
-// lib/data/db-provider.ts (not yet built) will replace it once DATABASE_URL
-// is wired; both must satisfy the same DataProvider contract from provider.ts.
+// Deterministic offline read model over shared fictional reference facts.
 import type { Domain, OverlayFlags, Tier } from "@/lib/domain/types";
+import { ACTORS, BASE_DATE_MS, CONTROL_SEEDS, INITIATIVE_SEEDS, type ControlSeed } from "../demo/reference-data";
+import { reviewerNameForDomain } from "../demo/personas";
 import { deriveTier } from "@/lib/triage/rules";
 import { requiredDomains } from "@/lib/triage/routing";
+import { reviewDecisionReadiness } from "@/lib/approval/review-readiness";
 import { actorMatches, displayNameFor } from "@/lib/services/actors";
 import type { DataProvider, WorkspaceScopedReadOptions } from "./provider";
 import type {
@@ -28,8 +25,7 @@ import type {
 // Deterministic helpers (pure functions of day index — no wall clock, no RNG)
 // ---------------------------------------------------------------------------
 
-const BASE_DATE = "2026-07-01T00:00:00.000Z";
-const BASE_MS = Date.parse(BASE_DATE);
+const BASE_MS = BASE_DATE_MS;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** ISO date string for `base + offsetDays` (may be negative). */
@@ -77,27 +73,9 @@ function series(
 // Actors (seed-spec §1)
 // ---------------------------------------------------------------------------
 
-const PRIYA = "Priya Raman";
-const DAN = "Dan Kowalski";
-const ELENA = "Dr. Elena Vasquez";
-const MARCUS = "Marcus Webb";
-const SOFIA = "Sofia Grant";
-const JAMES = "James Liu";
-const ANGELA = "Angela Torres";
-const RAY = "Ray Chen";
-const NIA = "Nia Okafor";
-
-// Reviewer-by-domain assignment used across seeded ReviewRows (seed-spec §1).
-const REVIEWER_BY_DOMAIN: Record<Domain, string> = {
-  "clinical-safety": ELENA,
-  "privacy-hipaa": MARCUS,
-  "responsible-ai": SOFIA,
-  legal: JAMES,
-  procurement: NIA,
-  "tech-architecture": NIA,
-  security: NIA,
-  "data-governance": NIA,
-};
+const DAN = ACTORS.danKowalski.name;
+const ANGELA = ACTORS.angelaTorres.name;
+const RAY = ACTORS.rayChen.name;
 
 const DOMAIN_LABEL: Record<Domain, string> = {
   legal: "Legal",
@@ -116,38 +94,11 @@ const DOMAIN_LABEL: Record<Domain, string> = {
 // docs/policies/INDEX.md control-to-section cross-reference.
 // ---------------------------------------------------------------------------
 
-interface CatalogEntry {
-  id: string;
-  name: string;
-  domain: Domain;
-  policySource: string;
-  // M4 catalog fields (control_definitions columns) — hand-picked plausible,
-  // deterministic values per control; no randomness, mirrors real-schema shape.
-  owner: string;
-  cadence: string;
-  enforcementMode: "monitor" | "gate" | "block";
-  remediationOwner: string | null;
-  requiredEvidence: string;
-}
-
-const CONTROL_CATALOG: CatalogEntry[] = [
-  { id: "L-01", name: "Vendor contract AI addendum", domain: "legal", policySource: "MP-L v3 §MP-L-2", owner: JAMES, cadence: "per-contract", enforcementMode: "gate", remediationOwner: JAMES, requiredEvidence: "Signed AI addendum on file" },
-  { id: "L-02", name: "Marketing-claims review", domain: "legal", policySource: "MP-L v3 §MP-L-3", owner: JAMES, cadence: "per-campaign", enforcementMode: "monitor", remediationOwner: JAMES, requiredEvidence: "Legal sign-off memo" },
-  { id: "P-01", name: "Vendor risk assessment", domain: "procurement", policySource: "MP-P v2 §MP-P-2", owner: NIA, cadence: "annual", enforcementMode: "gate", remediationOwner: NIA, requiredEvidence: "Completed vendor risk questionnaire" },
-  { id: "P-02", name: "SaaS data-residency attestation", domain: "procurement", policySource: "MP-P v2 §MP-P-3", owner: NIA, cadence: "annual", enforcementMode: "monitor", remediationOwner: NIA, requiredEvidence: "Vendor data-residency attestation letter" },
-  { id: "T-01", name: "Architecture review record", domain: "tech-architecture", policySource: "MP-T v2 §MP-T-2", owner: RAY, cadence: "per-deployment", enforcementMode: "gate", remediationOwner: RAY, requiredEvidence: "Architecture review record (ARB sign-off)" },
-  { id: "T-02", name: "Disaster-recovery plan", domain: "tech-architecture", policySource: "MP-T v2 §MP-T-3", owner: RAY, cadence: "annual", enforcementMode: "monitor", remediationOwner: RAY, requiredEvidence: "DR runbook + last test date" },
-  { id: "R-01", name: "Bias & fairness testing", domain: "responsible-ai", policySource: "MP-R v4 §MP-R-2", owner: SOFIA, cadence: "per-deployment", enforcementMode: "gate", remediationOwner: SOFIA, requiredEvidence: "Fairness test report" },
-  { id: "R-02", name: "Model card published", domain: "responsible-ai", policySource: "MP-R v4 §MP-R-3", owner: SOFIA, cadence: "per-deployment", enforcementMode: "monitor", remediationOwner: SOFIA, requiredEvidence: "Published model card URL" },
-  { id: "S-01", name: "Pen test / threat model", domain: "security", policySource: "MP-S v3 §MP-S-2", owner: DAN, cadence: "annual", enforcementMode: "block", remediationOwner: DAN, requiredEvidence: "Pen test report + threat model doc" },
-  { id: "S-02", name: "Secrets & access review", domain: "security", policySource: "MP-S v3 §MP-S-3", owner: DAN, cadence: "quarterly", enforcementMode: "gate", remediationOwner: DAN, requiredEvidence: "Access review sign-off" },
-  { id: "H-01", name: "PHI minimization & BAA", domain: "privacy-hipaa", policySource: "MP-H v3 §MP-H-2", owner: MARCUS, cadence: "per-deployment", enforcementMode: "block", remediationOwner: MARCUS, requiredEvidence: "Executed BAA + minimization review" },
-  { id: "H-02", name: "De-identification validation", domain: "privacy-hipaa", policySource: "MP-H v3 §MP-H-3", owner: MARCUS, cadence: "quarterly", enforcementMode: "gate", remediationOwner: MARCUS, requiredEvidence: "De-identification validation report" },
-  { id: "C-01", name: "Clinician-in-the-loop protocol", domain: "clinical-safety", policySource: "MP-C v3 §MP-C-2", owner: ELENA, cadence: "per-deployment", enforcementMode: "block", remediationOwner: ELENA, requiredEvidence: "Clinician-in-the-loop protocol doc" },
-  { id: "C-02", name: "Adverse-event monitoring", domain: "clinical-safety", policySource: "MP-C v3 §MP-C-3", owner: ELENA, cadence: "quarterly", enforcementMode: "gate", remediationOwner: ELENA, requiredEvidence: "Adverse-event monitoring log" },
-  { id: "D-01", name: "Data lineage & sourcing approval", domain: "data-governance", policySource: "MP-D v2 §MP-D-2", owner: PRIYA, cadence: "per-deployment", enforcementMode: "gate", remediationOwner: PRIYA, requiredEvidence: "Data lineage & sourcing approval memo" },
-  { id: "D-02", name: "Retention & disposal schedule", domain: "data-governance", policySource: "MP-D v2 §MP-D-3", owner: PRIYA, cadence: "annual", enforcementMode: "monitor", remediationOwner: PRIYA, requiredEvidence: "Retention & disposal schedule doc" },
-];
+type CatalogEntry = ControlSeed & { domain: Domain; policySource: string };
+const CONTROL_CATALOG = CONTROL_SEEDS.filter(
+  (entry): entry is CatalogEntry => entry.domain !== "runtime" && entry.policySource !== null,
+);
+const Q01_DEFINITION = CONTROL_SEEDS.find((entry) => entry.id === "Q-01")!;
 
 // Q-01 default threshold: tier-specific defaults are High=0.08, Critical=0.05
 // (seed-spec §3). controlCatalog() (the flat 17-row catalog consumed by
@@ -156,8 +107,8 @@ const CONTROL_CATALOG: CatalogEntry[] = [
 // ControlRow entries on Critical-tier initiatives use the tier-specific 0.05
 // value instead (see buildControls() below) — documented here as the one
 // deliberate divergence between the flat catalog and per-initiative rows.
-const Q01_DEFAULT_THRESHOLD = 0.08;
-const Q01_CRITICAL_THRESHOLD = 0.05;
+const Q01_DEFAULT_THRESHOLD = Q01_DEFINITION.tierDefaultThresholds!.high;
+const Q01_CRITICAL_THRESHOLD = Q01_DEFINITION.tierDefaultThresholds!.critical;
 
 // ---------------------------------------------------------------------------
 // Initiative fixture shape
@@ -194,29 +145,12 @@ interface InitiativeFixture {
   workspaceId?: string | null;
 }
 
-// Overlay-flag order per seed-spec §2.1: PHI, member-facing, care-coverage,
-// vendor-hosted, human-in-loop, individual-impact.
-function flags(
-  phi: boolean,
-  memberFacing: boolean,
-  careCoverageInfluence: boolean,
-  vendorHosted: boolean,
-  humanInLoop: boolean,
-  individualImpact: boolean,
-): OverlayFlags {
-  return { phi, memberFacing, careCoverageInfluence, vendorHosted, humanInLoop, individualImpact };
-}
-
-const INITIATIVES: InitiativeFixture[] = [
+const INITIATIVE_STORIES: Omit<InitiativeFixture, "title" | "flags" | "tier" | "requester">[] = [
   {
     // #1: careCoverage=Y, humanInLoop=N -> rule 1 -> Critical. Hand-check: OK.
     slug: "prior-auth-summarizer",
-    title: "Prior-Auth Clinical Summarizer",
-    flags: flags(true, true, true, true, false, true),
-    tier: "critical",
     state: "intake_draft",
     storyline: "champion",
-    requester: PRIYA,
     accountableApprover: null,
     domainsSigned: 0,
     overdue: false,
@@ -224,12 +158,8 @@ const INITIATIVES: InitiativeFixture[] = [
   {
     // #2: no PHI/memberFacing/careCoverage/individualImpact -> rule 7 -> Low. Hand-check: OK.
     slug: "marketing-ab-tester",
-    title: "Marketing Copy A/B Tester",
-    flags: flags(false, false, false, true, true, false),
-    tier: "low",
     state: "deployed",
     storyline: "fast-lane",
-    requester: DAN,
     accountableApprover: ANGELA,
     domainsSigned: 4,
     overdue: false,
@@ -237,12 +167,8 @@ const INITIATIVES: InitiativeFixture[] = [
   {
     // #3: PHI=Y -> rule 3 -> High. Hand-check: OK.
     slug: "social-sentiment-miner",
-    title: "Member Social-Media Sentiment Miner",
-    flags: flags(true, true, false, true, true, false),
-    tier: "high",
     state: "rejected",
     storyline: "rejected",
-    requester: PRIYA,
     accountableApprover: ANGELA,
     domainsSigned: 5,
     overdue: false,
@@ -250,12 +176,8 @@ const INITIATIVES: InitiativeFixture[] = [
   {
     // #4: PHI=Y -> rule 3 -> High. Hand-check: OK.
     slug: "member-chat-copilot",
-    title: "Member Services Chat Copilot",
-    flags: flags(true, true, false, false, true, false),
-    tier: "high",
     state: "deployed",
     storyline: "breach",
-    requester: PRIYA,
     accountableApprover: ANGELA,
     domainsSigned: 6,
     overdue: false,
@@ -263,12 +185,8 @@ const INITIATIVES: InitiativeFixture[] = [
   {
     // #5: careCoverage=Y, humanInLoop=N -> rule 1 -> Critical. Hand-check: OK.
     slug: "pa-correspondence-model",
-    title: "Prior-Auth Correspondence Drafting Model",
-    flags: flags(true, false, true, false, false, true),
-    tier: "critical",
     state: "deployed",
     storyline: "promotion-gate",
-    requester: PRIYA,
     accountableApprover: ANGELA,
     domainsSigned: 8,
     overdue: false,
@@ -276,12 +194,8 @@ const INITIATIVES: InitiativeFixture[] = [
   {
     // #6: careCoverage=Y, humanInLoop=Y -> rule 2 -> High. Hand-check: OK.
     slug: "claims-ocr-coder",
-    title: "Claims Document OCR + Coding Model",
-    flags: flags(true, false, true, false, true, true),
-    tier: "high",
     state: "deployed",
     storyline: "gpu",
-    requester: DAN,
     accountableApprover: ANGELA,
     domainsSigned: 7,
     overdue: false,
@@ -290,12 +204,8 @@ const INITIATIVES: InitiativeFixture[] = [
     // #7: no flags true except humanInLoop/individualImpact -> rule 5 -> Medium. Hand-check: OK.
     // Sanity fixture: Medium + no PHI/vendor/careCoverage -> exactly base 5 domains.
     slug: "provider-dedup-agent",
-    title: "Provider Directory Dedup Agent",
-    flags: flags(false, false, false, false, true, true),
-    tier: "medium",
     state: "in_review",
     storyline: "mid-pipeline",
-    requester: DAN,
     accountableApprover: null,
     domainsSigned: 3,
     overdue: false,
@@ -303,12 +213,8 @@ const INITIATIVES: InitiativeFixture[] = [
   {
     // #8: careCoverage=Y, humanInLoop=N -> rule 1 -> Critical. Hand-check: OK.
     slug: "nurse-triage-summarizer",
-    title: "Nurse Triage Line Summarizer",
-    flags: flags(true, false, true, false, false, true),
-    tier: "critical",
     state: "conditionally_approved",
     storyline: "conditional",
-    requester: PRIYA,
     accountableApprover: ANGELA,
     domainsSigned: 8,
     overdue: false,
@@ -316,12 +222,8 @@ const INITIATIVES: InitiativeFixture[] = [
   {
     // #9: PHI=Y -> rule 3 -> High. Hand-check: OK.
     slug: "formulary-qa-bot",
-    title: "Member Formulary Q&A Bot",
-    flags: flags(true, true, false, true, false, false),
-    tier: "high",
     state: "in_review",
     storyline: "returned",
-    requester: DAN,
     accountableApprover: null,
     domainsSigned: 4,
     overdue: true,
@@ -329,12 +231,8 @@ const INITIATIVES: InitiativeFixture[] = [
   {
     // #10: careCoverage=Y, humanInLoop=Y -> rule 2 -> High. Hand-check: OK.
     slug: "fwa-anomaly-detector",
-    title: "Fraud, Waste & Abuse Anomaly Detector",
-    flags: flags(true, false, true, false, true, true),
-    tier: "high",
     state: "deployed",
     storyline: "overdue",
-    requester: NIA,
     accountableApprover: ANGELA,
     domainsSigned: 7,
     overdue: true,
@@ -342,12 +240,8 @@ const INITIATIVES: InitiativeFixture[] = [
   {
     // #11: no PHI/memberFacing/careCoverage, individualImpact=Y -> rule 5 -> Medium. Hand-check: OK.
     slug: "hr-resume-screener",
-    title: "HR Résumé Screener",
-    flags: flags(false, false, false, true, true, true),
-    tier: "medium",
     state: "approved",
     storyline: "exception",
-    requester: DAN,
     accountableApprover: ANGELA,
     domainsSigned: 6,
     overdue: true,
@@ -355,17 +249,19 @@ const INITIATIVES: InitiativeFixture[] = [
   {
     // #12: no PHI/memberFacing/careCoverage, individualImpact=Y -> rule 5 -> Medium. Hand-check: OK.
     slug: "callcenter-qa-scorer",
-    title: "Call Center QA Auto-Scorer",
-    flags: flags(false, false, false, false, true, true),
-    tier: "medium",
     state: "deployed",
     storyline: "healthy",
-    requester: NIA,
     accountableApprover: ANGELA,
     domainsSigned: 5,
     overdue: false,
   },
 ];
+
+const INITIATIVES: InitiativeFixture[] = INITIATIVE_SEEDS.map(({ expectedTier, ...facts }) => {
+  const story = INITIATIVE_STORIES.find((entry) => entry.slug === facts.slug);
+  if (!story) throw new Error(`Missing demo storyline for ${facts.slug}`);
+  return { ...facts, tier: expectedTier, ...story };
+});
 
 // Internal consistency check: fail fast (at module load, dev/test time) if
 // any hand-authored tier ever drifts from lib/triage/rules.ts. Keeps this
@@ -435,7 +331,7 @@ function buildReviews(init: InitiativeFixture): ReviewRow[] {
   const domains = domainsRequiredFor(init);
   return domains.map((domain, index) => {
     const status = reviewStatusFor(init, domain, index);
-    const reviewer = status === "pending" ? null : REVIEWER_BY_DOMAIN[domain];
+    const reviewer = status === "pending" ? null : reviewerNameForDomain(domain);
     const signedAt = status === "signed" ? isoAt(-20 + index * 2) : null;
     // When this review entered the queue — spread across each cycle's domains
     // so the workbench aging view shows a believable fresh -> overdue gradient
@@ -825,6 +721,12 @@ function toSummary(init: InitiativeFixture): InitiativeSummary {
     accountableApprover: init.accountableApprover,
     domainsRequired: domains.length,
     domainsSigned: init.domainsSigned,
+    decisionReadiness: reviewDecisionReadiness({
+      state: init.state,
+      cycleOpen: init.state === "in_review" || init.state === "re_review",
+      requiredDomains: domains,
+      reviews: buildReviews(init),
+    }),
     overdue: init.overdue,
     storyline: init.storyline,
     updatedAt: seededUpdatedAt(init.slug),
@@ -921,11 +823,11 @@ function isVisibleToViewer(slug: string, opts?: WorkspaceScopedReadOptions): boo
 const OUTCOME_METRICS: OutcomeMetrics = {
   medianReviewCycleDays: 11,
   firstPassCompletenessPct: 60,
-  // reviewerHoursSaved is expressed as a per-review estimate (~4h/review per
+  // reviewerHoursSavedPerReview is expressed as a per-review estimate (~4h/review per
   // seed-spec §6's "drafted-vs-scratch estimate"), not an aggregate across
   // all reviews — the UI subtext "~4h/review" makes this explicit so the
   // single number 4 isn't misread as a portfolio-wide total.
-  reviewerHoursSaved: 4,
+  reviewerHoursSavedPerReview: 4,
   evidenceFresh: 10,
   evidenceTotal: 12,
   overdueControls: 3,
@@ -1083,7 +985,7 @@ export class MockDataProvider implements DataProvider {
       cadence: "continuous",
       enforcementMode: "block",
       remediationOwner: RAY,
-      requiredEvidence: "Eval observation stream (eval_hallucination) within threshold",
+      requiredEvidence: Q01_DEFINITION.requiredEvidence,
       evidenceAt: isoAt(-1),
       dueAt: null,
     };

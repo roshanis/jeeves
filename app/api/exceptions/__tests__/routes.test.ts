@@ -6,7 +6,6 @@ import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { createTestDb, closeTestDb, type TestDb } from "@/lib/db/test-client";
-import { resetGuardStateForTests } from "@/lib/services/route-guard";
 import { seedDatabase } from "@/scripts/seed";
 import { controlDefinitions, deploymentVersions, effectiveControls, sessions } from "@/lib/db/schema";
 import { createDraft } from "@/lib/services/initiative-service";
@@ -23,7 +22,6 @@ beforeEach(async () => {
   process.env.JEEVES_COOKIE_SECRET = COOKIE_SECRET;
   testDb = await createTestDb();
   await seedDatabase(testDb);
-  resetGuardStateForTests();
 });
 
 afterEach(async () => {

@@ -13,15 +13,14 @@
  */
 import { generateText } from "ai";
 import { openai } from "@ai-sdk/openai";
-import { getAgentPort, resolveAgentRuntime } from "./index";
+import { getAgentPort } from "./index";
 import { AgentInitializationError } from "./initialization-error";
+import { resolveAgentRuntimeConfig, type AgentRuntimeConfig } from "./runtime";
 
-export interface ConnectorHealth {
-  /** OPENAI_API_KEY is present and non-empty. */
-  configured: boolean;
+export interface ConnectorHealth extends AgentRuntimeConfig {
   /** A live probe call actually succeeded (always false for the mock — no call is made). */
   reachable: boolean;
-  adapter: "openai" | "mock";
+  /** Compatibility alias for the reviewer model probed here. */
   model: string;
   /** Null for the keyless mock, where no live assets are needed or checked. */
   assetsReady: boolean | null;
@@ -33,20 +32,16 @@ export interface ConnectorHealth {
 const DEFAULT_TIMEOUT_MS = 8000;
 
 export async function probeConnector(options?: { timeoutMs?: number }): Promise<ConnectorHealth> {
-  const runtime = resolveAgentRuntime();
+  const runtime = resolveAgentRuntimeConfig();
   // Probe the model used for draftReview. Agents SDK chat uses a separate
   // model; this one-word check does not verify chat or structured output.
-  const model = runtime === "agents-sdk"
-    ? process.env.OPENAI_TERRA_MODEL ?? "gpt-5.6-terra"
-    : process.env.OPENAI_MODEL ?? "gpt-5.1";
-  const key = process.env.OPENAI_API_KEY;
+  const model = runtime.reviewerModel;
 
   // No key -> mock adapter. Return immediately; make NO network call.
-  if (!key || key.trim().length === 0) {
+  if (!runtime.configured) {
     return {
-      configured: false,
+      ...runtime,
       reachable: false,
-      adapter: "mock",
       model,
       assetsReady: null,
       detail:
@@ -60,9 +55,8 @@ export async function probeConnector(options?: { timeoutMs?: number }): Promise<
     getAgentPort();
   } catch {
     return {
-      configured: true,
+      ...runtime,
       reachable: false,
-      adapter: "openai",
       model,
       assetsReady: false,
       detail: new AgentInitializationError().message,
@@ -82,22 +76,20 @@ export async function probeConnector(options?: { timeoutMs?: number }): Promise<
     });
     const latencyMs = Date.now() - startedAt;
     return {
-      configured: true,
+      ...runtime,
       reachable: true,
-      adapter: "openai",
       model,
       assetsReady: true,
       latencyMs,
-      detail: `Agent assets loaded (${runtime}). OpenAI ${model} responded in ${latencyMs}ms. Structured reviews and chat were not tested.`,
+      detail: `Agent assets loaded (${runtime.runtime}). AI SDK provider probe: OpenAI ${model} responded in ${latencyMs}ms. Structured reviews, the Agents SDK tool loop and chat were not tested.`,
     };
   } catch {
     return {
-      configured: true,
+      ...runtime,
       reachable: false,
-      adapter: "openai",
       model,
       assetsReady: true,
-      detail: `Agent assets loaded (${runtime}), but the provider check failed. Check model access, credentials, quota, and connectivity.`,
+      detail: `Agent assets loaded (${runtime.runtime}), but the provider check failed. Check model access, credentials, quota, and connectivity.`,
     };
   } finally {
     clearTimeout(timer);

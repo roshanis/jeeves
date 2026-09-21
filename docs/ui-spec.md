@@ -284,11 +284,11 @@ Chronological `AuditEvent` timeline for this initiative only: intake submitted �
 - **Recommended additions:**
   - `dialog` — mandatory-reason dialogs (Admin threshold edit, pause/resume, review return).
   - `tooltip` — disabled-button explanations (read-only mode, role gating).
-  - `select` / `dropdown-menu` — role switcher, filter builder dropdowns.
+  - `select` — role switcher and filter controls.
   - `toast` (via `sonner` or shadcn's toast primitive) — Run monitor results, sign/return confirmations, rate-limit errors.
   - `progress` — completeness meter on intake, GPU/budget bars.
   - `separator` — visual grouping within dense tabs (Controls, Audit timeline).
-  - `skeleton` — loading states throughout.
+  - Loading placeholders described above are design targets; the unused shared `skeleton` component was retired on 2026-09-19.
   - `alert` — breach banners, paused-deployment banners, exception-pending banners.
   - `avatar` — actor initials on pipeline board cards and audit timeline rows.
   - `command` (cmdk-style) — optional, for the Audit filter builder if it grows a searchable-picker need; not required for M1.

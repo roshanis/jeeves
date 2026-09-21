@@ -2,6 +2,7 @@
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
 import { draftBudgetPolicy } from "@/lib/workflow/draft-execution-policy";
+import { resolveAgentRuntimeConfig, reviewInvocationLimits } from "@/lib/agents/runtime";
 import { ReviewIntegrityError } from "@/lib/services/review-integrity";
 import { eq } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
@@ -72,9 +73,11 @@ export async function POST(
     return Response.json({ error: "initiative or review cycle not found" }, { status: 404 });
   }
 
+  const limits = reviewInvocationLimits(resolveAgentRuntimeConfig());
   try {
     const result = await startDraftRun(db, id, [...parsed.data.domains] as Domain[], undefined, {
       actor: guard.actor, sessionWorkspaceId: guard.workspaceId, budget: draftBudgetPolicy(), signal: req.signal,
+      runTimeoutMs: limits.timeoutMs,
     });
     if (result.outcomes.every((outcome) => outcome.error?.kind === "budget-exhausted")) {
       return Response.json({ ...result, error: "Demo token reservation budget exhausted for today." }, { status: 429 });

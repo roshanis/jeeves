@@ -9,7 +9,6 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTestDb, closeTestDb, type TestDb } from "@/lib/db/test-client";
-import { resetGuardStateForTests } from "@/lib/services/route-guard";
 import { controlDefinitions, initiatives, reviewDecisions, auditEvents, reviewCycles } from "@/lib/db/schema";
 import { and, eq, sql } from "drizzle-orm";
 import { createMockAgentPort } from "@/lib/agents/mock-adapter";
@@ -36,7 +35,6 @@ const COOKIE_SECRET = "test-only-workspace-cookie-secret";
 beforeEach(async () => {
   process.env.JEEVES_COOKIE_SECRET = COOKIE_SECRET;
   testDb = await createTestDb();
-  resetGuardStateForTests();
   portMocks.getAgentPort.mockReset().mockReturnValue(createMockAgentPort());
   vi.stubEnv("JEEVES_AGENT_RUNTIME", "ai-sdk");
   vi.stubEnv("JEEVES_DEEP_REVIEW", "0");
@@ -592,6 +590,7 @@ describe("deep-review budget multiplier on draft-run", () => {
   });
 
   it("429s with the same request when JEEVES_DEEP_REVIEW=1 — the 10x reserve no longer fits", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "test-placeholder-never-sent");
     vi.stubEnv("JEEVES_AGENT_RUNTIME", "agents-sdk");
     vi.stubEnv("JEEVES_DEEP_REVIEW", "1");
     // 12,000 fits eight ordinary attempts, but cannot fund one deep attempt.
@@ -763,6 +762,7 @@ describe("POST /api/reviews/[cycleId]/[domain]/run — on-demand agent run", () 
   }
 
   it("uses the same 15,000-token deep runtime reservation for a reviewer", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "test-placeholder-never-sent");
     vi.stubEnv("JEEVES_AGENT_RUNTIME", "agents-sdk");
     vi.stubEnv("JEEVES_DEEP_REVIEW", "1");
     const { cycleId, workspaceCookie } = await setUpCycle("23.0.0.1");

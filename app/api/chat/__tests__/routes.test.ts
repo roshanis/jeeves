@@ -8,7 +8,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { vi } from "vitest";
 import { createTestDb, closeTestDb, type TestDb } from "@/lib/db/test-client";
-import { resetGuardStateForTests } from "@/lib/services/route-guard";
 import { seedDatabase } from "@/scripts/seed";
 import * as agentsModule from "@/lib/agents";
 import { AgentInitializationError } from "@/lib/agents/initialization-error";
@@ -28,7 +27,6 @@ beforeEach(async () => {
   delete process.env.OPENAI_API_KEY;
   testDb = await createTestDb();
   await seedDatabase(testDb);
-  resetGuardStateForTests();
 });
 
 afterEach(async () => {
@@ -396,12 +394,9 @@ describe("POST /api/chat/intake", () => {
 });
 
 /**
- * Budget-exhaustion tests placed in their own describe block at the end of
- * the file (mirroring app/api/__tests__/routes.test.ts's placement): the
- * shared budget store (lib/services/route-guard.ts's module-scoped
- * `budgetStore`) is a process-wide singleton NOT cleared by
- * `resetGuardStateForTests()`, so exhausting "today"'s budget here must run
- * after every other test in this file that needs budget available.
+ * Budget-exhaustion tests use the current case's fresh PGlite database.
+ * The shared store delegates to getDb(), so prior cases cannot exhaust this
+ * case's allowance and test order does not provide isolation.
  */
 describe("budget-exhaustion 429 on chat routes", () => {
   it("429s POST /api/chat/auditor when the daily token budget is already exhausted", async () => {

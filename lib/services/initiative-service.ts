@@ -26,6 +26,7 @@ import { evidenceForSignature, EvidenceError } from './evidence-service';
  * multi-statement writes throughout this file, which depend on that
  * transactional isolation being real, not simulated.
  */
+import { overlayFromStoredIntake } from "../intake/stored-overlay";
 import { createHash, randomUUID } from "node:crypto";
 import { and, desc, eq, isNull } from "drizzle-orm";
 import type { Db } from "../db/client";
@@ -53,6 +54,7 @@ import { normalizeAdditionalAnswers } from "../intake/additional-questions";
 import { deriveTier } from "../triage/rules";
 import { requiredDomains } from "../triage/routing";
 import { fastLaneEligibility } from "../approval/eligibility";
+import { reviewDecisionReadiness } from "../approval/review-readiness";
 import { applicabilityApplies } from "./applicability";
 import { ACTOR_DIRECTORY, FAST_LANE_POLICY, SYSTEM_ACTOR, isPersonaKey, reviewerDomainFor } from "./actors";
 import { mutationWorkspaceMismatch } from "./workspace-guard";
@@ -154,17 +156,6 @@ function canonicalJson(value: unknown): string {
       .join(",")}}`;
   }
   return JSON.stringify(value);
-}
-
-function overlayFromPayload(payload: IntakePayload): OverlayFlags {
-  return {
-    phi: payload.overlay.touchesPHI === true,
-    memberFacing: payload.overlay.memberFacing === true,
-    careCoverageInfluence: payload.overlay.careCoverageInfluence === true,
-    vendorHosted: payload.overlay.vendorHosted === true,
-    humanInLoop: payload.overlay.humanInTheLoop === true,
-    individualImpact: payload.overlay.individualImpact === true,
-  };
 }
 
 function slugify(title: string): string {
@@ -413,7 +404,7 @@ export async function createDraft(db: Db, input: CreateDraftInput): Promise<Crea
       initiativeId,
       version: 1,
       submitted: false,
-      fields: payload as unknown as Record<string, string | boolean | null>,
+      fields: payload,
       missing: completeness.gaps.map((g) => g.field),
       createdAt: ts,
     });
@@ -470,7 +461,7 @@ export async function updateIntakeDraft(
     const nextVersion = current.version + 1;
     const completeness = evaluateCompleteness(input.payload);
     const intakeVersionId = `iv-${randomUUID()}`;
-    await tx.insert(intakeVersions).values({ id: intakeVersionId, initiativeId: input.initiativeId, version: nextVersion, submitted: false, fields: input.payload as unknown as Record<string, string | boolean | null>, missing: completeness.gaps.map((g) => g.field), createdAt: new Date(nowTs()) });
+    await tx.insert(intakeVersions).values({ id: intakeVersionId, initiativeId: input.initiativeId, version: nextVersion, submitted: false, fields: input.payload, missing: completeness.gaps.map((g) => g.field), createdAt: new Date(nowTs()) });
     const initiativeUpdate = await tx.update(initiatives).set({ title: input.payload.basics.title, updatedAt: new Date(nowTs()) }).where(and(eq(initiatives.id, input.initiativeId), eq(initiatives.state, "intake_draft"))).returning();
     if (initiativeUpdate.length === 0) throw new ConflictError("intake is no longer editable");
     return { initiativeId: input.initiativeId, slug: initiative.slug, intakeVersionId, version: nextVersion, payload: input.payload };
@@ -615,7 +606,7 @@ export async function triage(
       throw new ValidationError("initiative has no intake version to triage");
     }
     const payload = intake.fields as unknown as IntakePayload;
-    const flags = overlayFromPayload(payload);
+    const flags = overlayFromStoredIntake(payload);
     const tier = deriveTier(flags);
     const domains = [...requiredDomains(tier, flags)].sort() as Domain[];
     const completeness = evaluateCompleteness(payload, tier);
@@ -895,11 +886,7 @@ export async function signReview(
   });
 }
 
-export interface ReturnReviewResult {
-  cycleId: string;
-  domain: Domain;
-  status: "returned";
-}
+export interface ReturnReviewResult { cycleId: string; domain: Domain; status: "returned" }
 
 /** An open-cycle return invalidates in-flight drafts but preserves the signed receipt. */
 export async function returnReview(
@@ -935,10 +922,6 @@ export async function returnReview(
     return { cycleId, domain, status: "returned" };
   });
 }
-
-/* -------------------------------------------------------------------------
- * 4b. runReviewAgent — reviewer runs their domain's drafting agent on demand
- * ---------------------------------------------------------------------- */
 
 export type RunReviewAgentResult = Awaited<ReturnType<typeof runSingleDomainDraft>>;
 
@@ -1043,76 +1026,29 @@ export async function decide(
     if (cycle.closedAt !== null) throw new ConflictError(`review cycle ${cycle.id} is already closed`);
     const reviewSnapshots: Record<string, unknown>[] = [];
 
-    // Required-review completeness gate (M2.5, hardened for external-review
-    // finding P2-6 "vacuous completeness gate"): an approval cannot outrun
-    // the domain reviews. The REQUIRED domain set is resolved from the
-    // cycle's OWN risk assessment (`reviewCycles.riskAssessmentId` ->
-    // `riskAssessments.requiredDomains`) — NOT from whichever
-    // `review_decisions` rows happen to exist for the cycle. A reassessment
-    // cycle opened by `runMonitor` (lib/services/monitor-service.ts) is
-    // created with ZERO `review_decisions` rows by design (no per-domain
-    // redraft happens automatically on a breach), and even an initial cycle
-    // could in principle be short a row for one of its required domains;
-    // deriving "required" from "rows that happen to exist" made either shape
-    // pass vacuously — a post-breach re_review -> approved needed no signed
-    // review at all. Falls back to the initiative's latest risk assessment
-    // if the cycle's own `riskAssessmentId` doesn't resolve one; if NEITHER
-    // resolves, an approval must never proceed with no required-domain set
-    // at all, so this throws `ValidationError` rather than silently passing.
-    //
-    // A full `approved` requires a SIGNED row for EVERY required domain; a
-    // `conditionally_approved` requires every required domain at least
-    // DRAFTED (a missing, pending, returned, or failed review is blocking —
-    // the conditions capture residual risk, not an absent review).
-    // `rejected` has no completeness precondition. The fast-lane branch
-    // (triage()'s `eligibility.eligible` path) never calls `decide()` at
-    // all — it writes its own `initiative_decisions` row directly — so it
-    // is not, and must not be, routed through this gate.
+    // Requirements belong to this exact cycle and initiative; readiness is shared
+    // with the read model. Preserve the immutable review receipts in the decision.
     if (decision === "approved" || decision === "conditionally_approved") {
-      let cycleRequiredDomains: Domain[] | null = null;
-      if (cycle.riskAssessmentId) {
-        const [cycleRa] = await tx
-          .select({ requiredDomains: riskAssessments.requiredDomains })
-          .from(riskAssessments)
-          .where(eq(riskAssessments.id, cycle.riskAssessmentId));
-        if (cycleRa) cycleRequiredDomains = cycleRa.requiredDomains as Domain[];
+      const [cycleRa] = await tx.select({ requiredDomains: riskAssessments.requiredDomains })
+        .from(riskAssessments)
+        .where(and(eq(riskAssessments.id, cycle.riskAssessmentId), eq(riskAssessments.initiativeId, initiativeId)));
+      const decisions = await tx.select().from(reviewDecisions).where(eq(reviewDecisions.cycleId, cycle.id));
+      const readiness = reviewDecisionReadiness({
+        state: initiative.state as LifecycleState,
+        cycleOpen: !cycle.closedAt,
+        requiredDomains: cycleRa?.requiredDomains ?? null,
+        reviews: decisions,
+      });
+      if (!readiness.hasRequiredDomains) {
+        throw new ValidationError(`cannot ${decision}: review cycle ${cycle.id} has no resolvable required-domain set in its linked risk assessment`);
       }
-      if (!cycleRequiredDomains) {
-        const fallbackRa = await latestRiskAssessment(tx, initiativeId);
-        cycleRequiredDomains = fallbackRa ? (fallbackRa.requiredDomains as Domain[]) : null;
-      }
-      if (!cycleRequiredDomains || cycleRequiredDomains.length === 0) {
-        throw new ValidationError(
-          `cannot ${decision}: review cycle ${cycle.id} has no resolvable required-domain set (no risk assessment found for this cycle or the initiative)`,
-        );
-      }
-
-      const decisions = await tx
-        .select()
-        .from(reviewDecisions)
-        .where(eq(reviewDecisions.cycleId, cycle.id));
-      const byDomain = new Map(decisions.map((d) => [d.domain as Domain, d]));
-
-      const blockingDescriptions: string[] = [];
-      for (const domain of cycleRequiredDomains) {
-        const row = byDomain.get(domain);
-        if (!row) {
-          blockingDescriptions.push(`${domain}:missing`);
-          continue;
-        }
-        const satisfied =
-          decision === "approved"
-            ? row.status === "signed"
-            : row.status === "signed" || row.status === "drafted";
-        if (!satisfied) blockingDescriptions.push(`${domain}:${row.status}`);
-      }
-      if (blockingDescriptions.length > 0) {
+      const blocking = decision === "approved" ? readiness.approvalBlockers : readiness.conditionalBlockers;
+      if (blocking.length > 0) {
         const need = decision === "approved" ? "signed" : "drafted or signed";
-        throw new ValidationError(
-          `cannot ${decision}: ${blockingDescriptions.length} of ${cycleRequiredDomains.length} required domain review(s) not ${need} (${blockingDescriptions.join(", ")})`,
-        );
+        throw new ValidationError(`cannot ${decision}: ${blocking.length} of ${cycleRa.requiredDomains.length} required domain review(s) not ${need} (${blocking.join(", ")})`);
       }
-      for (const domain of cycleRequiredDomains) {
+      const byDomain = new Map(decisions.map((row) => [row.domain, row]));
+      for (const domain of cycleRa.requiredDomains) {
         const row = byDomain.get(domain)!;
         reviewSnapshots.push({
           reviewDecisionId: row.id, domain, status: row.status, revision: row.revision,

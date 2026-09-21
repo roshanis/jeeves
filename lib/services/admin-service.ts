@@ -10,12 +10,14 @@
  * admin surface too, not just initiative-service's own tests).
  */
 import { randomUUID } from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import type { Db } from "../db/client";
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import type * as schema from "../db/schema";
-import { auditEvents, controlDefinitions, deploymentVersions, effectiveControls, initiatives } from "../db/schema";
+import { auditEvents, controlDefinitions, deploymentVersions, effectiveControls, initiativeDecisions, initiatives, reviewCycles } from "../db/schema";
 import type { Actor, LifecycleState, Tier } from "../domain/types";
+import { operationalDeployment } from "../deployments/selection";
+import { currentControlRevisions } from "../controls/current-revisions";
 import { transition, IllegalTransitionError } from "../lifecycle/transitions";
 import { ConflictError } from "./initiative-service";
 import { mutationWorkspaceMismatch } from "./workspace-guard";
@@ -218,7 +220,7 @@ export async function setEvalThreshold(
       .select()
       .from(deploymentVersions)
       .where(eq(deploymentVersions.initiativeId, input.initiativeId));
-    const deployment = depRows.slice().sort((a, b) => b.deployedAt.getTime() - a.deployedAt.getTime())[0];
+    const deployment = operationalDeployment(depRows);
     if (!deployment) throw new NotFoundError("deploymentVersion for initiative", input.initiativeId);
 
     const ecRows = await tx
@@ -227,7 +229,7 @@ export async function setEvalThreshold(
       .where(
         and(eq(effectiveControls.deploymentId, deployment.id), eq(effectiveControls.controlId, input.controlId)),
       );
-    const ec = ecRows.slice().sort((a, b) => b.version - a.version)[0];
+    const ec = currentControlRevisions(ecRows)[0];
     if (!ec) throw new NotFoundError("effectiveControl", `${deployment.id}/${input.controlId}`);
 
     const before = ec.thresholdOverride ?? null;
@@ -290,7 +292,8 @@ async function loadInitiativeAndDeploymentOrThrow(
   initiative: typeof initiatives.$inferSelect;
   deployment: typeof deploymentVersions.$inferSelect;
 }> {
-  const initiativeRows = await tx.select().from(initiatives).where(eq(initiatives.id, initiativeId));
+  // Match review/approval lock order: parent first, then deployment and cycle.
+  const initiativeRows = await tx.select().from(initiatives).where(eq(initiatives.id, initiativeId)).for("update");
   const initiative = initiativeRows[0];
   if (!initiative) throw new NotFoundError("initiative", initiativeId);
   if (mutationWorkspaceMismatch(initiative.workspaceId, sessionWorkspaceId)) {
@@ -298,7 +301,7 @@ async function loadInitiativeAndDeploymentOrThrow(
   }
 
   const depRows = await tx.select().from(deploymentVersions).where(eq(deploymentVersions.initiativeId, initiativeId));
-  const deployment = depRows.slice().sort((a, b) => b.deployedAt.getTime() - a.deployedAt.getTime())[0];
+  const deployment = operationalDeployment(depRows);
   if (!deployment) throw new NotFoundError("deploymentVersion for initiative", initiativeId);
 
   return { initiative, deployment };
@@ -378,7 +381,9 @@ export async function pauseDeployment(
  * Admin-only (+ reason) manual resume. `transition()` accepts `resume` from
  * both `paused` and `re_review` (lifecycle/transitions.ts), both requiring a
  * non-empty reason — this covers both "just pause, resume" and "paused,
- * reassessment opened, resume once satisfied" flows identically.
+ * reassessment opened, resume once satisfied" flows identically. An approved
+ * reassessment restores its still-paused release through the existing deploy
+ * transition, only after confirming that exact closed cycle's approval.
  */
 export async function resumeDeployment(
   db: Db,
@@ -397,7 +402,23 @@ export async function resumeDeployment(
     );
     const ts = Date.now();
 
-    const result = transition(initiative.state as LifecycleState, "resume", actor, { ts, reason });
+    let approvedReassessmentCycleId: string | undefined;
+    if (initiative.state === "approved") {
+      const [cycle] = await tx.select().from(reviewCycles)
+        .where(eq(reviewCycles.initiativeId, initiativeId))
+        .orderBy(desc(reviewCycles.openedAt), desc(reviewCycles.id)).limit(1);
+      if (deployment.status !== "paused" || cycle?.kind !== "reassessment" || !cycle.closedAt) {
+        throw new ValidationError("resuming an approved initiative requires a paused deployment and a closed reassessment");
+      }
+      const [approval] = await tx.select({ id: initiativeDecisions.id }).from(initiativeDecisions).where(and(
+        eq(initiativeDecisions.initiativeId, initiativeId),
+        eq(initiativeDecisions.cycleId, cycle.id),
+        eq(initiativeDecisions.type, "approved"),
+      )).limit(1);
+      if (!approval) throw new ValidationError("the latest reassessment has no approved decision");
+      approvedReassessmentCycleId = cycle.id;
+    }
+    const result = transition(initiative.state as LifecycleState, approvedReassessmentCycleId ? "deploy" : "resume", actor, { ts, reason });
 
     // Compare-and-set (external-review finding P2-5b): same discipline as
     // pauseDeployment above.
@@ -430,9 +451,9 @@ export async function resumeDeployment(
       result.auditEvent.action,
       result.auditEvent.before,
       result.auditEvent.after,
-      `${actor.id} resumed deployment ${deployment.id}: ${reason}`,
+      `${actor.id} resumed deployment ${deployment.id}${approvedReassessmentCycleId ? " after approved reassessment" : ""}: ${reason}`,
       ts,
-      { deploymentId: deployment.id, reason },
+      { deploymentId: deployment.id, reason, ...(approvedReassessmentCycleId ? { reviewCycleId: approvedReassessmentCycleId } : {}) },
     );
 
     return { initiativeId, deploymentId: deployment.id, before: result.before, after: result.after };

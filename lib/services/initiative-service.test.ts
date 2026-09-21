@@ -21,6 +21,7 @@ import * as svc from "./initiative-service";
 import { SYSTEM_ACTOR } from "./actors";
 import { createMockAgentPort } from "../agents/mock-adapter";
 import type { Actor, Domain } from "../domain/types";
+import { DbDataProvider } from "../data/db-provider";
 
 /** Seed just the control catalog (seed-spec §3) — not the full 12-initiative dataset,
  * which would collide with the initiatives this test suite creates directly. */
@@ -1125,6 +1126,26 @@ describe("lib/services/initiative-service", () => {
 
       return { initiativeId, reassessCycleId, requiredDomains: latestRa.requiredDomains as Domain[] };
     }
+
+    it("rejects a cycle linked to another initiative's assessment instead of substituting the latest assessment", async () => {
+      const { initiativeId, reassessCycleId } = await setUpZeroRowReassessmentCycle();
+      const other = await svc.createDraft(db, { payload: CHAMPION_PREFILL_PAYLOAD, requesterActor: REQUESTER, requesterName: "Priya Raman" });
+      await svc.submitIntake(db, other.initiativeId, REQUESTER);
+      const otherTriage = await svc.triage(db, other.initiativeId);
+      await db.update(reviewCycles).set({ riskAssessmentId: otherTriage.riskAssessmentId }).where(eq(reviewCycles.id, reassessCycleId));
+      await expect(svc.decide(db, initiativeId, APPROVER, null, { decision: "approved" })).rejects.toThrow("no resolvable required-domain set");
+      const summary = (await new DbDataProvider(db).listInitiatives()).find((row) => row.initiativeId === initiativeId)!;
+      expect(summary.decisionReadiness).toMatchObject({ canApprove: false, canConditionallyApprove: false, hasRequiredDomains: false });
+    });
+
+    it("blocks closed cycles after role checks and projects them out of approval readiness", async () => {
+      const { initiativeId, reassessCycleId } = await setUpZeroRowReassessmentCycle();
+      await db.update(reviewCycles).set({ closedAt: new Date() }).where(eq(reviewCycles.id, reassessCycleId));
+      await expect(svc.decide(db, initiativeId, ADMIN, null, { decision: "approved" })).rejects.toBeInstanceOf(IllegalTransitionError);
+      await expect(svc.decide(db, initiativeId, APPROVER, null, { decision: "approved" })).rejects.toThrow("closed");
+      const summary = (await new DbDataProvider(db).listInitiatives()).find((row) => row.initiativeId === initiativeId)!;
+      expect(summary.decisionReadiness).toMatchObject({ canApprove: false, canConditionallyApprove: false, canReject: false });
+    });
 
     it("a reassessment cycle with ZERO review_decisions rows throws ValidationError listing every required domain as missing", async () => {
       const { initiativeId, requiredDomains } = await setUpZeroRowReassessmentCycle();

@@ -17,6 +17,7 @@
 // drizzle/0001_initiative_registry_view.sql — a read-only projection over
 // initiatives + latest risk assessment + latest deployment, not a table.
 import { sql } from "drizzle-orm";
+import type { StoredIntakeFields } from "../intake/stored-overlay";
 import {
   customType,
   bigint,
@@ -66,7 +67,7 @@ export const intakeVersions = pgTable(
     // Overlay flags captured at this intake version (seed-spec §2.1). Nullable
     // fields are permitted (e.g. champion #1's data.retentionIntent is
     // intentionally missing pre-submission).
-    fields: jsonb("fields").$type<Record<string, string | boolean | null>>().notNull(),
+    fields: jsonb("fields").$type<StoredIntakeFields>().notNull(),
     missing: jsonb("missing").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
   },

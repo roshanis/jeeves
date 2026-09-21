@@ -1,18 +1,7 @@
 /**
- * App-owned capability ports for agent and workflow execution — plan.md §4.
- *
- * These interfaces are the ONLY contract adapters may implement. Whether the
- * runtime is Vercel eve or the fallback (Vercel AI SDK + Workflow SDK) is an
- * adapter detail decided at the P0 spike; nothing in `app/` or `lib/` may
- * import an adapter directly — only these types.
- *
- * Hard rules reflected here (AGENTS.md):
- *  - Rule 1: agents draft, recommend, route, and flag missing evidence — they
- *    NEVER approve. No port result carries approval authority; outputs are
- *    recommendations that a named human acts on.
- *  - Rule 4: authoritative state transitions live in application code +
- *    Postgres, never inside adapters. Ports return data; the caller decides
- *    what (if anything) to persist or transition.
+ * Application-owned contracts for AI assistance. Adapters return drafts;
+ * application code and Postgres retain all authoritative state transitions.
+ * Agents never approve, sign, or decide.
  */
 
 /** The eight governance domains — plan.md §1 (all visible, all 8 drafted live). */
@@ -25,9 +14,6 @@ export type GovernanceDomain =
   | "privacy-hipaa"
   | "clinical-safety"
   | "data-governance";
-
-/** Deterministic risk tiers — plan.md §1 (healthcare overlay questions). */
-export type RiskTier = "low" | "medium" | "high" | "critical";
 
 /* -------------------------------------------------------------------------
  * Failure modes and results
@@ -60,7 +46,7 @@ export type PortFailure =
       elapsedMs: number;
     }
   | {
-      /** Cancelled via AbortSignal or WorkflowRunHandle.cancel(). */
+      /** Cancelled via AbortSignal. */
       kind: "cancelled";
       reason?: string;
     }
@@ -101,8 +87,7 @@ export interface ProgressEvent {
  * Options accepted by every port method.
  * Cancellation is cooperative: adapters must observe `signal` and resolve
  * with `{ ok: false, error: { kind: "cancelled" } }` when it aborts.
- * Progress is callback-based here; WorkflowPort additionally exposes an
- * async-iterable event stream on its run handle.
+ * Progress notifications use the optional callback.
  */
 export interface InvokeOptions {
   readonly signal?: AbortSignal;
@@ -112,7 +97,7 @@ export interface InvokeOptions {
 }
 
 /* -------------------------------------------------------------------------
- * AgentPort — draft review, triage assist, completeness check (plan.md §4)
+ * AgentPort — review drafting, auditor answers and intake interviews
  * ---------------------------------------------------------------------- */
 
 /**
@@ -143,6 +128,9 @@ export interface DraftReviewInput {
  */
 export interface DraftReviewOutput {
   readonly domain: GovernanceDomain;
+  /** Policy anchors, separate from descriptions of missing evidence. */
+  readonly citations: readonly string[];
+  /** Includes control-linked evidence/conditions and confidence notes for the human editor. */
   readonly draftMarkdown: string;
   readonly recommendation:
     | "recommend-sign-off"
@@ -152,42 +140,11 @@ export interface DraftReviewOutput {
   readonly suggestedConditions: readonly string[];
   /** Evidence the agent could not find — routed back to the requester. */
   readonly missingEvidence: readonly string[];
-  /** Policy references, never descriptions of missing evidence. */
-  readonly citations?: readonly string[];
   /** Preserve the control linkage while older consumers use missingEvidence. */
   readonly evidenceRequests?: readonly { readonly controlId: string; readonly description: string }[];
   readonly confidenceNotes?: string;
   /** Adapter-observed provenance; absent values are unknown, not inferred. */
   readonly generationMetadata?: Readonly<Record<string, unknown>>;
-}
-
-export interface TriageAssistInput {
-  readonly intake: IntakeSnapshot;
-}
-
-/**
- * Advisory only. The authoritative tier comes from the deterministic
- * overlay-question rules in `lib/` (plan.md §1, §8 test 1) — this output
- * exists to explain and cross-check, never to decide.
- */
-export interface TriageAssistOutput {
-  readonly suggestedTier: RiskTier;
-  readonly rationale: string;
-  /** Overlay questions whose answers most influenced the suggestion. */
-  readonly signals: readonly string[];
-}
-
-export interface CompletenessCheckInput {
-  readonly intake: IntakeSnapshot;
-}
-
-/** Plan.md §2 step 1 — e.g. flags the missing data-retention answer. */
-export interface CompletenessCheckOutput {
-  readonly complete: boolean;
-  /** Intake fields that are missing or insufficient, by answer key. */
-  readonly missingFields: readonly string[];
-  /** Per-field guidance the requester sees. */
-  readonly notes: Readonly<Record<string, string>>;
 }
 
 /* -------------------------------------------------------------------------
@@ -278,8 +235,8 @@ export interface IntakeInterviewOutput {
 }
 
 /**
- * Capability port for single-shot agent assists (plan.md §4).
- * Adapters (eve or fallback) implement this; app code depends only on it.
+ * Capabilities used by application callers.
+ * Adapters implement this contract; app code owns policy and persistence.
  */
 export interface AgentPort {
   /** Draft a domain review for a human to edit and sign. Never approves. */
@@ -287,18 +244,6 @@ export interface AgentPort {
     input: DraftReviewInput,
     options?: InvokeOptions,
   ): Promise<PortResult<DraftReviewOutput>>;
-
-  /** Advisory tier suggestion; deterministic app-code triage is authoritative. */
-  triageAssist(
-    input: TriageAssistInput,
-    options?: InvokeOptions,
-  ): Promise<PortResult<TriageAssistOutput>>;
-
-  /** Flag missing/insufficient intake evidence for the requester. */
-  checkCompleteness(
-    input: CompletenessCheckInput,
-    options?: InvokeOptions,
-  ): Promise<PortResult<CompletenessCheckOutput>>;
 
   /**
    * Answer a natural-language audit question, grounded ONLY on the
@@ -322,123 +267,4 @@ export interface AgentPort {
     input: IntakeInterviewInput,
     options?: InvokeOptions,
   ): Promise<PortResult<IntakeInterviewOutput>>;
-}
-
-/* -------------------------------------------------------------------------
- * WorkflowPort — fan-out, progress, pause/resume, cancel (plan.md §4)
- * ---------------------------------------------------------------------- */
-
-/** Everything a workflow run can emit, as a discriminated union on `type`. */
-export type WorkflowEvent<TItem, TItemResult> =
-  | { type: "run-started"; runId: string; at: string }
-  | { type: "item-started"; runId: string; item: TItem; at: string }
-  | {
-      type: "item-progress";
-      runId: string;
-      item: TItem;
-      progress: ProgressEvent;
-    }
-  | {
-      type: "item-completed";
-      runId: string;
-      item: TItem;
-      result: TItemResult;
-      at: string;
-    }
-  | {
-      type: "item-failed";
-      runId: string;
-      item: TItem;
-      error: PortFailure;
-      at: string;
-    }
-  | {
-      /**
-       * The run reached a human gate (plan.md §4 pause/resume) and will not
-       * progress until `WorkflowRunHandle.resume()` is called with a typed
-       * payload. `promptKey` tells the UI which human input is needed.
-       */
-      type: "paused-for-human";
-      runId: string;
-      promptKey: string;
-      message: string;
-      at: string;
-    }
-  | { type: "resumed"; runId: string; at: string }
-  | { type: "run-completed"; runId: string; at: string }
-  | { type: "run-failed"; runId: string; error: PortFailure; at: string }
-  | { type: "run-cancelled"; runId: string; reason?: string; at: string };
-
-/**
- * Input for a fan-out run: one task applied over many items — the canonical
- * case is drafting reviews across the live governance domains in parallel
- * (plan.md §2 step 2, §9 P2).
- */
-export interface FanOutInput<TItem, TTaskInput> {
-  /** Adapter-registered task name, e.g. "draft-domain-reviews". */
-  readonly task: string;
-  /** One entry per parallel branch (e.g. one per governance domain). */
-  readonly items: readonly TItem[];
-  /** Shared input every branch receives alongside its item. */
-  readonly shared: TTaskInput;
-}
-
-/** Aggregate outcome of a fan-out run: exactly one entry per input item. */
-export interface FanOutResult<TItem, TItemResult> {
-  readonly runId: string;
-  readonly outcomes: ReadonlyArray<{
-    readonly item: TItem;
-    readonly result: PortResult<TItemResult>;
-  }>;
-}
-
-/**
- * Live handle to a started run. The handle is how callers observe progress
- * (async-iterable event stream), await the final aggregate, resume a human
- * pause, or cancel — all four plan.md §4 workflow capabilities.
- *
- * Persistence note (hard rule 4): consuming these events NEVER mutates
- * authoritative state by itself. App code listens, then performs its own
- * transitions in Postgres.
- */
-export interface WorkflowRunHandle<TItem, TItemResult, TResumePayload> {
-  readonly runId: string;
-
-  /**
-   * Ordered event stream for this run. Iteration ends after a terminal
-   * event (`run-completed` | `run-failed` | `run-cancelled`).
-   */
-  events(): AsyncIterable<WorkflowEvent<TItem, TItemResult>>;
-
-  /** Resolves with the aggregate once the run reaches a terminal state. */
-  result(): Promise<PortResult<FanOutResult<TItem, TItemResult>>>;
-
-  /**
-   * Provide the typed human input a `paused-for-human` gate is waiting on.
-   * Rejects if the run is not currently paused.
-   */
-  resume(payload: TResumePayload): Promise<void>;
-
-  /** Cooperatively cancel the run; branches settle as `cancelled`. */
-  cancel(reason?: string): Promise<void>;
-}
-
-/**
- * Capability port for durable multi-step execution (plan.md §4).
- * Mocked fan-out is acceptable for the demo (plan.md §9 deferred polish);
- * the contract is identical either way, which is the point of the port.
- */
-export interface WorkflowPort {
-  /**
-   * Start a fan-out run and return a handle immediately; work continues in
-   * the background. `options.signal` aborts the whole run (equivalent to
-   * `handle.cancel()`); `options.onProgress` receives item-level progress
-   * in addition to the handle's event stream.
-   */
-  startFanOut<TItem, TTaskInput, TItemResult, TResumePayload = unknown>(
-    input: FanOutInput<TItem, TTaskInput>,
-    options?: InvokeOptions,
-  ): Promise<
-    PortResult<WorkflowRunHandle<TItem, TItemResult, TResumePayload>>
-  >;
 }

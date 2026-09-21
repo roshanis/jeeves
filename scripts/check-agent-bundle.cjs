@@ -48,18 +48,27 @@ function checkBundle() {
 
   const load = require(path.join(root, ".next/server/webpack-runtime.js"));
   require(path.join(root, ".next/server/app/api/initiatives/[id]/draft-run/route.js"));
-  // Resolve the compiled port module by its runtime selector, rather than a
-  // webpack module number that changes across builds. No test-only API route.
-  // Other modules (for example the draft budget policy) also inspect the
-  // runtime setting, so never assume the first matching module owns the port.
-  const entries = Object.entries(load.m).filter(([, factory]) => String(factory).includes("JEEVES_AGENT_RUNTIME"));
-  assert(entries.length > 0, "Compiled agent runtime selector was not found");
-  const portExports = entries.flatMap(([id]) => Object.values(load(id)))
-    .filter((value) => typeof value === "function" && String(value).includes("OPENAI_API_KEY"));
-  assert.equal(portExports.length, 1, "Expected exactly one compiled getAgentPort export");
-  const [getPort] = portExports;
-
   process.env.OPENAI_API_KEY = "";
+  // Webpack mangles module ids and export names. Locate the existing factory
+  // by its narrow descriptor/preflight shape, never by credentials text that
+  // now belongs to the resolver. This is deliberately implementation-coupled:
+  // fail closed on zero/multiple matches instead of trying arbitrary exports.
+  const portFactoryShape = (value) => {
+    const source = String(value);
+    return /\.configured\b/.test(source)
+      && /\.deepReviewEnabled\b/.test(source)
+      && /["']agents-sdk["']/.test(source)
+      && /\bcatch\s*\(/.test(source);
+  };
+  const candidates = new Set();
+  for (const [id, factory] of Object.entries(load.m)) {
+    if (!portFactoryShape(factory)) continue;
+    for (const value of Object.values(load(id))) {
+      if (typeof value === "function" && portFactoryShape(value)) candidates.add(value);
+    }
+  }
+  assert.equal(candidates.size, 1, "Expected exactly one compiled getAgentPort factory matching descriptor/preflight shape");
+  const [getPort] = candidates;
   assert.equal(typeof getPort().draftReview, "function");
   assert.equal(reads.size, 0, "Keyless mock unexpectedly needs live assets");
   process.env.OPENAI_API_KEY = "diagnostic-placeholder-never-sent";
