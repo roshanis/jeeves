@@ -1002,3 +1002,10 @@ initiative directly in 'in_review' with all reviews open.
 ### Files changed: agents-build-log.md conflict resolution (both complete append-only histories preserved). All upstream visitor changes were merged unchanged; the three incident-warning source/test files remain byte-identical to reviewed b646d6989fb78309be4b38748a30274297461d79.
 ### Diff summary: Main is now 69d971c8ecf0677323bed52c3f674ef560ac0e9b. The only conflict was the build log. Initial PR16 CI passed 1289 tests/126 files with 88.77 percent line coverage, 28 browser tests, packaged-agent check, lint/typecheck and Vercel preview. No incident-warning logic changed during integration.
 ### Recommendations / Next steps: Recheck affected UI/security tests and combined browser flow, obtain independent integration review, push the merge and require fresh PR checks before production merge. No credentials, hosted configuration, database or dependency edits are introduced by this task.
+
+
+## [AGENT: Codex] [2026-09-21T02:27:04Z]
+### Action: Corrected the inherited browser assertion exposed by integrating the new passwordless visitor flow, after independent Luna approval.
+### Files changed: tests/e2e/golden-path.spec.ts; agents-build-log.md (this append).
+### Diff summary: The first landing test starts a Priya requester session, navigates to Inbox, but previously expected the Program Office heading. Local browser context showed the correct persistent Priya session and RequesterView heading Your initiatives. The assertion now requires the retained Priya persona and exact level-1 requester heading. No application behavior changed and no test was skipped or weakened.
+### Recommendations / Next steps: Initial combined browser run was 27/28 with this incorrect heading expectation; failure context preserved at /tmp/jeeves-incident-notice-requester-heading-failure.md. Corrected scenario passes three consecutive runs. Combined focused UI/loader/security84, full lint and typecheck pass; rerun full browser and fresh PR CI before merge. Production remains pending. Main's visitor-access behavior and all other changes remain intact.
