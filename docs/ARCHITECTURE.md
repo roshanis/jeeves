@@ -223,7 +223,8 @@ budget-exhausted` — no raw provider error crosses the port boundary.
 request cancellation and bounded retries. It resolves intake through the exact
 cycle assessment, persists drafts and their audit receipts transactionally, and
 rejects results superseded by another run or a human action. Re-invocation can
-resume pending work. Human signatures require the displayed draft token.
+resume pending work. Human signatures require the displayed review revision
+and submitted evidence packet identity, with immutable signature receipts.
 
 The speculative `WorkflowPort`/event-stream/pause/resume/cancel interface was
 removed in the 2026-09-19 maintenance pass because it had no implementation or
@@ -245,7 +246,8 @@ selected SDK, configured/mock status and deep-mode invocation estimates.
 
 Both live adapters use the same terminal timeout/cancellation wrapper in
 `invoke.ts`. Policy citations remain distinct from missing evidence; control
-references and confidence notes remain in persisted reviewer Markdown. Intake
+references and confidence notes remain in persisted reviewer Markdown and
+structured review fields, alongside generation provenance. Intake
 uses a shared field definition with separate legacy-storage and strict model
 output schemas. Health probes report their limited scope; successful provider
 connectivity does not establish successful structured reviews or tool execution.

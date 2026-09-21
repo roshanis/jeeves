@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { MaxTurnsExceededError } from "@openai/agents";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
@@ -76,6 +77,28 @@ const VALID_REVIEWER_OBJECT = {
   suggestedConditions: [],
   confidenceNotes: "None.",
 };
+
+it.each([false, true])("preserves review provenance in Agents SDK deep mode=%s", async (deep) => {
+  process.env.OPENAI_TERRA_MODEL = "configured-review-model";
+  process.env.JEEVES_DEEP_REVIEW = deep ? "1" : "0";
+  let capturedInstructions = "";
+  let capturedPrompt = "";
+  const policyContext = ["Policy source: synthetic-policy-v2", "Submitted evidence metadata: synthetic-packet-revision-4"];
+  const port = createOpenAiAgentsAdapterWithRunner(async (agent, prompt) => {
+    capturedInstructions = String(agent.instructions);
+    capturedPrompt = prompt;
+    return { finalOutput: VALID_REVIEWER_OBJECT };
+  });
+  const result = await port.draftReview({ ...draftInput(), policyContext });
+  expect(result.ok).toBe(true);
+  if (!result.ok) return;
+  expect(result.value.citations).toEqual(VALID_REVIEWER_OBJECT.citations);
+  expect(result.value.generationMetadata).toMatchObject({ adapter: "openai-agents-sdk", configuredModelId: "configured-review-model", mode: deep ? "deep" : "standard", promptHashScope: "initial-input" });
+  expect(JSON.parse(capturedPrompt).policyContext).toEqual(policyContext);
+  expect(result.value.generationMetadata?.systemPromptHash).toBe(createHash("sha256").update(capturedInstructions).digest("hex"));
+  expect(result.value.generationMetadata?.userPromptHash).toBe(createHash("sha256").update(capturedPrompt).digest("hex"));
+  expect(result.value.generationMetadata).not.toHaveProperty("servedModelId");
+});
 
 const VALID_AUDITOR_OBJECT = {
   answerMd: "Member Chat Copilot is member-facing and touches PHI.",

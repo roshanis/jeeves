@@ -126,6 +126,16 @@ export const reviewDecisions = pgTable(
     citations: jsonb("citations").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
     signedAt: timestamp("signed_at", { withTimezone: true }),
     returnReason: text("return_reason"),
+    // A signature identifies the exact review revision, never whichever draft is current later.
+    revision: integer("revision").notNull().default(0),
+    activeAttemptId: text("active_attempt_id"),
+    activeAttemptExpiresAt: timestamp("active_attempt_expires_at", { withTimezone: true }),
+    signatureEventId: text("signature_event_id"),
+    missingEvidence: jsonb("missing_evidence").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+    evidenceRequests: jsonb("evidence_requests").$type<{ controlId: string; description: string }[]>()
+      .notNull().default(sql`'[]'::jsonb`),
+    sourceMetadata: jsonb("source_metadata").$type<Record<string, unknown>>(),
+    citationProvenance: text("citation_provenance").notNull().default("legacy-unverified"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
   },
   (t) => [

@@ -25,6 +25,15 @@ async function packet(documentId:string, includeAll=true) {
   const state = await getEvidence(db,'i',owner);
   return saveEvidenceDraft(db,'i',owner,{cycleId:'cycle',expectedRevision:state.draft?.revision ?? 0,entries:(includeAll?['H-01','H-02']:['H-01']).map(controlId=>({controlId,documentId,pageReference:'1',note:'Retention policy evidence'}))});
 }
+/** Simulate the review/evidence state observed by the client before a normal signature. */
+async function signLoadedEvidenceReview() {
+  const [review] = await db.select().from(reviewDecisions).where(eq(reviewDecisions.id, 'review'));
+  const evidence = await getEvidence(db, 'i', reviewer);
+  return signReview(db, 'cycle', 'privacy-hipaa', reviewer.actor, 'workspace-a', {
+    expectedRevision: review.revision,
+    expectedEvidencePacketId: evidence.latest?.id ?? null,
+  });
+}
 describe('versioned evidence workflow',()=>{
   it('uploads, submits, returns, revises, accepts and preserves both histories',async()=>{
     const first=await upload();
@@ -33,7 +42,7 @@ describe('versioned evidence workflow',()=>{
     const submitted=await submitEvidence(db,'i',owner,{packetId:draft.id,expectedRevision:draft.revision});
     expect((await getEvidence(db,'i',owner)).requirements[0].status).toBe('submitted');
     await assessEvidence(db,'i',reviewer,{packetId:submitted.id,controlId:'H-01',decision:'changes_requested',reason:'Add the retention duration.'});
-    await expect(signReview(db,'cycle','privacy-hipaa',reviewer.actor,'workspace-a')).rejects.toThrow(/evidence/i);
+    await expect(signLoadedEvidenceReview()).rejects.toThrow(/evidence/i);
     const second=await upload('upload-request-00002',first.id);
     expect(second.version).toBe(2);
     const revised=await packet(second.id);
@@ -43,7 +52,7 @@ describe('versioned evidence workflow',()=>{
     expect(state.documents).toHaveLength(2);
     expect(state.history).toHaveLength(2);
     expect(state.requirements.every(r=>r.status==='accepted')).toBe(true);
-    await signReview(db,'cycle','privacy-hipaa',reviewer.actor,'workspace-a');
+    await signLoadedEvidenceReview();
     expect((await downloadEvidence(db,'i',first.id,owner)).bytes).toEqual(bytes);
     expect((await db.select().from(auditEvents)).some(e=>e.action==='evidence_assessed')).toBe(true);
     await expect(db.update(evidenceDocuments).set({fileName:'overwritten.pdf'}).where(eq(evidenceDocuments.id,first.id))).rejects.toMatchObject({cause:{message:expect.stringMatching(/immutable/i)}});
@@ -64,11 +73,11 @@ describe('versioned evidence workflow',()=>{
     await expect(saveEvidenceDraft(db,'i',owner,{cycleId:'cycle',expectedRevision:0,entries:[]})).rejects.toMatchObject({status:409});
     const submitted=await submitEvidence(db,'i',owner,{packetId:draft.id,expectedRevision:draft.revision});
     await assessEvidence(db,'i',reviewer,{packetId:submitted.id,controlId:'H-01',decision:'accepted',reason:'Accepted.'});
-    await expect(signReview(db,'cycle','privacy-hipaa',reviewer.actor,'workspace-a')).rejects.toThrow(/evidence/i);
+    await expect(signLoadedEvidenceReview()).rejects.toThrow(/evidence/i);
     const revised=await packet(file.id); const second=await submitEvidence(db,'i',owner,{packetId:revised.id,expectedRevision:revised.revision});
     expect((await getEvidence(db,'i',owner)).requirements.find(r=>r.id==='H-01')?.assessment?.inherited).toBe(true);
     await assessEvidence(db,'i',reviewer,{packetId:second.id,controlId:'H-02',decision:'accepted',reason:'Accepted.'});
-    await signReview(db,'cycle','privacy-hipaa',reviewer.actor,'workspace-a');
+    await signLoadedEvidenceReview();
     await expect(saveEvidenceDraft(db,'i',owner,{cycleId:'cycle',expectedRevision:0,entries:[]})).rejects.toMatchObject({status:409});
   });
 });

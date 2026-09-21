@@ -41,7 +41,7 @@ export default defineConfig({
       "app/**/*.test.ts",
       "app/**/*.test.tsx",
     ],
-    exclude: ["tests/e2e/**", "node_modules/**"],
+    exclude: ["tests/postgres/**", "tests/e2e/**", "node_modules/**"],
     coverage: {
       provider: "v8",
       reporter: ["text", "html"],

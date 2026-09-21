@@ -7,7 +7,7 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: mocks.refresh }
 vi.mock("@/lib/client/session-context", () => ({ useLiveSessionOptional: mocks.session }));
 vi.mock("@/lib/client/api", async (original) => ({ ...await original<typeof import("@/lib/client/api")>(), runReviewAgent: mocks.run }));
 vi.mock("@/lib/client/review-actions", async (original) => ({ ...await original<typeof import("@/lib/client/review-actions")>(), performReviewMutation: mocks.mutate }));
-vi.mock("@/components/jeeves/review-evidence-workspace", () => ({ ReviewEvidenceWorkspace: ({ children }: { children: (props: unknown) => unknown }) => children({ signingBlock: null, cycleId: "cycle", cycleChanged: false }) }));
+vi.mock("@/components/jeeves/review-evidence-workspace", () => ({ ReviewEvidenceWorkspace: ({ children }: { children: (props: unknown) => unknown }) => children({ signingBlock: null, cycleId: "cycle", cycleChanged: false, evidencePacketId: null }) }));
 import { ReviewWorkbench, type ReviewQueueRow } from "@/components/jeeves/review-workbench";
 import { ApiError } from "@/lib/client/api";
 const session = { token: "test-reviewer", personaKey: "marcus-webb", role: "reviewer", workspaceId: "w", expiresAt: 9999999999999 };
@@ -16,7 +16,7 @@ beforeEach(() => {
   mocks.session.mockReturnValue({ session, logout: mocks.logout });
 });
 const rows: ReviewQueueRow[] = ["one", "two"].map((slug) => ({ slug, title: `Case ${slug}`, tier: "high", isSeeded: false, review: {
-  cycleId: "cycle", draftToken: "a".repeat(64), domain: "privacy-hipaa", status: "drafted", reviewer: null,
+  cycleId: "cycle", revision: 4, domain: "privacy-hipaa", status: "drafted", reviewer: null,
   createdAt: "2026-09-19T12:00:00Z", signedAt: null, draftMd: "Existing server draft", citations: [],
 } }));
 function Harness() {

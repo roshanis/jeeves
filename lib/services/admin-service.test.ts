@@ -26,7 +26,6 @@ import { IllegalTransitionError, decide, createDraft, runReviewAgent, signReview
 import { CHAMPION_PREFILL_PAYLOAD } from "../intake/champion-prefill";
 import { ACTOR_DIRECTORY } from "./actors";
 import type { Domain } from "../domain/types";
-import { reviewDraftToken } from "../workflow/review-draft-token";
 
 // Admin/domain tests never initialize a live SDK, regardless of host credentials.
 vi.mock("../agents", async () => {
@@ -378,12 +377,20 @@ describe("lib/services/admin-service", () => {
       expect(pending.length).toBeGreaterThan(0);
       expect(pending.every((row) => row.status === "pending")).toBe(true);
       for (const review of pending) {
+        expect(review).toMatchObject({
+          revision: 0, activeAttemptId: null, activeAttemptExpiresAt: null,
+          signatureEventId: null, missingEvidence: [], evidenceRequests: [],
+          sourceMetadata: null, citationProvenance: "legacy-unverified",
+        });
         const reviewer = Object.values(ACTOR_DIRECTORY).find((persona) => persona.reviewDomain === review.domain)!;
         const actor = { id: reviewer.id, role: "reviewer" as const };
         expect(await runReviewAgent(db, reviewCycleId, review.domain as Domain, actor, "ws-reassessment"))
           .toMatchObject({ status: "drafted" });
         const [drafted] = await db.select().from(reviewDecisions).where(eq(reviewDecisions.id, review.id));
-        await signReview(db, reviewCycleId, review.domain as Domain, actor, "ws-reassessment", undefined, reviewDraftToken(drafted));
+        await signReview(db, reviewCycleId, review.domain as Domain, actor, "ws-reassessment", {
+          expectedRevision: drafted.revision,
+          expectedEvidencePacketId: null,
+        });
       }
       expect(await decide(db, initiativeId, APPROVER, "ws-reassessment", { decision: "approved" }))
         .toMatchObject({ after: "approved" });

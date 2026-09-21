@@ -395,8 +395,8 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
               <span>
                 The form below is visible but non-interactive. Submitting an
                 initiative needs a live demo session, which runs in its own
-                isolated workspace with a daily token budget and rate limits
-                enforced server-side.
+                isolated workspace with rate limits and daily estimated token
+                reservations. Provider token usage and spend are not measured here.
               </span>
               {/* The button, not a pointer to one. This used to read "(use the
                   chip in the header)", which is an instruction to go hunting.

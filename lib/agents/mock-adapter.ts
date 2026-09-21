@@ -161,7 +161,7 @@ export function buildMockReviewerDraft(
       ].join("\n");
 
   return {
-    assessmentMd,
+    assessmentMd: `Synthetic data — demo. Canned policy references; document contents were not inspected.\n\n${assessmentMd}`,
     citations,
     evidenceRequests,
     recommendation: gapPresent ? "return-with-gaps" : "ready-for-signature",
@@ -534,7 +534,10 @@ export function createMockAgentPort(): AgentPort {
       }
 
       const rich = buildMockReviewerDraft(input);
-      const value = mapReviewerDraftToPortOutput(input.domain, rich);
+      const value = {
+        ...mapReviewerDraftToPortOutput(input.domain, rich),
+        generationMetadata: { adapter: "mock", synthetic: true, fixtureVersion: "reviewer-v1" },
+      };
       return { ok: true, value };
     },
 

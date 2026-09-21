@@ -1,7 +1,7 @@
 "use client";
 
 // Reviews tab (ui-spec §3.3): per-domain status list with draft text and
-// policy citations. Reviewer commands live in the evidence workbench; this
+// unverified references. Reviewer commands live in the evidence workbench; this
 // case summary links to the exact domain and owns only batch drafting.
 //
 // Live draft-run is synchronous: the POST returns a final outcome for every
@@ -54,7 +54,31 @@ const DOMAIN_ICON: Record<Domain, LucideIcon> = {
   "data-governance": Database,
 };
 
-export function ReviewsTab({ reviews, slug, initiativeId, isSeeded }: {
+interface ReviewsTabProps {
+  reviews: ReviewRow[];
+  slug?: string;
+  initiativeId?: string;
+  isSeeded?: boolean;
+}
+
+function unfinishedDomains(outcomes: DraftRunDomainOutcome[], reviews: ReviewRow[]): Domain[] {
+  return outcomes.filter((outcome) => {
+    if (outcome.status === "failed") return true;
+    if (outcome.status !== "skipped" || outcome.reason === "already signed") return false;
+    // An unqualified no-op can also mean a returned review. Only a known
+    // drafted/signed row proves the draft requirement was already satisfied.
+    const status = reviews.find((review) => review.domain === outcome.domain)?.status;
+    return outcome.reason !== undefined || (status !== "drafted" && status !== "signed");
+  }).map((outcome) => outcome.domain);
+}
+
+export function ReviewsTab(props: ReviewsTabProps) {
+  const live = useLiveSessionOptional();
+  const cycleKey = props.reviews.map((review) => review.cycleId ?? "legacy").join(":");
+  return <ReviewsTabContent key={`${props.slug}:${live?.session?.token ?? "public"}:${cycleKey}`} {...props} />;
+}
+
+function ReviewsTabContent({ reviews, slug, initiativeId, isSeeded }: {
   reviews: ReviewRow[];
   slug?: string;
   initiativeId?: string;
@@ -87,28 +111,41 @@ export function ReviewsTab({ reviews, slug, initiativeId, isSeeded }: {
     ? outcomeState.outcomes
     : [];
 
+  const unfinished = unfinishedDomains(outcomes, reviews);
+  const mounted = React.useRef(false);
+  React.useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
+
   async function handleStartDraftRun() {
     if (!session || !initiativeId || isSeeded !== false || checkedDomains.length === 0) return;
     setRunning(true);
     try {
       const result = await startDraftRun(session.token, initiativeId, checkedDomains);
+      if (!mounted.current) return;
       setOutcomeState({ cycleId: result.cycleId, outcomes: result.outcomes });
       const failedDomains = failedDraftRunDomains(result.outcomes);
+      const remainingDomains = unfinishedDomains(result.outcomes, reviews);
       if (failedDomains.length > 0) {
-        setSelectionState({ cycleId: result.cycleId, domains: failedDomains });
+        setSelectionState({ cycleId: result.cycleId, domains: remainingDomains });
         toast.error(
-          `${failedDomains.length} domain${failedDomains.length === 1 ? "" : "s"} failed. Retry only the failed domains.`,
+          `${failedDomains.length} domain${failedDomains.length === 1 ? "" : "s"} failed. Review the current status and retry the remaining domains.`,
         );
+      } else if (remainingDomains.length > 0) {
+        setSelectionState({ cycleId: result.cycleId, domains: remainingDomains });
+        toast.info(`${remainingDomains.length} domain${remainingDomains.length === 1 ? "" : "s"} did not complete. A run may still be active or the review changed. Refresh and review the current status before retrying.`);
       } else {
         setSelectionState({ cycleId: result.cycleId, domains: [] });
         toast.success("Draft run finished — all requested domains completed.");
       }
       router.refresh();
     } catch (err) {
+      if (!mounted.current) return;
       toast.error(isApiError(err) ? apiErrorToMessage(err) : "Draft run failed to start.");
       if (isApiError(err) && err.status === 401) live?.logout();
     } finally {
-      setRunning(false);
+      if (mounted.current) setRunning(false);
     }
   }
 
@@ -137,7 +174,7 @@ export function ReviewsTab({ reviews, slug, initiativeId, isSeeded }: {
       initiativeId &&
       isSeeded === false &&
       cycleId &&
-      (pendingDomains.length > 0 || outcomes.some((outcome) => outcome.status === "failed")),
+      (pendingDomains.length > 0 || unfinished.length > 0),
   );
 
   return (
@@ -150,10 +187,10 @@ export function ReviewsTab({ reviews, slug, initiativeId, isSeeded }: {
           <CardContent className="space-y-3">
             <p className="text-xs text-muted-foreground">
               Select the domains to draft (agents draft — humans decide). The request completes
-              before results appear. Failed domains remain selected for a focused retry.
+              before results appear. Incomplete domains remain selected for a focused retry.
             </p>
             <div className="grid grid-cols-1 gap-1 sm:grid-cols-2">
-              {Array.from(new Set([...pendingDomains, ...outcomes.filter((o) => o.status === "failed").map((o) => o.domain)])).map((domain) => (
+              {Array.from(new Set([...pendingDomains, ...unfinished])).map((domain) => (
                 <label key={domain} className="flex items-center gap-2 text-sm">
                   <input
                     type="checkbox"
@@ -182,8 +219,8 @@ export function ReviewsTab({ reviews, slug, initiativeId, isSeeded }: {
             >
               {running
                 ? "Drafting…"
-                : outcomes.some((outcome) => outcome.status === "failed")
-                  ? `Retry failed domains (${checkedDomains.length})`
+                : unfinished.length > 0
+                  ? `Retry remaining domains (${checkedDomains.length})`
                   : `Start draft run (${checkedDomains.length} domains)`}
             </Button>
           </CardContent>
@@ -215,7 +252,7 @@ export function ReviewsTab({ reviews, slug, initiativeId, isSeeded }: {
                 ) : null}
               </div>
             </CardHeader>
-            {slug || review.draftMd || review.citations.length > 0 ? (
+            {slug || review.draftMd || review.citations.length > 0 || review.missingEvidence?.length || review.evidenceRequests?.length ? (
               <CardContent className="space-y-3 pt-4">
                 {review.draftMd ? (
                   <p className="whitespace-pre-wrap text-sm leading-relaxed text-muted-foreground">
@@ -223,6 +260,8 @@ export function ReviewsTab({ reviews, slug, initiativeId, isSeeded }: {
                   </p>
                 ) : null}
                 {review.citations.length > 0 ? (
+                  <div className="space-y-2">
+                  <p className="text-xs text-muted-foreground">{review.citationProvenance === "agent-supplied" ? "Unverified agent references" : "Unverified historical references"}</p>
                   <div className="flex flex-wrap gap-1.5">
                     {review.citations.map((c) => (
                       <Badge key={c} variant="outline" className="font-mono text-[11px]">
@@ -230,7 +269,10 @@ export function ReviewsTab({ reviews, slug, initiativeId, isSeeded }: {
                       </Badge>
                     ))}
                   </div>
+                  </div>
                 ) : null}
+                {review.missingEvidence?.length ? <section className="space-y-1 text-sm" aria-label="Missing evidence"><h3 className="font-medium">Missing evidence reported by the agent</h3>{review.missingEvidence.map((gap, i) => <p key={i}>{gap}</p>)}</section> : null}
+                {review.evidenceRequests?.length ? <section className="space-y-1 text-sm" aria-label="Evidence requests"><h3 className="font-medium">Evidence requested by the agent</h3>{review.evidenceRequests.map((request, i) => <p key={i}>{request.controlId} · {request.description}</p>)}</section> : null}
                 {slug ? (
                   <Link
                     href={`/reviews?initiative=${encodeURIComponent(slug)}&domain=${encodeURIComponent(review.domain)}`}

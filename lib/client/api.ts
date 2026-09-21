@@ -61,6 +61,8 @@ export function apiErrorToMessage(err: ApiError): string {
       return "Rate limit or demo budget reached — try again shortly.";
     case 403:
       return "Not permitted for your current role.";
+    case 409:
+      return "This record changed. Refresh and review the latest information before trying again.";
     case 400:
       return err.message || "Invalid request.";
     default:
@@ -119,7 +121,7 @@ export interface DraftRunDomainOutcome {
   domain: Domain;
   status: "drafted" | "failed" | "skipped";
   error?: unknown;
-  reason?: "already signed";
+  reason?: "already signed" | "already running" | "superseded";
 }
 
 export interface StartDraftRunResult {
@@ -151,7 +153,7 @@ export interface RunReviewAgentResult {
   /** Human-readable failure reason — present only when status === "failed". */
   error?: string;
   /** Present when a concurrent human signature wins the persistence race. */
-  reason?: "already signed";
+  reason?: "already signed" | "already running" | "superseded";
 }
 
 export interface SignReviewResult {
@@ -476,11 +478,18 @@ export function runReviewAgent(
   token: string,
   cycleId: string,
   domain: Domain,
+  expectedRevision?: number,
 ): Promise<RunReviewAgentResult> {
   return request<RunReviewAgentResult>(
     `/api/reviews/${encodeURIComponent(cycleId)}/${encodeURIComponent(domain)}/run`,
-    { method: "POST", token },
+    { method: "POST", token, body: expectedRevision === undefined ? undefined : { expectedRevision } },
   );
+}
+
+export interface SignReviewInput {
+  expectedRevision: number;
+  expectedEvidencePacketId: string | null;
+  editedDraftMd?: string;
 }
 
 /** POST /api/reviews/[cycleId]/[domain]/sign — reviewer-only. */
@@ -488,15 +497,14 @@ export function signReview(
   token: string,
   cycleId: string,
   domain: Domain,
-  editedDraftMd: string | undefined,
-  expectedDraftToken: string,
+  input: SignReviewInput,
 ): Promise<SignReviewResult> {
   return request<SignReviewResult>(
     `/api/reviews/${encodeURIComponent(cycleId)}/${encodeURIComponent(domain)}/sign`,
     {
       method: "POST",
       token,
-      body: { ...(editedDraftMd !== undefined ? { editedDraftMd } : {}), expectedDraftToken },
+      body: input,
     },
   );
 }
@@ -507,10 +515,11 @@ export function returnReview(
   cycleId: string,
   domain: Domain,
   reason: string,
+  expectedRevision: number,
 ): Promise<ReturnReviewResult> {
   return request<ReturnReviewResult>(
     `/api/reviews/${encodeURIComponent(cycleId)}/${encodeURIComponent(domain)}/return`,
-    { method: "POST", token, body: { reason } },
+    { method: "POST", token, body: { reason, expectedRevision } },
   );
 }
 

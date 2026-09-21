@@ -551,7 +551,7 @@ describe("lib/workflow/review-run", () => {
     it("throws for an unknown cycle", async () => {
       await expect(
         runSingleDomainDraft(db, "cycle-does-not-exist", "legal", createMockAgentPort()),
-      ).rejects.toThrow(/no review cycle/i);
+      ).rejects.toThrow(/review cycle not found/i);
     });
   });
 

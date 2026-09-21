@@ -101,7 +101,7 @@ export type IntakeInterviewOutput = z.infer<typeof intakeInterviewOutputSchema>;
  * Reviewer rich-shape -> port-shape mapping (agents/README.md)
  * ---------------------------------------------------------------------- */
 
-/** Preserve policy citations separately and retain reviewer context in the saved Markdown. */
+/** Preserve structured reviewer details and their context in the human-editable Markdown. */
 export function mapReviewerDraftToPortOutput(
   domain: GovernanceDomain,
   rich: ReviewerDraftOutput,
@@ -130,10 +130,12 @@ export function mapReviewerDraftToPortOutput(
 
   return {
     domain,
-    citations: [...rich.citations],
     draftMarkdown: sections.join("\n\n"),
     recommendation,
     suggestedConditions: rich.suggestedConditions.map((c) => c.text),
     missingEvidence: rich.evidenceRequests.map((r) => r.description),
+    citations: [...rich.citations],
+    evidenceRequests: rich.evidenceRequests.map((r) => ({ ...r })),
+    confidenceNotes: rich.confidenceNotes,
   };
 }

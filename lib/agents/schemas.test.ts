@@ -108,6 +108,9 @@ describe("mapReviewerDraftToPortOutput", () => {
     expect(port.draftMarkdown).toContain("S-02: Require a named owner.");
     expect(port.draftMarkdown).toContain(rich.confidenceNotes);
     expect(port.missingEvidence).toEqual(["Provide the assessment."]);
+    expect(port.evidenceRequests).toEqual(rich.evidenceRequests);
+    expect(port.confidenceNotes).toBe(rich.confidenceNotes);
+    expect(port.citations).not.toContain("Provide the assessment.");
   });
 
   it('maps "ready-for-signature" -> "recommend-sign-off"', () => {

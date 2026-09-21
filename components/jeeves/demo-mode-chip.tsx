@@ -13,8 +13,8 @@
  *
  * Budget hint (judgment call, documented): there is no GET-budget route in
  * the API contract, so no live "42/50 actions" number can be shown without
- * fabricating data. The chip shows qualitative copy instead: daily token
- * budget + rate limits are enforced server-side and surfaced through 429
+ * fabricating data. The chip shows qualitative copy instead: daily estimated token
+ * reservations + rate limits are enforced server-side and surfaced through 429
  * error toasts when hit.
  */
 import * as React from "react";
@@ -82,7 +82,7 @@ export function DemoModeChip() {
       <span className="inline-flex items-center gap-2" data-slot="demo-mode-chip">
         <span
           className="inline-flex items-center gap-1.5 rounded-md border border-primary/30 bg-primary/10 px-2 py-1"
-          title="Session workspace active — daily demo token budget and rate limits are enforced server-side."
+          title="Session workspace active — daily estimated token reservations and request rate limits are enforced. Reservations do not measure provider usage or spend."
         >
           <span className="relative flex h-1.5 w-1.5 shrink-0" aria-hidden>
             <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-75" />
@@ -166,7 +166,7 @@ export function DemoModeChip() {
             <DialogTitle>{liveModeAvailable ? "Enter live demo mode" : "Explore the read-only preview"}</DialogTitle>
             <DialogDescription>
               {liveModeAvailable
-                ? "Enter the demo passcode and pick a persona. Mutations run in a session workspace with a daily token budget and rate limits enforced server-side."
+                ? "Enter the demo passcode and pick a persona. Mutations run in a session workspace with rate limits and daily estimated token reservations. Provider token usage and spend are not measured here."
                 : READ_ONLY_PREVIEW_MESSAGE}
             </DialogDescription>
           </DialogHeader>

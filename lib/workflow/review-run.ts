@@ -1,227 +1,269 @@
-/** App-owned draft execution: short transactions claim/persist; model calls run outside locks. */
+/** Application-owned draft execution: short locked claims and atomic result receipts. */
 import { randomUUID } from "node:crypto";
-import { and, count, desc, eq, inArray, sql } from "drizzle-orm";
-import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
-import type * as schema from "../db/schema";
+import { and, desc, eq, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
-import { auditEvents, initiatives, intakeVersions, reviewCycles, reviewDecisions, riskAssessments } from "../db/schema";
+import { auditEvents, reviewCycles, reviewDecisions, runBudget } from "../db/schema";
 import type { Actor, Domain } from "../domain/types";
 import { getAgentPort } from "../agents";
-import type { AgentPort, DraftReviewOutput, IntakeSnapshot, InvokeOptions, PortFailure, PortResult } from "../agents/ports";
-import { reviewDraftToken, reviewSnapshotCondition } from "./review-draft-token";
+import { AgentInitializationError } from "../agents/initialization-error";
+import type { AgentPort, DraftReviewOutput, PortFailure, PortResult } from "../agents/ports";
+import { lockCurrentReviewCycle, ReviewIntegrityError, type ReviewTx } from "../services/review-integrity";
+import { loadReviewContext } from "./review-context";
+import type { DraftBudgetPolicy } from "./draft-execution-policy";
 
-type Tx = PgDatabase<PgQueryResultHKT, typeof schema>;
-type Decision = typeof reviewDecisions.$inferSelect;
-type SkipReason = "already signed" | "review changed" | "cycle closed" | "superseded";
-export interface DraftRunDomainOutcome {
-  domain: Domain;
-  status: "drafted" | "failed" | "skipped";
-  error?: PortFailure;
-  reason?: SkipReason;
-}
+export type SkipReason = "already signed" | "already running" | "superseded";
+export interface DraftRunDomainOutcome { domain: Domain; status: "drafted" | "failed" | "skipped"; error?: PortFailure; reason?: SkipReason }
 export interface StartDraftRunResult { runId: string; cycleId: string; outcomes: DraftRunDomainOutcome[] }
 export type DraftRunDomainStatus = "pending" | "drafted" | "signed" | "returned" | "failed";
 export interface DraftRunProgressRow { domain: Domain; status: DraftRunDomainStatus; lastError?: string }
 export interface DraftRunProgress { cycleId: string; rows: DraftRunProgressRow[]; complete: boolean }
-export interface StartDraftRunOptions extends InvokeOptions { concurrency?: number; maxAttempts?: number }
-export interface RunSingleDomainOptions extends InvokeOptions { maxAttempts?: number; actor?: Actor }
-export interface RunSingleDomainResult {
-  cycleId: string;
-  domain: Domain;
-  status: "drafted" | "failed" | "skipped";
-  draftMd?: string;
-  error?: string;
-  reason?: SkipReason;
+export interface StartDraftRunOptions {
+  concurrency?: number;
+  maxAttempts?: number;
+  attemptTimeoutMs?: number;
+  runTimeoutMs?: number;
+  retryDelayMs?: number;
+  signal?: AbortSignal;
+  actor?: Actor;
+  sessionWorkspaceId?: string | null;
+  expectedRevision?: number;
+  budget?: DraftBudgetPolicy;
 }
-const DEFAULT_TIMEOUT_MS = 30_000;
+export type RunSingleDomainOptions = StartDraftRunOptions;
+export interface RunSingleDomainResult { cycleId: string; domain: Domain; status: "drafted" | "failed" | "skipped"; draftMd?: string; revision?: number; error?: string; errorKind?: PortFailure["kind"]; reason?: SkipReason }
 
-export class DraftRunConflictError extends Error {
-  constructor(message: string) { super(message); this.name = "DraftRunConflictError"; }
+type ReviewRow = typeof reviewDecisions.$inferSelect;
+type Claim = { id: string; row: ReviewRow; initiativeId: string; context: Awaited<ReturnType<typeof loadReviewContext>> };
+type DraftResult = PortResult<DraftReviewOutput>;
+const system: Actor = { id: "system", role: "system" };
+const timeout = (elapsedMs: number): PortFailure => ({ kind: "timeout", message: "Draft generation exceeded its time limit. Retry this domain.", elapsedMs });
+const cancelled = (): PortFailure => ({ kind: "cancelled", reason: "Draft generation was cancelled." });
+function failureText(error: PortFailure) { return error.kind === "cancelled" ? error.reason ?? "cancelled" : error.message; }
+function retryable(error: PortFailure) { return error.kind === "timeout" || (error.kind === "provider" && error.retryable); }
+function bounded(value: number | undefined, fallback: number, maximum: number) { return Number.isFinite(value) ? Math.max(1, Math.min(Math.floor(value!), maximum)) : fallback; }
+async function databaseNow(tx: ReviewTx): Promise<Date> {
+  const result = await tx.execute(sql`select clock_timestamp() as now`) as { rows: {now: Date | string}[] } | {now: Date | string}[];
+  const rows = (Array.isArray(result) ? result : result.rows) as {now: Date | string}[];
+  return new Date(rows[0]!.now);
 }
-
-async function runWithConcurrencyLimit<T, R>(items: readonly T[], limit: number, task: (item: T) => Promise<R>): Promise<R[]> {
-  const results: R[] = new Array(items.length);
-  let cursor = 0;
-  async function worker() {
-    while (cursor < items.length) {
-      const index = cursor++;
-      results[index] = await task(items[index]!);
-    }
-  }
-  await Promise.all(Array.from({ length: Math.max(1, Math.min(Math.floor(limit), items.length || 1)) }, worker));
-  return results;
+async function receipt(tx: ReviewTx, claim: Claim, options: StartDraftRunOptions, action: string, after: string, metadata: Record<string, unknown>) {
+  const actor = options.actor ?? system;
+  await tx.insert(auditEvents).values({ id: `evt-${randomUUID()}`, initiativeId: claim.initiativeId, ts: new Date(), actor: actor.id, actorRole: actor.role, action,
+    detail: `${claim.row.domain} draft attempt ${claim.id}: ${after}.`, before: claim.row.status, after,
+    metadata: { cycleId: claim.row.cycleId, domain: claim.row.domain, attemptId: claim.id, ...metadata } });
 }
-
-function isRetryableFailure(error: PortFailure): boolean {
-  return error.kind === "provider" && error.retryable;
-}
-async function draftWithRetry(port: AgentPort, cycleId: string, domain: Domain, intake: IntakeSnapshot, options: RunSingleDomainOptions): Promise<PortResult<DraftReviewOutput>> {
-  const maxAttempts = Math.max(1, options.maxAttempts ?? 2);
-  const deadline = Date.now() + (options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
-  let lastError: PortFailure = { kind: "provider", message: "Draft failed", retryable: false };
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    if (options.signal?.aborted) return { ok: false, error: { kind: "cancelled", reason: "Draft cancelled" } };
-    const remaining = deadline - Date.now();
-    if (remaining <= 0) return { ok: false, error: { kind: "timeout", message: "Draft deadline exceeded", elapsedMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS } };
-    try {
-      const result = await port.draftReview({ reviewCycleId: cycleId, domain, intake }, {
-        signal: options.signal, timeoutMs: remaining, onProgress: options.onProgress,
-      });
-      if (options.signal?.aborted) return { ok: false, error: { kind: "cancelled", reason: "Draft cancelled" } };
-      if (result.ok) return result;
-      lastError = result.error;
-    } catch {
-      lastError = { kind: "provider", message: "Review agent failed. Try again.", retryable: true };
-    }
-    if (!isRetryableFailure(lastError)) break;
-  }
-  return { ok: false, error: lastError };
-}
-
-/** Same parent-row lock as sign/return/decide, always acquired before review rows. */
-async function lockCycle(tx: Tx, cycleId: string) {
-  const [reference] = await tx.select().from(reviewCycles).where(eq(reviewCycles.id, cycleId));
-  if (!reference) throw new Error(`no review cycle ${cycleId}`);
-  await tx.select({ id: initiatives.id }).from(initiatives).where(eq(initiatives.id, reference.initiativeId)).for("update");
-  const [cycle] = await tx.select().from(reviewCycles).where(eq(reviewCycles.id, cycleId));
-  return cycle!;
-}
-
-/** Count only actions that invalidate an in-flight draft, not stale workers' completion receipts. */
-async function claimVersion(tx: Tx, cycleId: string, domain: Domain): Promise<number> {
-  const [row] = await tx.select({ value: count() }).from(auditEvents).where(and(
-    inArray(auditEvents.action, ["review_draft_started", "review_signed", "review_returned"]),
-    sql`${auditEvents.metadata}->>'cycleId' = ${cycleId}`,
-    sql`${auditEvents.metadata}->>'domain' = ${domain}`,
-  ));
-  return Number(row!.value);
-}
-interface DraftClaim { decision: Decision; intake: IntakeSnapshot; initiativeId: string; version: number; attemptId: string }
-async function claimDraft(db: Db, cycleId: string, domain: Domain, force: boolean, actor?: Actor): Promise<DraftClaim | null> {
+async function claimDomain(db: Db, cycleId: string, domain: Domain, force: boolean, options: StartDraftRunOptions, deadline: number): Promise<Claim | DraftRunDomainOutcome> {
   return db.transaction(async (tx) => {
-    const cycle = await lockCycle(tx, cycleId);
-    if (cycle.closedAt) throw new DraftRunConflictError(`review cycle ${cycleId} is closed`);
-    const [assessment] = await tx.select().from(riskAssessments).where(and(eq(riskAssessments.id, cycle.riskAssessmentId), eq(riskAssessments.initiativeId, cycle.initiativeId)));
-    if (!assessment || !assessment.requiredDomains.includes(domain)) throw new Error(`domain ${domain} is not required for review cycle ${cycleId}`);
-    const [intake] = await tx.select().from(intakeVersions).where(and(eq(intakeVersions.id, assessment.intakeVersionId), eq(intakeVersions.initiativeId, cycle.initiativeId)));
-    if (!intake) throw new Error(`review cycle ${cycleId} has no bound intake version`);
-    await tx.insert(reviewDecisions).values({ id: `rd-${randomUUID()}`, cycleId, domain, status: "pending", citations: [], createdAt: new Date() }).onConflictDoNothing();
-    const [decision] = await tx.select().from(reviewDecisions).where(and(eq(reviewDecisions.cycleId, cycleId), eq(reviewDecisions.domain, domain)));
-    if (decision!.status === "signed") {
-      if (force) throw new DraftRunConflictError(`cannot re-draft a signed review (${cycleId}/${domain})`);
-      return null;
+    const { initiative } = await lockCurrentReviewCycle(tx, cycleId, options.sessionWorkspaceId);
+    let [row] = await tx.select().from(reviewDecisions).where(and(eq(reviewDecisions.cycleId, cycleId), eq(reviewDecisions.domain, domain)));
+    if (!row) {
+      if (force) throw new ReviewIntegrityError("not_found", "Review decision not found.");
+      [row] = await tx.insert(reviewDecisions).values({ id: `rd-${randomUUID()}`, cycleId, domain, status: "pending", createdAt: new Date(), citations: [] }).returning();
     }
-    if (!force && decision!.status !== "pending" && decision!.status !== "failed") return null;
-    const attemptId = `attempt-${randomUUID()}`;
-    await tx.insert(auditEvents).values({
-      id: `evt-${randomUUID()}`, initiativeId: cycle.initiativeId, ts: new Date(),
-      actor: actor?.id ?? "system", actorRole: actor?.role ?? "system", action: "review_draft_started",
-      detail: `Started ${domain} review draft.`, before: decision!.status, after: decision!.status,
-      metadata: { cycleId, domain, attemptId, intakeVersionId: intake.id },
-    });
-    return { decision: decision!, intake: { initiativeId: cycle.initiativeId, intakeVersionId: intake.id, answers: intake.fields }, initiativeId: cycle.initiativeId, version: await claimVersion(tx, cycleId, domain), attemptId };
+    if (options.expectedRevision !== undefined && row.revision !== options.expectedRevision) throw new ReviewIntegrityError("conflict", "This draft changed. Refresh and review the current version.");
+    if (row.status === "signed") {
+      if (force) throw new ReviewIntegrityError("conflict", "Cannot re-draft a signed review.");
+      return { domain, status: "skipped", reason: "already signed" };
+    }
+    if (!force && !["pending", "failed"].includes(row.status)) return { domain, status: "skipped" };
+    const now = await databaseNow(tx);
+    if (row.activeAttemptId && row.activeAttemptExpiresAt && row.activeAttemptExpiresAt > now) return { domain, status: "skipped", reason: "already running" };
+    // Capture the immutable source versions while the same initiative lock protects evidence changes.
+    const context = await loadReviewContext(tx, cycleId, domain);
+    const id = `attempt-${randomUUID()}`;
+    await tx.update(reviewDecisions).set({ activeAttemptId: id, activeAttemptExpiresAt: new Date(now.getTime() + Math.max(0, deadline - Date.now()) + 5000) }).where(eq(reviewDecisions.id, row.id));
+    const claim = { id, row, initiativeId: initiative.id, context };
+    await receipt(tx, claim, options, "draft_attempt_started", row.status, { revision: row.revision, sourceMetadata: context.metadata });
+    return claim;
   });
 }
-function describePortFailure(error: PortFailure): string {
-  return error.kind === "cancelled" ? `cancelled${error.reason ? `: ${error.reason}` : ""}` : error.message;
+class ReservationInterrupted extends Error {
+  constructor(readonly reason: "cancelled" | "timed-out") { super(reason); }
 }
-
-/** The result and its attribution receipt commit together, including when receipt insertion fails. */
-async function finishDraft(
-  db: Db,
-  claim: DraftClaim,
-  result: PortResult<DraftReviewOutput>,
-  actor?: Actor,
-): Promise<RunSingleDomainResult> {
-  const { cycleId } = claim.decision;
-  const domain = claim.decision.domain as Domain;
+async function reserveAttempt(db: Db, claim: Claim, options: StartDraftRunOptions, attempt: number, deadline: number): Promise<"ready" | "superseded" | "budget-exhausted" | "cancelled" | "timed-out"> {
+  const requireTime = () => {
+    if (options.signal?.aborted) throw new ReservationInterrupted("cancelled");
+    if (Date.now() >= deadline) throw new ReservationInterrupted("timed-out");
+  };
+  try { return await db.transaction(async (tx) => {
+    try { await lockCurrentReviewCycle(tx, claim.row.cycleId, options.sessionWorkspaceId); }
+    catch (error) { if (error instanceof ReviewIntegrityError && error.kind === "conflict") return "superseded"; throw error; }
+    const [row] = await tx.select().from(reviewDecisions).where(eq(reviewDecisions.id, claim.row.id));
+    const now = await databaseNow(tx);
+    if (!row || row.activeAttemptId !== claim.id || row.revision !== claim.row.revision || !row.activeAttemptExpiresAt || row.activeAttemptExpiresAt <= now || row.status === "signed") return "superseded";
+    requireTime();
+    if (options.budget) {
+      const { day, tokensPerAttempt, dailyCap } = options.budget;
+      const reservationId = `evt-budget-${claim.id}-${attempt}`;
+      const [existing] = await tx.select({id: auditEvents.id}).from(auditEvents).where(eq(auditEvents.id, reservationId));
+      if (existing) return "ready";
+      if (tokensPerAttempt > dailyCap) return "budget-exhausted";
+      const reserved = await tx.insert(runBudget).values({id:day,day,tokensUsed:tokensPerAttempt,tokensCap:dailyCap}).onConflictDoUpdate({
+        target: runBudget.day, set: {tokensUsed:sql`${runBudget.tokensUsed} + ${tokensPerAttempt}`,tokensCap:dailyCap},
+        setWhere:sql`${runBudget.tokensUsed} + ${tokensPerAttempt} <= ${dailyCap}`,
+      }).returning();
+      // A shared-budget row lock may also outlast cancellation/deadline.
+      // Throwing here rolls back any reservation for work never dispatched.
+      requireTime();
+      if (!reserved.length) return "budget-exhausted";
+      const actor = options.actor ?? system;
+      await tx.insert(auditEvents).values({id:reservationId,initiativeId:claim.initiativeId,ts:new Date(),actor:actor.id,actorRole:actor.role,
+        action:"draft_budget_reserved",detail:"Reserved estimated model capacity for one draft attempt.",metadata:{attemptId:claim.id,attempt,estimatedTokens:tokensPerAttempt,day}});
+    }
+    requireTime();
+    return "ready";
+  }); } catch (error) {
+    if (error instanceof ReservationInterrupted) return error.reason;
+    throw error;
+  }
+}
+async function invoke(port: AgentPort, claim: Claim, options: StartDraftRunOptions, timeoutMs: number): Promise<DraftResult> {
+  if (options.signal?.aborted) return {ok:false,error:cancelled()};
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let abort!: () => void;
+  const stopped = new Promise<DraftResult>((resolve) => {
+    abort = () => { controller.abort(); resolve({ok:false,error:cancelled()}); };
+    options.signal?.addEventListener("abort", abort, {once:true});
+    timer = setTimeout(() => { controller.abort(); resolve({ok:false,error:timeout(timeoutMs)}); }, timeoutMs);
+  });
+  const call = Promise.resolve().then(() => port.draftReview({reviewCycleId:claim.row.cycleId,domain:claim.row.domain as Domain,intake:claim.context.intake,policyContext:claim.context.policyContext},
+    {signal:controller.signal,timeoutMs})).catch((): DraftResult => ({ok:false,error:{kind:"provider",message:"Draft generation failed. Retry this domain.",retryable:true}}));
+  try { return await Promise.race([call,stopped]); }
+  finally { if(timer)clearTimeout(timer); options.signal?.removeEventListener("abort",abort); }
+}
+async function delay(ms: number, signal?: AbortSignal) {
+  if (signal?.aborted || ms <= 0) return;
+  await new Promise<void>((resolve) => {
+    const finish = () => { clearTimeout(timer); signal?.removeEventListener("abort",finish); resolve(); };
+    const timer = setTimeout(finish, ms);
+    signal?.addEventListener("abort",finish,{once:true});
+  });
+}
+async function finish(db: Db, claim: Claim, options: StartDraftRunOptions, result: DraftResult, deadline: number): Promise<RunSingleDomainResult> {
   return db.transaction(async (tx) => {
-    const cycle = await lockCycle(tx, cycleId);
-    const [current] = await tx.select().from(reviewDecisions).where(eq(reviewDecisions.id, claim.decision.id));
-    let reason: SkipReason | undefined;
-    if (cycle.closedAt) reason = "cycle closed";
-    else if (current?.status === "signed") reason = "already signed";
-    else if (!current || reviewDraftToken(current) !== reviewDraftToken(claim.decision)) reason = "review changed";
-    else if (await claimVersion(tx, cycleId, domain) !== claim.version) reason = "superseded";
-
-    let outcome: RunSingleDomainResult;
-    let afterStatus = current?.status ?? null;
-    if (reason) {
-      outcome = { cycleId, domain, status: "skipped", reason };
-    } else if (!result.ok && (current!.status === "drafted" || current!.status === "returned")) {
-      // A failed explicit retry cannot erase a valid draft or a human return.
-      // Its error belongs to this attempt's receipt and response.
-      outcome = { cycleId, domain, status: "failed", error: describePortFailure(result.error) };
+    try { await lockCurrentReviewCycle(tx, claim.row.cycleId, options.sessionWorkspaceId); }
+    catch(error) { if(error instanceof ReviewIntegrityError && error.kind === "conflict") return {cycleId:claim.row.cycleId,domain:claim.row.domain as Domain,status:"skipped",reason:"superseded"}; throw error; }
+    const [current] = await tx.select().from(reviewDecisions).where(eq(reviewDecisions.id,claim.row.id));
+    const now = await databaseNow(tx);
+    const reason: SkipReason | null = current?.status === "signed" ? "already signed" :
+      !current || current.activeAttemptId !== claim.id || current.revision !== claim.row.revision || !current.activeAttemptExpiresAt || current.activeAttemptExpiresAt <= now ? "superseded" : null;
+    if(reason) return {cycleId:claim.row.cycleId,domain:claim.row.domain as Domain,status:"skipped",reason};
+    const fresh = await loadReviewContext(tx,claim.row.cycleId,claim.row.domain as Domain);
+    if(fresh.metadata.contextHash !== claim.context.metadata.contextHash) {
+      await tx.update(reviewDecisions).set({activeAttemptId:null,activeAttemptExpiresAt:null}).where(eq(reviewDecisions.id,current.id));
+      await receipt(tx,claim,options,"draft_attempt_superseded",current.status,{reason:"Review inputs changed."});
+      return {cycleId:claim.row.cycleId,domain:claim.row.domain as Domain,status:"skipped",reason:"superseded"};
+    }
+    // Once cancelled, no successful result is accepted, even if provider completion raced the abort.
+    const accepted: DraftResult = options.signal?.aborted ? {ok:false,error:cancelled()} :
+      Date.now() >= deadline ? {ok:false,error:timeout(bounded(options.runTimeoutMs,90_000,180_000))} : result;
+    const revision = current.revision+1;
+    const common = {revision,activeAttemptId:null,activeAttemptExpiresAt:null};
+    if(accepted.ok) {
+      const value = accepted.value;
+      await tx.update(reviewDecisions).set({...common,status:"drafted",draftMd:value.draftMarkdown,citations:[...(value.citations??[])],missingEvidence:[...value.missingEvidence],
+        evidenceRequests:[...(value.evidenceRequests??[])],citationProvenance:"agent-supplied",returnReason:null,signatureEventId:null,signedAt:null,
+        sourceMetadata:{...claim.context.metadata,...(value.generationMetadata?{generation:value.generationMetadata}:{}),attemptId:claim.id}}).where(eq(reviewDecisions.id,current.id));
     } else {
-      const values = result.ok
-        ? {
-            status: "drafted", draftMd: result.value.draftMarkdown,
-            citations: [...result.value.citations], returnReason: null,
-            reviewer: null, signedAt: null,
-          }
-        : { status: "pending", returnReason: `draft failed: ${describePortFailure(result.error)}` };
-      const updated = await tx.update(reviewDecisions).set(values)
-        .where(reviewSnapshotCondition(claim.decision)).returning();
-      if (updated.length === 0) {
-        outcome = { cycleId, domain, status: "skipped", reason: "review changed" };
-      } else {
-        afterStatus = updated[0]!.status;
-        outcome = result.ok
-          ? { cycleId, domain, status: "drafted", draftMd: result.value.draftMarkdown }
-          : { cycleId, domain, status: "failed", error: describePortFailure(result.error) };
-      }
+      // Failed re-drafting does not erase an existing human-visible assessment or return.
+      await tx.update(reviewDecisions).set({...common,returnReason:current.status === "returned" ? current.returnReason : `draft failed: ${failureText(accepted.error)}`}).where(eq(reviewDecisions.id,current.id));
     }
-    await tx.insert(auditEvents).values({
-      id: `evt-${randomUUID()}`,
-      initiativeId: claim.initiativeId,
-      ts: new Date(),
-      actor: actor?.id ?? "system",
-      actorRole: actor?.role ?? "system",
-      action: actor ? "review_agent_run" : "review_draft_completed",
-      detail: `Ran the ${domain} review agent: ${outcome.status}${outcome.reason ? ` (${outcome.reason})` : ""}.`,
-      before: current?.status ?? null,
-      after: afterStatus,
-      metadata: {
-        cycleId, domain, attemptId: claim.attemptId, status: outcome.status,
-        intakeVersionId: claim.intake.intakeVersionId,
-        ...(outcome.reason ? { reason: outcome.reason } : {}),
-        ...(!result.ok ? { errorKind: result.error.kind } : {}),
-      },
-    });
-    return outcome;
+    const outcome = accepted.ok ? "drafted" : "failed";
+    await receipt(tx,claim,options,options.actor?.role === "reviewer" ? "review_agent_run" : "draft_domain_completed",accepted.ok?"drafted":current.status,
+      {status:outcome,revision,sourceMetadata:claim.context.metadata,...(!accepted.ok?{errorKind:accepted.error.kind}:{})});
+    return {cycleId:claim.row.cycleId,domain:claim.row.domain as Domain,status:outcome,revision,...(accepted.ok?{draftMd:accepted.value.draftMarkdown}:{error:failureText(accepted.error),errorKind:accepted.error.kind})};
   });
 }
-
-export async function runSingleDomainDraft(db: Db, cycleId: string, domain: Domain, port: AgentPort = getAgentPort(), options: RunSingleDomainOptions = {}): Promise<RunSingleDomainResult> {
-  const claim = await claimDraft(db, cycleId, domain, true, options.actor);
-  if (!claim) return { cycleId, domain, status: "skipped" };
-  const result = await draftWithRetry(port, cycleId, domain, claim.intake, options);
-  return finishDraft(db, claim, result, options.actor);
+function acceptedOutcome(outcome: RunSingleDomainResult, result: DraftResult, options: StartDraftRunOptions): {outcome: RunSingleDomainResult; failure?: PortFailure} {
+  if (outcome.status !== "failed") return {outcome};
+  // Final persistence can reject a provider success after cancellation or a
+  // database wait. Report that accepted failure, not the earlier provider result.
+  if (!result.ok && result.error.kind === outcome.errorKind) return {outcome, failure: result.error};
+  return {outcome, failure: outcome.errorKind === "cancelled" ? cancelled() : timeout(bounded(options.runTimeoutMs,90_000,180_000))};
+}
+async function executeClaim(db: Db, claim: Claim, port: AgentPort | undefined, options: StartDraftRunOptions, deadline: number): Promise<{outcome:RunSingleDomainResult; failure?:PortFailure}> {
+  let result: DraftResult = {ok:false,error:timeout(0)};
+  const attempts = bounded(options.maxAttempts,2,3);
+  let agent: AgentPort;
+  try { agent = port ?? getAgentPort(); }
+  catch (cause) { throw cause instanceof AgentInitializationError ? cause : new AgentInitializationError(cause); }
+  for(let attempt=1;attempt<=attempts;attempt++) {
+    if(options.signal?.aborted) { result={ok:false,error:cancelled()}; break; }
+    const remaining=deadline-Date.now();
+    if(remaining<=0){result={ok:false,error:timeout(bounded(options.runTimeoutMs,90_000,180_000))};break;}
+    const reserved=await reserveAttempt(db,claim,options,attempt,deadline);
+    if(reserved==="superseded")return {outcome:{cycleId:claim.row.cycleId,domain:claim.row.domain as Domain,status:"skipped",reason:"superseded"}};
+    if(reserved==="cancelled"){result={ok:false,error:cancelled()};break;}
+    if(reserved==="timed-out"){result={ok:false,error:timeout(bounded(options.runTimeoutMs,90_000,180_000))};break;}
+    if(reserved==="budget-exhausted"){result={ok:false,error:{kind:"budget-exhausted",message:"Demo token reservation budget exhausted for today."}};break;}
+    // Lock acquisition and reservation can consume the remaining run time.
+    const dispatchRemaining = deadline-Date.now();
+    if (dispatchRemaining<=0) {result={ok:false,error:timeout(bounded(options.runTimeoutMs,90_000,180_000))};break;}
+    if (options.signal?.aborted) {result={ok:false,error:cancelled()};break;}
+    result=await invoke(agent,claim,options,Math.min(dispatchRemaining,bounded(options.attemptTimeoutMs,30_000,90_000)));
+    if(result.ok || !retryable(result.error) || attempt===attempts)break;
+    const base=options.retryDelayMs===0?0:bounded(options.retryDelayMs,250,2000);
+    await delay(Math.min(Math.max(0,deadline-Date.now()),base*2**(attempt-1)*(0.75+Math.random()*0.5)),options.signal);
+  }
+  return acceptedOutcome(await finish(db,claim,options,result,deadline),result,options);
 }
 
-/** Resume only unfinished domains; duplicate request entries never consume extra calls. */
-export async function startDraftRun(db: Db, initiativeId: string, domains: Domain[], port: AgentPort = getAgentPort(), options: StartDraftRunOptions = {}): Promise<StartDraftRunResult> {
-  const [cycle] = await db.select().from(reviewCycles).where(eq(reviewCycles.initiativeId, initiativeId)).orderBy(desc(reviewCycles.openedAt), desc(reviewCycles.id)).limit(1);
-  if (!cycle) throw new Error(`startDraftRun: initiative ${initiativeId} has no review cycle`);
-  if (cycle.closedAt) throw new DraftRunConflictError(`review cycle ${cycle.id} is closed`);
-  const runId = `run-${randomUUID()}`;
-  const outcomes = await runWithConcurrencyLimit([...new Set(domains)], options.concurrency ?? 3, async (domain): Promise<DraftRunDomainOutcome> => {
-    const claim = await claimDraft(db, cycle.id, domain, false);
-    if (!claim) return { domain, status: "skipped" };
-    const result = await draftWithRetry(port, cycle.id, domain, claim.intake, options);
-    const persisted = await finishDraft(db, claim, result);
-    return { domain, status: persisted.status, ...(persisted.reason ? { reason: persisted.reason } : {}), ...(!result.ok && persisted.status === "failed" ? { error: result.error } : {}) };
-  });
-  await db.insert(auditEvents).values({
-    id: `evt-${randomUUID()}`, initiativeId, ts: new Date(), actor: "system", actorRole: "system", action: "draft_run_completed",
-    detail: `Draft run ${runId} for cycle ${cycle.id}: ${outcomes.filter((o) => o.status === "drafted").length} drafted, ${outcomes.filter((o) => o.status === "failed").length} failed, ${outcomes.filter((o) => o.status === "skipped").length} skipped.`,
-    before: null, after: null, metadata: { runId, outcomes },
-  });
-  return { runId, cycleId: cycle.id, outcomes };
+
+/** Initialization failures are operational errors, not generated assessments. */
+async function execute(db: Db, claim: Claim, port: AgentPort | undefined, options: StartDraftRunOptions, deadline: number) {
+  try {
+    return await executeClaim(db, claim, port, options, deadline);
+  } catch (error) {
+    if (error instanceof AgentInitializationError) {
+      // Do not read the missing assets during cleanup or erase another attempt.
+      await db.transaction(async (tx) => {
+        try { await lockCurrentReviewCycle(tx, claim.row.cycleId, options.sessionWorkspaceId); }
+        catch (failure) {
+          if (failure instanceof ReviewIntegrityError && failure.kind === "conflict") return;
+          throw failure;
+        }
+        const [current] = await tx.select().from(reviewDecisions).where(eq(reviewDecisions.id, claim.row.id));
+        if (!current || current.activeAttemptId !== claim.id || current.revision !== claim.row.revision) return;
+        await tx.update(reviewDecisions).set({ activeAttemptId: null, activeAttemptExpiresAt: null }).where(eq(reviewDecisions.id, current.id));
+        await receipt(tx, claim, options, "draft_attempt_initialization_failed", current.status, { code: "AGENT_INITIALIZATION_FAILED" });
+      });
+    }
+    throw error;
+  }
 }
 
-export async function getRunProgress(db: Db, cycleId: string): Promise<DraftRunProgress> {
-  const rows = await db.select().from(reviewDecisions).where(eq(reviewDecisions.cycleId, cycleId));
-  const progressRows = rows.sort((a, b) => a.domain.localeCompare(b.domain)).map((r) => ({ domain: r.domain as Domain, status: r.status as DraftRunDomainStatus, ...(r.returnReason && r.status === "pending" ? { lastError: r.returnReason } : {}) }));
-  return { cycleId, rows: progressRows, complete: progressRows.every((r) => r.status === "drafted" || r.status === "signed" || r.status === "returned") };
+export async function startDraftRun(db:Db,initiativeId:string,domains:Domain[],port?:AgentPort,options:StartDraftRunOptions={}):Promise<StartDraftRunResult> {
+  const [cycle]=await db.select().from(reviewCycles).where(eq(reviewCycles.initiativeId,initiativeId)).orderBy(desc(reviewCycles.openedAt),desc(reviewCycles.id)).limit(1);
+  if(!cycle)throw new ReviewIntegrityError("not_found","Review cycle not found.");
+  const runId=`run-${randomUUID()}`, unique=[...new Set(domains)], outcomes:DraftRunDomainOutcome[]=new Array(unique.length);
+  const deadline=Date.now()+bounded(options.runTimeoutMs,90_000,180_000);
+  let cursor=0;
+  const errors:unknown[]=[];
+  async function worker(){
+    while(cursor<unique.length){const index=cursor++;const domain=unique[index]!;
+      try{
+        const claim=await claimDomain(db,cycle.id,domain,false,options,deadline);
+        if("status" in claim){outcomes[index]=claim;continue;}
+        const {outcome,failure}=await execute(db,claim,port,options,deadline);
+        outcomes[index]={domain,status:outcome.status,...(outcome.reason?{reason:outcome.reason}:{}),...(failure?{error:failure}:{})};
+      }catch(error){errors.push(error);}
+    }
+  }
+  // Drain siblings before responding; a failure cannot leave hidden commits racing the response.
+  await Promise.all(Array.from({length:Math.min(unique.length,bounded(options.concurrency,3,8))},worker));
+  if(errors.length)throw errors[0];
+  return {runId,cycleId:cycle.id,outcomes};
+}
+export async function runSingleDomainDraft(db:Db,cycleId:string,domain:Domain,port?:AgentPort,options:RunSingleDomainOptions={}):Promise<RunSingleDomainResult> {
+  const deadline=Date.now()+bounded(options.runTimeoutMs,90_000,180_000);
+  const claim=await claimDomain(db,cycleId,domain,true,options,deadline);
+  if("status" in claim)return {cycleId,domain,status:claim.status,reason:claim.reason};
+  return (await execute(db,claim,port,options,deadline)).outcome;
+}
+export async function getRunProgress(db:Db,cycleId:string):Promise<DraftRunProgress>{
+  const rows=await db.select().from(reviewDecisions).where(eq(reviewDecisions.cycleId,cycleId));
+  const progressRows:DraftRunProgressRow[]=rows.sort((a,b)=>a.domain.localeCompare(b.domain)).map(r=>({domain:r.domain as Domain,status:r.status as DraftRunDomainStatus,
+    ...(r.returnReason&&r.status==="pending"?{lastError:r.returnReason}:{})}));
+  return {cycleId,rows:progressRows,complete:progressRows.length>0&&progressRows.every(r=>["drafted","signed","returned"].includes(r.status))};
 }

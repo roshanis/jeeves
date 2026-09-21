@@ -32,6 +32,12 @@ export function isGovernanceDomain(value: unknown): value is GovernanceDomain {
   );
 }
 
+/**
+ * Next runs from the application root (standalone server.js also chdirs to
+ * its own directory). Resolve packaged assets there, not from import.meta.url:
+ * webpack embeds the build machine's absolute source path in that expression.
+ * next.config.ts explicitly traces these files into the relevant API bundles.
+ */
 export function repoAgentsDir(): string {
   return path.join(process.cwd(), "agents");
 }

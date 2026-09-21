@@ -6,6 +6,7 @@ import {
   returnReview,
   signReview,
   type DraftRunDomainOutcome,
+  type SignReviewInput,
 } from "./api";
 
 export interface ReviewActionEligibility {
@@ -22,8 +23,8 @@ export function failedDraftRunDomains(outcomes: DraftRunDomainOutcome[]): Domain
 }
 
 export type ReviewMutation =
-  | { kind: "sign"; editedDraftMd?: string; expectedDraftToken: string }
-  | { kind: "return"; reason: string };
+  | ({ kind: "sign" } & SignReviewInput)
+  | { kind: "return"; reason: string; expectedRevision: number };
 
 export function performReviewMutation(
   token: string,
@@ -32,9 +33,9 @@ export function performReviewMutation(
   mutation: ReviewMutation,
 ): Promise<unknown> {
   if (mutation.kind === "sign") {
-    return signReview(token, cycleId, domain, mutation.editedDraftMd, mutation.expectedDraftToken);
+    return signReview(token, cycleId, domain, { expectedRevision: mutation.expectedRevision, expectedEvidencePacketId: mutation.expectedEvidencePacketId, editedDraftMd: mutation.editedDraftMd });
   }
-  return returnReview(token, cycleId, domain, mutation.reason);
+  return returnReview(token, cycleId, domain, mutation.reason, mutation.expectedRevision);
 }
 
 export function getReviewActionEligibility(
@@ -42,11 +43,12 @@ export function getReviewActionEligibility(
   cycleId: string | null,
   domain: Domain,
   status: ReviewRow["status"],
+  revision?: number,
 ): ReviewActionEligibility {
   const isOwnDomain = Boolean(
     session?.role === "reviewer" && domainForPersona(session.personaKey) === domain,
   );
-  const hasLiveCycle = Boolean(cycleId);
+  const hasLiveCycle = Boolean(cycleId) && typeof revision === "number" && Number.isSafeInteger(revision) && revision >= 0;
   const actionable = status === "drafted" || status === "returned";
   return {
     isOwnDomain,

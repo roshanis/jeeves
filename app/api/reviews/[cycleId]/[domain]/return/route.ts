@@ -6,7 +6,7 @@
  * enforces both and throws `IllegalTransitionError` otherwise (mapped to
  * 403 here).
  *
- * Body:  { reason: string }
+ * Body:  { reason: string, expectedRevision: number }
  * 200:   { cycleId, domain, status: "returned" }
  * 401/429: as other mutating routes.
  * 400:   { error: string }  (missing/empty reason, invalid body, input-size gap)
@@ -26,6 +26,7 @@ import { runMutationGuard } from "@/lib/services/route-guard";
 import type { Domain } from "@/lib/domain/types";
 
 const bodySchema = z.object({
+  expectedRevision: z.number().int().nonnegative().safe(),
   reason: z.string().min(1).max(2000),
 });
 
@@ -52,7 +53,7 @@ export async function POST(
 
   const parsed = bodySchema.safeParse(json);
   if (!parsed.success) {
-    return Response.json({ error: "reason is required" }, { status: 400 });
+    return Response.json({ error: "A reason and the reviewed revision are required." }, { status: 400 });
   }
 
   const { cycleId, domain } = await context.params;
@@ -66,6 +67,7 @@ export async function POST(
       guard.actor,
       guard.workspaceId,
       parsed.data.reason,
+      parsed.data.expectedRevision,
     );
     return Response.json(result, { status: 200 });
   } catch (err) {

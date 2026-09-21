@@ -3,7 +3,9 @@
 Implemented locally on `codex/simplification-fixes-20260919`, following the user's
 R2 review and explicit instruction to fix. Astra xhigh specialists implemented
 separate areas and reviewed one another's changes. The original dirty checkout
-was not used for implementation. No merge or deployment is part of this task.
+was not used for implementation. The user subsequently authorized merging; the
+integration incorporates current main `7414d90`, including PR14's review-integrity
+protections, with independent Astra review of the combined behavior.
 
 ## What became simpler
 
@@ -12,11 +14,13 @@ was not used for implementation. No merge or deployment is part of this task.
 - Explicit operational-deployment and current-control selectors replace
   conflicting choices. Historical rows remain available on case details.
 - Review commands live in the evidence-led workbench. Direct links carry the
-  case/domain; server IDs and draft tokens replace browser-registry authority.
+  case/domain; server IDs and displayed revisions replace browser-registry
+  authority. Signatures bind to the submitted evidence packet.
 - Decision readiness is shared by server validation, portfolio projection and
   UI. Reassessments enter the review queue and can reach an explicit admin resume
   after approval. Rollback remains on the case's Deployments tab.
-- AI results retain actual citations, control references and confidence notes.
+- AI results retain citations, control references, confidence notes and generation
+  provenance, with evidence gaps stored separately from policy references.
   Both live SDKs share cancellation/deadline behavior and runtime configuration.
 - Mock and database fixtures share personas, reviewer assignments, controls and
   initiative facts. Provider facades no longer cache stale database handles.
@@ -38,16 +42,17 @@ signatures, evidence versions and concurrency. Pure migration-label checks no
 longer start a database. `tsx`, already present in the lockfile, is now declared
 directly because project scripts use it; no package version was upgraded.
 
-The final tree removes **2,062 net production source lines** across 72 changed
+The integrated tree removes **1,637 net production source lines** across 69 changed
 production paths, counting new files as well as deletions. The comparison is
-against cached `origin/main` at `ac9404e`, so it excludes the separately merged
-runtime repair. This counts TypeScript/JavaScript source, including configuration
+against `origin/main` at `7414d90`, so it excludes the separately merged runtime
+and review-integrity fixes. This counts TypeScript/JavaScript source, including configuration
 and scripts, and excludes tests, documentation and generated files.
 
 ## Verification
 
-- Unit/API/UI suite: **137 files, 1,343 tests passed**; coverage thresholds pass
-  with **88.75% lines**, 86.89% statements, 78.84% branches and 92.93% functions.
+- Integrated unit/API/UI suite: **146 files, 1,419 tests passed**; coverage
+  thresholds pass with **89.33% lines**, 87.25% statements, 79.4% branches and
+  93.04% functions.
 - Production-build Playwright: **28/28 passed**, including intake persistence,
   canonical review links, domain authority, signature and decision, evidence
   revision/acceptance, desktop and mobile checks.
@@ -55,10 +60,18 @@ and scripts, and excludes tests, documentation and generated files.
   with zero errors and one warning in a generated coverage report asset.
 - Relocated production-bundle checks pass for both AI runtimes, packaged policy
   reads and safe missing-asset failures, with network calls blocked.
+- Separate private PostgreSQL suite: **9/9 passed**, exercising concurrent claims,
+  late results, human changes and decisions through independent connections.
+- Production dependency audit: **zero reported vulnerabilities**.
 
-The first final browser run exposed a stale test selector that expected a space
-between a domain label and its count. Only that selector changed; the full rerun
-passed. The suite retains its existing scoped React 418 allowance on one
+Main integration retained the numeric revision, evidence packet and database
+attempt protocol, retiring the overlapping hash-token implementation. Review
+also caught and fixed a timeout configuration that would have prevented retries
+and a discard-edits path that needed to preserve explicit re-review. The browser
+test now follows the refreshed-source acknowledgment and checks the exact packet
+identity sent with the signature; the full rerun passed.
+
+The suite retains its existing scoped React 418 allowance on one
 submitted-detail reload, and the server logged a destination-stream-closed
 warning during navigation. These results are not a blanket absence-of-errors
 claim. Desktop and mobile evidence-review screenshots were also inspected.
@@ -91,7 +104,9 @@ The existing browser suite already covered evidence upload, revision, acceptance
 and blocked premature signing; the initial audit understated that coverage.
 This pass extends the journey through a complete evidence-backed signature.
 
-Local PGlite, mocked/intercepted SDK requests and browser checks do not establish
-hosted provider behavior or locking across independent production Postgres
-connections. The separately completed packaged-runtime repair `c93b95a` was
-reused as a prerequisite; its investigation was not repeated here.
+Local PGlite, mocked/intercepted SDK requests, browser checks and the separate
+private Postgres concurrency suite do not establish hosted provider behavior or
+production database readiness. The integration preserves main's existing
+`0012_review_integrity.sql` migration prerequisite and adds no new migration.
+No hosted migration or live provider call is part of this merge. The temporary
+Postgres cluster used independent connections and was stopped after its tests.

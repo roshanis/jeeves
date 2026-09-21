@@ -9,6 +9,7 @@ import {
   initiativeDecisions,
   initiatives,
   reviewCycles,
+  reviewDecisions,
 } from "../db/schema";
 import { setEvalThreshold } from "../services/admin-service";
 import type { ControlRow } from "./dto";
@@ -110,6 +111,39 @@ describe("lib/data/db-provider", () => {
       expect(cycles).toHaveLength(1);
       expect(detail!.reviews.length).toBeGreaterThan(0);
       expect(new Set(detail!.reviews.map((review) => review.cycleId))).toEqual(new Set([cycles[0].id]));
+      const storedReviews = await db.select().from(reviewDecisions).where(eq(reviewDecisions.cycleId, cycles[0].id));
+      for (const review of detail!.reviews) {
+        const stored = storedReviews.find((candidate) => candidate.domain === review.domain)!;
+        expect(review).toMatchObject({ revision: stored.revision, citations: stored.citations, missingEvidence: stored.missingEvidence, evidenceRequests: stored.evidenceRequests, citationProvenance: stored.citationProvenance });
+        expect(review.citationProvenance).toBe("legacy-unverified");
+      }
+    });
+
+    it("reloads the displayed revision and agent evidence context from the stored review", async () => {
+      const slug = "provider-dedup-agent";
+      const before = (await provider.getInitiativeDetail(slug))!;
+      const [stored] = await db.select().from(reviewDecisions)
+        .where(eq(reviewDecisions.cycleId, before.reviews[0].cycleId!));
+      const updated = {
+        revision: stored.revision + 1,
+        draftMd: "Revised synthetic review awaiting a human signature.",
+        citations: ["MP-S v3 §2"],
+        citationProvenance: "agent-supplied",
+        missingEvidence: ["Synthetic access-control evidence is missing."],
+        evidenceRequests: [{ controlId: "S-01", description: "Supply the synthetic access-control assessment." }],
+      };
+      try {
+        await db.update(reviewDecisions).set(updated).where(eq(reviewDecisions.id, stored.id));
+        const after = (await provider.getInitiativeDetail(slug))!;
+        expect(after.reviews.find((review) => review.domain === stored.domain))
+          .toMatchObject({ cycleId: stored.cycleId, ...updated });
+      } finally {
+        await db.update(reviewDecisions).set({
+          revision: stored.revision, draftMd: stored.draftMd, citations: stored.citations,
+          citationProvenance: stored.citationProvenance, missingEvidence: stored.missingEvidence,
+          evidenceRequests: stored.evidenceRequests,
+        }).where(eq(reviewDecisions.id, stored.id));
+      }
     });
 
     it("returns null for an unknown slug", async () => {

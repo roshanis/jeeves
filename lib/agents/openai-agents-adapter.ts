@@ -60,6 +60,7 @@
  * test suite (no network access, ever — see this file's own test) both
  * forbid that unless a human has explicitly opted in via the env var.
  */
+import { createHash } from "node:crypto";
 import {
   Agent,
   run as sdkRun,
@@ -422,7 +423,19 @@ export function createOpenAiAgentsAdapterWithRunner(
 
     return {
       ok: true,
-      value: mapReviewerDraftToPortOutput(input.domain, parsed.data),
+      value: {
+        ...mapReviewerDraftToPortOutput(input.domain, parsed.data),
+        generationMetadata: {
+          adapter: "openai-agents-sdk",
+          configuredModelId: terra,
+          mode: "deep",
+          systemPromptHash: createHash("sha256").update(`${system}${DEEP_REVIEW_TAIL}`).digest("hex"),
+          userPromptHash: createHash("sha256").update(userPrompt).digest("hex"),
+          // Tool responses occur after these prompts; do not claim this hash
+          // identifies the entire multi-turn provider transcript.
+          promptHashScope: "initial-input",
+        },
+      },
     };
   }
 
@@ -436,7 +449,7 @@ export function createOpenAiAgentsAdapterWithRunner(
         return { ok: false, error: validationFailure };
       }
 
-      const { prompt: userPrompt } = buildDraftReviewPrompt(
+      const { system, prompt: userPrompt } = buildDraftReviewPrompt(
         instructions,
         input,
       );
@@ -478,7 +491,17 @@ export function createOpenAiAgentsAdapterWithRunner(
 
       return {
         ok: true,
-        value: mapReviewerDraftToPortOutput(input.domain, parsed.data),
+        value: {
+          ...mapReviewerDraftToPortOutput(input.domain, parsed.data),
+          generationMetadata: {
+            adapter: "openai-agents-sdk",
+            configuredModelId: terra,
+            mode: "standard",
+            systemPromptHash: createHash("sha256").update(system).digest("hex"),
+            userPromptHash: createHash("sha256").update(userPrompt).digest("hex"),
+            promptHashScope: "initial-input",
+          },
+        },
       };
     },
 

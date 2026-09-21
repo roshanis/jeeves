@@ -11,7 +11,6 @@ import { asc, eq, isNull, or, type SQL } from "drizzle-orm";
 import type { Domain, LifecycleState, OverlayFlags, Tier } from "@/lib/domain/types";
 import { currentControlRevisions } from "@/lib/controls/current-revisions";
 import { operationalDeployment, latestDeployment } from "@/lib/deployments/selection";
-import { reviewDraftToken } from "@/lib/workflow/review-draft-token";
 import { reviewDecisionReadiness } from "@/lib/approval/review-readiness";
 import { overlayFromStoredIntake } from "@/lib/intake/stored-overlay";
 import { resolveThreshold } from "@/lib/controls/evaluate";
@@ -434,7 +433,7 @@ export class DbDataProvider implements DataProvider {
       .sort((a, b) => a.domain.localeCompare(b.domain))
       .map((rd) => ({
         cycleId: rd.cycleId,
-        draftToken: reviewDraftToken(rd),
+        revision: rd.revision,
         domain: rd.domain as Domain,
         status: rd.status as ReviewRow["status"],
         reviewer: rd.reviewer,
@@ -442,6 +441,9 @@ export class DbDataProvider implements DataProvider {
         signedAt: rd.signedAt ? toIso(rd.signedAt) : null,
         draftMd: rd.draftMd,
         citations: rd.citations,
+        citationProvenance: rd.citationProvenance as ReviewRow["citationProvenance"],
+        missingEvidence: rd.missingEvidence,
+        evidenceRequests: rd.evidenceRequests,
       }));
 
     const decisions: DecisionRow[] = snap.decisions

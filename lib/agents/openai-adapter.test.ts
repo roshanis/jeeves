@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { APICallError } from "ai";
 import { MockLanguageModelV4 } from "ai/test";
 import { describe, expect, it } from "vitest";
@@ -65,6 +66,31 @@ function textGenerateResult(obj: unknown) {
 }
 
 describe("openai-adapter — system prompt assembly", () => {
+  it("records the configured model and exact input prompt hashes without inventing a served model", async () => {
+    let system = "";
+    let user = "";
+    const policyContext = ["Policy source: synthetic-policy-v2", "Submitted evidence metadata: synthetic-packet-revision-4"];
+    const model = new MockLanguageModelV4({
+      modelId: "test-review-model",
+      doGenerate: async (options) => {
+        system = String(options.prompt.find((message) => message.role === "system")?.content ?? "");
+        const message = options.prompt.find((message) => message.role === "user");
+        user = JSON.stringify(message?.content);
+        return textGenerateResult(VALID_REVIEWER_OBJECT);
+      },
+    });
+    const result = await createOpenAIAgentPortWithModel(model).draftReview({ ...draftInput(), policyContext });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.citations).toEqual(VALID_REVIEWER_OBJECT.citations);
+    expect(result.value.generationMetadata).toMatchObject({ adapter: "vercel-ai-sdk", configuredModelId: "test-review-model", systemPromptHash: createHash("sha256").update(system).digest("hex") });
+    const userParts = JSON.parse(user) as { type: string; text?: string }[];
+    const userText = userParts.find((part) => part.type === "text")?.text ?? "";
+    expect(JSON.parse(userText).policyContext).toEqual(policyContext);
+    expect(result.value.generationMetadata?.userPromptHash).toBe(createHash("sha256").update(userText).digest("hex"));
+    expect(result.value.generationMetadata).not.toHaveProperty("servedModelId");
+  });
+
   it("passes a system prompt containing the shared reviewer instructions and the privacy-hipaa track overlay", async () => {
     let capturedPrompt: unknown;
     const model = new MockLanguageModelV4({
