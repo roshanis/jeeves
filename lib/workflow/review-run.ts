@@ -11,10 +11,10 @@ import { lockCurrentReviewCycle, ReviewIntegrityError, type ReviewTx } from "../
 import { loadReviewContext } from "./review-context";
 import type { DraftBudgetPolicy } from "./draft-execution-policy";
 
-export type SkipReason = "already signed" | "already running" | "superseded";
+export type SkipReason = "already signed" | "already running" | "superseded" | "reviewer abstained";
 export interface DraftRunDomainOutcome { domain: Domain; status: "drafted" | "failed" | "skipped"; error?: PortFailure; reason?: SkipReason }
 export interface StartDraftRunResult { runId: string; cycleId: string; outcomes: DraftRunDomainOutcome[] }
-export type DraftRunDomainStatus = "pending" | "drafted" | "signed" | "returned" | "failed";
+export type DraftRunDomainStatus = "pending" | "drafted" | "signed" | "returned" | "abstained" | "failed";
 export interface DraftRunProgressRow { domain: Domain; status: DraftRunDomainStatus; lastError?: string }
 export interface DraftRunProgress { cycleId: string; rows: DraftRunProgressRow[]; complete: boolean }
 export interface StartDraftRunOptions {
@@ -61,6 +61,7 @@ async function claimDomain(db: Db, cycleId: string, domain: Domain, force: boole
       [row] = await tx.insert(reviewDecisions).values({ id: `rd-${randomUUID()}`, cycleId, domain, status: "pending", createdAt: new Date(), citations: [] }).returning();
     }
     if (options.expectedRevision !== undefined && row.revision !== options.expectedRevision) throw new ReviewIntegrityError("conflict", "This draft changed. Refresh and review the current version.");
+    if (row.status === "abstained") return { domain, status: "skipped", reason: "reviewer abstained" };
     if (row.status === "signed") {
       if (force) throw new ReviewIntegrityError("conflict", "Cannot re-draft a signed review.");
       return { domain, status: "skipped", reason: "already signed" };

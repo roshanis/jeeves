@@ -4,7 +4,7 @@ import { eq } from 'drizzle-orm';
 import { createTestDb, closeTestDb, type TestDb } from '../db/test-client';
 import { initiatives, controlDefinitions, intakeVersions, riskAssessments, reviewCycles, reviewDecisions, auditEvents, evidenceDocuments, evidencePackets } from '../db/schema';
 import { getEvidence, uploadEvidence, saveEvidenceDraft, submitEvidence, assessEvidence, downloadEvidence } from './evidence-service';
-import { signReview } from './initiative-service';
+import { signReview, abstainReview, resumeReview } from './initiative-service';
 const owner = { actor: { id: 'priya-raman', role: 'requester' as const }, workspaceId: 'workspace-a' };
 const reviewer = { actor: { id: 'marcus-webb', role: 'reviewer' as const }, workspaceId: 'workspace-a' };
 const bytes = Buffer.from('%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF\n');
@@ -92,4 +92,17 @@ it('does not allow a foreign-domain reviewer or stale packet to assess evidence'
  await expect(assessEvidence(db,'i',{actor:{id:'james-liu',role:'reviewer'},workspaceId:'workspace-a'},{packetId:first.id,controlId:'H-01',decision:'accepted',reason:'Not my domain'})).rejects.toMatchObject({status:403});
  const next=await packet(file.id);await submitEvidence(db,'i',owner,{packetId:next.id,expectedRevision:next.revision});
  await expect(assessEvidence(db,'i',reviewer,{packetId:first.id,controlId:'H-01',decision:'accepted',reason:'Stale'})).rejects.toMatchObject({status:409});
+});
+
+it('blocks evidence assessment while abstained and restores it after explicit resume',async()=>{
+ const file=await upload();const draft=await packet(file.id);const submitted=await submitEvidence(db,'i',owner,{packetId:draft.id,expectedRevision:draft.revision});
+ await abstainReview(db,'cycle','privacy-hipaa',reviewer.actor,'workspace-a','Conflict of interest',0);
+ expect((await getEvidence(db,'i',reviewer)).reviewerDomain).toBeNull();
+ for(const decision of ['accepted','changes_requested'] as const) await expect(assessEvidence(db,'i',reviewer,{packetId:submitted.id,controlId:'H-01',decision,reason:'Attempt'})).rejects.toMatchObject({status:409,message:expect.stringMatching(/resume/i)});
+ expect((await db.select().from(auditEvents)).filter(e=>e.action==='evidence_assessed')).toHaveLength(0);
+ expect((await getEvidence(db,'i',reviewer)).requirements[0].assessment).toBeNull();
+ await resumeReview(db,'cycle','privacy-hipaa',reviewer.actor,'workspace-a',1);
+ expect((await getEvidence(db,'i',reviewer)).reviewerDomain).toBe('privacy-hipaa');
+ await assessEvidence(db,'i',reviewer,{packetId:submitted.id,controlId:'H-01',decision:'accepted',reason:'Independent review completed'});
+ expect((await getEvidence(db,'i',reviewer)).requirements[0].status).toBe('accepted');
 });

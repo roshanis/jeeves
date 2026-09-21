@@ -72,6 +72,11 @@ const DOMAIN_STATUS_META: Record<
     icon: CheckCircle2,
     className: "bg-status-good-bg text-status-good-fg",
   },
+  abstained: {
+    label: "Abstained",
+    icon: Circle,
+    className: "bg-status-neutral-bg text-status-neutral-fg",
+  },
   returned: {
     label: "Returned",
     icon: AlertTriangle,

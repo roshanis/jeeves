@@ -26,6 +26,7 @@ import { evidenceForSignature, EvidenceError } from './evidence-service';
  * multi-statement writes throughout this file, which depend on that
  * transactional isolation being real, not simulated.
  */
+import { currentAbstention, isResumableReviewStatus } from "../reviews/abstention";
 import { overlayFromStoredIntake } from "../intake/stored-overlay";
 import { createHash, randomUUID } from "node:crypto";
 import { and, desc, eq, isNull } from "drizzle-orm";
@@ -769,7 +770,7 @@ async function loadReviewDecisionOrThrow(
 function requireReviewerRole(actor: Actor): void {
   if (actor.role !== "reviewer") {
     throw new IllegalTransitionError(
-      `only role 'reviewer' may sign or return a domain review; role '${actor.role}' is not permitted`,
+      `only role 'reviewer' may act on a domain review; role '${actor.role}' is not permitted`,
       "in_review",
       "start_review",
       actor.role,
@@ -847,6 +848,7 @@ export async function signReview(
     const { initiative } = await lockReviewForMutation(tx, cycleId, domain, sessionWorkspaceId);
     const decision = await loadReviewDecisionOrThrow(tx, cycleId, domain);
     assertReviewRevision(decision, input?.expectedRevision);
+    if (decision.status === "abstained") throw new ConflictError("Resume this review before signing it.");
     if (input.expectedEvidencePacketId !== null && typeof input.expectedEvidencePacketId !== "string") {
       throw new ValidationError("An explicit expected evidence packet identity is required.");
     }
@@ -904,6 +906,7 @@ export async function returnReview(
     const { initiative } = await lockReviewForMutation(tx, cycleId, domain, sessionWorkspaceId);
     const decision = await loadReviewDecisionOrThrow(tx, cycleId, domain);
     assertReviewRevision(decision, expectedRevision);
+    if (decision.status === "abstained") throw new ConflictError("Resume this review before returning it.");
     if (!reason || reason.trim().length === 0) throw new ValidationError("returnReview requires a non-empty reason");
     const revision = decision.revision + 1;
     const updated = await tx.update(reviewDecisions).set({
@@ -920,6 +923,70 @@ export async function returnReview(
       metadata: { domain, cycleId, reason, revision, previousSignatureEventId: decision.signatureEventId },
     });
     return { cycleId, domain, status: "returned" };
+  });
+}
+
+/** Abstention leaves the required review incomplete and fences any draft in flight. */
+export async function abstainReview(
+  db: Db, cycleId: string, domain: Domain, actor: Actor, sessionWorkspaceId: string | null,
+  reason: string, expectedRevision: number,
+) {
+  requireReviewerRole(actor);
+  requireReviewerDomainMatch(actor, domain);
+  if (typeof reason !== "string" || !reason.trim() || reason.length > 2000) {
+    throw new ValidationError("Abstaining requires a reason of 1 to 2000 characters.");
+  }
+  return db.transaction(async (tx) => {
+    const { initiative } = await lockReviewForMutation(tx, cycleId, domain, sessionWorkspaceId);
+    const decision = await loadReviewDecisionOrThrow(tx, cycleId, domain);
+    assertReviewRevision(decision, expectedRevision);
+    if (!isResumableReviewStatus(decision.status)) throw new ConflictError("Only pending, drafted or returned reviews can be abstained from.");
+    const revision = decision.revision + 1;
+    const updated = await tx.update(reviewDecisions).set({
+      status: "abstained", reviewer: actor.id, revision, activeAttemptId: null, activeAttemptExpiresAt: null,
+    }).where(and(eq(reviewDecisions.id, decision.id), eq(reviewDecisions.status, decision.status),
+      eq(reviewDecisions.revision, decision.revision))).returning();
+    if (!updated.length) throw new ConflictError("This review changed. Refresh and inspect the current revision.");
+    await tx.insert(auditEvents).values({
+      id: `evt-${randomUUID()}`, initiativeId: initiative.id, ts: new Date(nowTs()),
+      actor: actor.id, actorRole: actor.role, action: "review_abstained",
+      detail: `Abstained from ${domain} review: ${reason.trim()}`,
+      before: decision.status, after: "abstained",
+      metadata: { cycleId, domain, reviewDecisionId: decision.id, revision, reason: reason.trim() },
+    });
+    return { cycleId, domain, status: "abstained" as const };
+  });
+}
+
+/** Restore the state recorded by the exact abstention receipt; the review still needs its normal sign-off. */
+export async function resumeReview(
+  db: Db, cycleId: string, domain: Domain, actor: Actor, sessionWorkspaceId: string | null,
+  expectedRevision: number,
+) {
+  requireReviewerRole(actor);
+  requireReviewerDomainMatch(actor, domain);
+  return db.transaction(async (tx) => {
+    const { initiative } = await lockReviewForMutation(tx, cycleId, domain, sessionWorkspaceId);
+    const decision = await loadReviewDecisionOrThrow(tx, cycleId, domain);
+    assertReviewRevision(decision, expectedRevision);
+    const events = await tx.select().from(auditEvents).where(and(
+      eq(auditEvents.initiativeId, initiative.id), eq(auditEvents.action, "review_abstained")));
+    const receipt = currentAbstention(decision, events);
+    if (!receipt) throw new ConflictError("This review has no valid current abstention receipt. Refresh and inspect the review history.");
+    const revision = decision.revision + 1;
+    const updated = await tx.update(reviewDecisions).set({
+      status: receipt.priorStatus, reviewer: actor.id, revision, activeAttemptId: null, activeAttemptExpiresAt: null,
+    }).where(and(eq(reviewDecisions.id, decision.id), eq(reviewDecisions.status, "abstained"),
+      eq(reviewDecisions.revision, decision.revision))).returning();
+    if (!updated.length) throw new ConflictError("This review changed. Refresh and inspect the current revision.");
+    await tx.insert(auditEvents).values({
+      id: `evt-${randomUUID()}`, initiativeId: initiative.id, ts: new Date(nowTs()),
+      actor: actor.id, actorRole: actor.role, action: "review_resumed",
+      detail: `Resumed ${domain} review in its previous ${receipt.priorStatus} state.`,
+      before: "abstained", after: receipt.priorStatus,
+      metadata: { cycleId, domain, reviewDecisionId: decision.id, revision, abstentionEventId: receipt.eventId },
+    });
+    return { cycleId, domain, status: receipt.priorStatus };
   });
 }
 

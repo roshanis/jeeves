@@ -120,7 +120,7 @@ export const reviewDecisions = pgTable(
       .notNull()
       .references(() => reviewCycles.id),
     domain: text("domain").notNull(),
-    status: text("status").notNull(), // 'pending' | 'drafted' | 'signed' | 'returned'
+    status: text("status").notNull(), // 'pending' | 'drafted' | 'signed' | 'returned' | 'abstained'
     reviewer: text("reviewer"),
     draftMd: text("draft_md"),
     citations: jsonb("citations").$type<string[]>().notNull().default(sql`'[]'::jsonb`),

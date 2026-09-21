@@ -127,7 +127,7 @@ export interface DraftRunDomainOutcome {
   domain: Domain;
   status: "drafted" | "failed" | "skipped";
   error?: unknown;
-  reason?: "already signed" | "already running" | "superseded";
+  reason?: "already signed" | "already running" | "superseded" | "reviewer abstained";
 }
 
 export interface StartDraftRunResult {
@@ -136,7 +136,7 @@ export interface StartDraftRunResult {
   outcomes: DraftRunDomainOutcome[];
 }
 
-export type DraftRunDomainStatus = "pending" | "drafted" | "signed" | "returned" | "failed";
+export type DraftRunDomainStatus = "pending" | "drafted" | "signed" | "returned" | "abstained" | "failed";
 
 export interface DraftRunProgressRow {
   domain: Domain;
@@ -159,7 +159,7 @@ export interface RunReviewAgentResult {
   /** Human-readable failure reason — present only when status === "failed". */
   error?: string;
   /** Present when a concurrent human signature wins the persistence race. */
-  reason?: "already signed" | "already running" | "superseded";
+  reason?: "already signed" | "already running" | "superseded" | "reviewer abstained";
 }
 
 export interface SignReviewResult {
@@ -527,6 +527,20 @@ export function returnReview(
   return request<ReturnReviewResult>(
     `/api/reviews/${encodeURIComponent(cycleId)}/${encodeURIComponent(domain)}/return`,
     { method: "POST", token, body: { reason, expectedRevision } },
+  );
+}
+
+export function abstainReview(token: string, cycleId: string, domain: Domain, reason: string, expectedRevision: number) {
+  return request<{ cycleId: string; domain: Domain; status: "abstained" }>(
+    `/api/reviews/${encodeURIComponent(cycleId)}/${encodeURIComponent(domain)}/abstain`,
+    { method: "POST", token, body: { reason, expectedRevision } },
+  );
+}
+
+export function resumeReview(token: string, cycleId: string, domain: Domain, expectedRevision: number) {
+  return request<{ cycleId: string; domain: Domain; status: "pending" | "drafted" | "returned" }>(
+    `/api/reviews/${encodeURIComponent(cycleId)}/${encodeURIComponent(domain)}/resume`,
+    { method: "POST", token, body: { expectedRevision } },
   );
 }
 

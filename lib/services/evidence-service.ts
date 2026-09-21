@@ -64,7 +64,7 @@ export async function getEvidence(db:Reader, ref:string, viewer:EvidenceViewer):
   const [documents,context]=await Promise.all([db.select(documentColumns).from(evidenceDocuments).where(eq(evidenceDocuments.initiativeId,initiative.id)).orderBy(desc(evidenceDocuments.createdAt)),cycleContext(db,initiative.id)]);
   const {packets,assessments}=await packetHistory(db,initiative.id,context.cycle?.id??null);
   const submitted=packets.filter(p=>p.status==='submitted'),latest=submitted[0];
-  return {initiativeId:initiative.id,cycleId:context.cycle?.id??null,canEdit:viewer.actor.role==='requester'&&initiative.requester===actorName(viewer.actor.id)&&editableStates.has(initiative.state)&&!context.cycle?.closedAt,reviewerDomain:viewer.actor.role==='reviewer'&&!context.cycle?.closedAt?reviewerDomainFor(viewer.actor.id):null,
+  return {initiativeId:initiative.id,cycleId:context.cycle?.id??null,canEdit:viewer.actor.role==='requester'&&initiative.requester===actorName(viewer.actor.id)&&editableStates.has(initiative.state)&&!context.cycle?.closedAt,reviewerDomain:viewer.actor.role==='reviewer'&&!context.cycle?.closedAt&&!context.decisions.some(d=>d.domain===reviewerDomainFor(viewer.actor.id)&&d.status==='abstained')?reviewerDomainFor(viewer.actor.id):null,
     documents:documents.map(documentDto),usedBytes:documents.reduce((n,d)=>n+d.byteSize,0),
     requirements:context.requirements.map(r=>{const entry=latest?.entries.find(e=>e.controlId===r.id)??null;const assessment=assessmentFor(r.id,submitted,assessments);return {id:r.id,name:r.name,domain:r.domain,description:r.requiredEvidence,policySource:r.policySource,entry,assessment,status:assessment?.decision??(entry?'submitted':'missing'),signed:context.decisions.some(d=>d.domain===r.domain&&d.status==='signed')};}),
     draft:packets.find(p=>p.status==='draft')?packetDto(packets.find(p=>p.status==='draft')!):null,latest:latest?packetDto(latest):null,
@@ -147,6 +147,7 @@ export async function assessEvidence(db:Db,ref:string,viewer:EvidenceViewer,inpu
     const context=await cycleContext(tx,initiative.id);
     const requirement=context.requirements.find(r=>r.id===input.controlId);
     if(viewer.actor.role!=='reviewer'||!requirement||reviewerDomainFor(viewer.actor.id)!==requirement.domain)throw new EvidenceError(403,'Only the assigned domain reviewer may assess this evidence.');
+    if(context.decisions.some(d=>d.domain===requirement.domain&&d.status==='abstained'))throw new EvidenceError(409,'Resume this review before assessing evidence.');
     if(context.cycle?.closedAt||!editableStates.has(initiative.state)||context.decisions.some(d=>d.domain===requirement.domain&&d.status==='signed'))throw new EvidenceError(409,'This review is closed to evidence assessments.');
     const {packets,assessments}=await packetHistory(tx,initiative.id,context.cycle?.id??null);
     const latest=packets.find(p=>p.status==='submitted');

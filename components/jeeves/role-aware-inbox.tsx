@@ -736,7 +736,7 @@ const DOMAIN_FOCUS: Record<Domain, string> = {
   procurement: "Vendor terms, sourcing, and contract lifecycle.",
 };
 
-const REVIEW_QUEUE_STATUSES = new Set<ReviewRow["status"]>(["pending", "drafted", "returned"]);
+const REVIEW_QUEUE_STATUSES = new Set<ReviewRow["status"]>(["pending", "drafted", "returned", "abstained"]);
 
 function DomainReviewQueueTable({
   rows,
