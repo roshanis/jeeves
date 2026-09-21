@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { ShieldCheck } from "lucide-react";
-import { buttonVariants } from "@/components/ui/button";
+import { TryDemoButton } from "@/components/jeeves/try-demo-button";
 import { DEMO_BANNER_TEXT } from "@/lib/demo-banner";
 import { FRAMEWORK_DISCLAIMER } from "@/lib/marketing/framework-mappings";
 
@@ -58,9 +58,7 @@ export default function MarketingLayout({
               >
                 Pilot
               </Link>
-              <Link href="/inbox" className={buttonVariants({ size: "sm" })}>
-                Live demo
-              </Link>
+              <TryDemoButton size="sm" />
             </nav>
           </div>
         </header>

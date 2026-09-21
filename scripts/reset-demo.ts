@@ -11,12 +11,13 @@
  *   2. Clears live session + budget state (invalidates outstanding demo
  *      sessions; resets the daily token budget) — these live outside the
  *      seed's own reset scope.
- *   3. Prints a checklist: passcode set, agent (OpenAI) connector, telemetry
+ *   3. Prints a checklist: workspace signing, agent (OpenAI) connector, telemetry
  *      connector, cron secret, build SHA, and a seed smoke-count.
  *
  * Refuses to run against NODE_ENV=production unless ALLOW_SEED=1 (same guard
  * as scripts/seed.ts — this is destructive/idempotent reseeding).
  */
+import { resolveWorkspaceCookieSecret } from "../lib/security/workspace-cookie";
 import { execSync } from "node:child_process";
 import { getDb, closeDb } from "../lib/db/client";
 import { initiatives, runBudget, sessions } from "../lib/db/schema";
@@ -58,10 +59,10 @@ async function resetDemo(): Promise<void> {
 
   // 3. Readiness checklist.
   console.log("\nPre-flight checklist:");
-  if (process.env.DEMO_PASSCODE && process.env.DEMO_PASSCODE.length > 0) {
-    ok("Demo passcode", "set");
+  if (resolveWorkspaceCookieSecret()) {
+    ok("Passwordless demo workspace", "signing configured");
   } else {
-    warn("Demo passcode", "DEMO_PASSCODE is unset — mutations will 401 until it is configured");
+    warn("Demo workspace", "Set JEEVES_COOKIE_SECRET to enable visitor sessions");
   }
 
   const agent = agentRuntimeStatus();

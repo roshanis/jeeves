@@ -53,7 +53,7 @@ import { getDb } from "@/lib/db/client";
 import { initiatives, reviewCycles } from "@/lib/db/schema";
 import { startDraftRun, getRunProgress } from "@/lib/workflow/review-run";
 import { runMutationGuard } from "@/lib/services/route-guard";
-import { workspaceMismatch } from "@/lib/services/workspace-guard";
+import { workspaceMismatch, mutationWorkspaceMismatch } from "@/lib/services/workspace-guard";
 import { resolveViewerWorkspaceId } from "@/lib/services/viewer-workspace";
 import type { Domain } from "@/lib/domain/types";
 import { agentInitializationResponse } from "@/lib/services/agent-error-response";
@@ -152,7 +152,7 @@ export async function POST(
     .select({ workspaceId: initiatives.workspaceId })
     .from(initiatives)
     .where(eq(initiatives.id, id));
-  if (!initiative || workspaceMismatch(initiative.workspaceId, guard.workspaceId)) {
+  if (!initiative || mutationWorkspaceMismatch(initiative.workspaceId, guard.workspaceId)) {
     return Response.json({ error: "initiative or review cycle not found" }, { status: 404 });
   }
 

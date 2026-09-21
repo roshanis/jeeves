@@ -8,10 +8,10 @@
  * Session-gated for ANY authenticated persona (the route's own doc comment:
  * "an auditor question is a read/explain action, not a role-restricted
  * mutation"). Without a live session, the input + submit are disabled with
- * the standard passcode-tooltip messaging; `DisableWithTooltip` only renders
+ * the standard demo-entry messaging; `DisableWithTooltip` only renders
  * a `<Button>` though, so for a text input this component wraps the
  * input+button pair directly in `Tooltip`/`TooltipTrigger`/`TooltipContent`
- * using the same exact tooltip copy (`DEMO_PASSCODE_TOOLTIP`) rather than
+ * using the same exact tooltip copy (`DEMO_SESSION_TOOLTIP`) rather than
  * reusing `DisableWithTooltip` itself (judgment call — documented here and
  * in the task report).
  *
@@ -26,7 +26,7 @@ import { useLiveSession } from "@/lib/client/session-context";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { DEMO_PASSCODE_TOOLTIP } from "./role-gate";
+import { DEMO_SESSION_TOOLTIP } from "./role-gate";
 
 interface ChatTurn {
   role: "user" | "assistant";
@@ -140,7 +140,7 @@ export function AuditorChat() {
                 </div>
               }
             />
-            <TooltipContent>{DEMO_PASSCODE_TOOLTIP}</TooltipContent>
+            <TooltipContent>{DEMO_SESSION_TOOLTIP}</TooltipContent>
           </Tooltip>
         ) : (
           <div className="flex items-center gap-2">

@@ -1,9 +1,12 @@
+import type React from "react";
+import { RoleProvider } from "@/components/jeeves/role-context";
+import { LiveSessionProvider } from "@/lib/client/session-context";
 // Monetization M1 marketing surfaces: the framework-crosswalk table, the
 // procurement-readiness pilot one-pager, and the repositioned landing-page
 // CTAs. Pure server components (no hooks, no data fetching), rendered
 // directly like tests/ui/landing-page.test.tsx.
-import { afterEach, describe, expect, it } from "vitest";
-import { cleanup, render } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { cleanup, render as rtlRender } from "@testing-library/react";
 import { FrameworkMappingTable } from "@/components/jeeves/framework-mapping-table";
 import {
   CONTROL_FRAMEWORK_MAPPINGS,
@@ -91,3 +94,9 @@ describe("PilotPage", () => {
     expect(getByText(FRAMEWORK_DISCLAIMER)).toBeDefined();
   });
 });
+
+function render(ui: React.ReactElement) {
+  return rtlRender(<RoleProvider><LiveSessionProvider>{ui}</LiveSessionProvider></RoleProvider>);
+}
+
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }) }));

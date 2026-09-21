@@ -43,16 +43,19 @@ export function isApiError(value: unknown): value is ApiError {
 
 /**
  * Stable, user-facing copy per status class (task contract):
- *   401 -> re-enter passcode; 429 -> rate limit/budget; 403 -> role;
+ *   401 -> restart demo session; 429 -> rate limit/budget; 403 -> role;
  *   400 -> surface the server's own validation message; else generic.
  */
 export function apiErrorToMessage(err: ApiError): string {
+  if (err.status === 503 && err.code === "DEMO_NOT_CONFIGURED") {
+    return "The demo is temporarily unavailable. Please try again later.";
+  }
   if (err.status === 503 && err.code === "AGENT_INITIALIZATION_FAILED") {
     return "Agents could not start. Test the connection on the Agents page, then retry.";
   }
   switch (err.status) {
     case 401:
-      return "Session expired or invalid — enter the demo passcode again.";
+      return "Session expired or invalid — start the demo again.";
     case 429:
       return "Rate limit or demo budget reached — try again shortly.";
     case 403:
@@ -377,11 +380,12 @@ async function request<T>(
  * Route helpers (one per app/api/** route)
  * ---------------------------------------------------------------------- */
 
-/** POST /api/session — passcode + personaKey -> session token. */
-export function postSession(passcode: string, personaKey: string): Promise<SessionResult> {
+/** Start a demo or switch personas within the current workspace. */
+export function postSession(personaKey: string, token?: string): Promise<SessionResult> {
   return request<SessionResult>("/api/session", {
     method: "POST",
-    body: { passcode, personaKey },
+    token,
+    body: { personaKey },
   });
 }
 

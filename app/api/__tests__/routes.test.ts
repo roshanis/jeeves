@@ -25,10 +25,10 @@ vi.mock("@/lib/db/client", () => ({
   getDb: () => testDb,
 }));
 
-const PASSCODE = "demo-passcode-for-tests";
+const COOKIE_SECRET = "test-only-workspace-cookie-secret";
 
 beforeEach(async () => {
-  process.env.DEMO_PASSCODE = PASSCODE;
+  process.env.JEEVES_COOKIE_SECRET = COOKIE_SECRET;
   testDb = await createTestDb();
   resetGuardStateForTests();
 });
@@ -47,7 +47,7 @@ async function issueSessionFor(personaKey: string): Promise<string> {
     new Request("http://localhost/api/session", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ passcode: PASSCODE, personaKey }),
+      body: JSON.stringify({ personaKey }),
     }),
   );
   expect(res.status).toBe(200);
@@ -80,7 +80,7 @@ async function issueSessionInWorkspace(
     new Request("http://localhost/api/session", {
       method: "POST",
       headers,
-      body: JSON.stringify({ passcode: PASSCODE, personaKey }),
+      body: JSON.stringify({ personaKey }),
     }),
   );
   expect(res.status).toBe(200);
@@ -167,13 +167,13 @@ async function seedControlCatalog(db: TestDb): Promise<void> {
 }
 
 describe("POST /api/session", () => {
-  it("issues a session for a correct passcode", async () => {
+  it("issues a session without a password", async () => {
     const { POST } = await import("../session/route");
     const res = await POST(
       new Request("http://localhost/api/session", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ passcode: PASSCODE, personaKey: "priya-raman" }),
+        body: JSON.stringify({ personaKey: "priya-raman" }),
       }),
     );
     expect(res.status).toBe(200);
@@ -181,13 +181,13 @@ describe("POST /api/session", () => {
     expect(json.token).toBeTruthy();
   });
 
-  it("401s a wrong passcode with no session issued", async () => {
+  it("401s an unknown persona with no session issued", async () => {
     const { POST } = await import("../session/route");
     const res = await POST(
       new Request("http://localhost/api/session", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ passcode: "wrong", personaKey: "priya-raman" }),
+        body: JSON.stringify({ personaKey: "unknown-persona" }),
       }),
     );
     expect(res.status).toBe(401);
@@ -1189,7 +1189,7 @@ describe("POST /api/session — signed workspace cookie", () => {
       new Request("http://localhost/api/session", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ passcode: PASSCODE, personaKey: "priya-raman" }),
+        body: JSON.stringify({ personaKey: "priya-raman" }),
       }),
     );
     const json1 = (await res1.json()) as { workspaceId: string };
@@ -1201,7 +1201,7 @@ describe("POST /api/session — signed workspace cookie", () => {
       new Request("http://localhost/api/session", {
         method: "POST",
         headers: { "content-type": "application/json", cookie: `jeeves_workspace=${cookieValue}` },
-        body: JSON.stringify({ passcode: PASSCODE, personaKey: "elena-vasquez" }),
+        body: JSON.stringify({ personaKey: "elena-vasquez" }),
       }),
     );
     const json2 = (await res2.json()) as { workspaceId: string };
@@ -1214,7 +1214,7 @@ describe("POST /api/session — signed workspace cookie", () => {
       new Request("http://localhost/api/session", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ passcode: PASSCODE, personaKey: "priya-raman" }),
+        body: JSON.stringify({ personaKey: "priya-raman" }),
       }),
     );
     const json1 = (await res1.json()) as { workspaceId: string };
@@ -1224,7 +1224,7 @@ describe("POST /api/session — signed workspace cookie", () => {
       new Request("http://localhost/api/session", {
         method: "POST",
         headers: { "content-type": "application/json", cookie: `jeeves_workspace=${json1.workspaceId}` },
-        body: JSON.stringify({ passcode: PASSCODE, personaKey: "elena-vasquez" }),
+        body: JSON.stringify({ personaKey: "elena-vasquez" }),
       }),
     );
     expect(res2.status).toBe(200);
@@ -1238,7 +1238,7 @@ describe("POST /api/session — signed workspace cookie", () => {
       new Request("http://localhost/api/session", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ passcode: PASSCODE, personaKey: "priya-raman" }),
+        body: JSON.stringify({ personaKey: "priya-raman" }),
       }),
     );
     const json1 = (await res1.json()) as { workspaceId: string };
@@ -1249,7 +1249,7 @@ describe("POST /api/session — signed workspace cookie", () => {
       new Request("http://localhost/api/session", {
         method: "POST",
         headers: { "content-type": "application/json", cookie: `jeeves_workspace=${tampered}` },
-        body: JSON.stringify({ passcode: PASSCODE, personaKey: "marcus-webb" }),
+        body: JSON.stringify({ personaKey: "marcus-webb" }),
       }),
     );
     expect(res2.status).toBe(200);

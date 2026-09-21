@@ -1,6 +1,6 @@
 /**
  * Shared request-guard pipeline for `app/api/**` mutating route handlers
- * (task brief deliverable 3): session (passcode-issued) -> rate-limit ->
+ * (task brief deliverable 3): session (server-issued) -> rate-limit ->
  * input-size validation -> optional budget reserve. This module composes
  * the persistence and validation primitives while keeping route handlers
  * thin.
@@ -11,7 +11,6 @@
  * otherwise call the service layer.
  */
 import { DbTokenBucketRateLimiter } from "../security/db-rate-limit";
-import { verifyPasscode } from "../security/passcode";
 import { issueSession } from "../security/session";
 import { DbBudgetStore, reserve, type BudgetStore } from "../security/budget";
 import { validateInputSize, type FieldLimit, type InputGap } from "../security/input-limits";
@@ -21,17 +20,7 @@ import { eq } from "drizzle-orm";
 import { getDb } from "../db/client";
 import { sessions } from "../db/schema";
 
-/* -------------------------------------------------------------------------
- * Persistent session, budget and rate-limit state.
- *
- * All three now live in Postgres. Rate limiting was the last piece still
- * held in a module-scoped Map, which meant per-serverless-instance buckets:
- * a caller got a fresh allowance by landing on a different instance, and a
- * cold start reset it (docs/production-readiness.md §1.2). That mattered
- * most for the passcode gate below, which was worth 5 attempts PER WARM
- * INSTANCE rather than 5 overall.
- * ---------------------------------------------------------------------- */
-
+// Sessions, budgets and rate limits live in Postgres across server instances.
 const SESSION_TTL_MS = 60 * 60 * 1000; // 1 hour demo session
 const rateLimiter = new DbTokenBucketRateLimiter(
   { capacity: 20, refillPerSecond: 0.5 },
@@ -41,21 +30,27 @@ const rateLimiter = new DbTokenBucketRateLimiter(
 const budgetStore: BudgetStore = new DbBudgetStore(getDb);
 const DAILY_TOKEN_CAP = 500_000;
 
-// Security review finding #1: /api/session sits pre-session outside
-// runMutationGuard, so the shared passcode was brute-forceable at wire
-// speed. Dedicated slow bucket: 5 attempts per client, one refill per 30s —
-// and now genuinely 5 per client rather than 5 per instance.
+// Anonymous workspace creation stays bounded separately from business actions.
 const sessionAttemptLimiter = new DbTokenBucketRateLimiter(
   { capacity: 5, refillPerSecond: 1 / 30 },
   getDb,
   () => Date.now(),
 );
 
-/** Pre-session brute-force gate for POST /api/session. */
+// Switching an existing session is separately bounded so exploring the eight
+// reviewer roles does not exhaust the anonymous workspace-creation allowance.
+const personaSwitchLimiter = new DbTokenBucketRateLimiter(
+  { capacity: 20, refillPerSecond: 0.2 }, getDb, () => Date.now(),
+);
+
+/** Separate limits for anonymous entry and authenticated persona switching. */
 export async function checkSessionAttempt(
   clientKey: string,
+  switching = false,
 ): Promise<{ allowed: boolean; retryAfterSeconds: number }> {
-  return sessionAttemptLimiter.checkAndConsume(`session:${clientKey}`);
+  return switching
+    ? personaSwitchLimiter.checkAndConsume(`persona-switch:${clientKey}`)
+    : sessionAttemptLimiter.checkAndConsume(`session:${clientKey}`);
 }
 
 /** Test-only: reset all module-scoped guard state between test files/cases. */
@@ -89,10 +84,9 @@ export interface IssueSessionResult {
 }
 
 /**
- * Verify the demo passcode and, if correct, issue + register a new session
- * bound to `personaKey`. Returns null on passcode mismatch/misconfiguration
- * (caller maps to 401, no side effects — plan §3 "unauthenticated requests
- * -> 401 with no side effects").
+ * Issue a public demo session bound to a known fictional persona.
+ * Returns null for unknown personas. Workspace ids passed here must already
+ * be verified by the route through a valid session or signed browser cookie.
  *
  * `existingWorkspaceId` (M2.5 inc.2b — per-browser workspace reuse): when a
  * non-empty value is passed (the caller's incoming `jeeves_workspace`
@@ -103,13 +97,9 @@ export interface IssueSessionResult {
  * unchanged behavior (fresh workspaceId derived from the new token).
  */
 export async function issueDemoSession(
-  providedPasscode: string,
-  expectedPasscode: string,
   personaKey: string,
   existingWorkspaceId?: string | null,
 ): Promise<IssueSessionResult | null> {
-  const check = verifyPasscode(providedPasscode, expectedPasscode);
-  if (!check.ok) return null;
   if (!resolveActor(personaKey)) return null;
 
   const session = issueSession({ ttlMs: SESSION_TTL_MS }, () => Date.now());
@@ -236,7 +226,7 @@ export async function runMutationGuard(
 ): Promise<MutationGuardResult> {
   const token = extractSessionToken(req);
   const { actor, workspaceId } = await resolveSession(token);
-  if (!actor) {
+  if (!actor || !workspaceId) {
     return { ok: false, failure: { kind: "unauthorized", status: 401, message: "invalid or missing session" } };
   }
 

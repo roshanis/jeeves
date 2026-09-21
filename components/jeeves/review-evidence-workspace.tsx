@@ -51,7 +51,7 @@ export function ReviewEvidenceWorkspace(props: Props) {
     {...props}
     session={session}
     onExpired={() => live?.logout()}
-    onUnlock={() => live?.openUnlockPrompt()}
+    onUnlock={() => live?.startDemo()}
   />;
 }
 
@@ -75,7 +75,7 @@ function errorMessage(error: unknown): string {
   if (isApiError(error) && error.status === 404) {
     return "Shared examples do not have private evidence packets. Open a case in your live workspace to review submitted documents.";
   }
-  if (isApiError(error) && error.status === 401) return "Your session expired. Enter the demo passcode again.";
+  if (isApiError(error) && error.status === 401) return "Your session expired. Start the demo again.";
   return error instanceof Error ? error.message : "Evidence could not be loaded.";
 }
 
@@ -176,8 +176,8 @@ function EvidenceWorkspace({ slug, domain, citations, reviewStatus, reviewCycleI
       </div>
     </div>
     {!session ? <div className="flex flex-wrap items-center gap-3 rounded-lg border bg-muted/30 px-4 py-3 text-sm">
-      <p>Enter the demo passcode to view private submitted evidence. Policy references remain read-only.</p>
-      <Button variant="outline" size="sm" onClick={onUnlock}>Enter demo passcode</Button>
+      <p>Start the demo to view private submitted evidence. Policy references remain read-only.</p>
+      <Button variant="outline" size="sm" onClick={onUnlock}>Start demo</Button>
     </div> : null}
     {error ? <div role="alert" className="space-y-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
       <div className="flex flex-wrap items-center gap-3"><AlertCircle className="size-4 shrink-0" aria-hidden /><p className="min-w-0 flex-1">{error}</p><Button variant="outline" size="sm" onClick={refresh} disabled={loading || pending}>Retry evidence</Button></div>
