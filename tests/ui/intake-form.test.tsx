@@ -6,6 +6,7 @@ import { fireEvent, screen } from "@testing-library/react";
 import { renderWithProviders } from "./helpers";
 import { LiveSessionProvider } from "@/lib/client/session-context";
 import { IntakeForm } from "@/components/jeeves/intake-form";
+import { ADDITIONAL_INTAKE_QUESTIONS } from "@/lib/intake/additional-questions";
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), refresh: vi.fn(), replace: vi.fn() }),
@@ -48,7 +49,7 @@ describe("IntakeForm — empty state", () => {
 });
 
 describe("IntakeForm — champion prefill (intake-spec §4/§5)", () => {
-  it("populates the form fields from CHAMPION_PREFILL_PAYLOAD", () => {
+  it("fills every applicable text and select field, including all eight additional answers", () => {
     renderForm();
     loadChampion();
 
@@ -61,6 +62,22 @@ describe("IntakeForm — champion prefill (intake-spec §4/§5)", () => {
     expect(
       (screen.getByLabelText(/Vendor name/) as HTMLInputElement).value,
     ).toBe("Halcyon Clinical AI, Inc.");
+    for (const questions of Object.values(ADDITIONAL_INTAKE_QUESTIONS)) {
+      for (const { question } of questions) {
+        expect((screen.getByRole("textbox", { name: question }) as HTMLTextAreaElement).value.trim()).not.toBe("");
+      }
+    }
+    const fields = document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>(
+      '[data-slot="intake-fieldset"] input:not([type="radio"]):not([type="checkbox"]), [data-slot="intake-fieldset"] textarea, [data-slot="intake-fieldset"] select',
+    );
+    for (const field of fields) expect(field.value.trim(), field.outerHTML).not.toBe("");
+    expect((screen.getByLabelText("Data retention intent") as HTMLSelectElement).value).toBe("<=30 days");
+    expect((screen.getByLabelText("Retention note (optional)") as HTMLInputElement).value).toContain("Synthetic proposal");
+    for (const category of ["Diagnosis/ICD codes", "Medications", "Clinical notes/free text", "Lab results"]) {
+      expect(screen.getByRole("checkbox", { name: category })).toHaveProperty("checked", true);
+    }
+    expect(screen.getByRole("checkbox", { name: "Other" })).toHaveProperty("checked", false);
+    expect(document.querySelectorAll('[data-slot="overlay-question"] input:checked')).toHaveLength(6);
   });
 
   it("tier preview flips to Critical via rule 1 with all 8 domains required", () => {
@@ -75,12 +92,12 @@ describe("IntakeForm — champion prefill (intake-spec §4/§5)", () => {
     expect(preview?.textContent).toContain("8 required domains");
   });
 
-  it("completeness meter shows the RFT-02 retention gap and the ADV-05 advisory", () => {
+  it("answers the retention question while keeping the missing-evidence advisory truthful", () => {
     renderForm();
     loadChampion();
 
     const meter = document.querySelector('[data-slot="completeness-meter"]');
-    expect(meter?.textContent).toContain(
+    expect(meter?.textContent).not.toContain(
       "PHI data retention intent is required for PHI-touching initiatives — please specify how long this data will be retained.",
     );
     expect(meter?.textContent).toContain("No evidence pre-attached");

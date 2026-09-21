@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ADDITIONAL_ANSWERS, EXPANDED_INTAKE } from "@/tests/fixtures/expanded-intake";
-import { CHAMPION_PREFILL_PAYLOAD } from "@/lib/intake/champion-prefill";
+import { CHAMPION_PREFILL_PAYLOAD, SAMPLE_INITIATIVE_PAYLOAD } from "@/lib/intake/champion-prefill";
 
 const mocks = vi.hoisted(() => ({ create: vi.fn(), update: vi.fn(), submit: vi.fn(), push: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: mocks.push }) }));
@@ -36,7 +36,14 @@ describe("additional intake questions", () => {
     }
     fireEvent.click(screen.getByRole("button", { name: "Submit intake" }));
     await waitFor(() => expect(mocks.submit).toHaveBeenCalledOnce());
-    expect(mocks.create.mock.calls[0][1]).toEqual(EXPANDED_INTAKE);
+    expect(mocks.create.mock.calls[0][1]).toEqual({
+      ...EXPANDED_INTAKE,
+      data: {
+        ...EXPANDED_INTAKE.data,
+        retentionIntent: SAMPLE_INITIATIVE_PAYLOAD.data.retentionIntent,
+        retentionIntentNote: SAMPLE_INITIATIVE_PAYLOAD.data.retentionIntentNote,
+      },
+    });
   });
 
   it("reopens saved answers and displays nested answers for reviewers", () => {
