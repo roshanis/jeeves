@@ -52,6 +52,25 @@ describe("persistent deployment recovery", () => {
     expect(mocks.rollback).not.toHaveBeenCalled();
   });
 
+  it("keeps shared examples readable but disables rollback for visitor admins", () => {
+    renderWithProviders(<DeploymentRecovery initiativeId="shared-case" initiativeTitle="Shared example" deployments={deployments} isSeeded />);
+    expect(screen.getByText("Deployment history")).toBeTruthy();
+    expect(rollbackButton().disabled).toBe(true);
+    expect(screen.getByText(/shared example.*read-only/i)).toBeTruthy();
+    fireEvent.click(rollbackButton());
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(mocks.rollback).not.toHaveBeenCalled();
+  });
+
+  it("requires an isolated workspace before enabling rollback", () => {
+    mocks.session.mockReturnValue({ session: { ...session, workspaceId: null }, logout: mocks.logout });
+    renderWithProviders(recovery());
+    expect(rollbackButton().disabled).toBe(true);
+    fireEvent.click(rollbackButton());
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(mocks.rollback).not.toHaveBeenCalled();
+  });
+
   it("requires a currently deployed version and an identified retired/paused target", () => {
     const view = renderWithProviders(recovery(deployments.map((row) => ({ ...row, status: "paused" }))));
     expect(rollbackButton().disabled).toBe(true);

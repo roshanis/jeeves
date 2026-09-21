@@ -13,12 +13,7 @@
 #            webServer (db:seed && build && start on port 3117), so this job
 #            only installs the browser and runs the suite.
 #
-# DEMO_PASSCODE is set for the e2e job on purpose: the live-loop spec
-# (create -> triage -> draft run -> sign -> decide) self-skips unless the
-# RUNNER's env has it, so without this line CI would silently run 7 of 8
-# specs and skip the one that exercises every mutation path. The value is a
-# throwaway that matches playwright.config.ts's own webServer env — it is
-# not a secret and gates nothing outside this ephemeral runner.
+# Playwright supplies an independent test-only signing key; visitor entry is passwordless.
 name: CI
 
 on:
@@ -85,10 +80,7 @@ jobs:
 
       - name: Run e2e suite
         run: npm run test:e2e
-        env:
-          # See the note at the top of this file — includes the live-loop
-          # spec instead of letting it self-skip.
-          DEMO_PASSCODE: e2e-test-pass
+
 
       - name: Upload Playwright report
         if: ${{ !cancelled() }}

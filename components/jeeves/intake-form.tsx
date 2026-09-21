@@ -10,7 +10,7 @@
  *   (lib/intake/completeness.ts) on every change; BLOCKING gaps gate the
  *   submit button, REQUIRED-FOR-TIER/ADVISORY gaps render as warnings only
  *   (the champion case submits WITH its RFT-02 retention gap by design).
- * - "Load champion example" populates the whole form from
+ * - "Use a sample initiative" populates the whole form from
  *   CHAMPION_PREFILL_PAYLOAD (intake-spec §4).
  * - Read-only public mode (no live session): fields render but are
  *   non-interactive (one <fieldset disabled> wrapper) and Submit is the
@@ -266,7 +266,7 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
   initialSlug?: string;
 } = {}) {
   const router = useRouter();
-  const { session, logout, openUnlockPrompt } = useLiveSession();
+  const { session, logout, startDemo } = useLiveSession();
 
   const [internalPayload, setInternalPayload] = React.useState<IntakePayload>(initialPayload ?? EMPTY_PAYLOAD);
   const payload = initialPayload ?? internalPayload;
@@ -393,21 +393,17 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
             <AlertTitle>Read-only mode</AlertTitle>
             <AlertDescription className="flex flex-col items-start gap-2.5">
               <span>
-                The form below is visible but non-interactive. Submitting an
-                initiative needs a live demo session, which runs in its own
-                isolated workspace with rate limits and daily estimated token
-                reservations. Provider token usage and spend are not measured here.
+                Start your demo, then use a sample initiative or fill in your
+                own fictional example. You can switch roles to review it next.
               </span>
-              {/* The button, not a pointer to one. This used to read "(use the
-                  chip in the header)", which is an instruction to go hunting.
-                  Opens the same dialog the header chip owns. */}
+              {/* Start directly where the visitor wants to act. */}
               <Button
                 type="button"
                 size="sm"
-                onClick={openUnlockPrompt}
+                onClick={startDemo}
                 data-slot="intake-unlock"
               >
-                Enter the demo passcode
+                Start the demo
               </Button>
             </AlertDescription>
           </Alert>
@@ -417,14 +413,14 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
             <AlertDescription>
               You are viewing intake as {session.role} — only Requesters may
               create and submit new initiatives. Switch to a requester persona
-              via the demo mode chip to submit.
+              using the persona picker in the header to submit.
             </AlertDescription>
           </Alert>
         ) : null}
 
         <div>
           <Button type="button" variant="outline" onClick={loadChampion} disabled={submitting} data-slot="load-champion">
-            Load champion example
+            Use a sample initiative
           </Button>
         </div>
 

@@ -44,7 +44,7 @@ Outcome metrics strip (Sierra-style, outcomes not activity): review cycle time, 
 ## 3. Public-demo safety model (Codex F2)
 
 - Public visitors: **read-only** seeded mode — no unauthenticated mutation endpoint exists.
-- Live/mutable demo: passcode-gated, runs in an **isolated demo workspace** (session-scoped data namespace, resettable), atomic per-day token budget check, input length limits, per-IP rate limiting.
+- Live/mutable demo: passwordless persona entry, runs in an **isolated demo workspace** (session-scoped data namespace, resettable), atomic per-day token budget check, input length limits, per-IP rate limiting.
 - Seeded flows never call the LLM provider — provider outage cannot break the demo.
 
 ## 4. Stack
@@ -98,7 +98,7 @@ Coverage: >80% on `lib/` logic (owner's global TDD rule — held; UI exempt).
 - **P2** (1 day): live loop — intake form → triage → 8 live draft reviews (fan-out with mocked output first, durable polish second) → sign-off → conditional approval → effective controls. *Stop: champion steps 1–4 work live.*
 - **P3** (½ day): breach → pause → reassessment; two admin actions with reasons + audit events. *Stop: steps 5 + 8 work.*
 - **P4** (¼ day): structured audit query with evidence links (step 6).
-- **P5** (¼ day): public read-only mode + passcode workspace + budget/rate limits verified, deploy, demo script, README.
+- **P5** (¼ day): public example browsing + passwordless workspace + budget/rate limits verified, deploy, demo script, README.
 - Deferred if behind: P4 first, then durable-workflow polish (mocked fan-out is acceptable for the demo).
 
 ## 10. Delegation
@@ -130,7 +130,7 @@ Conversational intake chat · free-form ask-the-auditor NL chat · real Arize Ph
 Codex verdict: *approve the direction, but rebase and reorder.* Two High findings drove it:
 (1) **hardening cannot remain last** — transactions, persistent session/rate/budget state, workspace isolation, authorization, and idempotency must precede scheduled monitoring and any **public** Vercel deploy; (2) **the console redesign must precede feature expansion** — don't pile Phoenix/GPU/exceptions onto an interface we were replacing.
 
-Owner nuance (Claude judgement): this is a **synthetic-data, read-only-public / passcode-gated demo** — M2.5 is a *hard gate before any public Vercel deploy*, **not** a blocker on finishing the console UX or running the demo locally/preview. So UX (M2) proceeds now; M2.5 lands before we expose a public URL.
+Historical owner nuance (Claude judgement, visitor-entry policy superseded by the 2026-09-19 amendment below): this was a **synthetic-data, read-only-public / passcode-gated demo** — M2.5 is a *hard gate before any public Vercel deploy*, **not** a blocker on finishing the console UX or running the demo locally/preview. So UX (M2) proceeds now; M2.5 lands before we expose a public URL.
 
 - **M1 — Champion vertical:** *[DELIVERED]* — full read-only + live governance loop, breach→pause→reassess, audit console, two admin actions.
 - **M2 — UX + workflow breadth (current):**
@@ -142,7 +142,7 @@ Owner nuance (Claude judgement): this is a **synthetic-data, read-only-public / 
   - *Exit:* all-8 mocked E2E passes; one live-provider smoke; workflow resumes after interruption.
 - **M2.5 — Deployment foundation (HARD GATE before any public deploy):** transaction-capable pooled Neon driver (today `neon-http.transaction()` is a stub — atomic only on PGlite); persistent sessions, rate limits, atomic budget; real workspace-scoped records + queries; requester-ownership + reviewer-assignment authorization; required-review completeness before approval; concurrency-safe sign/return/decide/monitor; dynamic DB-backed pages; security headers; guarded seeding. *Exit:* isolated Vercel preview passes two-session isolation + mutation tests.
 - **M3 — Operate loop:** authenticated, idempotent **scheduled** monitoring first; Phoenix/Arize as a **separately managed connector** (not assumed in-process) with connector health / last-sync / trace ids; synthetic OTel traces; GPU quotas only for the one self-hosted initiative; extend the promotion view (eval comparison, provenance evidence, history, rollback); cost + token-budget telemetry. *Exit:* a scheduled breach creates exactly one incident + reassessment; connector failure never breaks the demo.
-- **M4 — Governance operations + release:** full control-catalog fields (owner, cadence, applicability, enforcement mode, remediation owner, evidence freshness, versions) + filtering; exception request/approve/expire/renew/reject/revoke workflow with SoD + full audit linkage; security-reviewer pass + accessibility/browser pass; demo reset ritual (workspace reset, connector check, budget check, build SHA, smoke test, passcode rotation); preview → walkthrough → **human-approved** production promotion.
+- **M4 — Governance operations + release:** full control-catalog fields (owner, cadence, applicability, enforcement mode, remediation owner, evidence freshness, versions) + filtering; exception request/approve/expire/renew/reject/revoke workflow with SoD + full audit linkage; security-reviewer pass + accessibility/browser pass; demo reset ritual (workspace reset, connector check, budget check, build SHA, smoke test, workspace-signing-key readiness); preview → walkthrough → **human-approved** production promotion.
 - Gate between milestones: tests green, code-reviewer verdict, build-log entry, human checkpoint.
 
 ### 13c. Status snapshot (2026-07-13, "complete M2–M5" pass)
@@ -156,3 +156,10 @@ Owner nuance (Claude judgement): this is a **synthetic-data, read-only-public / 
 
 ---
 *GO given — building. Each phase still ends with tests green + reviewed diff before merge (Plan-First Gate satisfied 2026-07-11). Milestone reorder accepted 2026-07-11 per Codex review; recorded in `agents-build-log.md`.*
+
+
+### Passwordless visitor playground amendment (human request 2026-09-19)
+
+Visitors may start a demo directly and choose any fictional persona without a password. The landing CTA starts a requester session and opens intake; the header picker exchanges sessions in the same browser workspace. Shared examples remain viewable but read-only to visitor sessions; visitor changes are confined to their own initiative and derived records. Global control defaults are also read-only to visitors. Server-issued non-null workspace sessions, role/domain/ownership/SoD checks, audit, input limits, rate limits and atomic budgets remain mandatory. This supersedes earlier passcode-entry requirements in this plan. No verified real identity is implied by choosing a persona.
+
+JEEVES_COOKIE_SECRET signs browser continuity. Existing DEMO_PASSCODE configurations are supported only as a deprecated cookie-signing fallback to preserve existing cookies, never as a password gate. Neither configured means entry returns an actionable configuration error without creating a session. Configure an independent signing key for new deployments; do not expose it to the browser.

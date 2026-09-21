@@ -20,7 +20,7 @@ import { operationalDeployment } from "../deployments/selection";
 import { currentControlRevisions } from "../controls/current-revisions";
 import { transition, IllegalTransitionError } from "../lifecycle/transitions";
 import { ConflictError } from "./initiative-service";
-import { workspaceMismatch } from "./workspace-guard";
+import { mutationWorkspaceMismatch } from "./workspace-guard";
 
 /**
  * Re-exported so route handlers can catch a compare-and-set race (external-
@@ -168,6 +168,9 @@ export async function setEvalThreshold(
     const ts = Date.now();
 
     if (input.initiativeId === null) {
+      if (sessionWorkspaceId !== null) {
+        throw new ForbiddenError("Shared demo defaults are read-only. Edit a control in your own workspace.");
+      }
       if (!input.tier) {
         throw new ValidationError("setEvalThreshold: tier is required when initiativeId is null (tier-default change)");
       }
@@ -209,7 +212,7 @@ export async function setEvalThreshold(
     // further business-logic lookups, same NotFoundError shape as an
     // unknown initiative id on mismatch (never leaks that the initiative
     // exists in a different workspace).
-    if (workspaceMismatch(initiative.workspaceId, sessionWorkspaceId)) {
+    if (mutationWorkspaceMismatch(initiative.workspaceId, sessionWorkspaceId)) {
       throw new NotFoundError("initiative", input.initiativeId);
     }
 
@@ -293,7 +296,7 @@ async function loadInitiativeAndDeploymentOrThrow(
   const initiativeRows = await tx.select().from(initiatives).where(eq(initiatives.id, initiativeId)).for("update");
   const initiative = initiativeRows[0];
   if (!initiative) throw new NotFoundError("initiative", initiativeId);
-  if (workspaceMismatch(initiative.workspaceId, sessionWorkspaceId)) {
+  if (mutationWorkspaceMismatch(initiative.workspaceId, sessionWorkspaceId)) {
     throw new NotFoundError("initiative", initiativeId);
   }
 

@@ -5,8 +5,8 @@ import { renderWithProviders } from "./helpers";
 const mocks = vi.hoisted(() => ({ promotions: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 vi.mock("@/lib/client/session-context", () => ({
-  useLiveSession: () => ({ session: { role: "admin", token: "test-token" } }),
-  useLiveSessionOptional: () => ({ session: { role: "admin", token: "test-token" } }),
+  useLiveSession: () => ({ session: { role: "admin", token: "test-token", workspaceId: "visitor-workspace" } }),
+  useLiveSessionOptional: () => ({ session: { role: "admin", token: "test-token", workspaceId: "visitor-workspace" } }),
 }));
 vi.mock("@/lib/client/api", async (original) => ({
   ...await original<typeof import("@/lib/client/api")>(),

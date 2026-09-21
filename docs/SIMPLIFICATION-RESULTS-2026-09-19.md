@@ -4,8 +4,9 @@ Implemented locally on `codex/simplification-fixes-20260919`, following the user
 R2 review and explicit instruction to fix. Astra xhigh specialists implemented
 separate areas and reviewed one another's changes. The original dirty checkout
 was not used for implementation. The user subsequently authorized merging; the
-integration incorporates current main `7414d90`, including PR14's review-integrity
-protections, with independent Astra review of the combined behavior.
+integration incorporates current main `69d971c`, including PR14's review-integrity
+protections and PR15's passwordless visitor workspaces, with independent Astra
+review of the combined behavior.
 
 ## What became simpler
 
@@ -26,6 +27,8 @@ protections, with independent Astra review of the combined behavior.
   initiative facts. Provider facades no longer cache stale database handles.
 - Preview reads and writes agree: static previews cannot issue live sessions or
   mutate through session or cron endpoints.
+- Passwordless entry, persona exchange and workspace ownership remain intact.
+  Public visitors and shared examples cannot enable rollback controls.
 
 ## Removed
 
@@ -42,20 +45,23 @@ signatures, evidence versions and concurrency. Pure migration-label checks no
 longer start a database. `tsx`, already present in the lockfile, is now declared
 directly because project scripts use it; no package version was upgraded.
 
-The integrated tree removes **1,637 net production source lines** across 69 changed
+The integrated tree removes **1,630 net production source lines** across 70 changed
 production paths, counting new files as well as deletions. The comparison is
-against `origin/main` at `7414d90`, so it excludes the separately merged runtime
-and review-integrity fixes. This counts TypeScript/JavaScript source, including configuration
+against `origin/main` at `69d971c`, so it excludes the separately merged runtime,
+review-integrity and visitor-workspace changes. This counts TypeScript/JavaScript source, including configuration
 and scripts, and excludes tests, documentation and generated files.
 
 ## Verification
 
-- Integrated unit/API/UI suite: **146 files, 1,419 tests passed**; coverage
-  thresholds pass with **89.33% lines**, 87.25% statements, 79.4% branches and
-  93.04% functions.
+- Integrated unit/API/UI suite: **148 files, 1,436 tests passed**; coverage
+  thresholds pass with **89.48% lines**, 87.32% statements, 79.7% branches and
+  93.07% functions. The subsequent root-provider correction passed 32 focused
+  UI tests, including a new actual-layout navigation regression, plus an
+  independent 27-test rerun. Final published-head CI reruns the full suite.
 - Production-build Playwright: **28/28 passed**, including intake persistence,
   canonical review links, domain authority, signature and decision, evidence
-  revision/acceptance, desktop and mobile checks.
+  revision/acceptance, desktop and mobile checks. Rebuilt and rerun after the
+  root-provider correction; passwordless entry and persona switching pass.
 - Type checking and diff whitespace checks pass. Default lint exits successfully
   with zero errors and one warning in a generated coverage report asset.
 - Relocated production-bundle checks pass for both AI runtimes, packaged policy
@@ -70,6 +76,12 @@ also caught and fixed a timeout configuration that would have prevented retries
 and a discard-edits path that needed to preserve explicit re-review. The browser
 test now follows the refreshed-source acknowledgment and checks the exact packet
 identity sent with the signature; the full rerun passed.
+
+The later visitor-workspace integration retained strict visitor mutation
+ownership while preserving trusted internal calls. Regression checks caught and
+fixed rollback controls that could appear enabled for public or shared-example
+views. Independent review also identified a cross-layout login race; one root
+session provider now owns entry requests across marketing and console navigation.
 
 The suite retains its existing scoped React 418 allowance on one
 submitted-detail reload, and the server logged a destination-stream-closed

@@ -9,7 +9,7 @@ import { apiErrorToMessage, isApiError, rollbackDeployment } from "@/lib/client/
 import { useLiveSessionOptional, type LiveSession } from "@/lib/client/session-context";
 import { Button } from "@/components/ui/button";
 import { DeploymentsTab } from "./deployments-tab";
-import { DEMO_PASSCODE_TOOLTIP } from "./role-gate";
+import { DEMO_SESSION_TOOLTIP } from "./role-gate";
 import { RollbackDialog, type RollbackTargetOption } from "./rollback-dialog";
 
 /** Recovery belongs to the initiative, independently of its promotion queue. */
@@ -17,10 +17,12 @@ export function DeploymentRecovery({
   initiativeId,
   initiativeTitle,
   deployments,
+  isSeeded = false,
 }: {
   initiativeId?: string;
   initiativeTitle: string;
   deployments: DeploymentRow[];
+  isSeeded?: boolean;
 }) {
   const live = useLiveSessionOptional();
   const session = live?.session ?? null;
@@ -39,9 +41,10 @@ export function DeploymentRecovery({
     <div className="flex flex-col gap-4" data-slot="deployment-recovery">
       <DeploymentsTab deployments={deployments} />
       <RollbackControls
-        key={JSON.stringify([session?.token, session?.role, initiativeId, deployments])}
+        key={JSON.stringify([session?.token, session?.role, session?.workspaceId, initiativeId, isSeeded, deployments])}
         initiativeId={initiativeId}
         initiativeTitle={initiativeTitle}
+        isSeeded={isSeeded}
         current={current}
         targets={targets}
         session={session}
@@ -52,10 +55,11 @@ export function DeploymentRecovery({
 }
 
 function RollbackControls({
-  initiativeId, initiativeTitle, current, targets, session, onExpired,
+  initiativeId, initiativeTitle, isSeeded, current, targets, session, onExpired,
 }: {
   initiativeId?: string;
   initiativeTitle: string;
+  isSeeded: boolean;
   current: DeploymentRow | null;
   targets: RollbackTargetOption[];
   session: LiveSession | null;
@@ -73,8 +77,9 @@ function RollbackControls({
   }, []);
 
   const roleOk = session?.role === "approver" || session?.role === "admin";
-  const disabledReason = !session ? DEMO_PASSCODE_TOOLTIP
-    : !roleOk ? "Requires the approver or admin role — switch persona via the demo mode chip"
+  const disabledReason = !session?.workspaceId ? DEMO_SESSION_TOOLTIP
+    : isSeeded ? "This shared example is read-only. Create your own initiative to try rollback."
+    : !roleOk ? "Requires the approver or admin role — choose a persona in the header"
     : !initiativeId || !current?.id ? "No identified deployed version is available to roll back."
     : targets.length === 0 ? "No prior (retired/paused) version to roll back to"
     : null;

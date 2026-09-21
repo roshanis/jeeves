@@ -4,9 +4,10 @@
  */
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { eq } from "drizzle-orm";
 import { createTestDb, closeTestDb, type TestDb } from "@/lib/db/test-client";
 import { seedDatabase } from "@/scripts/seed";
-import { controlDefinitions, deploymentVersions, effectiveControls } from "@/lib/db/schema";
+import { controlDefinitions, deploymentVersions, effectiveControls, sessions } from "@/lib/db/schema";
 import { createDraft } from "@/lib/services/initiative-service";
 import { CHAMPION_PREFILL_PAYLOAD } from "@/lib/intake/champion-prefill";
 import { resolveWorkspaceCookieSecret, signWorkspaceId } from "@/lib/security/workspace-cookie";
@@ -15,10 +16,10 @@ let testDb: TestDb;
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => testDb }));
 
-const PASSCODE = "demo-passcode-for-tests";
+const COOKIE_SECRET = "test-only-workspace-cookie-secret";
 
 beforeEach(async () => {
-  process.env.DEMO_PASSCODE = PASSCODE;
+  process.env.JEEVES_COOKIE_SECRET = COOKIE_SECRET;
   testDb = await createTestDb();
   await seedDatabase(testDb);
 });
@@ -31,26 +32,34 @@ function bearer(token: string, ip = "40.40.40.1"): HeadersInit {
   return { authorization: `Bearer ${token}`, "x-forwarded-for": ip, "content-type": "application/json" };
 }
 
-async function issueSessionFor(personaKey: string, ip = "40.40.40.1"): Promise<string> {
+async function issueSessionFor(personaKey: string, ip = "40.40.40.1", workspaceId?: string): Promise<string> {
   const { POST } = await import("../../session/route");
+  const secret = resolveWorkspaceCookieSecret();
   const res = await POST(
     new Request("http://localhost/api/session", {
       method: "POST",
-      headers: { "content-type": "application/json", "x-forwarded-for": ip },
-      body: JSON.stringify({ passcode: PASSCODE, personaKey }),
+      headers: {
+        "content-type": "application/json",
+        "x-forwarded-for": ip,
+        ...(workspaceId && secret ? { cookie: `jeeves_workspace=${encodeURIComponent(signWorkspaceId(workspaceId, secret))}` } : {}),
+      },
+      body: JSON.stringify({ personaKey }),
     }),
   );
   return (await res.json()).token as string;
 }
 
-async function anEffectiveControlId(): Promise<string> {
+async function sessionWorkspace(token: string): Promise<string> {
+  const [session] = await testDb.select({ workspaceId: sessions.workspaceId }).from(sessions).where(eq(sessions.token, token));
+  return session!.workspaceId!;
+}
+
+async function anEffectiveControlId(workspaceId: string): Promise<string> {
   // Must be a control the P2-8 eligibility gate accepts: requestException
   // rejects controls that aren't 'overdue' or 'breached' (see
   // lib/services/exception-service.ts ELIGIBLE_EXCEPTION_REQUEST_STATUSES),
   // so grabbing whatever seeded row happens to sort first is not enough.
-  const rows = await testDb.select().from(effectiveControls);
-  const eligible = rows.find((r) => r.status === "overdue" || r.status === "breached");
-  return (eligible ?? rows[0]!).id;
+  return anEffectiveControlInWorkspace(workspaceId);
 }
 
 async function request(token: string, effectiveControlId: string, ip: string) {
@@ -77,7 +86,7 @@ async function issueSessionWithWorkspace(
     new Request("http://localhost/api/session", {
       method: "POST",
       headers: { "content-type": "application/json", "x-forwarded-for": ip },
-      body: JSON.stringify({ passcode: PASSCODE, personaKey }),
+      body: JSON.stringify({ personaKey }),
     }),
   );
   const json = await res.json();
@@ -130,7 +139,7 @@ async function anEffectiveControlInWorkspace(workspaceId: string): Promise<strin
 
 describe("POST /api/exceptions (request)", () => {
   it("401s without a session", async () => {
-    const ecId = await anEffectiveControlId();
+    const ecId = await anEffectiveControlId("unauthenticated-test-workspace");
     const { POST } = await import("../route");
     const res = await POST(
       new Request("http://localhost/api/exceptions", {
@@ -144,7 +153,7 @@ describe("POST /api/exceptions (request)", () => {
 
   it("200s with a session and the exception then shows in the public GET list", async () => {
     const token = await issueSessionFor("marcus-webb", "40.0.1.1");
-    const ecId = await anEffectiveControlId();
+    const ecId = await anEffectiveControlId(await sessionWorkspace(token));
     const res = await request(token, ecId, "40.0.1.1");
     expect(res.status).toBe(200);
     expect((await res.json()).status).toBe("requested");
@@ -159,7 +168,7 @@ describe("POST /api/exceptions (request)", () => {
 describe("POST /api/exceptions/[id]/decide", () => {
   it("403s a non-decider (reviewer) and 200s an approver who is not the requester", async () => {
     const requesterToken = await issueSessionFor("marcus-webb", "40.0.2.1");
-    const ecId = await anEffectiveControlId();
+    const ecId = await anEffectiveControlId(await sessionWorkspace(requesterToken));
     const { id } = await (await request(requesterToken, ecId, "40.0.2.1")).json();
 
     const { POST: decidePost } = await import("../[id]/decide/route");
@@ -177,7 +186,7 @@ describe("POST /api/exceptions/[id]/decide", () => {
     expect(forbidden.status).toBe(403);
 
     // The approver (not the requester) can.
-    const approverToken = await issueSessionFor("angela-torres", "40.0.2.3");
+    const approverToken = await issueSessionFor("angela-torres", "40.0.2.3", await sessionWorkspace(requesterToken));
     const ok = await decidePost(
       new Request(`http://localhost/api/exceptions/${id}/decide`, {
         method: "POST",
@@ -192,7 +201,7 @@ describe("POST /api/exceptions/[id]/decide", () => {
 
   it("403s the requester deciding their own exception (SoD)", async () => {
     const approverToken = await issueSessionFor("angela-torres", "40.0.3.1");
-    const ecId = await anEffectiveControlId();
+    const ecId = await anEffectiveControlId(await sessionWorkspace(approverToken));
     const { id } = await (await request(approverToken, ecId, "40.0.3.1")).json();
 
     const { POST: decidePost } = await import("../[id]/decide/route");
@@ -211,11 +220,11 @@ describe("POST /api/exceptions/[id]/decide", () => {
 describe("POST /api/exceptions/[id]/revoke", () => {
   it("revokes an approved exception", async () => {
     const requesterToken = await issueSessionFor("marcus-webb", "40.0.4.1");
-    const ecId = await anEffectiveControlId();
+    const ecId = await anEffectiveControlId(await sessionWorkspace(requesterToken));
     const { id } = await (await request(requesterToken, ecId, "40.0.4.1")).json();
 
     const { POST: decidePost } = await import("../[id]/decide/route");
-    const approverToken = await issueSessionFor("angela-torres", "40.0.4.2");
+    const approverToken = await issueSessionFor("angela-torres", "40.0.4.2", await sessionWorkspace(requesterToken));
     await decidePost(
       new Request(`http://localhost/api/exceptions/${id}/decide`, {
         method: "POST",

@@ -32,7 +32,7 @@ function workspace(slug = "case-one") {
   </ReviewEvidenceWorkspace>;
 }
 beforeEach(() => {
-  mocks.session.mockReturnValue({ session, logout: vi.fn(), openUnlockPrompt: vi.fn() });
+  mocks.session.mockReturnValue({ session, logout: vi.fn(), startDemo: vi.fn() });
   mocks.request.mockResolvedValue(fixture());
   mocks.mutate.mockResolvedValue({ status: "signed" });
 });
@@ -238,8 +238,18 @@ describe("evidence-led review", () => {
   it("keeps public visitors read-only and makes no private evidence request", () => {
     mocks.session.mockReturnValue(null);
     render(workspace());
-    expect(screen.getByText(/Enter the demo passcode to view private submitted evidence/)).toBeTruthy();
+    expect(screen.getByText(/Start the demo to view private submitted evidence/)).toBeTruthy();
     expect(mocks.request).not.toHaveBeenCalled();
+  });
+
+  it("starts the passwordless demo from the evidence workspace without fetching private evidence first", () => {
+    const startDemo = vi.fn();
+    mocks.session.mockReturnValue({ session: null, startDemo });
+    render(workspace());
+    fireEvent.click(screen.getByRole("button", { name: "Start demo" }));
+    expect(startDemo).toHaveBeenCalledOnce();
+    expect(mocks.request).not.toHaveBeenCalled();
+    expect(document.querySelector('input[type="password"]')).toBeNull();
   });
 
   it("preserves a human draft while switching sources and reviews", async () => {

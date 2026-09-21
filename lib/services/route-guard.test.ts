@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { closeTestDb, createTestDb, type TestDb } from "../db/test-client";
 import { runBudget, sessions } from "../db/schema";
 import { reserve } from "../security/budget";
+import { DbTokenBucketRateLimiter } from "../security/db-rate-limit";
 import {
   clientKeyFor,
   checkSessionAttempt,
@@ -13,7 +14,6 @@ import {
   runMutationGuard,
 } from "./route-guard";
 
-const PASSCODE = "correct-horse-battery-staple";
 let testDb: TestDb;
 
 vi.mock("@/lib/db/client", () => ({
@@ -44,14 +44,14 @@ describe("lib/services/route-guard", () => {
   ] as const)("keeps provider %s interactive with database %s", async (mode, databaseUrl) => {
     vi.stubEnv("DATA_PROVIDER", mode);
     vi.stubEnv("DATABASE_URL", databaseUrl);
-    const session = await issueDemoSession(PASSCODE, PASSCODE, "priya-raman");
+    const session = await issueDemoSession("priya-raman");
     expect(session).not.toBeNull();
     expect(await runMutationGuard(reqWithBearer(session!.token), undefined)).toMatchObject({ ok: true });
   });
 
   it.each(["session", "mutation"])("exhausting %s allowance does not consume the other limiter", async (first) => {
     vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-09-19T20:00:00Z"));
-    const session = (await issueDemoSession(PASSCODE, PASSCODE, "priya-raman"))!;
+    const session = (await issueDemoSession("priya-raman"))!;
     const key = "independent-limiters";
     const sessionAttempt = async () => (await checkSessionAttempt(key)).allowed;
     const mutation = async () => (await runMutationGuard(reqWithBearer(session.token, key), undefined)).ok;
@@ -65,8 +65,8 @@ describe("lib/services/route-guard", () => {
   });
 
   describe("issueDemoSession", () => {
-    it("issues a session for a correct passcode + known persona", async () => {
-      const result = await issueDemoSession(PASSCODE, PASSCODE, "priya-raman");
+    it("issues a session for a known persona without a password", async () => {
+      const result = await issueDemoSession("priya-raman");
       expect(result).not.toBeNull();
       expect(result!.token).toHaveLength(64); // 32 bytes hex
       expect(result!.workspaceId).toBe(`ws_${result!.token}`);
@@ -80,20 +80,20 @@ describe("lib/services/route-guard", () => {
       });
     });
 
-    it("returns null for a wrong passcode (no session created)", async () => {
-      const result = await issueDemoSession("wrong", PASSCODE, "priya-raman");
+    it("rejects an unknown persona without creating a session", async () => {
+      const result = await issueDemoSession("unknown-persona");
       expect(result).toBeNull();
     });
 
     it("returns null for an unknown persona key", async () => {
-      const result = await issueDemoSession(PASSCODE, PASSCODE, "not-a-real-persona");
+      const result = await issueDemoSession("not-a-real-persona");
       expect(result).toBeNull();
     });
   });
 
   describe("resolveSessionActor — role from session, never from body", () => {
     it("resolves the actor role from the persona bound at session issuance", async () => {
-      const session = (await issueDemoSession(PASSCODE, PASSCODE, "ray-chen"))!; // admin
+      const session = (await issueDemoSession("ray-chen"))!; // admin
       const actor = await resolveSessionActor(session.token);
       expect(actor).toEqual({ id: "ray-chen", role: "admin" });
     });
@@ -107,12 +107,24 @@ describe("lib/services/route-guard", () => {
     });
 
     it("deletes an expired persisted session and returns null", async () => {
-      const session = (await issueDemoSession(PASSCODE, PASSCODE, "ray-chen"))!;
+      const session = (await issueDemoSession("ray-chen"))!;
       await testDb.update(sessions).set({ expiresAt: Date.now() }).where(eq(sessions.token, session.token));
 
       expect(await resolveSessionActor(session.token)).toBeNull();
       expect(await testDb.select().from(sessions).where(eq(sessions.token, session.token))).toEqual([]);
     });
+  });
+
+  it("rejects a legacy session without a workspace before any mutation allowance is consumed", async () => {
+    const issued = (await issueDemoSession("ray-chen"))!;
+    // Current schema forbids null; emulate a legacy database only in this disposable test.
+    await testDb.execute(sql`ALTER TABLE sessions ALTER COLUMN workspace_id DROP NOT NULL`);
+    await testDb.execute(sql`UPDATE sessions SET workspace_id = NULL WHERE token = ${issued.token}`);
+    const check = vi.spyOn(DbTokenBucketRateLimiter.prototype, "checkAndConsume");
+    const result = await runMutationGuard(reqWithBearer(issued.token), undefined, { requiresBudget: true, estimatedTokens: 100 });
+    expect(result).toMatchObject({ ok: false, failure: { status: 401 } });
+    expect(check).not.toHaveBeenCalled();
+    expect(await testDb.select().from(runBudget)).toHaveLength(0);
   });
 
   describe("extractSessionToken", () => {
@@ -158,7 +170,7 @@ describe("lib/services/route-guard", () => {
     });
 
     it("200s (ok) with a valid session and resolves the actor from the session, not the body", async () => {
-      const session = (await issueDemoSession(PASSCODE, PASSCODE, "elena-vasquez"))!; // reviewer
+      const session = (await issueDemoSession("elena-vasquez"))!; // reviewer
       const req = reqWithBearer(session.token, "6.6.6.6");
       // Body claims 'admin' — must be ignored entirely; actor role must come from the session.
       const result = await runMutationGuard(req, { role: "admin" });
@@ -168,7 +180,7 @@ describe("lib/services/route-guard", () => {
     });
 
     it("returns the session's workspaceId in the success result (M2.5 inc.2a)", async () => {
-      const session = (await issueDemoSession(PASSCODE, PASSCODE, "priya-raman"))!;
+      const session = (await issueDemoSession("priya-raman"))!;
       const req = reqWithBearer(session.token, "6.6.6.7");
       const result = await runMutationGuard(req, undefined);
       expect(result.ok).toBe(true);
@@ -178,7 +190,7 @@ describe("lib/services/route-guard", () => {
     });
 
     it("429s after a burst exceeds the rate-limit capacity", async () => {
-      const session = (await issueDemoSession(PASSCODE, PASSCODE, "priya-raman"))!;
+      const session = (await issueDemoSession("priya-raman"))!;
       const clientIp = "7.7.7.7";
       let lastResult: Awaited<ReturnType<typeof runMutationGuard>> | null = null;
       // capacity is 20 tokens; fire 25 requests from the same client key.
@@ -192,7 +204,7 @@ describe("lib/services/route-guard", () => {
     });
 
     it("400s on input validation failure (field too long)", async () => {
-      const session = (await issueDemoSession(PASSCODE, PASSCODE, "priya-raman"))!;
+      const session = (await issueDemoSession("priya-raman"))!;
       const req = reqWithBearer(session.token, "8.8.8.8");
       const result = await runMutationGuard(
         req,
@@ -206,7 +218,7 @@ describe("lib/services/route-guard", () => {
     });
 
     it("429s when the daily token budget is exhausted", async () => {
-      const session = (await issueDemoSession(PASSCODE, PASSCODE, "priya-raman"))!;
+      const session = (await issueDemoSession("priya-raman"))!;
       const req = reqWithBearer(session.token, "9.9.9.1");
       const result = await runMutationGuard(req, undefined, {
         requiresBudget: true,
@@ -220,7 +232,7 @@ describe("lib/services/route-guard", () => {
     });
 
     it("budget reserve costs 0 tokens for the mock adapter but still exercises the reserve path", async () => {
-      const session = (await issueDemoSession(PASSCODE, PASSCODE, "priya-raman"))!;
+      const session = (await issueDemoSession("priya-raman"))!;
       const req = reqWithBearer(session.token, "9.9.9.2");
       const result = await runMutationGuard(req, undefined, {
         requiresBudget: true,

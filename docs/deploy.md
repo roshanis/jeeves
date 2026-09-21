@@ -18,7 +18,7 @@ only describes the steps. A human runs them.
 ```bash
 npm install
 npm run db:seed
-DATA_PROVIDER=db DEMO_PASSCODE=<choose-a-passcode> npm run dev
+DATA_PROVIDER=db JEEVES_COOKIE_SECRET=<server-signing-key> npm run dev
 ```
 
 Notes on each step:
@@ -36,17 +36,19 @@ Notes on each step:
   wrote to). Without this variable and without `DATABASE_URL`, the app falls
   back to `MockDataProvider` — an in-memory fixture set, not what you just
   seeded. See `lib/data/index.ts` for the exact selection logic.
-- `DEMO_PASSCODE=<choose-a-passcode>` gates the live/mutable demo workspace
-  (see §3). Pick any non-empty string for local use.
+- `JEEVES_COOKIE_SECRET=<server-signing-key>` signs browser workspace continuity.
+  Use a high-entropy random key, generated for example with `openssl rand -hex 32`.
+  Visitors never enter it. Existing DEMO_PASSCODE settings remain a deprecated
+  signing fallback only: it signs new cookies and verifies existing ones during migration.
 
 What you'll see at `http://localhost:3000`:
 
 - A read-only portfolio board of **12 seeded initiatives** (tiers, states,
-  the outcome-metrics strip) — browsable with no passcode.
-- A **"Run the live loop"** entry point that requires the demo passcode
-  before any mutation (intake edits, triage, draft-run, sign, decide,
-  monitor run, admin actions). Public visitors without the passcode stay
-  strictly read-only — there is no unauthenticated mutation endpoint.
+  the outcome-metrics strip) — browsable without signing up.
+- **Try the demo** starts an isolated requester session and opens intake.
+  Visitors can use the sample intake and switch roles in the header. Business
+  actions require a server-issued session; shared examples and global defaults
+  remain read-only to visitors.
 - Once inside the live loop, agent drafting runs on the **deterministic,
   keyless mock adapter** by default (`lib/agents/mock-adapter.ts`). Nothing
   is sent to OpenAI unless you also set `OPENAI_API_KEY` in your
@@ -81,7 +83,7 @@ npm run start        # next start (after build)
    |---|---|---|
    | `DATABASE_URL` | Yes | Neon Postgres connection string. Use the **pooled** connection string form (`...neon.tech/...?sslmode=require`), matching `.env.example`. Read by `lib/db/client.ts` via `@neondatabase/serverless` (`neon-serverless` WebSocket `Pool` driver — real interactive transactions) whenever it is set. |
    | `DATA_PROVIDER` | Yes | Set to `db`. Without `DATABASE_URL` this would fall back to PGlite/mock — you want the Neon-backed provider in production. |
-   | `DEMO_PASSCODE` | Yes | Gates the live/mutable demo workspace (`app/api/session/route.ts` reads it directly via `process.env.DEMO_PASSCODE`). Pick something you're comfortable pasting into a browser prompt in front of an audience — it is not a secret-grade credential, but treat it like one anyway (see §3). |
+   | `JEEVES_COOKIE_SECRET` | Yes for new deployments | Random server-only signing key for browser workspace continuity. Visitor entry is passwordless. Existing DEMO_PASSCODE can serve only as a deprecated signing fallback. |
    | `OPENAI_API_KEY` | Optional | Only set this if you want **live** LLM-drafted reviews during the demo. Omit it and the app runs entirely on the keyless mock adapter — safe default for a public URL. |
    | `OPENAI_MODEL` | Optional (only meaningful with `OPENAI_API_KEY`) | Model id for the real adapter, e.g. the value in `.env.example` (`gpt-5.1`). Unused when `OPENAI_API_KEY` is unset. |
 
@@ -167,36 +169,26 @@ current code, not hypothetical ones.
 > (production) — including the compare-and-set predicates those services
 > rely on.
 
-> **(b) Rate limiting is in-memory, per instance (sessions and budget are
-> not — M2.5).**
-> Sessions and the daily token budget moved to Postgres in M2.5: sessions
-> live in the `sessions` table (`lib/services/route-guard.ts` inserts and
-> validates against the DB) and the budget uses `DbBudgetStore`'s atomic
-> `INSERT … ON CONFLICT` upsert (`lib/security/budget.ts`), both correct
-> across instances. The **rate limiters** (`TokenBucketRateLimiter` in
-> `lib/security/rate-limit.ts`, including the passcode brute-force bucket)
-> remain in process memory, per instance: on a serverless fan-out a visitor
-> can get a fresh rate-limit bucket by landing on a different instance, so
-> effective throttling and brute-force resistance are weaker than the
-> configured numbers suggest. This is the accepted demo posture (plan.md §13c); a shared store
-> (e.g. Postgres or a KV) for the rate-limit buckets is the fix if the
-> passcode is low-entropy or the deployment ever spans many instances.
+> **(b) Rate limiting, sessions and budgets are persisted.**
+> Sessions, atomic daily budgets and token-bucket rate limits live in Postgres.
+> Anonymous entry uses a separate allowance from authenticated persona switching
+> so visitors can explore multiple reviewer roles while workspace creation stays
+> bounded. Mutation limits and input caps remain enforced by the shared guard.
 
 > **(c) Public URL cost exposure — mitigations already in place, and what
 > to verify before sharing the link.**
 > In place today:
-> - Public visitors are strictly **read-only**; there is no unauthenticated
->   mutation endpoint (`AGENTS.md` hard rule 2).
-> - The live/mutable workspace requires the `DEMO_PASSCODE` you set
->   (`app/api/session/route.ts`), and issues a session token scoped to an
->   isolated demo workspace (`lib/security/session.ts`).
+> - Visitors enter without a password and can select any fictional persona.
+>   `/api/session` issues an isolated workspace token; business mutations still
+>   require a valid non-null workspace session, role checks and ownership.
+> - Visitor writes cannot alter shared examples or global control defaults.
 > - An atomic daily token-budget check (`lib/security/budget.ts`, `reserve()`)
 >   caps total LLM usage per day, serialized per day-key so concurrent
 >   requests can't race past the cap.
 > - Per-client rate limiting (`lib/security/rate-limit.ts`, token bucket).
 > - Input length caps (`lib/security/input-limits.ts`).
 > - **The keyless mock adapter is the default.** Unless you explicitly set
->   `OPENAI_API_KEY`, no request — passcode or not — ever calls a real LLM
+>   `OPENAI_API_KEY`, no visitor request calls a real LLM
 >   provider, so there is no OpenAI bill exposure from a shared public URL
 >   at all.
 >
@@ -208,14 +200,13 @@ current code, not hypothetical ones.
 >   requests on different instances cannot race past the cap. (An earlier
 >   version of this bullet said the cap was per-instance "given gap (b)" —
 >   that was left over from before the move and contradicted gap (b) directly.
->   What remains per-instance is the *rate limiters*, not the budget.)
->   The residual exposure with a key set is therefore bounded by the daily
->   budget, but reached faster than the rate limits suggest; unset the key
->   for a fully public link and set it only for a controlled live session.
-> - Confirm `DEMO_PASSCODE` is actually set (not the `.env.example`
->   placeholder) — an empty/misconfigured passcode falls back to `""`,
->   which `app/api/session/route.ts` will simply fail closed against a
->   non-empty submitted passcode, but don't rely on that; set it explicitly.
+>   Rate limits are now persisted as well.) A public visitor can consume the
+>   shared model budget when a provider key is configured; this is a public
+>   playground, not an authenticated customer environment.
+> - Configure an independent random `JEEVES_COOKIE_SECRET`. With no signing
+>   key or legacy signing fallback, entry returns 503 without creating a session.
+>   Changing signing material invalidates old browser workspace cookies; it does
+>   not revoke existing session tokens before their normal expiry.
 > - Don't seed against a database that's serving a live public demo (see
 >   §2 step 4).
 
@@ -288,7 +279,7 @@ The cheap version, if a pilot happens:
    free and the data is realistic by construction.
 2. Deploy there first, run `npm run db:migrate` against the branch, boot the
    app, and confirm the console renders before touching production.
-3. `DEMO_PASSCODE` must differ between the two, and `OPENAI_API_KEY` should
+3. `JEEVES_COOKIE_SECRET` must differ between the two, and `OPENAI_API_KEY` should
    be unset on staging unless a specific test needs it — the daily token
    budget is per database, so a staging branch has its own cap and its own
    bill.

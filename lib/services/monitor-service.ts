@@ -53,7 +53,7 @@ import { evaluateControl, resolveThreshold, type EffectiveControl } from "../con
 import { transition, IllegalTransitionError, type AuditEventPayload } from "../lifecycle/transitions";
 import { currentControlRevisions } from "../controls/current-revisions";
 import { SYSTEM_ACTOR } from "./actors";
-import { workspaceMismatch } from "./workspace-guard";
+import { mutationWorkspaceMismatch } from "./workspace-guard";
 import { ConflictError } from "./initiative-service";
 
 /**
@@ -216,7 +216,7 @@ async function loadDeployedCandidates(
     if (!initiative || !initiative.tier) continue;
     if (
       workspaceScope !== UNSCOPED_WORKSPACE &&
-      workspaceMismatch(initiative.workspaceId, workspaceScope)
+      mutationWorkspaceMismatch(initiative.workspaceId, workspaceScope)
     ) {
       continue;
     }

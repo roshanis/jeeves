@@ -16,16 +16,19 @@ vi.mock("@/lib/db/client", () => ({
   getDb: () => testDb,
 }));
 
-const PASSCODE = "demo-passcode-for-tests";
+const COOKIE_SECRET = "test-only-workspace-cookie-secret";
 
 beforeEach(async () => {
-  process.env.DEMO_PASSCODE = PASSCODE;
+  process.env.JEEVES_COOKIE_SECRET = COOKIE_SECRET;
+  process.env.CRON_SECRET = "test-only-cron-secret";
   testDb = await createTestDb();
   await seedDatabase(testDb);
 });
 
 afterEach(async () => {
   await closeTestDb(testDb);
+  delete process.env.JEEVES_COOKIE_SECRET;
+  delete process.env.CRON_SECRET;
 });
 
 function bearer(token: string, ip = "20.20.20.1"): HeadersInit {
@@ -38,7 +41,7 @@ async function issueSessionFor(personaKey: string, ip = "20.20.20.1"): Promise<s
     new Request("http://localhost/api/session", {
       method: "POST",
       headers: { "content-type": "application/json", "x-forwarded-for": ip },
-      body: JSON.stringify({ passcode: PASSCODE, personaKey }),
+      body: JSON.stringify({ personaKey }),
     }),
   );
   expect(res.status).toBe(200);
@@ -74,7 +77,7 @@ describe("POST /api/monitor/run", () => {
     expect(Array.isArray(json.breaches)).toBe(true);
   });
 
-  it("defaults nowTs to base+14d and detects the #4 member-chat-copilot breach with no body at all", async () => {
+  it("defaults nowTs but does not let a visitor monitor mutate shared seeded records", async () => {
     const token = await issueSessionFor("ray-chen", "21.0.0.3");
     const { POST } = await import("../run/route");
     const res = await POST(
@@ -85,10 +88,10 @@ describe("POST /api/monitor/run", () => {
     );
     expect(res.status).toBe(200);
     const json = await res.json();
-    expect(json.incidentsCreated).toBe(1);
+    expect(json.incidentsCreated).toBe(0);
 
     const [init] = await testDb.select().from(initiatives).where(eq(initiatives.slug, "member-chat-copilot"));
-    expect(init!.state).toBe("re_review");
+    expect(init!.state).toBe("deployed");
   });
 
   it("honors an explicit nowTs in the body — base+8d does not yet breach", async () => {
@@ -120,13 +123,13 @@ describe("POST /api/monitor/run", () => {
     expect(res.status).toBe(400);
   });
 
-  it("a second call is idempotent over HTTP: zero new incidents on re-run", async () => {
+  it("does not create an incident from a visitor-scoped run over shared seeds", async () => {
     const token = await issueSessionFor("ray-chen", "21.0.0.6");
     const { POST } = await import("../run/route");
     const first = await POST(
       new Request("http://localhost/api/monitor/run", { method: "POST", headers: bearer(token, "21.0.0.6") }),
     );
-    expect((await first.json()).incidentsCreated).toBe(1);
+    expect((await first.json()).incidentsCreated).toBe(0);
 
     const second = await POST(
       new Request("http://localhost/api/monitor/run", { method: "POST", headers: bearer(token, "21.0.0.6") }),
@@ -148,9 +151,8 @@ describe("GET /api/monitor/incidents — public read-only", () => {
   });
 
   it("reflects a breach recorded by a prior monitor run", async () => {
-    const token = await issueSessionFor("ray-chen", "21.0.0.7");
-    const { POST } = await import("../run/route");
-    await POST(new Request("http://localhost/api/monitor/run", { method: "POST", headers: bearer(token, "21.0.0.7") }));
+    const { GET: runCron } = await import("../../cron/monitor/route");
+    await runCron(new Request("http://localhost/api/cron/monitor", { headers: { authorization: "Bearer test-only-cron-secret" } }));
 
     const { GET } = await import("../incidents/route");
     // Bare request, no cookie/auth → resolves to the public (null) viewer.

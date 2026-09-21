@@ -18,14 +18,24 @@ import { ReviewIntegrityError } from "@/lib/services/review-integrity";
 
 beforeEach(() => {
   vi.resetAllMocks();
-  mocks.guard.mockResolvedValue({ ok: true, actor: { role: "requester" }, workspaceId: null });
-  mocks.db.select.mockReturnValue({ from: () => ({ where: async () => [{ workspaceId: null }] }) });
+  mocks.guard.mockResolvedValue({ ok: true, actor: { role: "requester" }, workspaceId: "visitor-workspace" });
+  mocks.db.select.mockReturnValue({ from: () => ({ where: async () => [{ workspaceId: "visitor-workspace" }] }) });
   mocks.startDraftRun.mockResolvedValue({ outcomes: [{ domain: "legal", status: "drafted" }] });
   mocks.runReviewAgent.mockResolvedValue({ status: "drafted" });
 });
 afterEach(() => vi.unstubAllEnvs());
 
 describe("review route runtime reservations", () => {
+  it.each([null, "other-workspace"])("rejects visitor fan-out against workspace %s before execution or reservation", async (workspaceId) => {
+    mocks.db.select.mockReturnValue({ from: () => ({ where: async () => [{ workspaceId }] }) });
+    const response = await fanOut(new Request("http://localhost/api/initiatives/i/draft-run", {
+      method: "POST", body: JSON.stringify({ domains: ["legal"] }),
+    }), { params: Promise.resolve({ id: "i" }) });
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ error: "initiative or review cycle not found" });
+    expect(mocks.startDraftRun).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["", "agents-sdk", "1", 1500, 60_000],
     ["   ", "agents-sdk", "1", 1500, 60_000],
@@ -44,14 +54,14 @@ describe("review route runtime reservations", () => {
     expect((await fanOut(fanOutRequest, { params: Promise.resolve({ id: "i" }) })).status).toBe(200);
     expect(mocks.guard).toHaveBeenLastCalledWith(fanOutRequest, undefined);
     expect(mocks.startDraftRun).toHaveBeenLastCalledWith(mocks.db, "i", ["legal", "security"], undefined, {
-      actor: { role: "requester" }, sessionWorkspaceId: null, signal: fanOutRequest.signal,
+      actor: { role: "requester" }, sessionWorkspaceId: "visitor-workspace", signal: fanOutRequest.signal,
       budget: expect.objectContaining({ tokensPerAttempt: tokens, dailyCap: 500_000 }),
       runTimeoutMs: timeoutMs,
     });
     const singleRequest = new Request("http://localhost/api/reviews/c/legal/run", { method: "POST", signal: controller.signal });
     expect((await single(singleRequest, { params: Promise.resolve({ cycleId: "c", domain: "legal" }) })).status).toBe(200);
     expect(mocks.guard).toHaveBeenLastCalledWith(singleRequest, undefined);
-    expect(mocks.runReviewAgent).toHaveBeenLastCalledWith(mocks.db, "c", "legal", { role: "requester" }, null, undefined, {
+    expect(mocks.runReviewAgent).toHaveBeenLastCalledWith(mocks.db, "c", "legal", { role: "requester" }, "visitor-workspace", undefined, {
       signal: singleRequest.signal, budget: expect.objectContaining({ tokensPerAttempt: tokens, dailyCap: 500_000 }),
       runTimeoutMs: timeoutMs,
     });

@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { createTestDb, closeTestDb, type TestDb } from "@/lib/db/test-client";
 import { seedDatabase } from "@/scripts/seed";
-import { deploymentVersions, initiatives } from "@/lib/db/schema";
+import { deploymentVersions, initiatives, sessions } from "@/lib/db/schema";
 import { createDraft } from "@/lib/services/initiative-service";
 import { CHAMPION_PREFILL_PAYLOAD } from "@/lib/intake/champion-prefill";
 
@@ -20,10 +20,10 @@ vi.mock("@/lib/db/client", () => ({
   getDb: () => testDb,
 }));
 
-const PASSCODE = "demo-passcode-for-tests";
+const COOKIE_SECRET = "test-only-workspace-cookie-secret";
 
 beforeEach(async () => {
-  process.env.DEMO_PASSCODE = PASSCODE;
+  process.env.JEEVES_COOKIE_SECRET = COOKIE_SECRET;
   testDb = await createTestDb();
   await seedDatabase(testDb);
 });
@@ -42,7 +42,7 @@ async function issueSessionFor(personaKey: string, ip: string): Promise<string> 
     new Request("http://localhost/api/session", {
       method: "POST",
       headers: { "content-type": "application/json", "x-forwarded-for": ip },
-      body: JSON.stringify({ passcode: PASSCODE, personaKey }),
+      body: JSON.stringify({ personaKey }),
     }),
   );
   expect(res.status).toBe(200);
@@ -50,9 +50,15 @@ async function issueSessionFor(personaKey: string, ip: string): Promise<string> 
   return json.token;
 }
 
-async function memberChatCopilotId(): Promise<string> {
+async function memberChatCopilotId(workspaceId?: string): Promise<string> {
   const [init] = await testDb.select().from(initiatives).where(eq(initiatives.slug, "member-chat-copilot"));
+  if (workspaceId) await testDb.update(initiatives).set({ workspaceId }).where(eq(initiatives.id, init!.id));
   return init!.id;
+}
+
+async function sessionWorkspace(token: string): Promise<string> {
+  const [session] = await testDb.select({ workspaceId: sessions.workspaceId }).from(sessions).where(eq(sessions.token, token));
+  return session!.workspaceId!;
 }
 
 describe("POST /api/admin/threshold", () => {
@@ -83,7 +89,7 @@ describe("POST /api/admin/threshold", () => {
 
   it("403s a non-admin persona (requester)", async () => {
     const token = await issueSessionFor("priya-raman", "30.0.0.3");
-    const initiativeId = await memberChatCopilotId();
+    const initiativeId = await memberChatCopilotId(await sessionWorkspace(token));
     const { POST } = await import("../threshold/route");
     const res = await POST(
       new Request("http://localhost/api/admin/threshold", {
@@ -111,7 +117,7 @@ describe("POST /api/admin/threshold", () => {
 
   it("200s for the admin persona and writes a project override + audit event", async () => {
     const token = await issueSessionFor("ray-chen", "30.0.0.5");
-    const initiativeId = await memberChatCopilotId();
+    const initiativeId = await memberChatCopilotId(await sessionWorkspace(token));
     const { POST } = await import("../threshold/route");
     const res = await POST(
       new Request("http://localhost/api/admin/threshold", {
@@ -196,7 +202,7 @@ describe("POST /api/admin/deployments/[id]/pause", () => {
 
   it("200s for the admin persona with a reason and pauses the deployment", async () => {
     const token = await issueSessionFor("ray-chen", "31.0.0.4");
-    const initiativeId = await memberChatCopilotId();
+    const initiativeId = await memberChatCopilotId(await sessionWorkspace(token));
     const { POST } = await import("../deployments/[id]/pause/route");
     const res = await POST(
       new Request(`http://localhost/api/admin/deployments/${initiativeId}/pause`, {
@@ -244,7 +250,7 @@ describe("POST /api/admin/deployments/[id]/resume", () => {
 
   it("200s for the admin persona and restores 'deployed'", async () => {
     const token = await issueSessionFor("ray-chen", "32.0.0.3");
-    const initiativeId = await memberChatCopilotId();
+    const initiativeId = await memberChatCopilotId(await sessionWorkspace(token));
     const { POST: pausePost } = await import("../deployments/[id]/pause/route");
     await pausePost(
       new Request(`http://localhost/api/admin/deployments/${initiativeId}/pause`, {
@@ -316,7 +322,7 @@ describe("workspace authorization on admin mutation routes (P1 fix)", () => {
       new Request("http://localhost/api/session", {
         method: "POST",
         headers: { "content-type": "application/json", "x-forwarded-for": ip },
-        body: JSON.stringify({ passcode: PASSCODE, personaKey }),
+        body: JSON.stringify({ personaKey }),
       }),
     );
     expect(res.status).toBe(200);

@@ -40,8 +40,8 @@ export default async function AdminPage() {
   const incidents = incidentResult.incidents ?? [];
 
   // Project-override options for the threshold dialog: only initiatives whose
-  // DB id is resolvable (real-provider mode). Empty in mock mode → the dialog
-  // falls back to tier-default edits only.
+  // DB id is resolvable and whose records belong to this visitor. Shared
+  // defaults remain viewable; only workspace overrides can be edited.
   const initiativeOptions: ThresholdInitiativeOption[] = initiatives
     .filter((i) => !!i.initiativeId && !i.isSeeded)
     .map((i) => ({ initiativeId: i.initiativeId as string, title: i.title, slug: i.slug }));

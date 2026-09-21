@@ -63,6 +63,23 @@ describe("lib/services/monitor-service", () => {
   });
 
   describe("runMonitor — breach detection + idempotency (plan.md §2 step 5)", () => {
+    it("excludes null-workspace seed candidates from scoped runs while unscoped cron still processes them", async () => {
+      const { init, dep } = await memberChatCopilot(db);
+
+      const scoped = await runMonitor(db, RAY_CHEN, PLUS_14D, "ws-visitor");
+      expect(scoped.breaches.find((b) => b.deploymentId === dep.id)).toBeUndefined();
+      expect(scoped.incidentsCreated).toBe(0);
+      expect(scoped.evaluated).toBe(0);
+      const [afterScopedInit] = await db.select().from(initiatives).where(eq(initiatives.id, init.id));
+      const [afterScopedDep] = await db.select().from(deploymentVersions).where(eq(deploymentVersions.id, dep.id));
+      expect(afterScopedInit!.state).toBe("deployed");
+      expect(afterScopedDep!.status).toBe("deployed");
+
+      const cron = await runMonitor(db, SYSTEM_ACTOR, PLUS_14D, UNSCOPED_WORKSPACE);
+      expect(cron.breaches.some((b) => b.deploymentId === dep.id)).toBe(true);
+      expect(cron.incidentsCreated).toBe(1);
+    });
+
     it("filters foreign-workspace deployments before evaluation or mutation", async () => {
       const { init, dep } = await memberChatCopilot(db);
       await db

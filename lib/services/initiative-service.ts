@@ -57,7 +57,7 @@ import { fastLaneEligibility } from "../approval/eligibility";
 import { reviewDecisionReadiness } from "../approval/review-readiness";
 import { applicabilityApplies } from "./applicability";
 import { ACTOR_DIRECTORY, FAST_LANE_POLICY, SYSTEM_ACTOR, isPersonaKey, reviewerDomainFor } from "./actors";
-import { workspaceMismatch } from "./workspace-guard";
+import { mutationWorkspaceMismatch } from "./workspace-guard";
 import { lockCurrentReviewCycle, ReviewIntegrityError } from "./review-integrity";
 
 /* -------------------------------------------------------------------------
@@ -105,7 +105,7 @@ function assertWorkspaceAccess(
   entity: string,
   id: string,
 ): void {
-  if (workspaceMismatch(resourceWorkspaceId, sessionWorkspaceId)) {
+  if (mutationWorkspaceMismatch(resourceWorkspaceId, sessionWorkspaceId)) {
     throw new NotFoundError(entity, id);
   }
 }

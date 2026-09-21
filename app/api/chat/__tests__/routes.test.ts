@@ -18,10 +18,10 @@ vi.mock("@/lib/db/client", () => ({
   getDb: () => testDb,
 }));
 
-const PASSCODE = "demo-passcode-for-tests";
+const COOKIE_SECRET = "test-only-workspace-cookie-secret";
 
 beforeEach(async () => {
-  process.env.DEMO_PASSCODE = PASSCODE;
+  process.env.JEEVES_COOKIE_SECRET = COOKIE_SECRET;
   // Force the mock AgentPort (deterministic, offline) regardless of any
   // OPENAI_API_KEY present in the ambient test environment.
   delete process.env.OPENAI_API_KEY;
@@ -43,7 +43,7 @@ async function issueSessionFor(personaKey: string, ip: string): Promise<string> 
     new Request("http://localhost/api/session", {
       method: "POST",
       headers: { "content-type": "application/json", "x-forwarded-for": ip },
-      body: JSON.stringify({ passcode: PASSCODE, personaKey }),
+      body: JSON.stringify({ personaKey }),
     }),
   );
   expect(res.status).toBe(200);

@@ -27,7 +27,7 @@ describe.each([
     const response = await POST(new Request("http://localhost/api/session", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ passcode: "test-passcode", personaKey: "priya-raman" }),
+      body: JSON.stringify({ personaKey: "priya-raman" }),
     }));
     expect(response.status).toBe(403);
     expect(await response.json()).toMatchObject({ error: expect.stringContaining("preview is read-only") });
@@ -45,7 +45,7 @@ describe.each([
   });
 
   it("does not issue a session through the service helper", async () => {
-    expect(await issueDemoSession("same-passcode", "same-passcode", "priya-raman")).toBeNull();
+    expect(await issueDemoSession("priya-raman")).toBeNull();
     expect(getDb).not.toHaveBeenCalled();
   });
 

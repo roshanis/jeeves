@@ -1,7 +1,7 @@
 import { describe, expect, it, afterEach } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import {
-  DEMO_PASSCODE_TOOLTIP,
+  DEMO_SESSION_TOOLTIP,
   GatedActionButton,
 } from "@/components/jeeves/role-gate";
 import { RoleProvider, useRole } from "@/components/jeeves/role-context";
@@ -38,7 +38,7 @@ function signButtons(container: HTMLElement): HTMLButtonElement[] {
 
 describe("RoleGate mechanisms", () => {
   it("uses the exact auth-gating tooltip string", () => {
-    expect(DEMO_PASSCODE_TOOLTIP).toBe("Enter demo passcode to enable");
+    expect(DEMO_SESSION_TOOLTIP).toBe("Start the demo to try this action");
   });
 
   it("renders sign-style actions disabled-with-tooltip for non-admin roles", () => {

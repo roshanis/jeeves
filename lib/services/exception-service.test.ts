@@ -336,9 +336,13 @@ describe("exception-service", () => {
       await expect(svc.requestException(db, ecId, REQUESTER, null, "reason")).rejects.toThrow(NotFoundError);
     });
 
-    it("requestException: a seeded (null-workspace) effective control is requestable from ANY session workspace", async () => {
+    it("requestException: a non-null session cannot mutate a null-workspace control, with no partial write", async () => {
       const { ecId } = await anEffectiveControlInWorkspace(null);
-      const res = await svc.requestException(db, ecId, REQUESTER, "ws-anything", "reason");
+      await expect(svc.requestException(db, ecId, REQUESTER, "ws-anything", "reason")).rejects.toThrow(NotFoundError);
+      const [before] = await db.select().from(effectiveControls).where(eq(effectiveControls.id, ecId));
+      expect(before!.status).toBe("overdue");
+      expect(await db.select().from(controlExceptions).where(eq(controlExceptions.effectiveControlId, ecId))).toHaveLength(0);
+      const res = await svc.requestException(db, ecId, REQUESTER, null, "reason");
       expect(res.status).toBe("requested");
     });
 

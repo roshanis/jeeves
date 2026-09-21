@@ -5,7 +5,8 @@ import {
   deploymentVersions,
   effectiveControls,
   initiatives,
-  sessions,
+  reviewCycles,
+  reviewDecisions,
 } from "@/lib/db/schema";
 import { CHAMPION_PREFILL_PAYLOAD } from "@/lib/intake/champion-prefill";
 import { seedDatabase } from "@/scripts/seed";
@@ -16,7 +17,7 @@ vi.mock("@/lib/db/client", () => ({
   getDb: () => testDb,
 }));
 
-const PASSCODE = "workspace-authz-route-tests";
+const COOKIE_SECRET = "test-only-workspace-cookie-secret";
 const FULL_ATTESTATION = {
   feedbackDataSource: "Synthetic member-feedback archive.",
   consentBasis: "Fictional demo consent basis.",
@@ -24,7 +25,7 @@ const FULL_ATTESTATION = {
 };
 
 beforeEach(async () => {
-  process.env.DEMO_PASSCODE = PASSCODE;
+  process.env.JEEVES_COOKIE_SECRET = COOKIE_SECRET;
   process.env.JEEVES_COOKIE_SECRET = "workspace-authz-route-secret";
   testDb = await createTestDb();
   await seedDatabase(testDb);
@@ -58,7 +59,7 @@ async function issueSession(
     new Request("http://localhost/api/session", {
       method: "POST",
       headers,
-      body: JSON.stringify({ passcode: PASSCODE, personaKey }),
+      body: JSON.stringify({ personaKey }),
     }),
   );
   expect(response.status).toBe(200);
@@ -116,7 +117,7 @@ async function createWorkspacePair(personaKey: string, ipBase: string) {
 }
 
 describe("remaining mutation routes enforce session workspace authorization", () => {
-  it("submit returns the unknown-id 404 shape before ownership/state checks, while owner and shared rows remain mutable", async () => {
+  it("submit returns the unknown-id 404 shape before ownership/state checks, while shared rows stay read-only", async () => {
     const { owner, foreign } = await createWorkspacePair("priya-raman", "70.0.0");
     const initiativeId = await createLiveInitiative(owner.token, "70.0.0.3");
     await testDb
@@ -167,10 +168,12 @@ describe("remaining mutation routes enforce session workspace authorization", ()
       }),
       { params: Promise.resolve({ id: sharedId }) },
     );
-    expect(sharedResponse.status).toBe(200);
+    expect(sharedResponse.status).toBe(404);
+    const [sharedAfterSubmit] = await testDb.select().from(initiatives).where(eq(initiatives.id, sharedId));
+    expect(sharedAfterSubmit!.state).toBe("intake_draft");
   });
 
-  it("triage returns 404 before wrong-state validation and allows owner/shared triage", async () => {
+  it("triage returns 404 before wrong-state validation and keeps shared rows read-only", async () => {
     const { owner, foreign } = await createWorkspacePair("priya-raman", "70.0.1");
     const initiativeId = await createLiveInitiative(owner.token, "70.0.1.3");
     const { POST } = await import("../initiatives/[id]/triage/route");
@@ -222,7 +225,7 @@ describe("remaining mutation routes enforce session workspace authorization", ()
       }),
       { params: Promise.resolve({ id: sharedId }) },
     );
-    expect(sharedSubmit.status).toBe(200);
+    expect(sharedSubmit.status).toBe(404);
     const sharedTriage = await POST(
       new Request(`http://localhost/api/initiatives/${sharedId}/triage`, {
         method: "POST",
@@ -230,7 +233,9 @@ describe("remaining mutation routes enforce session workspace authorization", ()
       }),
       { params: Promise.resolve({ id: sharedId }) },
     );
-    expect(sharedTriage.status).toBe(200);
+    expect(sharedTriage.status).toBe(404);
+    const [sharedAfterTriage] = await testDb.select().from(initiatives).where(eq(initiatives.id, sharedId));
+    expect(sharedAfterTriage!.state).toBe("intake_draft");
   });
 
   it("checkpoint promotion scopes through the deployment's owning initiative", async () => {
@@ -271,7 +276,9 @@ describe("remaining mutation routes enforce session workspace authorization", ()
       .select()
       .from(deploymentVersions)
       .where(eq(deploymentVersions.status, "awaiting_promotion_signoff"));
-    expect((await call(sharedCheckpoint!.id, foreign.token, "70.0.2.8")).status).toBe(200);
+    expect((await call(sharedCheckpoint!.id, foreign.token, "70.0.2.8")).status).toBe(404);
+    const [sharedAfterPromote] = await testDb.select().from(deploymentVersions).where(eq(deploymentVersions.id, sharedCheckpoint!.id));
+    expect(sharedAfterPromote!.status).toBe("awaiting_promotion_signoff");
   });
 
   it("project threshold override returns the unknown-initiative 404 shape and preserves owner/shared access", async () => {
@@ -327,7 +334,7 @@ describe("remaining mutation routes enforce session workspace authorization", ()
       .select()
       .from(initiatives)
       .where(eq(initiatives.slug, "member-chat-copilot"));
-    expect((await call(shared!.id, foreign.token, "70.0.3.8")).status).toBe(200);
+    expect((await call(shared!.id, foreign.token, "70.0.3.8")).status).toBe(404);
   });
 
   it("pause returns 404 before state validation and allows owner/shared mutations", async () => {
@@ -379,7 +386,9 @@ describe("remaining mutation routes enforce session workspace authorization", ()
       .select()
       .from(initiatives)
       .where(eq(initiatives.slug, "member-chat-copilot"));
-    expect((await call(shared!.id, foreign.token, "70.0.4.8")).status).toBe(200);
+    expect((await call(shared!.id, foreign.token, "70.0.4.8")).status).toBe(404);
+    const [pausedSharedAfter] = await testDb.select().from(initiatives).where(eq(initiatives.id, shared!.id));
+    expect(pausedSharedAfter!.state).toBe("deployed");
   });
 
   it("resume returns the unknown-initiative 404 shape and allows owner/shared mutations", async () => {
@@ -430,7 +439,9 @@ describe("remaining mutation routes enforce session workspace authorization", ()
       .update(deploymentVersions)
       .set({ status: "paused" })
       .where(eq(deploymentVersions.initiativeId, shared!.id));
-    expect((await call(shared!.id, foreign.token, "70.0.5.8")).status).toBe(200);
+    expect((await call(shared!.id, foreign.token, "70.0.5.8")).status).toBe(404);
+    const [resumedSharedAfter] = await testDb.select().from(initiatives).where(eq(initiatives.id, shared!.id));
+    expect(resumedSharedAfter!.state).toBe("paused");
   });
 
   it("monitor filters foreign deployments inside the service before evaluation or pause", async () => {
@@ -440,15 +451,6 @@ describe("remaining mutation routes enforce session workspace authorization", ()
       .select()
       .from(initiatives)
       .where(eq(initiatives.slug, "member-chat-copilot"));
-    const [ownerSession] = await testDb
-      .select({ workspaceId: sessions.workspaceId })
-      .from(sessions)
-      .where(eq(sessions.token, owner.token));
-    await testDb
-      .update(initiatives)
-      .set({ workspaceId: ownerSession!.workspaceId })
-      .where(eq(initiatives.id, breachInitiative!.id));
-
     const { POST } = await import("../monitor/run/route");
     const call = (token: string, ip: string) =>
       POST(
@@ -470,6 +472,76 @@ describe("remaining mutation routes enforce session workspace authorization", ()
 
     const ownerResponse = await call(owner.token, "70.0.6.4");
     expect(ownerResponse.status).toBe(200);
-    expect(((await ownerResponse.json()) as { incidentsCreated: number }).incidentsCreated).toBe(1);
+    expect(((await ownerResponse.json()) as { incidentsCreated: number }).incidentsCreated).toBe(0);
+    const [afterOwner] = await testDb.select().from(initiatives).where(eq(initiatives.id, breachInitiative!.id));
+    expect(afterOwner!.state).toBe("deployed");
+  });
+
+  it("returns 404 and preserves a shared seeded review when a visitor tries to sign, return, or run it", async () => {
+    const [initiative] = await testDb.select().from(initiatives).where(eq(initiatives.slug, "provider-dedup-agent"));
+    expect(initiative!.workspaceId).toBeNull();
+    const [cycle] = await testDb.select().from(reviewCycles).where(eq(reviewCycles.initiativeId, initiative!.id));
+    expect(cycle).toBeTruthy();
+    const pending = await testDb.select().from(reviewDecisions).where(eq(reviewDecisions.cycleId, cycle!.id));
+    const reviewerForDomain: Record<string, string> = {
+      "clinical-safety": "elena-vasquez",
+      "privacy-hipaa": "marcus-webb",
+      "responsible-ai": "sofia-grant",
+      legal: "james-liu",
+      security: "devon-clarke",
+      "tech-architecture": "wei-zhang",
+      "data-governance": "grace-kim",
+      procurement: "tom-brennan",
+    };
+    const decision = pending.find((row) => row.status === "pending" && reviewerForDomain[row.domain]);
+    expect(decision).toBeTruthy();
+    const token = (await issueSession(reviewerForDomain[decision!.domain], "70.0.7.1")).token;
+    const before = {
+      status: decision!.status,
+      revision: decision!.revision,
+      draftMd: decision!.draftMd,
+      signedAt: decision!.signedAt,
+      returnReason: decision!.returnReason,
+    };
+    const params = Promise.resolve({ cycleId: cycle!.id, domain: decision!.domain });
+
+    const { POST: sign } = await import("../reviews/[cycleId]/[domain]/sign/route");
+    const signResponse = await sign(new Request(`http://localhost/api/reviews/${cycle!.id}/${decision!.domain}/sign`, {
+      method: "POST",
+      headers: bearer(token, "70.0.7.2"),
+      body: JSON.stringify({ expectedRevision: decision!.revision, expectedEvidencePacketId: null, editedDraftMd: "visitor attempt" }),
+    }), { params });
+    expect(signResponse.status).toBe(404);
+
+    const { POST: returnReview } = await import("../reviews/[cycleId]/[domain]/return/route");
+    const returnResponse = await returnReview(new Request(`http://localhost/api/reviews/${cycle!.id}/${decision!.domain}/return`, {
+      method: "POST",
+      headers: bearer(token, "70.0.7.3"),
+      body: JSON.stringify({ expectedRevision: decision!.revision, reason: "visitor attempt" }),
+    }), { params });
+    expect(returnResponse.status).toBe(404);
+
+    const agentsModule = await import("@/lib/agents");
+    const getAgentPort = vi.spyOn(agentsModule, "getAgentPort");
+    try {
+      const { POST: runReview } = await import("../reviews/[cycleId]/[domain]/run/route");
+      const runResponse = await runReview(new Request(`http://localhost/api/reviews/${cycle!.id}/${decision!.domain}/run`, {
+        method: "POST",
+        headers: bearer(token, "70.0.7.4"),
+      }), { params });
+      expect(runResponse.status).toBe(404);
+      expect(getAgentPort).not.toHaveBeenCalled();
+    } finally {
+      getAgentPort.mockRestore();
+    }
+
+    const [after] = await testDb.select().from(reviewDecisions).where(eq(reviewDecisions.id, decision!.id));
+    expect({
+      status: after!.status,
+      revision: after!.revision,
+      draftMd: after!.draftMd,
+      signedAt: after!.signedAt,
+      returnReason: after!.returnReason,
+    }).toEqual(before);
   });
 });

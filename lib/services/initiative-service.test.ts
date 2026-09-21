@@ -1391,7 +1391,7 @@ describe("lib/services/initiative-service", () => {
         ).rejects.toThrow(`initiative not found: ${draft.initiativeId}`);
       });
 
-      it("submitIntake allows the owning workspace and any workspace for a null-workspace initiative", async () => {
+      it("submitIntake allows the owning workspace and internal null-workspace calls", async () => {
         const owned = await svc.createDraft(db, {
           payload: CHAMPION_PREFILL_PAYLOAD,
           requesterActor: REQUESTER,
@@ -1409,11 +1409,11 @@ describe("lib/services/initiative-service", () => {
           workspaceId: null,
         });
         await expect(
-          svc.submitIntake(db, seededStyle.initiativeId, REQUESTER, "ws-any"),
+          svc.submitIntake(db, seededStyle.initiativeId, REQUESTER, null),
         ).resolves.toMatchObject({ submitted: true });
       });
 
-      it("triage checks workspace before lifecycle validation, and permits owner/null-workspace calls", async () => {
+      it("triage checks workspace before lifecycle validation, and permits owner/internal null-workspace calls", async () => {
         const foreignWrongState = await svc.createDraft(db, {
           payload: CHAMPION_PREFILL_PAYLOAD,
           requesterActor: REQUESTER,
@@ -1435,9 +1435,9 @@ describe("lib/services/initiative-service", () => {
           requesterName: "Priya Raman",
           workspaceId: null,
         });
-        await svc.submitIntake(db, seededStyle.initiativeId, REQUESTER, "ws-any");
+        await svc.submitIntake(db, seededStyle.initiativeId, REQUESTER, null);
         await expect(
-          svc.triage(db, seededStyle.initiativeId, SYSTEM_ACTOR, "ws-any"),
+          svc.triage(db, seededStyle.initiativeId, SYSTEM_ACTOR, null),
         ).resolves.toMatchObject({ branch: "review" });
       });
     });
@@ -1485,11 +1485,14 @@ describe("lib/services/initiative-service", () => {
         ).rejects.toThrow(NotFoundError);
       });
 
-      it("a seeded (null-workspace) initiative is decidable from ANY session workspace", async () => {
+      it("a non-null session cannot decide a null-workspace initiative, with no partial write", async () => {
         const { initiativeId } = await initiativeReadyToDecide(null);
-        const res = await svc.decide(db, initiativeId, APPROVER, "ws-anything-at-all", {
-          decision: "rejected",
-        });
+        await expect(svc.decide(db, initiativeId, APPROVER, "ws-anything-at-all", { decision: "rejected" }))
+          .rejects.toThrow(NotFoundError);
+        const unchanged = (await db.select().from(initiatives).where(eq(initiatives.id, initiativeId)))[0]!;
+        expect(unchanged.state).toBe("in_review");
+        expect(await db.select().from(initiativeDecisions).where(eq(initiativeDecisions.initiativeId, initiativeId))).toHaveLength(0);
+        const res = await svc.decide(db, initiativeId, APPROVER, null, { decision: "rejected" });
         expect(res.type).toBe("rejected");
       });
 
@@ -1558,9 +1561,12 @@ describe("lib/services/initiative-service", () => {
         );
       });
 
-      it("a seeded (null-workspace) initiative is submittable from ANY session workspace", async () => {
+      it("a non-null session cannot submit a null-workspace initiative, with no partial write", async () => {
         const draft = await draftInWorkspace(null);
-        const res = await svc.submitIntake(db, draft.initiativeId, REQUESTER, "ws-anything-at-all");
+        await expect(svc.submitIntake(db, draft.initiativeId, REQUESTER, "ws-anything-at-all")).rejects.toThrow(NotFoundError);
+        const unchanged = (await db.select().from(initiatives).where(eq(initiatives.id, draft.initiativeId)))[0]!;
+        expect(unchanged.state).toBe("intake_draft");
+        const res = await svc.submitIntake(db, draft.initiativeId, REQUESTER, null);
         expect(res.submitted).toBe(true);
       });
     });
@@ -1608,9 +1614,13 @@ describe("lib/services/initiative-service", () => {
         await expect(svc.triage(db, initiativeId, SYSTEM_ACTOR, null)).rejects.toThrow(NotFoundError);
       });
 
-      it("a seeded (null-workspace) initiative is triageable from ANY session workspace", async () => {
+      it("a non-null session cannot triage a null-workspace initiative, with no partial write", async () => {
         const initiativeId = await submittedInWorkspace(null);
-        const res = await svc.triage(db, initiativeId, SYSTEM_ACTOR, "ws-anything-at-all");
+        await expect(svc.triage(db, initiativeId, SYSTEM_ACTOR, "ws-anything-at-all")).rejects.toThrow(NotFoundError);
+        const unchanged = (await db.select().from(initiatives).where(eq(initiatives.id, initiativeId)))[0]!;
+        expect(unchanged.state).toBe("submitted");
+        expect(await db.select().from(riskAssessments).where(eq(riskAssessments.initiativeId, initiativeId))).toHaveLength(0);
+        const res = await svc.triage(db, initiativeId, SYSTEM_ACTOR, null);
         expect(res.tier).toBe("critical");
       });
     });
@@ -1652,10 +1662,13 @@ describe("lib/services/initiative-service", () => {
         ).rejects.toThrow(NotFoundError);
       });
 
-      it("a seeded (null-workspace) review is signable from ANY session workspace", async () => {
+      it("a non-null session cannot sign a null-workspace review, with no partial write", async () => {
         const { cycleId } = await initiativeReadyToDecide(null);
         const rdId = await draftedClinicalSafety(cycleId);
-        const res = await signLoadedReview(db, cycleId, "clinical-safety", REVIEWER, "ws-anything");
+        await expect(signLoadedReview(db, cycleId, "clinical-safety", REVIEWER, "ws-anything")).rejects.toThrow(NotFoundError);
+        const before = (await db.select().from(reviewDecisions).where(eq(reviewDecisions.id, rdId)))[0]!;
+        expect(before.status).toBe("drafted");
+        const res = await signLoadedReview(db, cycleId, "clinical-safety", REVIEWER, null);
         expect(res.status).toBe("signed");
         const row = (await db.select().from(reviewDecisions).where(eq(reviewDecisions.id, rdId)))[0]!;
         expect(row.status).toBe("signed");

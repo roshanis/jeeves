@@ -65,7 +65,7 @@ import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import type * as schema from "../db/schema";
 import { auditEvents, deploymentVersions, initiatives } from "../db/schema";
 import type { Actor } from "../domain/types";
-import { workspaceMismatch } from "./workspace-guard";
+import { mutationWorkspaceMismatch } from "./workspace-guard";
 import { ConflictError } from "./initiative-service";
 
 // Re-exported so route handlers can import every promotion-service error
@@ -285,7 +285,7 @@ export interface PromoteCheckpointResult {
  *     never received the session workspace, so any authenticated session
  *     that learned a checkpoint id could promote another workspace's
  *     checkpoint): the target's owning initiative must be workspace-
- *     accessible to `sessionWorkspaceId` (`workspaceMismatch`, same rule
+ *     accessible to `sessionWorkspaceId` (`mutationWorkspaceMismatch`, same rule
  *     `rollbackDeployment` applies to initiatives). On mismatch, throws the
  *     SAME `NotFoundError("deploymentVersion", deploymentVersionId)` shape
  *     as an unknown checkpoint id — never leaks that the checkpoint exists
@@ -348,7 +348,7 @@ export async function promoteCheckpoint(
       .from(initiatives)
       .where(eq(initiatives.id, target.initiativeId));
     const owningInitiative = initiativeRows[0];
-    if (!owningInitiative || workspaceMismatch(owningInitiative.workspaceId, sessionWorkspaceId)) {
+    if (!owningInitiative || mutationWorkspaceMismatch(owningInitiative.workspaceId, sessionWorkspaceId)) {
       throw new NotFoundError("deploymentVersion", deploymentVersionId);
     }
 
@@ -554,7 +554,7 @@ export async function rollbackDeployment(
     // Workspace authorization (external-review finding #1): same NotFoundError
     // shape as an unknown id on mismatch — never leaks that the initiative
     // exists in a different workspace.
-    if (workspaceMismatch(initiativeRows[0].workspaceId, sessionWorkspaceId)) {
+    if (mutationWorkspaceMismatch(initiativeRows[0].workspaceId, sessionWorkspaceId)) {
       throw new NotFoundError("initiative", initiativeId);
     }
 

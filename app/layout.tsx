@@ -4,6 +4,12 @@ import "./globals.css";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/sonner";
 import { RoleProvider } from "@/components/jeeves/role-context";
+import { LiveSessionProvider } from "@/lib/client/session-context";
+import { resolveDataProviderMode } from "@/lib/data/provider-mode";
+
+// Resolve capability at runtime, including mock-build/db-start demos, while
+// keeping session entry state mounted across marketing/console navigation.
+export const dynamic = "force-dynamic";
 
 // Body: Inter (highly legible UI workhorse). Headings: Sora (geometric
 // display with more character). Mono: JetBrains Mono (ids, versions, code).
@@ -112,17 +118,19 @@ export default function RootLayout({
           Skip to content
         </a>
         <RoleProvider>
-          <TooltipProvider>
-            {/* Console chrome (sidebar/top bar/mobile nav/footer) moved to
-                app/(console)/layout.tsx so the public marketing site at
-                "/", "/frameworks", "/pilot" (app/(marketing)/*, with its
-                own chrome in app/(marketing)/layout.tsx) renders
-                full-bleed, without the ops sidebar bleeding through. Every
-                ops route lives under the (console) route group and gets
-                that chrome instead. */}
-            {children}
-            <Toaster />
-          </TooltipProvider>
+          <LiveSessionProvider liveModeAvailable={resolveDataProviderMode(process.env.DATA_PROVIDER, !!process.env.DATABASE_URL) === "db"}>
+            <TooltipProvider>
+              {/* Console chrome (sidebar/top bar/mobile nav/footer) moved to
+                  app/(console)/layout.tsx so the public marketing site at
+                  "/", "/frameworks", "/pilot" (app/(marketing)/*, with its
+                  own chrome in app/(marketing)/layout.tsx) renders
+                  full-bleed, without the ops sidebar bleeding through. Every
+                  ops route lives under the (console) route group and gets
+                  that chrome instead. */}
+              {children}
+              <Toaster />
+            </TooltipProvider>
+          </LiveSessionProvider>
         </RoleProvider>
       </body>
     </html>

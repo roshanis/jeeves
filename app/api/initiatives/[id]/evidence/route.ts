@@ -17,7 +17,7 @@ type Context={params:Promise<{id:string}>};
 export async function GET(req:Request,context:Context):Promise<Response> {
  try {
   const viewer=await resolveSession(extractSessionToken(req));
-  if(!viewer.actor)throw new EvidenceError(401,'Enter the demo passcode to view private evidence.');
+  if(!viewer.actor)throw new EvidenceError(401,'Start the demo to view private evidence.');
   return Response.json(await getEvidence(getDb(),(await context.params).id,{actor:viewer.actor,workspaceId:viewer.workspaceId}),{headers:privateHeaders});
  }catch(error){return evidenceResponseError(error);}
 }

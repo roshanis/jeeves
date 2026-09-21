@@ -14,7 +14,7 @@
 - which **saved views** are pinned on Home and Audit,
 - nothing else. Every role sees the same initiative list, the same detail page, the same tabs. No route is role-scoped (no `/reviewer/*`, no `/admin-only-dashboard`). This mirrors Sierra's pattern of one product surface with contextual affordances, per plan §1/§2 (Codex F8).
 
-Roles (fictional, from seed-spec §1): **Requester** (Priya Raman, Dan Kowalski), **Reviewer** (Dr. Elena Vasquez, Marcus Webb, Sofia Grant, James Liu), **Program Office** (Nia Okafor), **Audit/Leadership** (reads everything, approves nothing — Angela Torres also reviews audit views in her VP capacity), **Admin** (Ray Chen). The role switcher is a demo convenience (no real auth in M1 per plan §11) — switching role is instant and client-side; it does not re-fetch a different data set, only a different action/view configuration.
+Roles are fictional: Requester, eight domain Reviewers, Approver, Program Office and Admin. The persona picker exchanges the server-issued session in the same browser workspace; server-side role, domain and ownership checks remain authoritative.
 
 ---
 
@@ -29,7 +29,7 @@ Roles (fictional, from seed-spec §1): **Requester** (Priya Raman, Dan Kowalski)
 | `/audit` | Audit query console | AuditEvent, ReviewDecision, EffectiveControl, Initiative (joined) |
 | `/admin` | Admin console | ControlDefinition (Q-01 only, live), DeploymentVersion (pause/resume), AuditEvent (control-change log), RunBudget |
 
-No route requires a role param; role is a client-side context (`useRole()`), not a URL segment, so a Program Office user and a Reviewer looking at `/initiatives/prior-auth-summarizer` are on the identical URL with different visible actions. This also keeps the public read-only mode (§7) a single flag rather than a route split.
+No route requires a role parameter. The current server-issued session determines authorization; `useRole()` projects that persona in the interface. The same initiative URL can show different role actions without changing the browser workspace.
 
 ---
 
@@ -39,7 +39,7 @@ No route requires a role param; role is a client-side context (`useRole()`), not
 
 **Layout (top to bottom):**
 
-1. **Chrome banner** (see §7) — "Fictional demo — synthetic data," role switcher, passcode entry if in read-only mode.
+1. **Chrome banner** (see §7) — "Fictional demo — synthetic data," role switcher, one-click Start demo entry while browsing.
 2. **Outcome-metrics strip** — 5 cards/badges in a horizontal row (Recharts sparkline behind each number where seed-spec §6 implies a trend, otherwise a plain stat card):
    - Review cycle time (median ~11d) — sparkline of recent cycle times, champion case annotated once it closes faster.
    - First-pass completeness rate (~60%) — donut or simple percentage badge.
@@ -70,7 +70,7 @@ No route requires a role param; role is a client-side context (`useRole()`), not
 **States:**
 - *Loading:* skeleton cards for outcome strip (5 shimmering boxes), skeleton columns for pipeline board.
 - *Empty:* not reachable in the demo (seed always populates 12 initiatives) — but the board renders an empty-column state ("No initiatives in Rejected") gracefully per column since #3 is the only rejected one and other columns could theoretically be empty in a reset workspace.
-- *Read-only public:* all click-throughs to detail pages still work (read is always allowed); "New initiative" button is disabled with tooltip "Enter demo passcode to create initiatives" (§7); admin quick-actions (Resume) are hidden entirely, not just disabled, for non-admin/public.
+- *Read-only public:* all click-throughs to detail pages still work (read is always allowed); "New initiative" button is disabled with tooltip "Start the demo to create initiatives" (§7); admin quick-actions (Resume) are hidden entirely, not just disabled, for non-admin/public.
 - *Paused:* any card representing a paused deployment (initiative #4 mid-demo) gets a distinct amber left-border + "Paused" badge instead of "Deployed," and surfaces in the SLA callout list.
 - *Breach:* not a Home-level state per se — the breach is discovered via Operate tab / triggered via Admin "Run monitor" — but once fired, initiative #4's card flips to "Paused" with a small red incident icon, and a new SLA callout appears: "Incident opened — #4 member-chat-copilot."
 
@@ -106,7 +106,7 @@ Cost / eval / GPU panels, built from `Observation` series (seed-spec §4). **Eve
 - **Cost panel:** daily token-cost line chart (Recharts `LineChart`) — shown for any deployed initiative with a cost series (e.g., #4 ramping $80→$140/day).
 - **Eval panel:** hallucination-rate / relevance line chart with the Q-01 threshold rendered as a horizontal reference line (Recharts `ReferenceLine`). For #4, the line visibly crosses 0.08 around day 9 and stays above — this is the panel the presenter watches during the breach beat. For #5, instead of a live drift line, render a **v2.0 → v2.1 offline eval comparison** (bar or grouped-bar chart) plus a "Promotion gate: awaiting feedback-provenance sign-off" banner — this is the RL/version-promotion story, explicitly not a training dashboard (plan §5).
 - **GPU panel:** only rendered for initiative #6 (`claims-ocr-coder`, the one self-hosted workload) — utilization sinusoid with an 80% quota reference line. Absent entirely (not zeroed-out) for every other initiative, since GPU utilization is only meaningful for the one self-hosted deployment (seed-spec §4).
-- **Budget/rate context:** a small `RunBudget` status line near the cost panel if this initiative consumed live-demo budget (relevant mainly if a visitor is in passcode/live mode).
+- **Budget/rate context:** a small `RunBudget` status line near the cost panel if this initiative consumed live-demo budget (relevant mainly if a visitor is in interactive demo mode).
 - Admin-only inline action: **"Run monitor"** button (also available at `/admin`, duplicated here for narrative convenience during the champion walkthrough) — synchronously evaluates Q-01 against the observation series; idempotent (re-running creates no duplicate incident, per plan §8 test 5). On breach, this tab's eval panel gets a red annotation marker at the threshold-crossing point and the header's lifecycle badge flips to "Paused."
 
 ### 3.7 Audit tab
@@ -122,7 +122,7 @@ Chronological `AuditEvent` timeline for this initiative only: intake submitted �
 **States:**
 - *Loading:* header skeleton + tab-content skeleton (table/card placeholders per active tab).
 - *Empty:* Reviews tab for a freshly-triaged initiative with no drafts yet shows "No reviews drafted yet" with required-domains checklist instead of a table.
-- *Read-only public:* Sign/Return/Continue-intake/Run-monitor buttons are hidden (not just disabled) for unauthenticated public visitors per plan §3 ("no unauthenticated mutation endpoint exists"); a small inline note replaces them: "Sign in with demo passcode to take actions."
+- *Read-only public:* Sign/Return/Continue-intake/Run-monitor buttons are hidden (not just disabled) for unauthenticated public visitors per plan §3 ("no unauthenticated mutation endpoint exists"); a small inline note replaces them: "Start the demo to take actions."
 - *Paused:* header badge "Paused" in amber/red; Operate tab shows a persistent banner "Deployment paused — [reason] — opened Incident #… — Reassessment ReviewCycle in progress" with a link to the new ReviewCycle's Reviews tab entries.
 - *Breach:* the specific moment-of-crossing state — Operate tab's eval chart shows the reference-line crossing annotated in red, plus a banner "Eval quality floor breached (Q-01): hallucination rate 0.081 ≥ 0.08 sustained 3 points" that appears immediately after "Run monitor" fires, before the page-level Paused state is even reflected elsewhere — this is intentionally the most detailed state in the whole spec since it's the demo's climax.
 
@@ -156,7 +156,7 @@ Chronological `AuditEvent` timeline for this initiative only: intake submitted �
 **States:**
 - *Loading:* n/a (client-rendered form, no async load before interaction).
 - *Empty:* default state — all 6 toggles unset, tier preview shows "Answer all questions to see tier," completeness meter at 0%.
-- *Read-only public:* entire form disabled with a banner: "Enter demo passcode to create a new initiative" — form fields render (so visitors can see the questions) but are non-interactive, and Submit is replaced with a disabled button + tooltip.
+- *Read-only public:* entire form disabled with a banner: "Start the demo to create a new initiative" — form fields render (so visitors can see the questions) but are non-interactive, and Submit is replaced with a disabled button + tooltip.
 - *Paused / Breach:* not applicable to this screen (pre-lifecycle).
 
 **Demo money-shot:** the live tier-preview panel flipping to "Critical — all 8 domains required" the instant the presenter answers "care-coverage = Yes, human-in-loop = No," making the deterministic triage rule visible and legible in real time, then the completeness meter catching the missing retention field before submit is even possible — governance-by-design, not governance-by-afterthought.
@@ -187,7 +187,7 @@ Chronological `AuditEvent` timeline for this initiative only: intake submitted �
 **States:**
 - *Loading:* skeleton rows in queue, empty drafting pane with "Select a review" placeholder.
 - *Empty:* "Your queue is empty" for a reviewer with nothing assigned (not the champion's actual seed state, but a legitimate reachable state after all champion reviews are signed).
-- *Read-only public:* drafting surface renders fully (so visitors can see how review drafting works) but Sign/Return are disabled with tooltip "Enter demo passcode to act as a reviewer."
+- *Read-only public:* drafting surface renders fully (so visitors can see how review drafting works) but Sign/Return are disabled with tooltip "Choose a reviewer persona to try reviews."
 - *Paused:* a review row belonging to a reassessment ReviewCycle (opened after #4's breach) shows a distinct "Reassessment" tag distinguishing it from the initial cycle's reviews.
 - *Breach:* not directly surfaced here except via the reassessment row appearing after the breach fires elsewhere (Operate tab / Admin "Run monitor").
 
@@ -224,7 +224,7 @@ Chronological `AuditEvent` timeline for this initiative only: intake submitted �
 **States:**
 - *Loading:* skeleton rows in results table while a query runs (should be near-instant against seed data, but skeleton exists for the live-demo-workspace case where a query might hit a larger session dataset).
 - *Empty:* a filter combination with zero matches shows "No records match this query" with a suggestion to broaden filters — reachable state, should look intentional not broken.
-- *Read-only public:* fully available — audit query is read-only by nature, so this screen behaves identically for public visitors and passcode users (one of the few screens with no gated actions at all).
+- *Read-only public:* fully available — audit query is read-only by nature, so this screen behaves identically for public visitors and demo participants (one of the few screens with no gated actions at all).
 - *Paused / Breach:* the "Overdue controls" and general filters surface breach-related events naturally (e.g., filtering to initiative #4 after breach shows the pause/incident/reassessment events) but there's no distinct page-level state — this screen always just reflects current data.
 
 **Demo money-shot:** running "What changed on Q-01 and who changed it" live and landing on the exact base−30d event where Ray Chen tightened the threshold from 0.10→0.08 with reason "Q2 quality initiative" — this is the seed-spec's deliberate foreshadowing payoff, and clicking through from that event to the later breach makes the causal chain (tighter threshold → real breach 30 days later) visible in two clicks.
@@ -253,7 +253,7 @@ Chronological `AuditEvent` timeline for this initiative only: intake submitted �
 **States:**
 - *Loading:* skeleton cards for both action panels.
 - *Empty:* n/a — Q-01 and at least one deployment always exist in seed data.
-- *Read-only public:* both dialogs are unreachable — buttons hidden with a banner: "Admin actions require demo passcode + Admin role."
+- *Read-only public:* both dialogs are unreachable — buttons hidden with a banner: "Admin actions require a demo workspace and Admin persona."
 - *Paused:* the pause/resume card is the literal source of truth for this state — a paused deployment shows "Resume" instead of "Pause," with the original pause reason displayed inline.
 - *Breach:* immediately after "Run monitor" detects a breach, this page shows a success/alert toast ("Breach detected on member-chat-copilot — deployment paused, incident #… opened, reassessment cycle #… created") and the pause/resume card updates live to reflect the new paused state without a full page reload.
 
@@ -266,10 +266,10 @@ Chronological `AuditEvent` timeline for this initiative only: intake submitted �
 **Persistent across all routes:**
 
 1. **Top banner:** "Fictional demo — synthetic data. Meridian Health is a fictional payer; not affiliated with any real organization." Always visible, non-dismissible (or dismissible-but-reappears-per-session — recommend non-dismissible given plan §3's public-safety emphasis).
-2. **Role switcher:** a dropdown/segmented control in the header — Requester / Reviewer / Program Office / Audit-Leadership / Admin. Switching is instant, client-side, and re-renders available actions + saved views per §0; it does not change the underlying data or require a page reload beyond re-evaluating which buttons/views show.
-3. **Demo mode indicator + passcode entry:** a small chip showing "Read-only (public)" or "Live demo (session workspace)." Clicking it when in read-only mode opens a passcode entry dialog (per plan §3): on correct passcode, the session transitions to an isolated, resettable demo workspace with mutation enabled, subject to per-day token budget, input-length limits, and per-IP rate limiting (all enforced server-side; the UI's job is to surface remaining budget/rate-limit state gracefully, e.g., a small "Demo budget: 42/50 actions today" indicator once live, and a clear error toast rather than a silent failure if a rate limit is hit).
-4. **Public read-only mode behavior (cross-cutting rule):** every mutation-capable button in the entire app (Submit intake, Sign, Return, Run monitor, Edit threshold, Pause/Resume) follows one consistent pattern when in public read-only mode: the button remains visible (so the read-only visitor can see what actions exist) but is disabled with a tooltip "Enter demo passcode to enable this action." This is distinct from the role-based hide-entirely pattern in §6/§7 (Admin approve-buttons don't exist at all, for anyone) — read-only-mode disabling is about authentication state, role-based hiding is about architectural separation of duties. Keep these two mechanisms conceptually and, ideally, componentized separately (`<GatedAction requiresAuth>` vs. role-conditional rendering) so they don't get conflated in implementation.
-5. **Global nav:** Home, Initiatives (maybe just via Home's board — a lightweight "browse all" link if a flat list is useful), Reviews, Audit, Admin — a simple header nav, visible to all roles (again, no route hiding; Admin nav item is visible to a Requester-role viewer too, since there's no real auth boundary in the demo, only an action-visibility one once *inside* that page).
+2. **Persona switcher:** the header lists the fictional demo personas grouped by role. Choosing one exchanges the server-issued session within the same browser workspace, then updates the visible persona and role. Controls show pending state during the exchange and preserve the prior persona on failure.
+3. **Visitor demo controls:** Start demo immediately creates a requester session. On the marketing site, Try the demo also opens intake. The header persona picker exchanges the session for a selected fictional role within the same browser workspace; no password dialog or logout step is involved. Pending entry/switch controls are disabled and failures offer a retry. Exit demo returns to browsing. Shared examples and global defaults stay read-only; visitors can create and act on their own records. Session, role, workspace, rate and budget checks remain server-side.
+4. **Public read-only mode behavior (cross-cutting rule):** every mutation-capable button in the entire app (Submit intake, Sign, Return, Run monitor, Edit threshold, Pause/Resume) follows one consistent pattern when in public read-only mode: the button remains visible (so the read-only visitor can see what actions exist) but is disabled with a tooltip "Start the demo to try this action." This is distinct from the role-based hide-entirely pattern in §6/§7 (Admin approve-buttons don't exist at all, for anyone) — read-only-mode disabling is about authentication state, role-based hiding is about architectural separation of duties. Keep these two mechanisms conceptually and, ideally, componentized separately (`<GatedAction requiresAuth>` vs. role-conditional rendering) so they don't get conflated in implementation.
+5. **Global nav:** Home, Initiatives (maybe just via Home's board — a lightweight "browse all" link if a flat list is useful), Reviews, Audit, Admin — a simple header nav, visible to all roles (again, no route hiding; Admin nav item is visible to a Requester-role viewer too, navigation does not grant authority: server-issued sessions and workspace/role checks gate actions).
 
 ---
 
@@ -282,7 +282,7 @@ Chronological `AuditEvent` timeline for this initiative only: intake submitted �
 - `badge` — tier badges, lifecycle-state badges, evidence-status pills, connector-status chips, "Synthetic data — demo" labels.
 - `tabs` — Initiative detail's 6-tab layout.
 - **Recommended additions:**
-  - `dialog` — mandatory-reason dialogs (Admin threshold edit, pause/resume, review return), passcode entry.
+  - `dialog` — mandatory-reason dialogs (Admin threshold edit, pause/resume, review return).
   - `tooltip` — disabled-button explanations (read-only mode, role gating).
   - `select` — role switcher and filter controls.
   - `toast` (via `sonner` or shadcn's toast primitive) — Run monitor results, sign/return confirmations, rate-limit errors.

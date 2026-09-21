@@ -49,7 +49,12 @@ function extractWorkspaceCookie(req: Request): string | null {
     .split(";")
     .map((p) => p.trim())
     .find((p) => p.startsWith(`${WORKSPACE_COOKIE_NAME}=`));
-  return match ? decodeURIComponent(match.slice(WORKSPACE_COOKIE_NAME.length + 1)) : null;
+  if (!match) return null;
+  try {
+    return decodeURIComponent(match.slice(WORKSPACE_COOKIE_NAME.length + 1));
+  } catch {
+    return null;
+  }
 }
 
 /**
