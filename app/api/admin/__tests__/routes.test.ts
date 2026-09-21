@@ -9,7 +9,6 @@ import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { createTestDb, closeTestDb, type TestDb } from "@/lib/db/test-client";
-import { resetGuardStateForTests } from "@/lib/services/route-guard";
 import { seedDatabase } from "@/scripts/seed";
 import { deploymentVersions, initiatives } from "@/lib/db/schema";
 import { createDraft } from "@/lib/services/initiative-service";
@@ -27,7 +26,6 @@ beforeEach(async () => {
   process.env.DEMO_PASSCODE = PASSCODE;
   testDb = await createTestDb();
   await seedDatabase(testDb);
-  resetGuardStateForTests();
 });
 
 afterEach(async () => {

@@ -31,6 +31,7 @@ import {
 } from "@/lib/services/monitor-service";
 import { expireDueExceptions } from "@/lib/services/exception-service";
 import { SYSTEM_ACTOR } from "@/lib/services/actors";
+import { checkReadOnlyMode } from "@/lib/services/route-guard";
 
 // Kept in sync with app/api/monitor/run/route.ts#DEFAULT_MONITOR_NOW_TS (a
 // literal here rather than a cross-route import — same rationale as that file).
@@ -56,6 +57,11 @@ export async function GET(req: Request): Promise<Response> {
     const message =
       auth.status === 503 ? "scheduled monitoring not configured (CRON_SECRET unset)" : "unauthorized";
     return Response.json({ error: message }, { status: auth.status });
+  }
+
+  const readOnlyFailure = checkReadOnlyMode();
+  if (readOnlyFailure) {
+    return Response.json({ error: readOnlyFailure.message }, { status: readOnlyFailure.status });
   }
 
   const nowParam = new URL(req.url).searchParams.get("nowTs");

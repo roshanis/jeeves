@@ -22,19 +22,8 @@
  *      reason for pause).
  *   3. Opens a reassessment `review_cycles` row via the `open_reassessment`
  *      transition (paused -> re_review), linked back to the incident.
- *   4. Generates a human-readable incident summary. Breach detection stays
- *      deterministic code (agents/ops-monitor/instructions.md: "never you") —
- *      the agent only narrates a detection that already happened. There is
- *      no `AgentPort` method for ops-monitor (see lib/agents/schemas.ts /
- *      mock-adapter.ts's `generateMockIncidentSummary`, which documents that
- *      ops-monitor "has no port method today"), so this module still routes
- *      through `getAgentPort()` to decide mock-vs-real per plan.md §4 (never
- *      call an adapter directly), but for the one ops-monitor shape that
- *      isn't yet a port method, it falls back to the deterministic mock
- *      generator when the port resolved is the mock port — this keeps the
- *      demo fully keyless/offline-safe as the task brief requires ("mock
- *      adapter fine") without inventing a new port method outside this
- *      task's owned files (lib/agents/ports.ts is not owned by this task).
+ *   4. Formats the detected incident deterministically without initializing
+ *      any AI adapter or making a provider call.
  *   5. Writes an AuditEvent for every transition, all inside one
  *      `db.transaction()` per breached deployment — a partial write (state
  *      changed, no incident row, or vice versa) must never be observable.
@@ -56,14 +45,13 @@ import {
   initiatives,
   observations,
   reviewCycles,
+  reviewDecisions,
   riskAssessments,
 } from "../db/schema";
 import type { Actor, LifecycleState, Observation, Tier } from "../domain/types";
 import { evaluateControl, resolveThreshold, type EffectiveControl } from "../controls/evaluate";
 import { transition, IllegalTransitionError, type AuditEventPayload } from "../lifecycle/transitions";
-import { getAgentPort } from "../agents";
-import { generateMockIncidentSummary } from "../agents/mock-adapter";
-import type { GovernanceDomain } from "../agents/ports";
+import { currentControlRevisions } from "../controls/current-revisions";
 import { SYSTEM_ACTOR } from "./actors";
 import { workspaceMismatch } from "./workspace-guard";
 import { ConflictError } from "./initiative-service";
@@ -238,27 +226,9 @@ async function loadDeployedCandidates(
   return result;
 }
 
-/**
- * Ops-monitor incident narration: agent never decides the breach, only
- * narrates it (agents/ops-monitor/instructions.md). `getAgentPort()` is
- * still called here (per plan.md §4: app code depends only on the port
- * factory, never an adapter directly) purely to select mock-vs-real the
- * same way every other agent call in this codebase does; the actual
- * generation uses `generateMockIncidentSummary` because ops-monitor has no
- * `AgentPort` method yet (see lib/agents/schemas.ts / mock-adapter.ts) —
- * adding one would mean editing lib/agents/ports.ts, which this task does
- * not own. `getAgentPort()` already resolves to the deterministic mock
- * adapter whenever `OPENAI_API_KEY` is unset (tests, demo-safe default),
- * which keeps this fully offline/keyless-safe as the task brief requires.
- */
-async function generateIncidentSummary(input: {
-  controlId: string;
-  initiativeId: string;
-  domain: GovernanceDomain;
-}): Promise<string> {
-  getAgentPort();
-  const summary = generateMockIncidentSummary(input);
-  return summary.incidentSummaryMd;
+/** Narration is a deterministic rendering of an already detected breach. */
+function generateIncidentSummary(input: { controlId: string; initiativeId: string }): string {
+  return `Control ${input.controlId} breached its threshold for initiative ${input.initiativeId}. Deployment paused and a reassessment ReviewCycle opened automatically.`;
 }
 
 /* -------------------------------------------------------------------------
@@ -299,7 +269,7 @@ export async function runMonitor(
         ),
       );
     if (ecRows.length === 0) continue;
-    const ec = ecRows.slice().sort((a, b) => b.version - a.version)[0]!;
+    const ec = currentControlRevisions(ecRows)[0]!;
 
     const defRows = await db
       .select()
@@ -479,6 +449,18 @@ export async function runMonitor(
           closedAt: null,
           incidentId: null, // set below once the incident id is known
         });
+        // A cycle enters the same reviewer queue as initial submission. These
+        // pending obligations are created atomically with its incident, with
+        // no model calls or automatic human decisions.
+        if (latestRa.requiredDomains.length > 0) {
+          await tx.insert(reviewDecisions).values([...new Set(latestRa.requiredDomains)].map((domain) => ({
+            id: `rd-${randomUUID()}`,
+            cycleId: reviewCycleId,
+            domain,
+            status: "pending",
+            createdAt: new Date(nowTs),
+          })));
+        }
         await insertAuditEvent(
           tx,
           initiative.id,
@@ -487,13 +469,10 @@ export async function runMonitor(
           { reviewCycleId, controlId: RUNTIME_CONTROL_ID },
         );
 
-        // 3. Incident summary narration (deterministic detection already
-        // decided above; the agent only narrates it).
-        const domain = (def.domain === "runtime" ? "responsible-ai" : def.domain) as GovernanceDomain;
-        const incidentSummaryMd = await generateIncidentSummary({
+        // 3. Narrate the already-detected breach without initializing an AI runtime.
+        const incidentSummaryMd = generateIncidentSummary({
           controlId: RUNTIME_CONTROL_ID,
           initiativeId: initiative.id,
-          domain,
         });
 
         // 4. Incident row (idempotency anchor).

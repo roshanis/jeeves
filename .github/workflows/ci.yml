@@ -97,3 +97,8 @@ jobs:
           name: playwright-report
           path: playwright-report/
           retention-days: 7
+
+      # Reuse the webpack production build emitted by Playwright. The check
+      # relocates only deployable files and forbids network/source-tree reads.
+      - name: Verify packaged agent runtime
+        run: node scripts/check-agent-bundle.cjs

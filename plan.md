@@ -49,6 +49,17 @@ Outcome metrics strip (Sierra-style, outcomes not activity): review cycle time, 
 
 ## 4. Stack
 
+**Maintenance amendment (2026-09-19, authorized by the user's simplification fix):**
+The historical P0 architecture below records the proposal. The implemented
+runtime has three `AgentPort` capabilities: drafting, intake interviewing and
+query-grounded auditor answers. Dormant triage/completeness adapter methods and
+unimplemented `WorkflowPort` types are retired. Deterministic triage, completeness
+and monitoring remain in domain code. Review execution is a bounded application
+worker pool with Postgres state, request cancellation and finite invocation
+limits; it is not a durable background runner. Both existing AI adapters remain.
+Workflow SDK adoption and a user-facing cancel/background queue remain deferred.
+
+
 Next.js (App Router) + TypeScript + Tailwind/shadcn + Recharts; Neon Postgres + Drizzle; Vitest + one **required** Playwright golden-path test; **Vercel AI SDK + Workflow SDK (P0 gate decision)** behind **capability-oriented ports** — `AgentPort` (draft review, triage assist, completeness check; AI SDK `generateText` + `Output.object` structured drafts) and `WorkflowPort` (deterministic fan-out, progress, human pause/resume via `createHook`/`resumeHook` behind authenticated routes, cancel) — defined in app-owned types. Authoritative state transitions live in application code + Postgres, never inside adapters. eve backlogged as optional post-GA AgentPort adapter.
 
 ## 5. Domain model (Codex F5 — versioned, registry as a view)

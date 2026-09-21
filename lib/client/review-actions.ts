@@ -22,7 +22,7 @@ export function failedDraftRunDomains(outcomes: DraftRunDomainOutcome[]): Domain
 }
 
 export type ReviewMutation =
-  | { kind: "sign"; editedDraftMd?: string }
+  | { kind: "sign"; editedDraftMd?: string; expectedDraftToken: string }
   | { kind: "return"; reason: string };
 
 export function performReviewMutation(
@@ -32,7 +32,7 @@ export function performReviewMutation(
   mutation: ReviewMutation,
 ): Promise<unknown> {
   if (mutation.kind === "sign") {
-    return signReview(token, cycleId, domain, mutation.editedDraftMd);
+    return signReview(token, cycleId, domain, mutation.editedDraftMd, mutation.expectedDraftToken);
   }
   return returnReview(token, cycleId, domain, mutation.reason);
 }

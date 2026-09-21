@@ -9,10 +9,15 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTestDb, closeTestDb, type TestDb } from "@/lib/db/test-client";
-import { resetGuardStateForTests } from "@/lib/services/route-guard";
-import { controlDefinitions, initiatives } from "@/lib/db/schema";
+import { controlDefinitions, initiatives, reviewDecisions } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { CONTROL_SEEDS } from "@/scripts/seed";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import * as agentsModule from "@/lib/agents";
+import { AgentInitializationError } from "@/lib/agents/initialization-error";
+import { reviewDraftToken } from "@/lib/workflow/review-draft-token";
 
 let testDb: TestDb;
 
@@ -25,7 +30,6 @@ const PASSCODE = "demo-passcode-for-tests";
 beforeEach(async () => {
   process.env.DEMO_PASSCODE = PASSCODE;
   testDb = await createTestDb();
-  resetGuardStateForTests();
 });
 
 afterEach(async () => {
@@ -347,11 +351,27 @@ describe("full champion route chain: submit -> triage -> draft-run -> sign -> de
     expect(progressJson.rows.length).toBeGreaterThan(0);
 
     const { POST: signPost } = await import("../reviews/[cycleId]/[domain]/sign/route");
+    const [loadedDecision] = (await testDb.select().from(reviewDecisions).where(eq(reviewDecisions.cycleId, cycleId))).filter((row) => row.domain === "clinical-safety");
+    const expectedDraftToken = reviewDraftToken(loadedDecision!);
+    const missingTokenRes = await signPost(
+      new Request(`http://localhost/api/reviews/${cycleId}/clinical-safety/sign`, {
+        method: "POST", headers: bearer(reviewerToken, "10.0.0.1"), body: JSON.stringify({ editedDraftMd: "Draft" }),
+      }),
+      { params: Promise.resolve({ cycleId, domain: "clinical-safety" }) },
+    );
+    expect(missingTokenRes.status).toBe(400);
+    const staleTokenRes = await signPost(
+      new Request(`http://localhost/api/reviews/${cycleId}/clinical-safety/sign`, {
+        method: "POST", headers: bearer(reviewerToken, "10.0.0.1"), body: JSON.stringify({ expectedDraftToken: "0".repeat(64) }),
+      }),
+      { params: Promise.resolve({ cycleId, domain: "clinical-safety" }) },
+    );
+    expect(staleTokenRes.status).toBe(409);
     const signRes = await signPost(
       new Request(`http://localhost/api/reviews/${cycleId}/clinical-safety/sign`, {
         method: "POST",
         headers: bearer(reviewerToken, "10.0.0.1"),
-        body: JSON.stringify({ editedDraftMd: "Reviewer-edited clinical safety draft." }),
+        body: JSON.stringify({ editedDraftMd: "Reviewer-edited clinical safety draft.", expectedDraftToken }),
       }),
       { params: Promise.resolve({ cycleId, domain: "clinical-safety" }) },
     );
@@ -361,6 +381,7 @@ describe("full champion route chain: submit -> triage -> draft-run -> sign -> de
     const signAsRequesterRes = await signPost(
       new Request(`http://localhost/api/reviews/${cycleId}/legal/sign`, {
         method: "POST",
+        body: JSON.stringify({ expectedDraftToken }),
         headers: bearer(requesterToken, "10.0.0.1"),
       }),
       { params: Promise.resolve({ cycleId, domain: "legal" }) },
@@ -372,6 +393,7 @@ describe("full champion route chain: submit -> triage -> draft-run -> sign -> de
     const signWrongDomainRes = await signPost(
       new Request(`http://localhost/api/reviews/${cycleId}/legal/sign`, {
         method: "POST",
+        body: JSON.stringify({ expectedDraftToken }),
         headers: bearer(reviewerToken, "10.0.0.1"),
       }),
       { params: Promise.resolve({ cycleId, domain: "legal" }) },
@@ -468,11 +490,11 @@ describe("requester ownership authz on submit", () => {
 });
 
 describe("deep-review budget multiplier on draft-run", () => {
-  // JEEVES_DEEP_REVIEW=1 makes each domain a tool-using Agents-SDK loop
-  // (many model calls), so the route reserves DEEP_REVIEW_BUDGET_MULTIPLIER
-  // (10x) the standard per-domain estimate. Proven by leaving exactly enough
+  // A configured Agents SDK runtime with JEEVES_DEEP_REVIEW=1 makes each
+  // domain a tool loop, so the route reserves 10x the normal estimate.
+  // Proven by leaving exactly enough
   // headroom for the standard reservation but not the deep one: same
-  // request, same domains, different outcome purely from the env flag.
+  // request, same domains, different outcome from the resolved runtime.
   //
   // Runs BEFORE the exhaustion suite below on purpose — that one poisons the
   // shared day bucket with 10M tokens and every later reservation would 429
@@ -544,9 +566,11 @@ describe("deep-review budget multiplier on draft-run", () => {
 
   afterEach(() => {
     delete process.env.JEEVES_DEEP_REVIEW;
+    vi.unstubAllEnvs();
   });
 
   it("reserves the standard estimate when deep review is off", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "");
     delete process.env.JEEVES_DEEP_REVIEW;
     // Headroom sits between the standard reserve and the 10x deep reserve.
     await leaveHeadroom(STANDARD_RESERVE * 4);
@@ -554,8 +578,33 @@ describe("deep-review budget multiplier on draft-run", () => {
     expect(await draftRun(id, token, "11.5.0.1")).not.toBe(429);
   });
 
-  it("429s with the same request when JEEVES_DEEP_REVIEW=1 — the 10x reserve no longer fits", async () => {
+  it("returns a safe 503 for missing agent assets while keeping unknown IDs private", async () => {
+    const { id, token } = await triagedInitiative("11.7.0.1");
+    const { POST } = await import("../initiatives/[id]/draft-run/route");
+    const cwd = vi.spyOn(process, "cwd").mockReturnValue(mkdtempSync(path.join(tmpdir(), "jeeves-missing-prompts-")));
+    vi.stubEnv("OPENAI_API_KEY", "test-placeholder-never-sent");
+    const fetch = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Network forbidden in asset regression"));
+    try {
+      const request = () => new Request("http://localhost/api/initiatives/test/draft-run", {
+        method: "POST", headers: bearer(token, "11.7.0.1"), body: JSON.stringify({ domains: ["legal"] }),
+      });
+      const response = await POST(request(), { params: Promise.resolve({ id }) });
+      expect(response.status).toBe(503);
+      expect(await response.json()).toEqual({ error: "Agent runtime could not initialize. Check the deployed prompts and policies.", code: "AGENT_INITIALIZATION_FAILED" });
+      const missing = await POST(request(), { params: Promise.resolve({ id: "unknown" }) });
+      expect(missing.status).toBe(404);
+      expect(await missing.json()).toEqual({ error: "initiative or review cycle not found" });
+    } finally {
+      cwd.mockRestore();
+      fetch.mockRestore();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("429s when configured Agents SDK deep review needs a 10x reserve", async () => {
     process.env.JEEVES_DEEP_REVIEW = "1";
+    vi.stubEnv("OPENAI_API_KEY", "test-placeholder-never-sent");
+    vi.stubEnv("JEEVES_AGENT_RUNTIME", "agents-sdk");
     await leaveHeadroom(STANDARD_RESERVE * 4);
     const { id, token } = await triagedInitiative("11.6.0.1");
     expect(await draftRun(id, token, "11.6.0.1")).toBe(429);
@@ -677,6 +726,24 @@ describe("POST /api/reviews/[cycleId]/[domain]/run — on-demand agent run", () 
     const json = await res.json();
     expect(json.status).toBe("drafted");
     expect(json.draftMd).toBeTruthy();
+  });
+
+  it("returns a safe 503 when an authorized reviewer's agent cannot initialize", async () => {
+    const { cycleId, workspaceCookie } = await setUpCycle("21.8.0.1");
+    const { token } = await issueSessionInWorkspace("elena-vasquez", workspaceCookie);
+    const { POST } = await import("../reviews/[cycleId]/[domain]/run/route");
+    const factory = vi.spyOn(agentsModule, "getAgentPort").mockImplementationOnce(() => {
+      throw new AgentInitializationError(new Error("ENOENT /private/build/prompts"));
+    });
+    try {
+      const response = await POST(new Request(`http://localhost/api/reviews/${cycleId}/clinical-safety/run`, {
+        method: "POST", headers: bearer(token, "21.8.0.2"),
+      }), { params: Promise.resolve({ cycleId, domain: "clinical-safety" }) });
+      expect(response.status).toBe(503);
+      expect(await response.json()).toEqual({ error: "Agent runtime could not initialize. Check the deployed prompts and policies.", code: "AGENT_INITIALIZATION_FAILED" });
+    } finally {
+      factory.mockRestore();
+    }
   });
 
   it("403s when a reviewer runs a domain they are not assigned to", async () => {

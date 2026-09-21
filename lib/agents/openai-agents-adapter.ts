@@ -33,26 +33,17 @@
  *   - The five error classes above are real constructors usable with
  *     `instanceof` (confirmed in agents-core/dist/errors.d.ts).
  *
- * Provider-agnostic logic (instruction-file loading, deterministic tier/
- * domain helpers, pre-call validation, the five prompt builders, and the
+ * Provider-agnostic logic (instruction-file loading,
+ * domain helpers, pre-call validation, the prompt builders, and the
  * provider-agnostic slice of the PortFailure mapping contract) is reused
  * verbatim from `./adapter-shared` — see that module's doc comment. This
  * file keeps only what is genuinely OpenAI-Agents-SDK-specific: `Agent`
  * construction, `run()` invocation/cancellation/timeout racing, this SDK's
  * own error-type mapping, and the deep-review (policy-corpus tool use) path.
  *
- * Model routing (env-overridable):
- *   checkCompleteness, intakeInterview, triageAssist, auditorAnswer
- *     -> `OPENAI_LUNA_MODEL` (default "gpt-5.6-luna")
- *   draftReview
- *     -> `OPENAI_TERRA_MODEL` (default "gpt-5.6-terra")
- * Luna is the high-volume/latency-sensitive model: checkCompleteness,
- * intakeInterview, triageAssist, and auditorAnswer are all called
- * synchronously from user-facing request paths (intake chat, the triage
- * explainer, the audit chat) where demo latency is directly felt. Terra is
- * reserved for draftReview, the one call that is genuinely nuanced,
- * policy-grounded drafting work (and, in deep mode, multi-turn tool use) —
- * worth the extra latency budget the other four methods can't afford.
+ * Model routing (env-overridable): intakeInterview and auditorAnswer use
+ * OPENAI_LUNA_MODEL; draftReview uses OPENAI_TERRA_MODEL. Deep review adds
+ * bounded, read-only policy tools to the same application-owned draft call.
  *
  * Reasoning effort defaults to `OPENAI_REASONING_EFFORT ?? "low"` (falling
  * back to "low" on an unrecognised value rather than crashing) for the same
@@ -80,36 +71,31 @@ import {
   setTracingDisabled,
 } from "@openai/agents";
 import type { ModelSettings, Tool } from "@openai/agents";
+import { resolveAgentRuntimeConfig } from "./runtime";
 import {
   auditorAnswerOutputSchema,
   intakeInterviewOutputSchema,
   mapReviewerDraftToPortOutput,
   reviewerDraftOutputSchema,
-  triageRationaleOutputSchema,
 } from "./schemas";
 import {
   KNOWN_DOMAINS,
   buildAuditorPrompt,
-  buildCompletenessPrompt,
   buildDraftReviewPrompt,
   buildIntakeInterviewPrompt,
-  buildTriagePrompt,
   cancelledFailure,
-  completenessPortShapeSchema,
   isAbortError,
   loadInstructions,
   mapModelOutputSchemaFailure,
   providerFailure,
-  timeoutFailure,
   validateDraftReviewInput,
 } from "./adapter-shared";
 import { createPolicyCorpusTools } from "./policy-corpus";
+import { invokeWithDeadline } from "./invoke";
 import type {
   AgentPort,
   AuditorAnswerInput,
   AuditorAnswerOutput,
-  CompletenessCheckInput,
-  CompletenessCheckOutput,
   DraftReviewInput,
   DraftReviewOutput,
   GovernanceDomain,
@@ -118,21 +104,11 @@ import type {
   InvokeOptions,
   PortFailure,
   PortResult,
-  TriageAssistInput,
-  TriageAssistOutput,
 } from "./ports";
 
 /* -------------------------------------------------------------------------
  * Model routing + reasoning effort
  * ---------------------------------------------------------------------- */
-
-function lunaModelId(): string {
-  return process.env.OPENAI_LUNA_MODEL ?? "gpt-5.6-luna";
-}
-
-function terraModelId(): string {
-  return process.env.OPENAI_TERRA_MODEL ?? "gpt-5.6-terra";
-}
 
 type ReasoningEffort = NonNullable<ModelSettings["reasoning"]>["effort"];
 
@@ -176,7 +152,7 @@ export type AgentsRunFn = (
  * Error mapping (this adapter's own provider-error-type mapping — see
  * ./adapter-shared's doc comment on the PortFailure mapping CONTRACT: each
  * adapter owns this, but must produce the same shapes via the shared
- * providerFailure/cancelledFailure/timeoutFailure constructors).
+ * providerFailure/cancelledFailure constructors).
  * ---------------------------------------------------------------------- */
 
 /**
@@ -316,41 +292,15 @@ export function createOpenAiAgentsAdapterWithRunner(
   const modelSettings: ModelSettings = {
     reasoning: { effort: resolveReasoningEffort() },
   };
-  const luna = lunaModelId();
-  const terra = terraModelId();
+  // The directly injected runner still executes the Agents SDK adapter even
+  // when the deployment selector is unset in a unit test.
+  const runtime = resolveAgentRuntimeConfig({ ...process.env, JEEVES_AGENT_RUNTIME: "agents-sdk" });
+  const luna = runtime.chatModel;
+  const terra = runtime.reviewerModel;
   // Read once at adapter creation, same as the model-id/reasoning-effort env
   // reads above — a given adapter instance's deep-review behavior is fixed
   // for its lifetime, not re-checked per call.
   const deepReviewEnabled = process.env.JEEVES_DEEP_REVIEW === "1";
-
-  /* -----------------------------------------------------------------------
-   * Agents built ONCE at adapter creation, not per call (task brief). The
-   * four domain-invariant methods get exactly one Agent each. draftReview's
-   * system prompt varies per domain (reviewer shared instructions + a
-   * per-domain track overlay), so it gets one Agent per known
-   * GovernanceDomain, built once here from the same
-   * `instructions.reviewerShared`/`instructions.reviewerTracks` fields
-   * `./adapter-shared`'s `buildDraftReviewPrompt` itself joins — kept in
-   * lockstep by construction (same two fields, same join), not by calling
-   * that per-call helper at creation time just to throw its `prompt` half
-   * away.
-   * -------------------------------------------------------------------- */
-
-  const triageAgent = new Agent({
-    name: "jeeves-triage",
-    instructions: instructions.triage,
-    model: luna,
-    modelSettings,
-    outputType: triageRationaleOutputSchema,
-  });
-
-  const completenessAgent = new Agent({
-    name: "jeeves-completeness",
-    instructions: instructions.completeness,
-    model: luna,
-    modelSettings,
-    outputType: completenessPortShapeSchema,
-  });
 
   const auditorAgent = new Agent({
     name: "jeeves-auditor",
@@ -393,13 +343,7 @@ export function createOpenAiAgentsAdapterWithRunner(
     );
   }
 
-  /* -----------------------------------------------------------------------
-   * Shared call plumbing: cancellation/timeout racing + error mapping,
-   * mirroring openai-adapter.ts's `callStructured` precedence rules exactly
-   * (an explicit user abort is always `cancelled`, even when a deadline was
-   * also set; only a deadline-triggered abort is `timeout`).
-   * -------------------------------------------------------------------- */
-
+  /** SDK-specific invocation; the shared runner owns its terminal outcome. */
   async function callAgent(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     agent: Agent<any, any>,
@@ -407,80 +351,22 @@ export function createOpenAiAgentsAdapterWithRunner(
     options: InvokeOptions | undefined,
     runOptions: { readonly maxTurns?: number } = {},
   ): Promise<PortResult<unknown>> {
-    if (options?.signal?.aborted) {
-      return { ok: false, error: cancelledFailure() };
-    }
-
-    const startedAt = Date.now();
-    const timeoutMs = options?.timeoutMs;
-
-    const controller = new AbortController();
-    const onUserAbort = () => controller.abort();
-    options?.signal?.addEventListener("abort", onUserAbort, { once: true });
-
-    let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
-    let timedOut = false;
-
-    const buildTimeoutResult = (): PortResult<unknown> => ({
-      ok: false,
-      error: timeoutFailure(timeoutMs as number, Date.now() - startedAt),
-    });
-
-    try {
-      const call = runFn(agent, userPrompt, {
-        signal: controller.signal,
-        maxTurns: runOptions.maxTurns,
-      });
-
-      // Race the call against the deadline rather than trusting the runner
-      // to honor the abort — a hung run (or a fake runFn that never
-      // settles) must still time out from the caller's perspective.
-      const raced =
-        timeoutMs === undefined
-          ? await call
-          : await Promise.race([
-              call,
-              new Promise<"deadline">((resolve) => {
-                deadlineTimer = setTimeout(() => {
-                  timedOut = true;
-                  controller.abort();
-                  resolve("deadline");
-                }, timeoutMs);
-              }),
-            ]);
-
-      if (raced === "deadline") {
-        // Detach the aborted in-flight call so its eventual rejection does
-        // not surface as an unhandled rejection.
-        call.catch(() => {});
-        return buildTimeoutResult();
-      }
-
-      return { ok: true, value: raced.finalOutput };
-    } catch (err) {
-      // Precedence: an explicit user abort is `cancelled` even when a
-      // deadline was also set; only a deadline-triggered abort is `timeout`.
-      if (options?.signal?.aborted) {
-        return { ok: false, error: cancelledFailure() };
-      }
-      if (timedOut) {
-        return buildTimeoutResult();
-      }
-      return {
-        ok: false,
-        error: mapAgentsErrorToPortFailure(err, runOptions.maxTurns),
-      };
-    } finally {
-      if (deadlineTimer !== undefined) {
-        clearTimeout(deadlineTimer);
-      }
-      options?.signal?.removeEventListener("abort", onUserAbort);
-    }
+    return invokeWithDeadline(
+      async (signal) => {
+        const result = await runFn(agent, userPrompt, {
+          signal,
+          maxTurns: runOptions.maxTurns,
+        });
+        return result.finalOutput;
+      },
+      (error) => mapAgentsErrorToPortFailure(error, runOptions.maxTurns),
+      options,
+    );
   }
 
   /**
    * The deep-review path builds its Agent (and its tools) fresh per call,
-   * unlike the five standard-mode Agents above. Documented judgment call:
+   * unlike the standard-mode Agents above. Documented judgment call:
    * `createPolicyCorpusTools`'s `onRead` callback must be able to name
    * *this* call's `invocationId`/`onProgress` in each "reading-policy"
    * event it emits. Baking a single shared deep-review Agent (and its tools)
@@ -528,27 +414,10 @@ export function createOpenAiAgentsAdapterWithRunner(
       return result;
     }
 
-    // Deep mode differs from every other schema-mismatch case in this
-    // adapter (which map to kind:"provider", see mapModelOutputSchemaFailure
-    // above): here the agent was explicitly instructed (DEEP_REVIEW_TAIL) to
-    // emit ONLY conformant JSON as its final message, so a non-conforming
-    // final message is a contract violation on OUR prompt's own terms, not
-    // an ordinary model-output quality issue — we surface it distinctly as
-    // kind:"validation" with the Zod issue paths, per the task brief.
     const candidate = coerceDeepReviewOutput(result.value);
     const parsed = reviewerDraftOutputSchema.safeParse(candidate);
     if (!parsed.success) {
-      return {
-        ok: false,
-        error: {
-          kind: "validation",
-          message:
-            "Deep-review agent's final message did not conform to ReviewerDraftOutput.",
-          issues: parsed.error.issues.map((issue) =>
-            issue.path.length > 0 ? issue.path.join(".") : "(root)",
-          ),
-        },
-      };
+      return { ok: false, error: mapModelOutputSchemaFailure(parsed.error) };
     }
 
     return {
@@ -611,71 +480,6 @@ export function createOpenAiAgentsAdapterWithRunner(
         ok: true,
         value: mapReviewerDraftToPortOutput(input.domain, parsed.data),
       };
-    },
-
-    async triageAssist(
-      input: TriageAssistInput,
-      options?: InvokeOptions,
-    ): Promise<PortResult<TriageAssistOutput>> {
-      const {
-        prompt: userPrompt,
-        computedTier,
-      } = buildTriagePrompt(instructions, input);
-
-      options?.onProgress?.({
-        invocationId: `openai-agents-triage-${input.intake.intakeVersionId}`,
-        stage: "explaining",
-        at: new Date().toISOString(),
-      });
-
-      const result = await callAgent(triageAgent, userPrompt, options);
-      if (!result.ok) {
-        return result;
-      }
-
-      const parsed = triageRationaleOutputSchema.safeParse(result.value);
-      if (!parsed.success) {
-        return { ok: false, error: mapModelOutputSchemaFailure(parsed.error) };
-      }
-
-      // agents/triage/instructions.md hard rule: the model never computes a
-      // tier — suggestedTier always comes from OUR deterministic input, never
-      // from model output.
-      return {
-        ok: true,
-        value: {
-          suggestedTier: computedTier,
-          rationale: parsed.data.rationaleMd,
-          signals: parsed.data.flagExplanations.map((f) => f.flag),
-        },
-      };
-    },
-
-    async checkCompleteness(
-      input: CompletenessCheckInput,
-      options?: InvokeOptions,
-    ): Promise<PortResult<CompletenessCheckOutput>> {
-      const { prompt: userPrompt } = buildCompletenessPrompt(
-        instructions,
-        input,
-      );
-
-      options?.onProgress?.({
-        invocationId: `openai-agents-completeness-${input.intake.intakeVersionId}`,
-        stage: "checking",
-        at: new Date().toISOString(),
-      });
-
-      const result = await callAgent(completenessAgent, userPrompt, options);
-      if (!result.ok) {
-        return result;
-      }
-
-      const parsed = completenessPortShapeSchema.safeParse(result.value);
-      if (!parsed.success) {
-        return { ok: false, error: mapModelOutputSchemaFailure(parsed.error) };
-      }
-      return { ok: true, value: parsed.data };
     },
 
     async auditorAnswer(

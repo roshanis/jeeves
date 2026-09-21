@@ -14,6 +14,10 @@ All data fictional. Generation rules: fixed PRNG seed `"meridian-2026"`, fixed b
 | Marcus Webb | Reviewer — Privacy/HIPAA | |
 | Sofia Grant | Reviewer — Responsible AI | Authors the returned review on #9 |
 | James Liu | Reviewer — Legal | |
+| Devon Clarke | Reviewer — Security | Fictional domain reviewer |
+| Wei Zhang | Reviewer — Tech Architecture | Fictional domain reviewer |
+| Grace Kim | Reviewer — Data Governance | Fictional domain reviewer |
+| Tom Brennan | Reviewer — Procurement | Fictional domain reviewer |
 | Angela Torres | **Accountable approver** (VP, AI Governance) | Named on all approvals incl. fast-lane policy |
 | Ray Chen | Admin (Platform) | The two live admin actions; CANNOT approve/sign (separation of duties) |
 | Nia Okafor | Program office | Owns SLA/pipeline views |

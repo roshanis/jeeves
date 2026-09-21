@@ -31,9 +31,9 @@ function jsonResponse(status: number, body: unknown): Response {
   });
 }
 
-function renderChip() {
+function renderChip(liveModeAvailable = true) {
   return renderWithProviders(
-    <LiveSessionProvider>
+    <LiveSessionProvider liveModeAvailable={liveModeAvailable}>
       <DemoModeChip />
     </LiveSessionProvider>,
   );
@@ -53,6 +53,36 @@ function openDialogAndFill(passcode: string, personaKey = "priya-raman") {
 }
 
 describe("DemoModeChip", () => {
+  it("explains read-only preview mode without offering an unusable passcode form", () => {
+    renderChip(false);
+    fireEvent.click(screen.getByRole("button", { name: "Read-only preview" }));
+    expect(screen.getByRole("dialog", { name: "Explore the read-only preview" })).toBeTruthy();
+    expect(screen.getByText(/preview is read-only/)).toBeTruthy();
+    expect(screen.queryByLabelText("Demo passcode")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Enter live mode" })).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("does not read or delete a stored live session while showing a preview", () => {
+    const saved = JSON.stringify({ token: "tok-live", workspaceId: "ws-1", expiresAt: Date.now() + 60_000, personaKey: "priya-raman", personaLabel: "Priya Raman", role: "requester" });
+    sessionStorage.setItem("jeeves_live_session", saved);
+    const getItem = vi.spyOn(Storage.prototype, "getItem");
+    renderChip(false);
+    expect(screen.getByRole("button", { name: "Read-only preview" })).toBeTruthy();
+    expect(screen.queryByText("Live demo (session workspace)")).toBeNull();
+    expect(getItem).not.toHaveBeenCalledWith("jeeves_live_session");
+    expect(sessionStorage.getItem("jeeves_live_session")).toBe(saved);
+    getItem.mockRestore();
+  });
+
+  it("shows the server's preview limitation if live mode becomes unavailable", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(403, { error: "This preview is read-only. Open an interactive demo workspace to save changes." }));
+    renderChip();
+    openDialogAndFill("correct-pass");
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveProperty("textContent", "This preview is read-only. Open an interactive demo workspace to save changes."));
+    expect(screen.getByText("Read-only (public)")).toBeTruthy();
+  });
+
   it("starts in read-only mode", () => {
     renderChip();
     expect(screen.getByText("Read-only (public)")).toBeTruthy();

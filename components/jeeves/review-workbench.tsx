@@ -5,8 +5,7 @@
 // domain-review actions (hidden for Admin,
 // disabled-with-tooltip without a live session — see role-gate.tsx).
 //
-// Live mode: for an initiative created during this live demo session (the
-// live registry knows its cycleId), a reviewer-role session gets an
+// Live mode: the server-scoped review supplies its exact cycle; an assigned reviewer gets an
 // EDITABLE assessment textarea and working Sign (submits the edited draft)
 // and Return (mandatory-reason dialog) actions against the real API.
 import * as React from "react";
@@ -51,7 +50,6 @@ import {
   isApiError,
   runReviewAgent,
 } from "@/lib/client/api";
-import { useLiveInfo } from "@/lib/client/use-live-info";
 import { useLiveSessionOptional } from "@/lib/client/session-context";
 import {
   getReviewActionEligibility,
@@ -63,6 +61,7 @@ export interface ReviewQueueRow {
   slug: string;
   title: string;
   tier: Tier;
+  isSeeded?: boolean;
   review: ReviewRow;
 }
 
@@ -99,20 +98,35 @@ function DomainIcon({ domain, className }: { domain: Domain; className?: string 
   return <Icon className={className} aria-hidden />;
 }
 
-export function ReviewWorkbench({ rows }: { rows: ReviewQueueRow[] }) {
+export interface ReviewSelection {
+  slug: string;
+  domain: Domain;
+}
+
+export function ReviewWorkbench({ rows, selection, onSelectionChange }: {
+  rows: ReviewQueueRow[];
+  /** The route owns selection, including copied links and Back/Forward. */
+  selection?: ReviewSelection | null;
+  onSelectionChange?: (selection: ReviewSelection | null) => void;
+}) {
   const { reviewerDomain } = useRole();
   const live = useLiveSessionOptional();
   const sessionKey = live?.session?.token ?? "public";
-  const [selected, setSelected] = React.useState<{ slug: string; domain: Domain } | null>(null);
-  const [drafts, setDrafts] = React.useState<Record<string, string>>({});
-  const [queueOpen, setQueueOpen] = React.useState(true);
+  const [localSelection, setLocalSelection] = React.useState<ReviewSelection | null>(null);
+  const selected = selection === undefined ? localSelection : selection;
+  const selectReview = onSelectionChange ?? setLocalSelection;
+  const [drafts, setDrafts] = React.useState<Record<string, {
+    text: string;
+    expectedDraftToken: string | undefined;
+  }>>({});
+  const [queueOpen, setQueueOpen] = React.useState(!selection);
   const [override, setOverride] = React.useState<Domain | "all" | null>(null);
   // Queue aging clock — null on server/first render (placeholder), then the
   // cached client time. See useClientNow above for the hydration rationale.
   const nowMs = useClientNow();
 
-  const effectiveFilter = override ?? reviewerDomain ?? "all";
-  const isPersonaDefault = override === null && reviewerDomain !== null;
+  const effectiveFilter = selected?.domain ?? override ?? reviewerDomain ?? "all";
+  const isPersonaDefault = !selected && override === null && reviewerDomain !== null;
 
   const presentDomains = DOMAIN_ORDER.filter((d) =>
     rows.some((row) => row.review.domain === d),
@@ -154,7 +168,7 @@ export function ReviewWorkbench({ rows }: { rows: ReviewQueueRow[] }) {
             <div className="flex flex-wrap items-center gap-1.5">
               <button
                 type="button"
-                onClick={() => setOverride("all")}
+                onClick={() => { setOverride("all"); selectReview(null); }}
                 aria-pressed={effectiveFilter === "all"}
                 className={`touch-min rounded-md px-3 py-1.5 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background ${
                   effectiveFilter === "all"
@@ -181,7 +195,7 @@ export function ReviewWorkbench({ rows }: { rows: ReviewQueueRow[] }) {
                   <button
                     key={domain}
                     type="button"
-                    onClick={() => setOverride(domain)}
+                    onClick={() => { setOverride(domain); selectReview(null); }}
                     aria-pressed={isActive}
                     className={`touch-min rounded-md px-3 py-1.5 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background ${
                       isActive
@@ -237,7 +251,7 @@ export function ReviewWorkbench({ rows }: { rows: ReviewQueueRow[] }) {
                     <button
                       type="button"
                       onClick={() => {
-                        setSelected({ slug: row.slug, domain: row.review.domain });
+                        selectReview({ slug: row.slug, domain: row.review.domain });
                         setQueueOpen(false);
                       }}
                       aria-label={`Open ${DOMAIN_LABEL[row.review.domain]} review for ${row.title}`}
@@ -313,23 +327,38 @@ export function ReviewWorkbench({ rows }: { rows: ReviewQueueRow[] }) {
               evidenceCycleId={cycleId}
               cycleChanged={cycleChanged}
               editedText={
-                drafts[draftKey] ??
+                drafts[draftKey]?.text ??
                 visibleSelected.review.draftMd ??
                 ""
               }
+              expectedDraftToken={drafts[draftKey]
+                ? drafts[draftKey].expectedDraftToken
+                : visibleSelected.review.draftToken}
               onEditedTextChange={(value) =>
                 setDrafts((current) => ({
                   ...current,
-                  [draftKey]: value,
+                  [draftKey]: {
+                    text: value,
+                    expectedDraftToken: current[draftKey]
+                      ? current[draftKey].expectedDraftToken
+                      : visibleSelected.review.draftToken,
+                  },
                 }))
               }
+              onLoadCurrentDraft={() => setDrafts((current) => {
+                const next = { ...current };
+                delete next[draftKey];
+                return next;
+              })}
             />
             )}
           </ReviewEvidenceWorkspace>
         </div>
       ) : (
         <p className="rounded-lg border border-dashed bg-muted/30 px-4 py-8 text-center text-sm text-muted-foreground">
-          {rows.length === 0
+          {selected
+            ? "This review is not available in the current workspace. Choose a review from the queue."
+            : rows.length === 0
             ? "Nothing is awaiting signature. Drafts that have not started remain available from the initiative’s Reviews tab."
             : "Select a review to inspect its evidence, verify the sources, and record your assessment."}
         </p>
@@ -345,14 +374,18 @@ export function ReviewWorkbench({ rows }: { rows: ReviewQueueRow[] }) {
 function AssessmentPane({
   row,
   editedText,
+  expectedDraftToken,
   onEditedTextChange,
+  onLoadCurrentDraft,
   signingBlock,
   evidenceCycleId,
   cycleChanged,
 }: {
   row: ReviewQueueRow;
   editedText: string;
+  expectedDraftToken: string | undefined;
   onEditedTextChange: (value: string) => void;
+  onLoadCurrentDraft: () => void;
   signingBlock: string | null;
   evidenceCycleId: string | null;
   cycleChanged: boolean;
@@ -360,12 +393,16 @@ function AssessmentPane({
   const router = useRouter();
   const live = useLiveSessionOptional();
   const session = live?.session ?? null;
-  const liveInfo = useLiveInfo(row.slug);
-  const cycleId = cycleChanged ? null : row.review.cycleId ?? evidenceCycleId ?? liveInfo?.cycleId ?? null;
+  const cycleId = cycleChanged || row.isSeeded === true ? null : row.review.cycleId ?? evidenceCycleId ?? null;
 
   const [pending, setPending] = React.useState(false);
   const [running, setRunning] = React.useState(false);
   const [returnOpen, setReturnOpen] = React.useState(false);
+  const mounted = React.useRef(false);
+  React.useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
 
   const eligibility = getReviewActionEligibility(
     session,
@@ -375,29 +412,32 @@ function AssessmentPane({
   );
   const alreadySigned = row.review.status === "signed";
   const hasDraft = Boolean(row.review.draftMd);
+  const sourceChanged = !alreadySigned && expectedDraftToken !== row.review.draftToken;
 
   async function handleRunAgent() {
     if (!session || !cycleId) return;
     setRunning(true);
     try {
       const res = await runReviewAgent(session.token, cycleId, row.review.domain);
+      if (!mounted.current) return;
       if (res.status === "drafted") {
-        if (res.draftMd) onEditedTextChange(res.draftMd);
+        onLoadCurrentDraft();
         toast.success(`${DOMAIN_LABEL[row.review.domain]} agent drafted a fresh assessment.`);
       } else {
         toast.error(`Agent run failed: ${res.error ?? "unknown error"}`);
       }
       router.refresh();
     } catch (err) {
+      if (!mounted.current) return;
       toast.error(isApiError(err) ? apiErrorToMessage(err) : "Agent run failed.");
       if (isApiError(err) && err.status === 401) live?.logout();
     } finally {
-      setRunning(false);
+      if (mounted.current) setRunning(false);
     }
   }
 
   async function handleSign() {
-    if (!session || !cycleId || signingBlock || pending || running) return;
+    if (!session || !cycleId || !expectedDraftToken || sourceChanged || signingBlock || pending || running) return;
     setPending(true);
     try {
       await performReviewMutation(
@@ -406,17 +446,25 @@ function AssessmentPane({
         row.review.domain,
         {
           kind: "sign",
+          expectedDraftToken,
           editedDraftMd:
             editedText !== (row.review.draftMd ?? "") ? editedText : undefined,
         },
       );
+      if (!mounted.current) return;
       toast.success(`${DOMAIN_LABEL[row.review.domain]} review signed.`);
       router.refresh();
     } catch (err) {
-      toast.error(isApiError(err) ? apiErrorToMessage(err) : "Sign failed.");
+      if (!mounted.current) return;
+      if (isApiError(err) && err.status === 409) {
+        toast.error("This review changed. Compare the refreshed draft before signing again; your edits are preserved.");
+        router.refresh();
+      } else {
+        toast.error(isApiError(err) ? apiErrorToMessage(err) : "Sign failed.");
+      }
       if (isApiError(err) && err.status === 401) live?.logout();
     } finally {
-      setPending(false);
+      if (mounted.current) setPending(false);
     }
   }
 
@@ -428,14 +476,16 @@ function AssessmentPane({
         kind: "return",
         reason,
       });
+      if (!mounted.current) return;
       setReturnOpen(false);
       toast.success(`${DOMAIN_LABEL[row.review.domain]} review returned.`);
       router.refresh();
     } catch (err) {
+      if (!mounted.current) return;
       toast.error(isApiError(err) ? apiErrorToMessage(err) : "Return failed.");
       if (isApiError(err) && err.status === 401) live?.logout();
     } finally {
-      setPending(false);
+      if (mounted.current) setPending(false);
     }
   }
 
@@ -455,7 +505,7 @@ function AssessmentPane({
             <button
               type="button"
               onClick={() => void handleRunAgent()}
-              disabled={running || alreadySigned}
+              disabled={running || pending || alreadySigned}
               data-slot="run-agent-button"
               className="inline-flex items-center justify-center gap-2 rounded-md border px-3 py-2 text-sm font-medium text-primary transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
             >
@@ -473,18 +523,22 @@ function AssessmentPane({
           className="min-h-56 w-full rounded-md border border-input bg-transparent p-3 text-sm leading-relaxed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
           value={editedText}
           onChange={(e) => onEditedTextChange(e.target.value)}
-          disabled={!eligibility.canEdit}
+          disabled={!eligibility.canEdit || pending || running}
           maxLength={20_000}
           aria-label="Assessment text"
           data-slot="assessment-textarea"
         />
+        {sourceChanged ? <div role="status" className="space-y-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
+          <p>The source draft changed. Your edits are preserved, but signing is blocked until you review the current draft.</p>
+          <button type="button" onClick={onLoadCurrentDraft} className="min-h-11 font-medium underline underline-offset-4">Discard edits and load current draft</button>
+        </div> : null}
         {signingBlock && !alreadySigned ? <p role="status" className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">{signingBlock}</p> : null}
         {alreadySigned ? <p className="rounded-lg border bg-muted/30 p-3 text-sm">Signed by {row.review.reviewer ?? "the assigned reviewer"}{row.review.signedAt ? ` on ${row.review.signedAt.slice(0, 10)}` : ""}. This domain review is read-only.</p> : null}
         <div className="flex flex-wrap gap-2">
           <GatedActionButton
             label="Sign"
             requiresRole="reviewer"
-            pending={pending || running || Boolean(signingBlock)}
+            pending={pending || running || Boolean(signingBlock) || sourceChanged || !expectedDraftToken}
             pendingLabel={pending ? "Signing…" : "Sign"}
             onAction={eligibility.canSignOrReturn ? () => void handleSign() : undefined}
           />

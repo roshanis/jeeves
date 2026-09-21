@@ -8,7 +8,6 @@ import {
   sessions,
 } from "@/lib/db/schema";
 import { CHAMPION_PREFILL_PAYLOAD } from "@/lib/intake/champion-prefill";
-import { resetGuardStateForTests } from "@/lib/services/route-guard";
 import { seedDatabase } from "@/scripts/seed";
 
 let testDb: TestDb;
@@ -29,7 +28,6 @@ beforeEach(async () => {
   process.env.JEEVES_COOKIE_SECRET = "workspace-authz-route-secret";
   testDb = await createTestDb();
   await seedDatabase(testDb);
-  resetGuardStateForTests();
 });
 
 afterEach(async () => {

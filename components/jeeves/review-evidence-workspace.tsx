@@ -181,7 +181,7 @@ function EvidenceWorkspace({ slug, domain, citations, reviewStatus, reviewCycleI
     </div> : null}
     {error ? <div role="alert" className="space-y-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
       <div className="flex flex-wrap items-center gap-3"><AlertCircle className="size-4 shrink-0" aria-hidden /><p className="min-w-0 flex-1">{error}</p><Button variant="outline" size="sm" onClick={refresh} disabled={loading || pending}>Retry evidence</Button></div>
-      <p className="text-xs leading-relaxed"><Link href={`/initiatives/${encodeURIComponent(slug)}?tab=reviews`} className="font-medium underline underline-offset-4">Open initiative reviews</Link> to retry your domain review there. All evidence and sign-off requirements still apply.</p>
+      <p className="text-xs leading-relaxed"><Link href={evidenceHref} className="font-medium underline underline-offset-4">Open initiative evidence</Link> to inspect submitted packets and history. Retry evidence here before signing.</p>
     </div> : null}
     {notice ? <p role="status" className="text-sm text-primary">{notice}</p> : null}
     <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(12rem,0.8fr)_minmax(0,1.45fr)_minmax(0,1fr)]" data-slot="review-columns">

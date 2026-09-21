@@ -2,17 +2,13 @@ import { describe, expect, it } from "vitest";
 import {
   buildMockReviewerDraft,
   createMockAgentPort,
-  generateMockIncidentSummary,
-  generateMockTriageRationale,
 } from "@/lib/agents/mock-adapter";
 import type {
   AuditorAnswerInput,
-  CompletenessCheckInput,
   DraftReviewInput,
   GovernanceDomain,
   IntakeInterviewInput,
   IntakeSnapshot,
-  TriageAssistInput,
 } from "@/lib/agents/ports";
 
 /** Real citation anchors per domain (docs/policies/INDEX.md), keyed by
@@ -125,24 +121,6 @@ describe("createMockAgentPort — determinism and AgentPort contract", () => {
     expect(first).toEqual(second);
   });
 
-  it("triageAssist: same input -> deep-equal output across 2 calls", async () => {
-    const input: TriageAssistInput = {
-      intake: intake({ phi: true, careCoverageInfluence: true }),
-    };
-    const first = await port.triageAssist(input);
-    const second = await port.triageAssist(input);
-    expect(first).toEqual(second);
-  });
-
-  it("checkCompleteness: same input -> deep-equal output across 2 calls", async () => {
-    const input: CompletenessCheckInput = {
-      intake: intake({ retentionIntent: "<=1 year" }),
-    };
-    const first = await port.checkCompleteness(input);
-    const second = await port.checkCompleteness(input);
-    expect(first).toEqual(second);
-  });
-
   it("draftReview never emits an approval — recommendation matches /^recommend-/", async () => {
     const result = await port.draftReview(draftInput("clinical-safety"));
     expect(result.ok).toBe(true);
@@ -177,26 +155,6 @@ describe("createMockAgentPort — determinism and AgentPort contract", () => {
     controller.abort();
     const result = await promise;
     expect(result).toEqual({ ok: false, error: { kind: "cancelled" } });
-  });
-
-  it("checkCompleteness flags missing retention answer", async () => {
-    const result = await port.checkCompleteness({ intake: intake({}) });
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.value.complete).toBe(false);
-      expect(result.value.missingFields).toContain("retentionIntent");
-    }
-  });
-
-  it("checkCompleteness reports complete when retention answer is present", async () => {
-    const result = await port.checkCompleteness({
-      intake: intake({ retentionIntent: "<=1 year" }),
-    });
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.value.complete).toBe(true);
-      expect(result.value.missingFields).toEqual([]);
-    }
   });
 });
 
@@ -238,50 +196,6 @@ describe("createMockAgentPort — timeoutMs deadline (ports.ts InvokeOptions)", 
       ok: false,
       error: { kind: "cancelled" },
     });
-  });
-});
-
-describe("generateMockTriageRationale — rich shape", () => {
-  it("is deterministic for the same input", () => {
-    const input: TriageAssistInput = {
-      intake: intake({ phi: true, careCoverageInfluence: true }),
-    };
-    expect(generateMockTriageRationale(input)).toEqual(
-      generateMockTriageRationale(input),
-    );
-  });
-
-  it("produces rationaleMd and flagExplanations", () => {
-    const result = generateMockTriageRationale({
-      intake: intake({ phi: true }),
-    });
-    expect(typeof result.rationaleMd).toBe("string");
-    expect(result.rationaleMd.length).toBeGreaterThan(0);
-    expect(Array.isArray(result.flagExplanations)).toBe(true);
-  });
-});
-
-describe("generateMockIncidentSummary — deterministic canned generator", () => {
-  it("is deterministic for the same input", () => {
-    const payload = {
-      controlId: "Q-01",
-      initiativeId: "init-1",
-      domain: "clinical-safety" as GovernanceDomain,
-    };
-    expect(generateMockIncidentSummary(payload)).toEqual(
-      generateMockIncidentSummary(payload),
-    );
-  });
-
-  it("produces the OpsMonitorIncidentOutput shape", () => {
-    const result = generateMockIncidentSummary({
-      controlId: "Q-01",
-      initiativeId: "init-1",
-      domain: "clinical-safety" as GovernanceDomain,
-    });
-    expect(typeof result.incidentSummaryMd).toBe("string");
-    expect(Array.isArray(result.suggestedScope)).toBe(true);
-    expect(typeof result.severityNote).toBe("string");
   });
 });
 

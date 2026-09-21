@@ -94,7 +94,8 @@ describe("lib/data/db-provider", () => {
       const details = await provider.listInitiativeDetails({ viewerWorkspaceId: null });
 
       expect(details).toHaveLength(12);
-      expect(select).toHaveBeenCalledTimes(11);
+      // Bound the query budget without fixing its exact implementation count.
+      expect(select.mock.calls.length).toBeLessThanOrEqual(11);
       expect(details.find((detail) => detail.summary.slug === "member-chat-copilot"))
         .toEqual(await provider.getInitiativeDetail("member-chat-copilot", { viewerWorkspaceId: null }));
       select.mockRestore();
@@ -238,8 +239,7 @@ describe("lib/data/db-provider", () => {
       expect(m.firstPassCompletenessPct).toBeGreaterThanOrEqual(55);
       expect(m.firstPassCompletenessPct).toBeLessThanOrEqual(65);
       // Drafted-vs-scratch estimate at ~4h/review.
-      expect(m.reviewerHoursSaved).toBeGreaterThan(0);
-      expect(m.reviewerHoursSaved % 4).toBe(0);
+      expect(m.reviewerHoursSavedPerReview).toBe(4);
       // Evidence freshness 10/12 (#10 and #11 stale).
       expect(m.evidenceTotal).toBe(12);
       expect(m.evidenceFresh).toBe(10);

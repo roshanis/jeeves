@@ -26,6 +26,7 @@ import { evidenceForSignature, EvidenceError } from './evidence-service';
  * multi-statement writes throughout this file, which depend on that
  * transactional isolation being real, not simulated.
  */
+import { overlayFromStoredIntake } from "../intake/stored-overlay";
 import { createHash, randomUUID } from "node:crypto";
 import { and, eq, isNull } from "drizzle-orm";
 import type { Db } from "../db/client";
@@ -45,14 +46,16 @@ import {
 } from "../db/schema";
 import type { Actor, Domain, LifecycleState, OverlayFlags, Tier } from "../domain/types";
 import { transition, IllegalTransitionError, type AuditEventPayload } from "../lifecycle/transitions";
-import { runSingleDomainDraft } from "../workflow/review-run";
-import type { AgentPort } from "../agents/ports";
+import { runSingleDomainDraft, type RunSingleDomainResult } from "../workflow/review-run";
+import { reviewDraftToken, reviewSnapshotCondition } from "../workflow/review-draft-token";
+import type { AgentPort, InvokeOptions } from "../agents/ports";
 import { evaluateCompleteness } from "../intake/completeness";
 import type { IntakePayload } from "../intake/types";
 import { normalizeAdditionalAnswers } from "../intake/additional-questions";
 import { deriveTier } from "../triage/rules";
 import { requiredDomains } from "../triage/routing";
 import { fastLaneEligibility } from "../approval/eligibility";
+import { reviewDecisionReadiness } from "../approval/review-readiness";
 import { applicabilityApplies } from "./applicability";
 import { ACTOR_DIRECTORY, FAST_LANE_POLICY, SYSTEM_ACTOR, isPersonaKey, reviewerDomainFor } from "./actors";
 import { workspaceMismatch } from "./workspace-guard";
@@ -153,17 +156,6 @@ function canonicalJson(value: unknown): string {
       .join(",")}}`;
   }
   return JSON.stringify(value);
-}
-
-function overlayFromPayload(payload: IntakePayload): OverlayFlags {
-  return {
-    phi: payload.overlay.touchesPHI === true,
-    memberFacing: payload.overlay.memberFacing === true,
-    careCoverageInfluence: payload.overlay.careCoverageInfluence === true,
-    vendorHosted: payload.overlay.vendorHosted === true,
-    humanInLoop: payload.overlay.humanInTheLoop === true,
-    individualImpact: payload.overlay.individualImpact === true,
-  };
 }
 
 function slugify(title: string): string {
@@ -318,7 +310,7 @@ async function latestReviewCycle(
 ): Promise<typeof reviewCycles.$inferSelect | null> {
   const rows = await tx.select().from(reviewCycles).where(eq(reviewCycles.initiativeId, initiativeId));
   if (rows.length === 0) return null;
-  return rows.slice().sort((a, b) => b.openedAt.getTime() - a.openedAt.getTime())[0]!;
+  return rows.slice().sort((a, b) => b.openedAt.getTime() - a.openedAt.getTime() || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0))[0]!;
 }
 
 /* -------------------------------------------------------------------------
@@ -412,7 +404,7 @@ export async function createDraft(db: Db, input: CreateDraftInput): Promise<Crea
       initiativeId,
       version: 1,
       submitted: false,
-      fields: payload as unknown as Record<string, string | boolean | null>,
+      fields: payload,
       missing: completeness.gaps.map((g) => g.field),
       createdAt: ts,
     });
@@ -469,7 +461,7 @@ export async function updateIntakeDraft(
     const nextVersion = current.version + 1;
     const completeness = evaluateCompleteness(input.payload);
     const intakeVersionId = `iv-${randomUUID()}`;
-    await tx.insert(intakeVersions).values({ id: intakeVersionId, initiativeId: input.initiativeId, version: nextVersion, submitted: false, fields: input.payload as unknown as Record<string, string | boolean | null>, missing: completeness.gaps.map((g) => g.field), createdAt: new Date(nowTs()) });
+    await tx.insert(intakeVersions).values({ id: intakeVersionId, initiativeId: input.initiativeId, version: nextVersion, submitted: false, fields: input.payload, missing: completeness.gaps.map((g) => g.field), createdAt: new Date(nowTs()) });
     const initiativeUpdate = await tx.update(initiatives).set({ title: input.payload.basics.title, updatedAt: new Date(nowTs()) }).where(and(eq(initiatives.id, input.initiativeId), eq(initiatives.state, "intake_draft"))).returning();
     if (initiativeUpdate.length === 0) throw new ConflictError("intake is no longer editable");
     return { initiativeId: input.initiativeId, slug: initiative.slug, intakeVersionId, version: nextVersion, payload: input.payload };
@@ -614,7 +606,7 @@ export async function triage(
       throw new ValidationError("initiative has no intake version to triage");
     }
     const payload = intake.fields as unknown as IntakePayload;
-    const flags = overlayFromPayload(payload);
+    const flags = overlayFromStoredIntake(payload);
     const tier = deriveTier(flags);
     const domains = [...requiredDomains(tier, flags)].sort() as Domain[];
     const completeness = evaluateCompleteness(payload, tier);
@@ -807,276 +799,89 @@ function requireReviewerDomainMatch(actor: Actor, domain: Domain): void {
   }
 }
 
-export interface SignReviewResult {
-  cycleId: string;
-  domain: Domain;
-  status: "signed";
+/** Authorize and serialize review mutations with initiative approval/closure. */
+async function loadOpenReviewContext(tx: Tx, cycleId: string, domain: Domain, sessionWorkspaceId: string | null) {
+  const [reference] = await tx.select().from(reviewCycles).where(eq(reviewCycles.id, cycleId));
+  if (!reference) throw new NotFoundError("reviewDecision", `${cycleId}/${domain}`);
+  const initiative = await loadInitiativeOrThrow(tx, reference.initiativeId, true);
+  assertWorkspaceAccess(initiative.workspaceId, sessionWorkspaceId, "reviewDecision", `${cycleId}/${domain}`);
+  const [cycle] = await tx.select().from(reviewCycles).where(eq(reviewCycles.id, cycleId));
+  if (cycle!.closedAt) throw new ValidationError(`review cycle ${cycleId} is closed`);
+  const decision = await loadReviewDecisionOrThrow(tx, cycleId, domain);
+  return { decision, initiativeId: initiative.id };
 }
 
-/**
- * Reviewer signs off a domain's review, recording the edited draft
- * (`editedDraftMd`, defaulting to the existing draft when omitted) as the
- * signed content. Reviewer-only (SoD); does not by itself transition the
- * initiative lifecycle state — `decide()` closes out the initiative once
- * enough domains are signed, matching plan.md §5 (ReviewDecision is
- * per-domain, distinct from the initiative-level Decision).
- */
+export interface SignReviewResult { cycleId: string; domain: Domain; status: "signed" }
+
+/** Sign only content matching the server snapshot displayed by the browser. */
 export async function signReview(
-  db: Db,
-  cycleId: string,
-  domain: Domain,
-  actor: Actor,
-  sessionWorkspaceId: string | null,
-  editedDraftMd?: string,
+  db: Db, cycleId: string, domain: Domain, actor: Actor, sessionWorkspaceId: string | null,
+  editedDraftMd?: string, expectedDraftToken?: string,
 ): Promise<SignReviewResult> {
   requireReviewerRole(actor);
   requireReviewerDomainMatch(actor, domain);
   return db.transaction(async (tx) => {
-    const decision = await loadReviewDecisionOrThrow(tx, cycleId, domain);
-
-    // Resolve the owning initiative's workspace up front (also needed below
-    // for the audit event's initiativeId — one lookup, reused) and enforce
-    // workspace authorization BEFORE any business-logic validation.
-    const cycle = await tx.select().from(reviewCycles).where(eq(reviewCycles.id, cycleId));
-    const initiativeId = cycle[0]?.initiativeId ?? null;
-    if (initiativeId) {
-      const [initiative] = await tx
-        .select({ workspaceId: initiatives.workspaceId })
-        .from(initiatives)
-        .where(eq(initiatives.id, initiativeId)).for("update");
-      if (initiative) {
-        assertWorkspaceAccess(
-          initiative.workspaceId,
-          sessionWorkspaceId,
-          "reviewDecision",
-          `${cycleId}/${domain}`,
-        );
-      }
+    const { decision, initiativeId } = await loadOpenReviewContext(tx, cycleId, domain, sessionWorkspaceId);
+    if (expectedDraftToken !== undefined && expectedDraftToken !== reviewDraftToken(decision)) {
+      throw new ConflictError("The review draft changed. Refresh and review the current content before signing.");
     }
-
-    let evidenceSnapshot = null;
-    if (initiativeId) {
-      try { evidenceSnapshot = await evidenceForSignature(tx, initiativeId, cycleId, domain); }
-      catch (error) { if (error instanceof EvidenceError) throw new ValidationError(error.message); throw error; }
-    }
-
-    if (decision.status === "signed") {
-      throw new ValidationError(`review for ${domain} in cycle ${cycleId} is already signed`);
-    }
+    if (decision.status === "signed") throw new ValidationError(`review for ${domain} in cycle ${cycleId} is already signed`);
     const draftMd = editedDraftMd ?? decision.draftMd;
-    if (!draftMd) {
-      throw new ValidationError(`cannot sign ${domain} in cycle ${cycleId}: no draft content`);
-    }
-
-    // Compare-and-set (external-review finding #3): only write if the row's
-    // status is still what THIS transaction observed it to be.
-    const updated = await tx
-      .update(reviewDecisions)
+    if (!draftMd) throw new ValidationError(`cannot sign ${domain} in cycle ${cycleId}: no draft content`);
+    let evidenceSnapshot;
+    try { evidenceSnapshot = await evidenceForSignature(tx, initiativeId, cycleId, domain); }
+    catch (error) { if (error instanceof EvidenceError) throw new ValidationError(error.message); throw error; }
+    const updated = await tx.update(reviewDecisions)
       .set({ status: "signed", reviewer: actor.id, draftMd, signedAt: new Date(nowTs()) })
-      .where(and(eq(reviewDecisions.id, decision.id), eq(reviewDecisions.status, decision.status)))
-      .returning();
-    if (updated.length === 0) {
-      throw new ConflictError(
-        `review ${domain} in cycle ${cycleId} changed concurrently (expected status '${decision.status}')`,
-      );
-    }
-
+      .where(reviewSnapshotCondition(decision)).returning();
+    if (updated.length === 0) throw new ConflictError(`review ${domain} in cycle ${cycleId} changed concurrently`);
     await tx.insert(auditEvents).values({
-      id: `evt-${randomUUID()}`,
-      initiativeId,
-      ts: new Date(nowTs()),
-      actor: actor.id,
-      actorRole: actor.role,
-      action: "review_signed",
-      detail: `Signed ${domain} review for cycle ${cycleId}.`,
-      before: decision.status,
-      after: "signed",
-      metadata: { domain, cycleId, evidenceSnapshot },
+      id: `evt-${randomUUID()}`, initiativeId, ts: new Date(nowTs()), actor: actor.id, actorRole: actor.role,
+      action: "review_signed", detail: `Signed ${domain} review for cycle ${cycleId}.`, before: decision.status, after: "signed",
+      metadata: { domain, cycleId, evidenceSnapshot, draftToken: reviewDraftToken(decision) },
     });
-
     return { cycleId, domain, status: "signed" };
   });
 }
 
-export interface ReturnReviewResult {
-  cycleId: string;
-  domain: Domain;
-  status: "returned";
-}
+export interface ReturnReviewResult { cycleId: string; domain: Domain; status: "returned" }
 
-/** Reviewer returns a domain review with a required reason (routes back to the requester). */
+/** Returning invalidates all earlier AI attempts while preserving the human reason. */
 export async function returnReview(
-  db: Db,
-  cycleId: string,
-  domain: Domain,
-  actor: Actor,
-  sessionWorkspaceId: string | null,
-  reason: string,
+  db: Db, cycleId: string, domain: Domain, actor: Actor, sessionWorkspaceId: string | null, reason: string,
 ): Promise<ReturnReviewResult> {
   requireReviewerRole(actor);
   requireReviewerDomainMatch(actor, domain);
-  if (!reason || reason.trim().length === 0) {
-    throw new ValidationError("returnReview requires a non-empty reason");
-  }
+  if (!reason || reason.trim().length === 0) throw new ValidationError("returnReview requires a non-empty reason");
   return db.transaction(async (tx) => {
-    const decision = await loadReviewDecisionOrThrow(tx, cycleId, domain);
-
-    const cycle = await tx.select().from(reviewCycles).where(eq(reviewCycles.id, cycleId));
-    const initiativeId = cycle[0]?.initiativeId ?? null;
-    if (initiativeId) {
-      const [initiative] = await tx
-        .select({ workspaceId: initiatives.workspaceId })
-        .from(initiatives)
-        .where(eq(initiatives.id, initiativeId));
-      if (initiative) {
-        assertWorkspaceAccess(
-          initiative.workspaceId,
-          sessionWorkspaceId,
-          "reviewDecision",
-          `${cycleId}/${domain}`,
-        );
-      }
-    }
-
-    const updated = await tx
-      .update(reviewDecisions)
-      .set({ status: "returned", reviewer: actor.id, returnReason: reason })
-      .where(and(eq(reviewDecisions.id, decision.id), eq(reviewDecisions.status, decision.status)))
-      .returning();
-    if (updated.length === 0) {
-      throw new ConflictError(
-        `review ${domain} in cycle ${cycleId} changed concurrently (expected status '${decision.status}')`,
-      );
-    }
-
+    const { decision, initiativeId } = await loadOpenReviewContext(tx, cycleId, domain, sessionWorkspaceId);
+    const updated = await tx.update(reviewDecisions)
+      .set({ status: "returned", reviewer: actor.id, signedAt: null, returnReason: reason })
+      .where(reviewSnapshotCondition(decision)).returning();
+    if (updated.length === 0) throw new ConflictError(`review ${domain} in cycle ${cycleId} changed concurrently`);
     await tx.insert(auditEvents).values({
-      id: `evt-${randomUUID()}`,
-      initiativeId,
-      ts: new Date(nowTs()),
-      actor: actor.id,
-      actorRole: actor.role,
-      action: "review_returned",
-      detail: `Returned ${domain} review for cycle ${cycleId}: ${reason}`,
-      before: decision.status,
-      after: "returned",
+      id: `evt-${randomUUID()}`, initiativeId, ts: new Date(nowTs()), actor: actor.id, actorRole: actor.role,
+      action: "review_returned", detail: `Returned ${domain} review for cycle ${cycleId}: ${reason}`, before: decision.status, after: "returned",
       metadata: { domain, cycleId, reason },
     });
-
     return { cycleId, domain, status: "returned" };
   });
 }
 
-/* -------------------------------------------------------------------------
- * 4b. runReviewAgent — reviewer runs their domain's drafting agent on demand
- * ---------------------------------------------------------------------- */
+export type RunReviewAgentResult = RunSingleDomainResult;
 
-export interface RunReviewAgentResult {
-  cycleId: string;
-  domain: Domain;
-  status: "drafted" | "failed" | "skipped";
-  /** Fresh draft markdown — present only when status === "drafted". */
-  draftMd?: string;
-  /** Human-readable failure reason — present only when status === "failed". */
-  error?: string;
-  /** Present when a concurrent human signature wins the persistence race. */
-  reason?: "already signed";
-}
-
-/**
- * A reviewer runs the drafting agent for THEIR domain on demand (M3 operate
- * loop — the "Run agent" button in the workbench). Same authz as
- * sign/return: reviewer-role only, and only for the domain that reviewer is
- * assigned to (`requireReviewerDomainMatch`) — so no reviewer can trigger
- * another domain's agent. Refuses to re-draft a review that is already
- * `signed` (a human decision; the reviewer must `return` it first). Delegates
- * the actual (re)draft to `runSingleDomainDraft` and records ONE
- * actor-attributed `review_agent_run` audit event — distinct from the
- * `system` `draft_run_completed` event the fan-out writes.
- *
- * NOT wrapped in a single `db.transaction`: the draft persist happens inside
- * `runSingleDomainDraft` immediately after the (slow, network) LLM call, and
- * holding a DB transaction open across that call would be wrong. The audit
- * row is appended right after; the only failure window (draft saved, audit
- * append failed) is benign for an append-only log and never corrupts
- * lifecycle state (a draft is not a lifecycle transition).
- */
+/** Authorize before invocation; the workflow commits draft and actor receipt together. */
 export async function runReviewAgent(
-  db: Db,
-  cycleId: string,
-  domain: Domain,
-  actor: Actor,
-  sessionWorkspaceId: string | null,
-  /** Overridable for tests (inject a fake AgentPort); defaults to the real port inside runSingleDomainDraft. */
-  port?: AgentPort,
+  db: Db, cycleId: string, domain: Domain, actor: Actor, sessionWorkspaceId: string | null,
+  port?: AgentPort, options: InvokeOptions = {},
 ): Promise<RunReviewAgentResult> {
   requireReviewerRole(actor);
   requireReviewerDomainMatch(actor, domain);
-
-  // The (cycle, domain) review must exist and must not already be signed.
-  const decisionRows = await db
-    .select()
-    .from(reviewDecisions)
-    .where(and(eq(reviewDecisions.cycleId, cycleId), eq(reviewDecisions.domain, domain)));
-  const decision = decisionRows[0];
-  if (!decision) throw new NotFoundError("reviewDecision", `${cycleId}/${domain}`);
-
-  // Not wrapped in a transaction (see file comment above) — best-effort
-  // workspace check against the current committed state, same as every
-  // other read/write in this function.
-  const cycleRows = await db.select().from(reviewCycles).where(eq(reviewCycles.id, cycleId));
-  const initiativeId = cycleRows[0]?.initiativeId ?? null;
-  if (initiativeId) {
-    const [initiative] = await db
-      .select({ workspaceId: initiatives.workspaceId })
-      .from(initiatives)
-      .where(eq(initiatives.id, initiativeId));
-    if (initiative) {
-      assertWorkspaceAccess(
-        initiative.workspaceId,
-        sessionWorkspaceId,
-        "reviewDecision",
-        `${cycleId}/${domain}`,
-      );
-    }
-  }
-
-  if (decision.status === "signed") {
-    throw new ValidationError(
-      `review for ${domain} in cycle ${cycleId} is already signed; return it before re-drafting`,
-    );
-  }
-
-  const outcome = await runSingleDomainDraft(db, cycleId, domain, port);
-  const detail =
-    outcome.status === "drafted"
-      ? `Ran the ${domain} review agent on demand — fresh draft generated.`
-      : outcome.status === "failed"
-        ? `Ran the ${domain} review agent on demand — draft failed: ${outcome.error ?? "unknown error"}.`
-        : `Ran the ${domain} review agent on demand — persistence skipped because the review was already signed.`;
-  await db.insert(auditEvents).values({
-    id: `evt-${randomUUID()}`,
-    initiativeId,
-    ts: new Date(nowTs()),
-    actor: actor.id,
-    actorRole: actor.role,
-    action: "review_agent_run",
-    detail,
-    before: decision.status,
-    after:
-      outcome.status === "drafted"
-        ? "drafted"
-        : outcome.status === "skipped"
-          ? "signed"
-          : decision.status,
-    metadata: {
-      domain,
-      cycleId,
-      status: outcome.status,
-      ...(outcome.reason ? { reason: outcome.reason } : {}),
-    },
+  await db.transaction(async (tx) => {
+    const { decision } = await loadOpenReviewContext(tx, cycleId, domain, sessionWorkspaceId);
+    if (decision.status === "signed") throw new ValidationError(`review for ${domain} in cycle ${cycleId} is already signed; return it before re-drafting`);
   });
-
-  return outcome;
+  return runSingleDomainDraft(db, cycleId, domain, port, { ...options, actor });
 }
 
 /* -------------------------------------------------------------------------
@@ -1133,7 +938,7 @@ export async function decide(
   }
 
   return db.transaction(async (tx) => {
-    const initiative = await loadInitiativeOrThrow(tx, initiativeId);
+    const initiative = await loadInitiativeOrThrow(tx, initiativeId, true);
     assertWorkspaceAccess(initiative.workspaceId, sessionWorkspaceId, "initiative", initiativeId);
     const cycle = await latestReviewCycle(tx, initiativeId);
     if (!cycle) {
@@ -1145,74 +950,28 @@ export async function decide(
     // a non-approver gets IllegalTransitionError before any completeness rule.
     const result = transition(initiative.state as LifecycleState, action, actor, { ts: nowTs() });
 
-    // Required-review completeness gate (M2.5, hardened for external-review
-    // finding P2-6 "vacuous completeness gate"): an approval cannot outrun
-    // the domain reviews. The REQUIRED domain set is resolved from the
-    // cycle's OWN risk assessment (`reviewCycles.riskAssessmentId` ->
-    // `riskAssessments.requiredDomains`) — NOT from whichever
-    // `review_decisions` rows happen to exist for the cycle. A reassessment
-    // cycle opened by `runMonitor` (lib/services/monitor-service.ts) is
-    // created with ZERO `review_decisions` rows by design (no per-domain
-    // redraft happens automatically on a breach), and even an initial cycle
-    // could in principle be short a row for one of its required domains;
-    // deriving "required" from "rows that happen to exist" made either shape
-    // pass vacuously — a post-breach re_review -> approved needed no signed
-    // review at all. Falls back to the initiative's latest risk assessment
-    // if the cycle's own `riskAssessmentId` doesn't resolve one; if NEITHER
-    // resolves, an approval must never proceed with no required-domain set
-    // at all, so this throws `ValidationError` rather than silently passing.
-    //
-    // A full `approved` requires a SIGNED row for EVERY required domain; a
-    // `conditionally_approved` requires every required domain at least
-    // DRAFTED (a missing, pending, returned, or failed review is blocking —
-    // the conditions capture residual risk, not an absent review).
-    // `rejected` has no completeness precondition. The fast-lane branch
-    // (triage()'s `eligibility.eligible` path) never calls `decide()` at
-    // all — it writes its own `initiative_decisions` row directly — so it
-    // is not, and must not be, routed through this gate.
+    if (cycle.closedAt) throw new ValidationError(`review cycle ${cycle.id} is closed`);
+
+    // Resolve requirements from this exact cycle and initiative. Rejection has
+    // no review-completeness precondition; deterministic fast-lane bypasses decide().
     if (decision === "approved" || decision === "conditionally_approved") {
-      let cycleRequiredDomains: Domain[] | null = null;
-      if (cycle.riskAssessmentId) {
-        const [cycleRa] = await tx
-          .select({ requiredDomains: riskAssessments.requiredDomains })
-          .from(riskAssessments)
-          .where(eq(riskAssessments.id, cycle.riskAssessmentId));
-        if (cycleRa) cycleRequiredDomains = cycleRa.requiredDomains as Domain[];
+      const [cycleRa] = await tx.select({ requiredDomains: riskAssessments.requiredDomains })
+        .from(riskAssessments)
+        .where(and(eq(riskAssessments.id, cycle.riskAssessmentId), eq(riskAssessments.initiativeId, initiativeId)));
+      const decisions = await tx.select().from(reviewDecisions).where(eq(reviewDecisions.cycleId, cycle.id));
+      const readiness = reviewDecisionReadiness({
+        state: initiative.state as LifecycleState,
+        cycleOpen: !cycle.closedAt,
+        requiredDomains: cycleRa?.requiredDomains ?? null,
+        reviews: decisions,
+      });
+      if (!readiness.hasRequiredDomains) {
+        throw new ValidationError(`cannot ${decision}: review cycle ${cycle.id} has no resolvable required-domain set in its linked risk assessment`);
       }
-      if (!cycleRequiredDomains) {
-        const fallbackRa = await latestRiskAssessment(tx, initiativeId);
-        cycleRequiredDomains = fallbackRa ? (fallbackRa.requiredDomains as Domain[]) : null;
-      }
-      if (!cycleRequiredDomains || cycleRequiredDomains.length === 0) {
-        throw new ValidationError(
-          `cannot ${decision}: review cycle ${cycle.id} has no resolvable required-domain set (no risk assessment found for this cycle or the initiative)`,
-        );
-      }
-
-      const decisions = await tx
-        .select()
-        .from(reviewDecisions)
-        .where(eq(reviewDecisions.cycleId, cycle.id));
-      const byDomain = new Map(decisions.map((d) => [d.domain as Domain, d]));
-
-      const blockingDescriptions: string[] = [];
-      for (const domain of cycleRequiredDomains) {
-        const row = byDomain.get(domain);
-        if (!row) {
-          blockingDescriptions.push(`${domain}:missing`);
-          continue;
-        }
-        const satisfied =
-          decision === "approved"
-            ? row.status === "signed"
-            : row.status === "signed" || row.status === "drafted";
-        if (!satisfied) blockingDescriptions.push(`${domain}:${row.status}`);
-      }
-      if (blockingDescriptions.length > 0) {
+      const blocking = decision === "approved" ? readiness.approvalBlockers : readiness.conditionalBlockers;
+      if (blocking.length > 0) {
         const need = decision === "approved" ? "signed" : "drafted or signed";
-        throw new ValidationError(
-          `cannot ${decision}: ${blockingDescriptions.length} of ${cycleRequiredDomains.length} required domain review(s) not ${need} (${blockingDescriptions.join(", ")})`,
-        );
+        throw new ValidationError(`cannot ${decision}: ${blocking.length} of ${cycleRa.requiredDomains.length} required domain review(s) not ${need} (${blocking.join(", ")})`);
       }
     }
 

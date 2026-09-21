@@ -3,9 +3,7 @@ import {
   auditorAnswerOutputSchema,
   intakeInterviewOutputSchema,
   mapReviewerDraftToPortOutput,
-  opsMonitorIncidentOutputSchema,
   reviewerDraftOutputSchema,
-  triageRationaleOutputSchema,
   type ReviewerDraftOutput,
 } from "@/lib/agents/schemas";
 
@@ -95,92 +93,23 @@ describe("reviewerDraftOutputSchema", () => {
   });
 });
 
-describe("triageRationaleOutputSchema", () => {
-  const validTriage = {
-    rationaleMd: "This initiative is Critical because ...",
-    flagExplanations: [
-      { flag: "careCoverageInfluence", answer: "Yes", why: "Drives Critical tier." },
-    ],
-  };
-
-  it("accepts a valid fixture", () => {
-    expect(triageRationaleOutputSchema.safeParse(validTriage).success).toBe(
-      true,
-    );
-  });
-
-  it("accepts an empty flagExplanations array", () => {
-    expect(
-      triageRationaleOutputSchema.safeParse({
-        ...validTriage,
-        flagExplanations: [],
-      }).success,
-    ).toBe(true);
-  });
-
-  it("rejects a fixture missing rationaleMd", () => {
-    const fixture: Record<string, unknown> = { ...validTriage };
-    delete fixture.rationaleMd;
-    expect(triageRationaleOutputSchema.safeParse(fixture).success).toBe(false);
-  });
-
-  it("rejects a flagExplanations entry missing `why`", () => {
-    const result = triageRationaleOutputSchema.safeParse({
-      ...validTriage,
-      flagExplanations: [{ flag: "phi", answer: "Yes" }],
-    });
-    expect(result.success).toBe(false);
-  });
-
-  it("rejects wrong type for flagExplanations (not an array)", () => {
-    const result = triageRationaleOutputSchema.safeParse({
-      ...validTriage,
-      flagExplanations: "not-an-array",
-    });
-    expect(result.success).toBe(false);
-  });
-});
-
-describe("opsMonitorIncidentOutputSchema", () => {
-  const validIncident = {
-    incidentSummaryMd: "Q-01 breached threshold 0.05 sustained 3 points.",
-    suggestedScope: ["responsible-ai", "clinical-safety"],
-    severityNote: "Critical-tier, coverage-influencing initiative.",
-  };
-
-  it("accepts a valid fixture", () => {
-    expect(
-      opsMonitorIncidentOutputSchema.safeParse(validIncident).success,
-    ).toBe(true);
-  });
-
-  it("accepts an empty suggestedScope array", () => {
-    expect(
-      opsMonitorIncidentOutputSchema.safeParse({
-        ...validIncident,
-        suggestedScope: [],
-      }).success,
-    ).toBe(true);
-  });
-
-  it("rejects a suggestedScope value outside the 8-value GovernanceDomain set", () => {
-    const result = opsMonitorIncidentOutputSchema.safeParse({
-      ...validIncident,
-      suggestedScope: ["not-a-real-domain"],
-    });
-    expect(result.success).toBe(false);
-  });
-
-  it("rejects a fixture missing severityNote", () => {
-    const fixture: Record<string, unknown> = { ...validIncident };
-    delete fixture.severityNote;
-    expect(opsMonitorIncidentOutputSchema.safeParse(fixture).success).toBe(
-      false,
-    );
-  });
-});
-
 describe("mapReviewerDraftToPortOutput", () => {
+  it("preserves policy citations and control-linked reviewer notes in the persisted result fields", () => {
+    const rich = validReviewerDraft({
+      assessmentMd: "Synthetic review assessment.",
+      citations: ["SYN-POLICY v1 §2"],
+      evidenceRequests: [{ controlId: "S-01", description: "Provide the assessment." }],
+      suggestedConditions: [{ controlId: "S-02", text: "Require a named owner." }],
+      confidenceNotes: "The supplied evidence does not establish test coverage.",
+    });
+    const port = mapReviewerDraftToPortOutput("security", rich);
+    expect(port).toHaveProperty("citations", ["SYN-POLICY v1 §2"]);
+    expect(port.draftMarkdown).toContain("S-01: Provide the assessment.");
+    expect(port.draftMarkdown).toContain("S-02: Require a named owner.");
+    expect(port.draftMarkdown).toContain(rich.confidenceNotes);
+    expect(port.missingEvidence).toEqual(["Provide the assessment."]);
+  });
+
   it('maps "ready-for-signature" -> "recommend-sign-off"', () => {
     const rich = validReviewerDraft({ recommendation: "ready-for-signature" });
     const port = mapReviewerDraftToPortOutput("privacy-hipaa", rich);
@@ -306,6 +235,8 @@ describe("intakeInterviewOutputSchema", () => {
       primaryUsers: "",
       decisionInformed: "",
       expectedVolume: null,
+      currentWorkflow: null,
+      successMetrics: null,
     },
     data: {
       dataSources: [],
@@ -314,6 +245,7 @@ describe("intakeInterviewOutputSchema", () => {
       retentionIntent: null,
       retentionIntentNote: null,
       trainingVsInference: null,
+      vendorDataReuse: null,
     },
     modelVendor: {
       buildOrBuy: null,
@@ -325,10 +257,15 @@ describe("intakeInterviewOutputSchema", () => {
       affectedPopulations: [],
       expectedBenefits: null,
       expectedHarms: null,
+      evaluationPlan: null,
     },
     deployment: {
       integrationPoints: [],
       rolloutPlan: null,
+      operationalOwner: null,
+      humanReviewProcess: null,
+      monitoringPlan: null,
+      fallbackPlan: null,
     },
     overlay: {
       touchesPHI: null,

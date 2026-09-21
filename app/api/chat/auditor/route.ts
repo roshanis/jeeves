@@ -28,7 +28,8 @@
  */
 import { z } from "zod";
 import { getAgentPort } from "@/lib/agents";
-import type { PortFailure } from "@/lib/agents/ports";
+import type { AgentPort, PortFailure } from "@/lib/agents/ports";
+import { agentInitializationResponse } from "@/lib/services/agent-error-response";
 import { getProvider } from "@/lib/data";
 import type { AuditQueryRow, CannedAuditQueryId } from "@/lib/data/dto";
 import { runMutationGuard } from "@/lib/services/route-guard";
@@ -182,7 +183,14 @@ export async function POST(req: Request): Promise<Response> {
     }
   }
 
-  const port = getAgentPort();
+  let port: AgentPort;
+  try {
+    port = getAgentPort();
+  } catch (error) {
+    const unavailable = agentInitializationResponse(error);
+    if (unavailable) return unavailable;
+    throw error;
+  }
   const result = await port.auditorAnswer(
     { question: parsed.data.question, groundingRows: rows, queryUsed },
     { timeoutMs: AGENT_TIMEOUT_MS },

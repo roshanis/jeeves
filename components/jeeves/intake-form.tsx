@@ -22,6 +22,7 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import type { IntakePayload } from "@/lib/intake/types";
+import { EMPTY_INTAKE_PAYLOAD as EMPTY_PAYLOAD } from "@/lib/intake/defaults";
 import { ADDITIONAL_INTAKE_QUESTIONS, ADDITIONAL_ANSWER_MAX_LENGTH } from "@/lib/intake/additional-questions";
 import {
   evaluateCompleteness,
@@ -129,38 +130,6 @@ const OVERLAY_QUESTIONS: {
       "Individual-impact combined with member-facing is an independent High-tier trigger, and feeds Medium-tier default even absent other flags.",
   },
 ];
-
-export const EMPTY_PAYLOAD: IntakePayload = {
-  basics: {
-    title: "",
-    sponsorOrg: "",
-    requesterName: "",
-    requesterEmail: "",
-    businessProblem: "",
-  },
-  useCase: { primaryUsers: "", decisionInformed: "", expectedVolume: null, currentWorkflow: null, successMetrics: null },
-  data: {
-    dataSources: [],
-    phiCategories: [],
-    phiCategoriesOtherText: null,
-    retentionIntent: null,
-    retentionIntentNote: null,
-    trainingVsInference: null,
-    vendorDataReuse: null,
-  },
-  modelVendor: { buildOrBuy: null, vendorName: null, hosting: null, modelType: null },
-  populationImpact: { affectedPopulations: [], expectedBenefits: null, expectedHarms: null, evaluationPlan: null },
-  deployment: { integrationPoints: [], rolloutPlan: null, operationalOwner: null, humanReviewProcess: null, monitoringPlan: null, fallbackPlan: null },
-  overlay: {
-    touchesPHI: null,
-    memberFacing: null,
-    careCoverageInfluence: null,
-    vendorHosted: null,
-    humanInTheLoop: null,
-    individualImpact: null,
-  },
-  evidenceAttachments: [],
-};
 
 /* -------------------------------------------------------------------------
  * Small presentational helpers

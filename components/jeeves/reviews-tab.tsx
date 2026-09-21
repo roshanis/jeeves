@@ -1,16 +1,15 @@
 "use client";
 
 // Reviews tab (ui-spec §3.3): per-domain status list with draft text and
-// policy citations. Sign/Return are approve-style actions: hidden entirely
-// for Admin, disabled-with-tooltip without a live session (role-gate.tsx),
-// and LIVE for a reviewer-role session on an initiative created during this
-// live demo session (lib/client/live-registry.ts knows its cycleId).
+// policy citations. Reviewer commands live in the evidence workbench; this
+// case summary links to the exact domain and owns only batch drafting.
 //
 // Live draft-run is synchronous: the POST returns a final outcome for every
 // requested domain. The UI reports those outcomes directly and offers a
 // targeted retry for failed domains.
 import * as React from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { toast } from "sonner";
 import type { ReviewRow } from "@/lib/data/dto";
 import type { Domain } from "@/lib/domain/types";
@@ -28,23 +27,15 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Separator } from "@/components/ui/separator";
 import {
   apiErrorToMessage,
   isApiError,
   startDraftRun,
   type DraftRunDomainOutcome,
 } from "@/lib/client/api";
-import { useLiveInfo } from "@/lib/client/use-live-info";
 import { useLiveSessionOptional } from "@/lib/client/session-context";
-import { GatedActionButton } from "./role-gate";
 import { DOMAIN_LABEL, ReviewStatusBadge } from "./domain-labels";
-import { ReturnReviewDialog } from "./return-review-dialog";
-import {
-  failedDraftRunDomains,
-  getReviewActionEligibility,
-  performReviewMutation,
-} from "@/lib/client/review-actions";
+import { failedDraftRunDomains } from "@/lib/client/review-actions";
 
 // Re-exported for backwards compatibility with earlier imports; the
 // canonical home is ./domain-labels (server-safe).
@@ -63,12 +54,15 @@ const DOMAIN_ICON: Record<Domain, LucideIcon> = {
   "data-governance": Database,
 };
 
-export function ReviewsTab({ reviews, slug }: { reviews: ReviewRow[]; slug?: string }) {
+export function ReviewsTab({ reviews, slug, initiativeId, isSeeded }: {
+  reviews: ReviewRow[];
+  slug?: string;
+  initiativeId?: string;
+  isSeeded?: boolean;
+}) {
   const router = useRouter();
   const live = useLiveSessionOptional();
   const session = live?.session ?? null;
-
-  const liveInfo = useLiveInfo(slug);
 
   // ----- live draft-run state -------------------------------------------
   const pendingDomains = React.useMemo(
@@ -79,7 +73,7 @@ export function ReviewsTab({ reviews, slug }: { reviews: ReviewRow[]; slug?: str
     cycleId: string | null;
     domains: Domain[];
   } | null>(null);
-  const cycleId = liveInfo?.cycleId ?? null;
+  const cycleId = reviews[0]?.cycleId ?? null;
   const selectedDomains = selectionState?.cycleId === cycleId
     ? selectionState.domains
     : null;
@@ -89,15 +83,15 @@ export function ReviewsTab({ reviews, slug }: { reviews: ReviewRow[]; slug?: str
     cycleId: string | null;
     outcomes: DraftRunDomainOutcome[];
   }>({ cycleId: null, outcomes: [] });
-  const outcomes = outcomeState.cycleId === (liveInfo?.cycleId ?? null)
+  const outcomes = outcomeState.cycleId === cycleId
     ? outcomeState.outcomes
     : [];
 
   async function handleStartDraftRun() {
-    if (!session || !liveInfo?.initiativeId || checkedDomains.length === 0) return;
+    if (!session || !initiativeId || isSeeded !== false || checkedDomains.length === 0) return;
     setRunning(true);
     try {
-      const result = await startDraftRun(session.token, liveInfo.initiativeId, checkedDomains);
+      const result = await startDraftRun(session.token, initiativeId, checkedDomains);
       setOutcomeState({ cycleId: result.cycleId, outcomes: result.outcomes });
       const failedDomains = failedDraftRunDomains(result.outcomes);
       if (failedDomains.length > 0) {
@@ -118,67 +112,6 @@ export function ReviewsTab({ reviews, slug }: { reviews: ReviewRow[]; slug?: str
     }
   }
 
-  // ----- live sign/return -----------------------------------------------
-  const [actingDomain, setActingDomain] = React.useState<Domain | null>(null);
-  const [returnDialogDomain, setReturnDialogDomain] = React.useState<Domain | null>(null);
-  const [localState, setLocalState] = React.useState<{
-    cycleId: string | null;
-    statuses: Partial<Record<Domain, ReviewRow["status"]>>;
-  }>({ cycleId: null, statuses: {} });
-  const localStatus = localState.cycleId === (liveInfo?.cycleId ?? null)
-    ? localState.statuses
-    : {};
-
-  async function handleSign(domain: Domain) {
-    if (!session || !liveInfo?.cycleId) return;
-    const cycleId = liveInfo.cycleId;
-    setActingDomain(domain);
-    try {
-      await performReviewMutation(session.token, cycleId, domain, { kind: "sign" });
-      setLocalState((prev) => ({
-        cycleId,
-        statuses: {
-          ...(prev.cycleId === cycleId ? prev.statuses : {}),
-          [domain]: "signed",
-        },
-      }));
-      toast.success(`${DOMAIN_LABEL[domain]} review signed.`);
-      router.refresh();
-    } catch (err) {
-      toast.error(isApiError(err) ? apiErrorToMessage(err) : "Sign failed.");
-      if (isApiError(err) && err.status === 401) live?.logout();
-    } finally {
-      setActingDomain(null);
-    }
-  }
-
-  async function handleReturn(domain: Domain, reason: string) {
-    if (!session || !liveInfo?.cycleId) return;
-    const cycleId = liveInfo.cycleId;
-    setActingDomain(domain);
-    try {
-      await performReviewMutation(session.token, cycleId, domain, {
-        kind: "return",
-        reason,
-      });
-      setLocalState((prev) => ({
-        cycleId,
-        statuses: {
-          ...(prev.cycleId === cycleId ? prev.statuses : {}),
-          [domain]: "returned",
-        },
-      }));
-      setReturnDialogDomain(null);
-      toast.success(`${DOMAIN_LABEL[domain]} review returned.`);
-      router.refresh();
-    } catch (err) {
-      toast.error(isApiError(err) ? apiErrorToMessage(err) : "Return failed.");
-      if (isApiError(err) && err.status === 401) live?.logout();
-    } finally {
-      setActingDomain(null);
-    }
-  }
-
   if (reviews.length === 0) {
     return (
       <p className="text-sm text-muted-foreground">
@@ -190,20 +123,20 @@ export function ReviewsTab({ reviews, slug }: { reviews: ReviewRow[]; slug?: str
 
   const outcomeByDomain = new Map(outcomes.map((outcome) => [outcome.domain, outcome]));
   const displayRows = reviews.map((review) => {
-    const local = localStatus[review.domain];
     const outcome = outcomeByDomain.get(review.domain);
     let status: ReviewRow["status"] | "failed" = review.status;
     if (review.status !== "signed") {
       if (outcome?.status === "drafted" || outcome?.status === "failed") status = outcome.status;
-      if (local) status = local;
     }
     return { review, status };
   });
 
   const canRunDrafts = Boolean(
     session &&
-      liveInfo?.initiativeId &&
-      liveInfo?.cycleId &&
+      (session.role === "requester" || session.role === "admin") &&
+      initiativeId &&
+      isSeeded === false &&
+      cycleId &&
       (pendingDomains.length > 0 || outcomes.some((outcome) => outcome.status === "failed")),
   );
 
@@ -258,13 +191,7 @@ export function ReviewsTab({ reviews, slug }: { reviews: ReviewRow[]; slug?: str
       ) : null}
 
       {displayRows.map(({ review, status }) => {
-        const eligibility = getReviewActionEligibility(
-          session,
-          liveInfo?.cycleId ?? null,
-          review.domain,
-          status === "failed" ? "pending" : status,
-        );
-         const DomainIcon = DOMAIN_ICON[review.domain];
+        const DomainIcon = DOMAIN_ICON[review.domain];
         return (
           <Card key={review.domain} size="sm" data-slot="review-row" data-domain={review.domain} className="card-quiet overflow-hidden">
             <CardHeader className="flex-row items-center justify-between gap-2 border-b py-2.5">
@@ -288,7 +215,7 @@ export function ReviewsTab({ reviews, slug }: { reviews: ReviewRow[]; slug?: str
                 ) : null}
               </div>
             </CardHeader>
-            {review.draftMd || review.citations.length > 0 || status === "drafted" || status === "returned" ? (
+            {slug || review.draftMd || review.citations.length > 0 ? (
               <CardContent className="space-y-3 pt-4">
                 {review.draftMd ? (
                   <p className="whitespace-pre-wrap text-sm leading-relaxed text-muted-foreground">
@@ -304,50 +231,19 @@ export function ReviewsTab({ reviews, slug }: { reviews: ReviewRow[]; slug?: str
                     ))}
                   </div>
                 ) : null}
-                {status === "drafted" || status === "returned" ? (
-                  <>
-                    <Separator />
-                    <div className="flex justify-end gap-2">
-                      <GatedActionButton
-                        label="Sign"
-                        requiresRole="reviewer"
-                        pending={actingDomain === review.domain}
-                        pendingLabel="Signing…"
-                        onAction={
-                          eligibility.canSignOrReturn ? () => void handleSign(review.domain) : undefined
-                        }
-                      />
-                      <GatedActionButton
-                        label="Return"
-                        variant="outline"
-                        requiresRole="reviewer"
-                        pending={actingDomain === review.domain}
-                        onAction={
-                          eligibility.canSignOrReturn
-                            ? () => setReturnDialogDomain(review.domain)
-                            : undefined
-                        }
-                      />
-                    </div>
-                  </>
+                {slug ? (
+                  <Link
+                    href={`/reviews?initiative=${encodeURIComponent(slug)}&domain=${encodeURIComponent(review.domain)}`}
+                    className="inline-flex min-h-11 items-center text-sm font-medium text-primary underline-offset-4 hover:underline"
+                  >
+                    Open {DOMAIN_LABEL[review.domain]} review
+                  </Link>
                 ) : null}
               </CardContent>
             ) : null}
           </Card>
         );
       })}
-
-      <ReturnReviewDialog
-        open={returnDialogDomain !== null}
-        onOpenChange={(open) => {
-          if (!open) setReturnDialogDomain(null);
-        }}
-        domainLabel={returnDialogDomain ? DOMAIN_LABEL[returnDialogDomain] : ""}
-        pending={actingDomain !== null}
-        onConfirm={(reason) => {
-          if (returnDialogDomain) void handleReturn(returnDialogDomain, reason);
-        }}
-      />
     </div>
   );
 }

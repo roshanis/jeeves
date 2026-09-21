@@ -7,13 +7,14 @@
  *                            unknown personaKey — never distinguished in the
  *                            response, to avoid leaking which part failed)
  * 400:   { error: string }  (malformed body)
+ * 403:   { error: string }  (read-only preview)
  *
  * This route intentionally does NOT go through `runMutationGuard` (there is
  * no session yet to check) — it is the one mutating endpoint that is
  * reachable pre-session, gated by the passcode itself instead.
  */
 import { z } from "zod";
-import { checkSessionAttempt, clientKeyFor, issueDemoSession } from "@/lib/services/route-guard";
+import { checkReadOnlyMode, checkSessionAttempt, clientKeyFor, issueDemoSession } from "@/lib/services/route-guard";
 import {
   resolveWorkspaceCookieSecret,
   signWorkspaceId,
@@ -69,9 +70,14 @@ const bodySchema = z.object({
 });
 
 export async function POST(req: Request): Promise<Response> {
+  const readOnlyFailure = checkReadOnlyMode();
+  if (readOnlyFailure) {
+    return Response.json({ error: readOnlyFailure.message }, { status: readOnlyFailure.status });
+  }
+
   // Security review finding #1: brute-force gate — this route sits
-  // pre-session, outside runMutationGuard. Limiter lives in route-guard so
-  // resetGuardStateForTests() clears it between tests.
+  // pre-session, outside runMutationGuard. Its limiter stores buckets in
+  // Postgres; API tests isolate them with a fresh database per case.
   const attempt = await checkSessionAttempt(clientKeyFor(req));
   if (!attempt.allowed) {
     return Response.json(

@@ -50,9 +50,10 @@ const GAP_LEVEL_CLASS: Record<CompletenessGap["level"], string> = {
   ADVISORY: "text-muted-foreground",
 };
 
-export function IntakeChat({ payload, onPayloadChange, onReview }: {
+export function IntakeChat({ payload, payloadRevision, onPayloadChange, onReview }: {
   payload?: IntakePayload;
-  onPayloadChange?: (payload: IntakePayload) => void;
+  payloadRevision?: number;
+  onPayloadChange?: (payload: IntakePayload, expectedRevision: number) => boolean | void;
   onReview?: () => void;
 }) {
   const { session, logout } = useLiveSession();
@@ -63,15 +64,28 @@ export function IntakeChat({ payload, onPayloadChange, onReview }: {
     (payload as unknown as Record<string, unknown>) ?? {},
   );
   const [message, setMessage] = React.useState("");
-  const [gaps, setGaps] = React.useState<CompletenessGap[]>([]);
-  const [done, setDone] = React.useState(false);
+  const [assessment, setAssessment] = React.useState<{
+    payload: IntakePayload;
+    revision?: number;
+    gaps: CompletenessGap[];
+    done: boolean;
+  } | null>(null);
   const [pending, setPending] = React.useState(false);
+
+  // Completeness belongs to the answers evaluated by the server. A manual edit
+  // invalidates that assessment while preserving the mounted conversation.
+  const currentAssessment =
+    (!payload || payload === assessment?.payload) && payloadRevision === assessment?.revision
+      ? assessment
+      : null;
+  const gaps = currentAssessment?.gaps ?? [];
+  const done = currentAssessment?.done ?? false;
 
   const gapsByLevel = (level: CompletenessGap["level"]) =>
     gaps.filter((g) => g.level === level);
 
   async function handleSubmit() {
-    if (!session || !isRequester) return;
+    if (!session || !isRequester || pending) return;
     const trimmed = message.trim();
     if (trimmed.length === 0) return;
 
@@ -87,11 +101,18 @@ export function IntakeChat({ payload, onPayloadChange, onReview }: {
         conversation: nextConversation,
         partialPayload: (payload as unknown as Record<string, unknown>) ?? partialPayload,
       });
+      if (onPayloadChange?.(result.updatedPayload, payloadRevision ?? 0) === false) {
+        toast.info("Your answers changed while the assistant was replying. Send another message to continue from your latest edits.");
+        return;
+      }
       setConversation((prev) => [...prev, { role: "assistant", content: result.reply }]);
       setPartialPayload(result.updatedPayload as unknown as Record<string, unknown>);
-      onPayloadChange?.(result.updatedPayload);
-      setGaps(result.gaps);
-      setDone(result.done);
+      setAssessment({
+        payload: result.updatedPayload,
+        revision: payloadRevision === undefined ? undefined : payloadRevision + 1,
+        gaps: result.gaps,
+        done: result.done,
+      });
     } catch (err) {
       if (isApiError(err)) {
         toast.error(apiErrorToMessage(err));

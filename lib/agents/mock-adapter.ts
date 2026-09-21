@@ -11,16 +11,12 @@ import { ADDITIONAL_INTAKE_QUESTIONS, ADDITIONAL_ANSWER_MAX_LENGTH } from "@/lib
  */
 import {
   mapReviewerDraftToPortOutput,
-  type OpsMonitorIncidentOutput,
   type ReviewerDraftOutput,
-  type TriageRationaleOutput,
 } from "./schemas";
 import type {
   AgentPort,
   AuditorAnswerInput,
   AuditorAnswerOutput,
-  CompletenessCheckInput,
-  CompletenessCheckOutput,
   DraftReviewInput,
   DraftReviewOutput,
   GovernanceDomain,
@@ -28,12 +24,10 @@ import type {
   IntakeInterviewOutput,
   InvokeOptions,
   PortResult,
-  TriageAssistInput,
-  TriageAssistOutput,
 } from "./ports";
 
 /* -------------------------------------------------------------------------
- * Shared retention-gap check (draftReview + checkCompleteness)
+ * Retention-gap check for deterministic draftReview
  * ---------------------------------------------------------------------- */
 
 /**
@@ -223,155 +217,6 @@ function delayOrAbort(
     }
     signal?.addEventListener("abort", onAbort, { once: true });
   });
-}
-
-/* -------------------------------------------------------------------------
- * Triage rationale (rich + port-shape)
- * ---------------------------------------------------------------------- */
-
-/**
- * Deterministic rich `TriageRationaleOutput` synthesized from
- * `input.intake.answers`. This is the fuller shape documented in
- * agents/triage/instructions.md; `AgentPort.triageAssist` (below) returns
- * the simpler port shape (`TriageAssistOutput`), so this is exported
- * separately for future/direct testing use per the task brief.
- */
-export function generateMockTriageRationale(
-  input: TriageAssistInput,
-): TriageRationaleOutput {
-  const answers = input.intake.answers;
-  const phi = Boolean(answers["phi"]);
-  const memberFacing = Boolean(answers["memberFacing"]);
-  const careCoverageInfluence = Boolean(answers["careCoverageInfluence"]);
-  const humanInLoop = Boolean(answers["humanInLoop"]);
-
-  const flagExplanations: TriageRationaleOutput["flagExplanations"] = [];
-  if (careCoverageInfluence) {
-    flagExplanations.push({
-      flag: "careCoverageInfluence",
-      answer: "Yes",
-      why: "Care/coverage-influencing initiatives carry the highest routing weight in the tier rules.",
-    });
-  }
-  if (phi) {
-    flagExplanations.push({
-      flag: "phi",
-      answer: "Yes",
-      why: "PHI-touching initiatives are routed through Privacy/HIPAA regardless of other flags.",
-    });
-  }
-  if (memberFacing) {
-    flagExplanations.push({
-      flag: "memberFacing",
-      answer: "Yes",
-      why: "Member-facing initiatives add Legal's marketing-claims review to the required domains.",
-    });
-  }
-  if (careCoverageInfluence && !humanInLoop) {
-    flagExplanations.push({
-      flag: "humanInLoop",
-      answer: "No",
-      why: "No qualified human reviews the output before it reaches a coverage step — the highest-risk pattern.",
-    });
-  }
-
-  const rationaleMd =
-    careCoverageInfluence && !humanInLoop
-      ? "This initiative influences a coverage decision and no qualified human reviews its output before that decision takes effect — the highest-risk combination in the review model, routed as Critical tier."
-      : phi
-        ? "This initiative touches PHI, which routes it through Privacy/HIPAA and drives at least a High tier."
-        : "This initiative's overlay-question answers place it in a lower-risk routing tier per the fired rule.";
-
-  return { rationaleMd, flagExplanations };
-}
-
-function buildTriageAssistOutput(
-  input: TriageAssistInput,
-): TriageAssistOutput {
-  const answers = input.intake.answers;
-  const phi = Boolean(answers["phi"]);
-  const careCoverageInfluence = Boolean(answers["careCoverageInfluence"]);
-  const humanInLoop = Boolean(answers["humanInLoop"]);
-  const memberFacing = Boolean(answers["memberFacing"]);
-  const individualImpact = Boolean(answers["individualImpact"]);
-
-  const signals: string[] = [];
-  if (phi) signals.push("phi");
-  if (memberFacing) signals.push("member-facing");
-  if (careCoverageInfluence) signals.push("coverage-influence");
-  if (individualImpact) signals.push("individual-impact");
-
-  let suggestedTier: TriageAssistOutput["suggestedTier"];
-  let rationale: string;
-  if (careCoverageInfluence && !humanInLoop) {
-    suggestedTier = "critical";
-    rationale =
-      "Care/coverage influence without a human-in-the-loop checkpoint is the highest-risk pattern.";
-  } else if (careCoverageInfluence || phi) {
-    suggestedTier = "high";
-    rationale = careCoverageInfluence
-      ? "Care/coverage influence with a human-in-the-loop checkpoint present."
-      : "PHI-touching initiative.";
-  } else if (memberFacing || individualImpact) {
-    suggestedTier = "medium";
-    rationale = "Member-facing or individual-impact flag present, no higher-priority rule fired.";
-  } else {
-    suggestedTier = "low";
-    rationale = "No elevated-risk overlay flags present.";
-  }
-
-  return { suggestedTier, rationale, signals };
-}
-
-/* -------------------------------------------------------------------------
- * Completeness check
- * ---------------------------------------------------------------------- */
-
-function buildCompletenessCheckOutput(
-  input: CompletenessCheckInput,
-): CompletenessCheckOutput {
-  const answers = input.intake.answers;
-  const gapPresent = !hasRetentionAnswer(answers);
-
-  return {
-    complete: !gapPresent,
-    missingFields: gapPresent ? ["retentionIntent"] : [],
-    notes: gapPresent
-      ? {
-          retentionIntent:
-            "Specify the intended data-retention period before this intake can be treated as complete.",
-        }
-      : {},
-  };
-}
-
-/* -------------------------------------------------------------------------
- * Ops-monitor incident summary (not wired to any AgentPort method)
- * ---------------------------------------------------------------------- */
-
-export interface MockIncidentPayload {
-  readonly controlId: string;
-  readonly initiativeId: string;
-  readonly domain: GovernanceDomain;
-}
-
-/**
- * Deterministic canned incident-summary generator matching
- * `OpsMonitorIncidentOutput` (agents/ops-monitor/instructions.md). Not
- * wired to any `AgentPort` method — `ops-monitor` has no port method today
- * (see lib/agents/schemas.ts's note on `opsMonitorIncidentOutputSchema`).
- */
-export function generateMockIncidentSummary(
-  payload: MockIncidentPayload,
-): OpsMonitorIncidentOutput {
-  const fixture = DOMAIN_FIXTURES[payload.domain];
-  return {
-    incidentSummaryMd: `Control ${payload.controlId} breached its threshold for initiative ${payload.initiativeId}. Deployment paused and a reassessment ReviewCycle opened automatically.`,
-    suggestedScope: [payload.domain, "responsible-ai"].filter(
-      (d, i, arr) => arr.indexOf(d) === i,
-    ) as GovernanceDomain[],
-    severityNote: `Breach recorded against ${fixture.policyId}-adjacent controls (${fixture.controlIds.join(", ")}); severity reflects the initiative's existing tier/profile, not a newly invented scale.`,
-  };
 }
 
 /* -------------------------------------------------------------------------
@@ -691,40 +536,6 @@ export function createMockAgentPort(): AgentPort {
       const rich = buildMockReviewerDraft(input);
       const value = mapReviewerDraftToPortOutput(input.domain, rich);
       return { ok: true, value };
-    },
-
-    async triageAssist(
-      input: TriageAssistInput,
-      options?: InvokeOptions,
-    ): Promise<PortResult<TriageAssistOutput>> {
-      options?.onProgress?.({
-        invocationId: `mock-triage-${input.intake.intakeVersionId}`,
-        stage: "explaining",
-        at: new Date().toISOString(),
-      });
-
-      if (options?.signal?.aborted) {
-        return { ok: false, error: { kind: "cancelled" } };
-      }
-
-      return { ok: true, value: buildTriageAssistOutput(input) };
-    },
-
-    async checkCompleteness(
-      input: CompletenessCheckInput,
-      options?: InvokeOptions,
-    ): Promise<PortResult<CompletenessCheckOutput>> {
-      options?.onProgress?.({
-        invocationId: `mock-completeness-${input.intake.intakeVersionId}`,
-        stage: "checking",
-        at: new Date().toISOString(),
-      });
-
-      if (options?.signal?.aborted) {
-        return { ok: false, error: { kind: "cancelled" } };
-      }
-
-      return { ok: true, value: buildCompletenessCheckOutput(input) };
     },
 
     async auditorAnswer(

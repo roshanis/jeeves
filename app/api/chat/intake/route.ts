@@ -24,9 +24,11 @@
  */
 import { z } from "zod";
 import { getAgentPort } from "@/lib/agents";
-import type { PortFailure } from "@/lib/agents/ports";
+import type { AgentPort, PortFailure } from "@/lib/agents/ports";
+import { agentInitializationResponse } from "@/lib/services/agent-error-response";
 import { evaluateCompleteness } from "@/lib/intake/completeness";
 import type { IntakePayload } from "@/lib/intake/types";
+import { EMPTY_INTAKE_PAYLOAD } from "@/lib/intake/defaults";
 import { runMutationGuard } from "@/lib/services/route-guard";
 
 const MAX_MESSAGES = 50;
@@ -83,37 +85,7 @@ function statusForFailure(error: PortFailure): number {
  * field-level value.
  */
 function coerceToIntakePayload(portPayload: Readonly<Record<string, unknown>>): IntakePayload {
-  const empty: IntakePayload = {
-    basics: {
-      title: "",
-      sponsorOrg: "",
-      requesterName: "",
-      requesterEmail: "",
-      businessProblem: "",
-    },
-    useCase: { primaryUsers: "", decisionInformed: "", expectedVolume: null, currentWorkflow: null, successMetrics: null },
-    data: {
-      dataSources: [],
-      phiCategories: [],
-      phiCategoriesOtherText: null,
-      retentionIntent: null,
-      retentionIntentNote: null,
-      trainingVsInference: null,
-      vendorDataReuse: null,
-    },
-    modelVendor: { buildOrBuy: null, vendorName: null, hosting: null, modelType: null },
-    populationImpact: { affectedPopulations: [], expectedBenefits: null, expectedHarms: null, evaluationPlan: null },
-    deployment: { integrationPoints: [], rolloutPlan: null, operationalOwner: null, humanReviewProcess: null, monitoringPlan: null, fallbackPlan: null },
-    overlay: {
-      touchesPHI: null,
-      memberFacing: null,
-      careCoverageInfluence: null,
-      vendorHosted: null,
-      humanInTheLoop: null,
-      individualImpact: null,
-    },
-    evidenceAttachments: [],
-  };
+  const empty = EMPTY_INTAKE_PAYLOAD;
 
   return {
     basics: { ...empty.basics, ...(portPayload.basics as object | undefined) },
@@ -203,7 +175,14 @@ export async function POST(req: Request): Promise<Response> {
     return Response.json({ error: "invalid request body" }, { status: 400 });
   }
 
-  const port = getAgentPort();
+  let port: AgentPort;
+  try {
+    port = getAgentPort();
+  } catch (error) {
+    const unavailable = agentInitializationResponse(error);
+    if (unavailable) return unavailable;
+    throw error;
+  }
   const result = await port.intakeInterview(
     {
       conversation: parsed.data.conversation,

@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { screen } from "@testing-library/react";
 import { IntakeTab } from "@/components/jeeves/intake-tab";
-import { getProvider } from "@/lib/data";
+import { MockDataProvider } from "@/lib/data/mock-provider";
 import { renderWithProviders } from "./helpers";
 
 describe("IntakeTab — champion initiative (#1 prior-auth-summarizer)", () => {
   it('shows the "Draft — not yet submitted" state', async () => {
-    const detail = await getProvider().getInitiativeDetail(
+    const detail = await new MockDataProvider().getInitiativeDetail(
       "prior-auth-summarizer",
     );
     expect(detail).not.toBeNull();
@@ -17,7 +17,7 @@ describe("IntakeTab — champion initiative (#1 prior-auth-summarizer)", () => {
   });
 
   it("flags the missing data-retention answer (completeness gap)", async () => {
-    const detail = await getProvider().getInitiativeDetail(
+    const detail = await new MockDataProvider().getInitiativeDetail(
       "prior-auth-summarizer",
     );
     renderWithProviders(<IntakeTab intake={detail!.intake} />);

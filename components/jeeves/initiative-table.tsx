@@ -273,7 +273,8 @@ export function InitiativeTable({
                   {i.domainsSigned}/{i.domainsRequired}
                 </td>
                 <td className="hidden px-2 py-1.5 text-xs text-muted-foreground @4xl:table-cell">
-                  {NEXT_ACTION[i.state]}
+                  {(i.state === "in_review" || i.state === "re_review") && i.decisionReadiness
+                    ? i.decisionReadiness.reason : NEXT_ACTION[i.state]}
                 </td>
               </tr>
             );

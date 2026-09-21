@@ -11,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { createTestDb, closeTestDb, type TestDb } from "../db/test-client";
 import { seedDatabase, BASE_DATE_MS } from "../../scripts/seed";
-import { auditEvents, controlDefinitions, deploymentVersions, effectiveControls, initiatives } from "../db/schema";
+import { auditEvents, controlDefinitions, deploymentVersions, effectiveControls, incidents, initiativeDecisions, initiatives, reviewCycles, reviewDecisions } from "../db/schema";
 import {
   setEvalThreshold,
   pauseDeployment,
@@ -22,8 +22,17 @@ import {
   ConflictError,
 } from "./admin-service";
 import { runMonitor, UNSCOPED_WORKSPACE } from "./monitor-service";
-import { IllegalTransitionError, decide, createDraft } from "./initiative-service";
+import { IllegalTransitionError, decide, createDraft, runReviewAgent, signReview } from "./initiative-service";
 import { CHAMPION_PREFILL_PAYLOAD } from "../intake/champion-prefill";
+import { ACTOR_DIRECTORY } from "./actors";
+import type { Domain } from "../domain/types";
+import { reviewDraftToken } from "../workflow/review-draft-token";
+
+// Admin/domain tests never initialize a live SDK, regardless of host credentials.
+vi.mock("../agents", async () => {
+  const { createMockAgentPort } = await import("../agents/mock-adapter");
+  return { getAgentPort: () => createMockAgentPort() };
+});
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const PLUS_14D = BASE_DATE_MS + 14 * DAY_MS;
@@ -50,6 +59,45 @@ describe("lib/services/admin-service", () => {
   });
 
   describe("setEvalThreshold — project override", () => {
+    it("updates only the current control revision on the operational deployment when a newer candidate exists", async () => {
+      const initiativeId = await memberChatCopilotId(db);
+      const [deployed] = await db.select().from(deploymentVersions)
+        .where(eq(deploymentVersions.initiativeId, initiativeId));
+      const controls = await db.select().from(effectiveControls)
+        .where(eq(effectiveControls.deploymentId, deployed!.id));
+      const original = controls.find((control) => control.controlId === "Q-01")!;
+      const currentId = `ec-${randomUUID()}`;
+      const candidateId = `dep-${randomUUID()}`;
+      const candidateControlId = `ec-${randomUUID()}`;
+      await db.insert(deploymentVersions).values({
+        ...deployed!,
+        id: candidateId,
+        version: "v-next",
+        status: "awaiting_promotion_signoff",
+        deployedAt: new Date(deployed!.deployedAt.getTime() + DAY_MS),
+      });
+      await db.insert(effectiveControls).values([
+        { ...original, id: currentId, version: original.version + 1, thresholdOverride: 0.07 },
+        { ...original, id: candidateControlId, deploymentId: candidateId, thresholdOverride: 0.12 },
+      ]);
+
+      const result = await setEvalThreshold(db, RAY_CHEN, null, {
+        controlId: "Q-01", initiativeId, newValue: 0.06, reason: "Tighten the active control.",
+      });
+
+      expect(result.before).toBe(0.07);
+      const [current] = await db.select().from(effectiveControls).where(eq(effectiveControls.id, currentId));
+      const [history] = await db.select().from(effectiveControls).where(eq(effectiveControls.id, original.id));
+      const [candidate] = await db.select().from(effectiveControls).where(eq(effectiveControls.id, candidateControlId));
+      expect(current!.thresholdOverride).toBe(0.06);
+      expect(history!.thresholdOverride).toBe(original.thresholdOverride);
+      expect(candidate!.thresholdOverride).toBe(0.12);
+      const events = await db.select().from(auditEvents).where(eq(auditEvents.initiativeId, initiativeId));
+      expect(events.find((event) => event.action === "control_threshold_changed")).toMatchObject({
+        before: "0.07", after: "0.06", actor: RAY_CHEN.id,
+      });
+    });
+
     it("writes a threshold override for the initiative's deployment + a before/after audit event", async () => {
       const initiativeId = await memberChatCopilotId(db);
 
@@ -209,6 +257,51 @@ describe("lib/services/admin-service", () => {
   });
 
   describe("pauseDeployment / resumeDeployment", () => {
+    it("pauses and resumes the operational version without changing the newer seeded promotion candidate", async () => {
+      const [initiative] = await db.select().from(initiatives)
+        .where(eq(initiatives.slug, "pa-correspondence-model"));
+      const versions = await db.select().from(deploymentVersions)
+        .where(eq(deploymentVersions.initiativeId, initiative!.id));
+      const deployed = versions.find((version) => version.status === "deployed")!;
+      const candidate = versions.find((version) => version.status === "awaiting_promotion_signoff")!;
+
+      const paused = await pauseDeployment(db, RAY_CHEN, null, initiative!.id, "Pause the active release.");
+      expect(paused.deploymentId).toBe(deployed.id);
+      const [pausedVersion] = await db.select().from(deploymentVersions).where(eq(deploymentVersions.id, deployed.id));
+      expect(pausedVersion!.status).toBe("paused");
+      const resumed = await resumeDeployment(db, RAY_CHEN, null, initiative!.id, "Resume the active release.");
+      expect(resumed.deploymentId).toBe(deployed.id);
+
+      const [unchangedCandidate] = await db.select().from(deploymentVersions).where(eq(deploymentVersions.id, candidate.id));
+      expect(unchangedCandidate).toEqual(candidate);
+      const events = await db.select().from(auditEvents).where(eq(auditEvents.initiativeId, initiative!.id));
+      for (const action of ["pause", "resume"]) {
+        expect(events.find((event) => event.action === action)?.metadata).toMatchObject({ deploymentId: deployed.id });
+      }
+    });
+
+    it.each(["awaiting_promotion_signoff", "retired"])(
+      "rejects operational mutations when only a %s version remains",
+      async (status) => {
+        const initiativeId = await memberChatCopilotId(db);
+        await db.update(deploymentVersions).set({ status }).where(eq(deploymentVersions.initiativeId, initiativeId));
+        const beforeEvents = await db.select().from(auditEvents).where(eq(auditEvents.initiativeId, initiativeId));
+        const beforeControls = await db.select().from(effectiveControls);
+        const beforeVersions = await db.select().from(deploymentVersions).where(eq(deploymentVersions.initiativeId, initiativeId));
+
+        await expect(pauseDeployment(db, RAY_CHEN, null, initiativeId, "No active release.")).rejects.toThrow(NotFoundError);
+        await expect(setEvalThreshold(db, RAY_CHEN, null, {
+          controlId: "Q-01", initiativeId, newValue: 0.06, reason: "No active release.",
+        })).rejects.toThrow(NotFoundError);
+        await db.update(initiatives).set({ state: "paused" }).where(eq(initiatives.id, initiativeId));
+        await expect(resumeDeployment(db, RAY_CHEN, null, initiativeId, "No active release.")).rejects.toThrow(NotFoundError);
+
+        expect(await db.select().from(deploymentVersions).where(eq(deploymentVersions.initiativeId, initiativeId))).toEqual(beforeVersions);
+        expect(await db.select().from(effectiveControls)).toEqual(beforeControls);
+        expect(await db.select().from(auditEvents).where(eq(auditEvents.initiativeId, initiativeId))).toEqual(beforeEvents);
+      },
+    );
+
     it("pauseDeployment requires a non-empty reason (rejects empty string)", async () => {
       const initiativeId = await memberChatCopilotId(db);
       await expect(pauseDeployment(db, RAY_CHEN, null, initiativeId, "")).rejects.toThrow(ValidationError);
@@ -272,6 +365,81 @@ describe("lib/services/admin-service", () => {
       const result = await resumeDeployment(db, RAY_CHEN, null, initiativeId, "Reassessment complete, model retrained.");
       expect(result.after).toBe("deployed");
     });
+
+    it("resumes only by explicit admin action after monitor, domain drafts/signatures, and reassessment approval", async () => {
+      const initiativeId = await memberChatCopilotId(db);
+      await db.update(initiatives).set({ workspaceId: "ws-reassessment" }).where(eq(initiatives.id, initiativeId));
+      const [deployment] = await db.select().from(deploymentVersions).where(eq(deploymentVersions.initiativeId, initiativeId));
+      const monitor = await runMonitor(db, RAY_CHEN, PLUS_14D, "ws-reassessment");
+      const breach = monitor.breaches.find((row) => row.deploymentId === deployment.id)!;
+      const reviewCycleId = breach.reviewCycleId;
+      if (!reviewCycleId) throw new Error("the breach must open a reassessment cycle");
+      const pending = await db.select().from(reviewDecisions).where(eq(reviewDecisions.cycleId, reviewCycleId));
+      expect(pending.length).toBeGreaterThan(0);
+      expect(pending.every((row) => row.status === "pending")).toBe(true);
+      for (const review of pending) {
+        const reviewer = Object.values(ACTOR_DIRECTORY).find((persona) => persona.reviewDomain === review.domain)!;
+        const actor = { id: reviewer.id, role: "reviewer" as const };
+        expect(await runReviewAgent(db, reviewCycleId, review.domain as Domain, actor, "ws-reassessment"))
+          .toMatchObject({ status: "drafted" });
+        const [drafted] = await db.select().from(reviewDecisions).where(eq(reviewDecisions.id, review.id));
+        await signReview(db, reviewCycleId, review.domain as Domain, actor, "ws-reassessment", undefined, reviewDraftToken(drafted));
+      }
+      expect(await decide(db, initiativeId, APPROVER, "ws-reassessment", { decision: "approved" }))
+        .toMatchObject({ after: "approved" });
+      const [beforeResume] = await db.select().from(deploymentVersions).where(eq(deploymentVersions.id, deployment.id));
+      expect(beforeResume.status).toBe("paused");
+      await expect(resumeDeployment(db, APPROVER, "ws-reassessment", initiativeId, "Ready.")).rejects.toThrow(ForbiddenError);
+      await expect(resumeDeployment(db, RAY_CHEN, "ws-reassessment", initiativeId, " ")).rejects.toThrow(ValidationError);
+      await expect(resumeDeployment(db, RAY_CHEN, "other-workspace", initiativeId, "Ready.")).rejects.toThrow(NotFoundError);
+
+      const reason = "Approved reassessment reviewed; restore the paused release.";
+      expect(await resumeDeployment(db, RAY_CHEN, "ws-reassessment", initiativeId, reason))
+        .toMatchObject({ deploymentId: deployment.id, before: "approved", after: "deployed" });
+      const [resumed] = await db.select().from(deploymentVersions).where(eq(deploymentVersions.id, deployment.id));
+      expect(resumed).toMatchObject({ status: "deployed", pausedAt: null });
+      const [incident] = await db.select().from(incidents).where(eq(incidents.id, breach.incidentId));
+      expect(incident.resolvedAt).toBeNull();
+      const events = await db.select().from(auditEvents).where(eq(auditEvents.initiativeId, initiativeId));
+      const recoveryEvents = events.filter((event) => event.action === "deploy" && event.metadata?.reviewCycleId === reviewCycleId);
+      expect(recoveryEvents).toHaveLength(1);
+      expect(recoveryEvents[0]).toMatchObject({
+        actor: RAY_CHEN.id, actorRole: "admin", before: "approved", after: "deployed",
+        metadata: { deploymentId: deployment.id, reviewCycleId, reason },
+      });
+      await expect(resumeDeployment(db, RAY_CHEN, "ws-reassessment", initiativeId, reason)).rejects.toThrow(IllegalTransitionError);
+    });
+
+    it.each(["initial", "open", "missing-decision", "wrong-decision", "newer-cycle", "deployed", "candidate-only"])(
+      "does not resume an approved initiative with %s recovery context",
+      async (scenario) => {
+        const initiativeId = await memberChatCopilotId(db);
+        const [priorCycle] = await db.select().from(reviewCycles).where(eq(reviewCycles.initiativeId, initiativeId));
+        const cycleId = `cycle-${randomUUID()}`;
+        const openedAt = new Date(PLUS_14D);
+        await db.insert(reviewCycles).values({
+          ...priorCycle, id: cycleId, kind: scenario === "initial" ? "initial" : "reassessment",
+          openedAt, closedAt: scenario === "open" ? null : new Date(PLUS_14D + 1000),
+        });
+        if (scenario !== "missing-decision") await db.insert(initiativeDecisions).values({
+          id: `decision-${randomUUID()}`, initiativeId, cycleId,
+          type: scenario === "wrong-decision" ? "rejected" : "approved",
+          approver: APPROVER.id, decidedAt: new Date(PLUS_14D + 1000),
+        });
+        if (scenario === "newer-cycle") await db.insert(reviewCycles).values({
+          ...priorCycle, id: `cycle-${randomUUID()}`, kind: "reassessment", openedAt: new Date(PLUS_14D + 2000), closedAt: null,
+        });
+        await db.update(initiatives).set({ state: "approved" }).where(eq(initiatives.id, initiativeId));
+        await db.update(deploymentVersions).set({
+          status: scenario === "candidate-only" ? "awaiting_promotion_signoff" : scenario === "deployed" ? "deployed" : "paused",
+        }).where(eq(deploymentVersions.initiativeId, initiativeId));
+        const beforeVersions = await db.select().from(deploymentVersions).where(eq(deploymentVersions.initiativeId, initiativeId));
+        const beforeEvents = await db.select().from(auditEvents).where(eq(auditEvents.initiativeId, initiativeId));
+        await expect(resumeDeployment(db, RAY_CHEN, null, initiativeId, "Attempt recovery.")).rejects.toThrow();
+        expect(await db.select().from(deploymentVersions).where(eq(deploymentVersions.initiativeId, initiativeId))).toEqual(beforeVersions);
+        expect(await db.select().from(auditEvents).where(eq(auditEvents.initiativeId, initiativeId))).toEqual(beforeEvents);
+      },
+    );
 
     it("pauseDeployment checks workspace before lifecycle state and allows the owning workspace", async () => {
       const initiativeId = await memberChatCopilotId(db);

@@ -17,7 +17,8 @@ import { ReviewsTab } from "@/components/jeeves/reviews-tab";
 import { DecisionsTab } from "@/components/jeeves/decisions-tab";
 import { ControlsTab } from "@/components/jeeves/controls-tab";
 import { EvalsTab } from "@/components/jeeves/operate-tab";
-import { DeploymentsTab, DEPLOYMENT_STATUS_LABEL } from "@/components/jeeves/deployments-tab";
+import { DeploymentRecovery } from "@/components/jeeves/deployment-recovery";
+import { DEPLOYMENT_STATUS_LABEL } from "@/components/jeeves/deployments-tab";
 import {
   InitiativeBlockersRail,
   summarizeBlockers,
@@ -189,7 +190,7 @@ export default async function InitiativeDetailPage({
         </div>
       ) : null}
 
-      <LiveActionsBar slug={summary.slug} state={summary.state} />
+      <LiveActionsBar initiativeId={summary.initiativeId} isSeeded={summary.isSeeded} state={summary.state} decisionReadiness={summary.decisionReadiness} />
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_18rem]">
         <InitiativeTabs initialTab={tab}>
@@ -229,7 +230,7 @@ export default async function InitiativeDetailPage({
           </TabsContent>
           <TabsContent value="evidence"><EvidenceTab slug={summary.slug} /></TabsContent>
           <TabsContent value="reviews">
-            <ReviewsTab reviews={detail.reviews} slug={summary.slug} />
+            <ReviewsTab reviews={detail.reviews} slug={summary.slug} initiativeId={summary.initiativeId} isSeeded={summary.isSeeded} />
           </TabsContent>
           <TabsContent value="decisions">
             <DecisionsTab slug={summary.slug} decisions={detail.decisions} />
@@ -241,7 +242,7 @@ export default async function InitiativeDetailPage({
             <EvalsTab slug={summary.slug} telemetry={detail.telemetry} />
           </TabsContent>
           <TabsContent value="deployments">
-            <DeploymentsTab deployments={detail.deployments} />
+            <DeploymentRecovery initiativeId={summary.initiativeId} initiativeTitle={summary.title} deployments={detail.deployments} />
           </TabsContent>
           <TabsContent value="audit">
             <AuditTab events={detail.events} />

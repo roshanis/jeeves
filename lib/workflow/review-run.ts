@@ -1,509 +1,227 @@
-/**
- * WorkflowPort-shaped fan-out for domain draft reviews (plan.md §2 step 2,
- * §9 P2; task brief deliverable 2).
- *
- * `startDraftRun` invokes `getAgentPort().draftReview` once PER requested
- * domain and persists each result into `review_decisions` as it completes.
- * State lives entirely in Postgres (`review_decisions` + a lightweight
- * `run_progress` audit-event trail) — "durable-lite": there is no in-memory
- * run registry, so a caller can re-invoke `startDraftRun` for the same cycle
- * at any time (e.g. after a server restart) and it resumes by re-attempting
- * only domains that are not already `drafted`/`signed`.
- *
- * Idempotency: `review_decisions` has a unique (cycleId, domain) constraint
- * (lib/db/schema.ts). This module never inserts a second row for a
- * (cycle, domain) pair that already exists — it always updates the
- * existing `pending`/`returned` row in place, so re-running the same fan-out
- * twice never duplicates rows (task brief: "idempotent per (cycle, domain)").
- * A domain already `drafted` or `signed` is left untouched by a re-run
- * (no wasted LLM calls, no clobbering a human-signed decision).
- *
- * Bounded concurrency (hardening pass, Codex review): rather than firing all
- * requested domains at once via a single `Promise.allSettled` (up to 8
- * concurrent LLM calls per HTTP request — a real risk for provider
- * concurrency limits / request timeouts), domains are run through a small
- * hand-rolled worker-pool limiter (`runWithConcurrencyLimit` below) that
- * caps in-flight `draftReview` calls at `options.concurrency` (default 3).
- * Workers pull the next domain off a shared queue as soon as they finish, so
- * this preserves the exact same order-independent semantics as before: every
- * requested-and-eligible domain is still attempted, and one slow/failed
- * domain in one batch never blocks domains assigned to other workers.
- *
- * Per-domain retry (hardening pass): a domain whose `draftReview` attempt
- * fails (thrown rejection or `{ ok: false }` PortResult) is retried, up to
- * `options.maxAttempts` total attempts (default 2 — i.e. one retry), before
- * being persisted/recorded as `failed`. `PortFailure` (lib/agents/ports.ts)
- * has no reliable cross-variant transient/permanent discriminator — only the
- * `provider` variant carries a `retryable` boolean, `validation` is clearly
- * permanent (bad input will fail identically every time), and `cancelled`
- * represents a deliberate abort that retrying would defeat. Rather than
- * inventing a discriminator that doesn't exist on the type, this module
- * retries every failure kind EXCEPT `validation` and `cancelled`, and additionally
- * skips retrying a `provider` failure whose `retryable` is explicitly `false`.
- * This is a conservative, documented choice, not a guess: worst case for an
- * unretryable-but-not-explicitly-marked failure is one extra (cheap, bounded)
- * attempt, never an infinite loop, and it never retries a deliberate
- * cancellation or a request that will provably fail the same way again.
- */
+/** App-owned draft execution: short transactions claim/persist; model calls run outside locks. */
 import { randomUUID } from "node:crypto";
-import { and, eq, inArray, ne } from "drizzle-orm";
+import { and, count, desc, eq, inArray, sql } from "drizzle-orm";
+import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
+import type * as schema from "../db/schema";
 import type { Db } from "../db/client";
-import { auditEvents, intakeVersions, reviewCycles, reviewDecisions } from "../db/schema";
-import type { Domain } from "../domain/types";
+import { auditEvents, initiatives, intakeVersions, reviewCycles, reviewDecisions, riskAssessments } from "../db/schema";
+import type { Actor, Domain } from "../domain/types";
 import { getAgentPort } from "../agents";
-import type {
-  AgentPort,
-  DraftReviewOutput,
-  GovernanceDomain,
-  IntakeSnapshot,
-  PortFailure,
-} from "../agents/ports";
+import type { AgentPort, DraftReviewOutput, IntakeSnapshot, InvokeOptions, PortFailure, PortResult } from "../agents/ports";
+import { reviewDraftToken, reviewSnapshotCondition } from "./review-draft-token";
 
+type Tx = PgDatabase<PgQueryResultHKT, typeof schema>;
+type Decision = typeof reviewDecisions.$inferSelect;
+type SkipReason = "already signed" | "review changed" | "cycle closed" | "superseded";
 export interface DraftRunDomainOutcome {
   domain: Domain;
   status: "drafted" | "failed" | "skipped";
-  /** Present when status === "failed". */
   error?: PortFailure;
-  /** Present when persistence loses a race to an immutable human signature. */
-  reason?: "already signed";
+  reason?: SkipReason;
 }
-
-export interface StartDraftRunResult {
-  runId: string;
-  cycleId: string;
-  outcomes: DraftRunDomainOutcome[];
-}
-
+export interface StartDraftRunResult { runId: string; cycleId: string; outcomes: DraftRunDomainOutcome[] }
 export type DraftRunDomainStatus = "pending" | "drafted" | "signed" | "returned" | "failed";
-
-export interface DraftRunProgressRow {
-  domain: Domain;
-  status: DraftRunDomainStatus;
-  /** Present only for domains whose most recent attempt failed. */
-  lastError?: string;
-}
-
-export interface DraftRunProgress {
-  cycleId: string;
-  rows: DraftRunProgressRow[];
-  /** True once every requested domain is drafted/signed/returned (none pending/failed). */
-  complete: boolean;
-}
-
-/** Options accepted by `startDraftRun`, all optional with documented defaults. */
-export interface StartDraftRunOptions {
-  /** Max concurrent `draftReview` calls in flight at once. Default 3. */
-  concurrency?: number;
-  /** Max attempts per domain (first try + retries) before recording `failed`. Default 2. */
-  maxAttempts?: number;
-}
-
-const DEFAULT_CONCURRENCY = 3;
-const DEFAULT_MAX_ATTEMPTS = 2;
-
-function nowTs(): number {
-  return Date.now();
-}
-
-/**
- * Runs `task` for every item in `items` with at most `limit` invocations
- * in flight concurrently, returning results in the SAME order as `items`
- * (order of the returned array is stable and input-indexed even though
- * completion order is not — callers zip `items[i]` with `results[i]`).
- * Implemented as a small worker pool: `limit` workers pull the next index
- * off a shared cursor as soon as they finish their current item, so a
- * slow/failed item never blocks items assigned to other workers, and every
- * item is still attempted exactly once per call (retries are the caller's
- * concern inside `task`, not this helper's).
- */
-async function runWithConcurrencyLimit<TItem, TResult>(
-  items: readonly TItem[],
-  limit: number,
-  task: (item: TItem, index: number) => Promise<TResult>,
-): Promise<TResult[]> {
-  const results: TResult[] = new Array(items.length);
-  let cursor = 0;
-  const effectiveLimit = Math.max(1, Math.min(limit, items.length || 1));
-
-  async function worker(): Promise<void> {
-    while (cursor < items.length) {
-      const index = cursor;
-      cursor += 1;
-      results[index] = await task(items[index]!, index);
-    }
-  }
-
-  await Promise.all(Array.from({ length: effectiveLimit }, () => worker()));
-  return results;
-}
-
-/**
- * True when a failed `draftReview` attempt is worth retrying. See the
- * top-of-file comment for the reasoning: retry every kind except a
- * deliberate `cancelled` abort, a permanently-invalid `validation` failure,
- * or a `provider` failure explicitly marked non-retryable.
- */
-function isRetryableFailure(error: PortFailure): boolean {
-  if (error.kind === "cancelled" || error.kind === "validation") return false;
-  if (error.kind === "provider" && !error.retryable) return false;
-  return true;
-}
-
-/**
- * Attempts `port.draftReview` for one domain up to `maxAttempts` times,
- * retrying only on a retryable failure (see `isRetryableFailure`). Returns
- * the last attempt's outcome (success, or the final failure) — the caller
- * persists exactly one row per domain regardless of how many attempts ran.
- */
-async function draftWithRetry(
-  port: AgentPort,
-  cycleId: string,
-  domain: Domain,
-  intake: IntakeSnapshot,
-  maxAttempts: number,
-): Promise<{ ok: true; value: DraftReviewOutput } | { ok: false; error: PortFailure }> {
-  let lastError: PortFailure = {
-    kind: "provider",
-    message: `draftReview for ${domain} never attempted (maxAttempts < 1)`,
-    retryable: true,
-  };
-
-  for (let attempt = 1; attempt <= Math.max(1, maxAttempts); attempt++) {
-    try {
-      const result = await port.draftReview({
-        reviewCycleId: cycleId,
-        domain: domain as GovernanceDomain,
-        intake,
-      });
-      if (result.ok) return result;
-      lastError = result.error;
-      if (!isRetryableFailure(lastError) || attempt >= maxAttempts) {
-        return { ok: false, error: lastError };
-      }
-    } catch (err) {
-      lastError = {
-        kind: "provider",
-        message: err instanceof Error ? err.message : String(err),
-        retryable: true,
-      };
-      if (attempt >= maxAttempts) {
-        return { ok: false, error: lastError };
-      }
-    }
-  }
-
-  return { ok: false, error: lastError };
-}
-
-async function loadIntakeSnapshot(tx: Db, initiativeId: string): Promise<IntakeSnapshot> {
-  const rows = await tx.select().from(intakeVersions).where(eq(intakeVersions.initiativeId, initiativeId));
-  const latest = rows.slice().sort((a, b) => b.version - a.version)[0];
-  if (!latest) {
-    throw new Error(`startDraftRun: initiative ${initiativeId} has no intake version`);
-  }
-  return {
-    initiativeId,
-    intakeVersionId: latest.id,
-    answers: latest.fields,
-  };
-}
-
-/**
- * Run (or resume) a fan-out draft-review pass for `domains` against
- * `cycleId`. Skips any domain whose `review_decisions` row is already
- * `drafted`, `signed`, or `returned` (idempotent re-run / resumability).
- * Every remaining domain is drafted with retry, at most `options.concurrency`
- * at a time (default 3) — a failed/slow domain never prevents others from
- * completing and being persisted; see the top-of-file comment for the
- * bounded-concurrency and retry design.
- */
-export async function startDraftRun(
-  db: Db,
-  initiativeId: string,
-  domains: Domain[],
-  /** Overridable for tests (inject a failing/fake AgentPort); defaults to the real `getAgentPort()`. */
-  port: AgentPort = getAgentPort(),
-  options: StartDraftRunOptions = {},
-): Promise<StartDraftRunResult> {
-  const concurrency = options.concurrency ?? DEFAULT_CONCURRENCY;
-  const maxAttempts = options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
-  const cycleRows = await db.select().from(reviewCycles).where(eq(reviewCycles.initiativeId, initiativeId));
-  const cycle = cycleRows.slice().sort((a, b) => b.openedAt.getTime() - a.openedAt.getTime())[0];
-  if (!cycle) {
-    throw new Error(`startDraftRun: initiative ${initiativeId} has no review cycle`);
-  }
-  const cycleId = cycle.id;
-  const runId = `run-${randomUUID()}`;
-
-  const existingRows = await db
-    .select()
-    .from(reviewDecisions)
-    .where(and(eq(reviewDecisions.cycleId, cycleId), inArray(reviewDecisions.domain, domains)));
-  const existingByDomain = new Map(existingRows.map((r) => [r.domain, r]));
-
-  const toRun = domains.filter((d) => {
-    const existing = existingByDomain.get(d);
-    return !existing || existing.status === "pending" || existing.status === "failed";
-  });
-  const alreadyDone: DraftRunDomainOutcome[] = domains
-    .filter((d) => !toRun.includes(d))
-    .map((d) => ({ domain: d, status: "skipped" }));
-
-  const intake = await loadIntakeSnapshot(db, initiativeId);
-
-  // Bounded-concurrency, retrying fan-out (see top-of-file comment). Each
-  // worker persists its own domain's result the moment its attempts settle,
-  // so persistence still happens "as it completes" exactly as before — only
-  // the number of simultaneously in-flight `draftReview` calls changed.
-  const runResults = await runWithConcurrencyLimit(toRun, concurrency, async (domain) => {
-    const result = await draftWithRetry(port, cycleId, domain, intake, maxAttempts);
-    if (result.ok) {
-      // A signature is a human decision and always wins: if the row was
-      // signed by a reviewer while this domain's draftReview call was still
-      // in flight, `persistDraft` refuses to overwrite it (returns false),
-      // and the domain is reported as `skipped: already signed`, never as
-      // `drafted`.
-      const persisted = await persistDraft(db, cycleId, domain, result.value);
-      if (!persisted) {
-        return { domain, status: "skipped" as const, reason: "already signed" as const };
-      }
-      return { domain, status: "drafted" as const };
-    }
-    const persisted = await persistFailure(db, cycleId, domain, result.error);
-    if (!persisted) {
-      return { domain, status: "skipped" as const, reason: "already signed" as const };
-    }
-    return { domain, status: "failed" as const, error: result.error };
-  });
-
-  const outcomes: DraftRunDomainOutcome[] = [...alreadyDone, ...runResults];
-
-  await db.insert(auditEvents).values({
-    id: `evt-${randomUUID()}`,
-    initiativeId,
-    ts: new Date(nowTs()),
-    actor: "system",
-    actorRole: "system",
-    action: "draft_run_completed",
-    detail: `Draft run ${runId} for cycle ${cycleId}: ${outcomes.filter((o) => o.status === "drafted").length} drafted, ${
-      outcomes.filter((o) => o.status === "failed").length
-    } failed, ${outcomes.filter((o) => o.status === "skipped").length} skipped.`,
-    before: null,
-    after: null,
-    metadata: { runId, outcomes },
-  });
-
-  return { runId, cycleId, outcomes };
-}
-
-/**
- * Persists a successful draft. Returns `true` if it wrote, `false` if it
- * skipped because the row was signed by a human reviewer concurrently (the
- * signature wins — see the module-level race-condition note above `and`
- * `signReview` in lib/services/initiative-service.ts for the established
- * compare-and-set pattern this mirrors). The UPDATE branch is therefore
- * conditional at the DB level (`status <> 'signed'`), asserted via the
- * `.returning()` rowcount rather than a separate read-then-write race
- * window: the SELECT above is only used to decide insert-vs-update and to
- * get `existing.id`, never trusted for the write's correctness.
- *
- * The insert branch (row absent) is never the race: a concurrent sign
- * requires an existing row to sign, so a missing row always means insert is
- * safe.
- */
-async function persistDraft(
-  db: Db,
-  cycleId: string,
-  domain: Domain,
-  value: DraftReviewOutput,
-): Promise<boolean> {
-  const rows = await db
-    .select()
-    .from(reviewDecisions)
-    .where(and(eq(reviewDecisions.cycleId, cycleId), eq(reviewDecisions.domain, domain)));
-  const existing = rows[0];
-  const citations: string[] = [...value.missingEvidence];
-
-  if (existing) {
-    const updated = await db
-      .update(reviewDecisions)
-      .set({ status: "drafted", draftMd: value.draftMarkdown, citations, returnReason: null })
-      .where(and(eq(reviewDecisions.id, existing.id), ne(reviewDecisions.status, "signed")))
-      .returning();
-    return updated.length > 0;
-  } else {
-    await db.insert(reviewDecisions).values({
-      id: `rd-${randomUUID()}`,
-      cycleId,
-      domain,
-      status: "drafted",
-      reviewer: null,
-      draftMd: value.draftMarkdown,
-      citations,
-      signedAt: null,
-      returnReason: null,
-      createdAt: new Date(nowTs()),
-    });
-    return true;
-  }
-}
-
-/** Renders any `PortFailure` variant to a human-readable string ("cancelled" has no `message` field). */
-function describePortFailure(error: PortFailure): string {
-  if (error.kind === "cancelled") {
-    return `cancelled${error.reason ? `: ${error.reason}` : ""}`;
-  }
-  return error.message;
-}
-
-/**
- * Persists a failed draft attempt. Returns `true` if it wrote, `false` if it
- * skipped because the row was signed by a human reviewer concurrently (the
- * signature wins — see `persistDraft`'s doc comment for the shared
- * compare-and-set rationale). Same conditional-UPDATE / `.returning()`
- * rowcount-assert shape as `persistDraft`; the insert branch is not the race
- * for the same reason (a concurrent sign requires an existing row).
- */
-async function persistFailure(
-  db: Db,
-  cycleId: string,
-  domain: Domain,
-  error: PortFailure,
-): Promise<boolean> {
-  const rows = await db
-    .select()
-    .from(reviewDecisions)
-    .where(and(eq(reviewDecisions.cycleId, cycleId), eq(reviewDecisions.domain, domain)));
-  const existing = rows[0];
-
-  // Per-domain failure isolation: leave the row 'pending' (not 'drafted'),
-  // recording the failure reason in returnReason so the UI can surface it,
-  // without blocking retry (a subsequent startDraftRun re-attempts it since
-  // it is still not drafted/signed/returned).
-  const reasonText = `draft failed: ${describePortFailure(error)}`;
-
-  if (existing) {
-    const updated = await db
-      .update(reviewDecisions)
-      .set({ status: "pending", returnReason: reasonText })
-      .where(and(eq(reviewDecisions.id, existing.id), ne(reviewDecisions.status, "signed")))
-      .returning();
-    return updated.length > 0;
-  } else {
-    await db.insert(reviewDecisions).values({
-      id: `rd-${randomUUID()}`,
-      cycleId,
-      domain,
-      status: "pending",
-      reviewer: null,
-      draftMd: null,
-      citations: [],
-      signedAt: null,
-      returnReason: reasonText,
-      createdAt: new Date(nowTs()),
-    });
-    return true;
-  }
-}
-
-/* -------------------------------------------------------------------------
- * On-demand single-domain (re)draft — the mechanism behind a reviewer's
- * "Run agent" button (M3 operate loop). Distinct from `startDraftRun`:
- *   - It targets exactly ONE (cycle, domain) pair given the cycleId directly.
- *   - It ALWAYS re-attempts that domain even when it is already `drafted` or
- *     `returned` (the reviewer explicitly asked for a fresh draft), overwriting
- *     the existing draft in place via `persistDraft`. `startDraftRun` instead
- *     SKIPS anything already drafted, which is the wrong behavior for an
- *     explicit re-run.
- *   - It refuses to overwrite a `signed` decision — a human signature is
- *     immutable until the review is returned. This is a backstop; the service
- *     layer (`runReviewAgent`) checks first and surfaces a clean 400.
- *   - It writes NO audit event: the actor-attributed row (which reviewer ran
- *     the agent) is the service layer's responsibility, since this module has
- *     no actor.
- * ---------------------------------------------------------------------- */
-
+export interface DraftRunProgressRow { domain: Domain; status: DraftRunDomainStatus; lastError?: string }
+export interface DraftRunProgress { cycleId: string; rows: DraftRunProgressRow[]; complete: boolean }
+export interface StartDraftRunOptions extends InvokeOptions { concurrency?: number; maxAttempts?: number }
+export interface RunSingleDomainOptions extends InvokeOptions { maxAttempts?: number; actor?: Actor }
 export interface RunSingleDomainResult {
   cycleId: string;
   domain: Domain;
   status: "drafted" | "failed" | "skipped";
-  /** The freshly drafted markdown — present only when status === "drafted". */
   draftMd?: string;
-  /** Human-readable failure reason — present only when status === "failed". */
   error?: string;
-  /** Present when a concurrent human signature wins the persistence race. */
-  reason?: "already signed";
+  reason?: SkipReason;
+}
+const DEFAULT_TIMEOUT_MS = 30_000;
+
+export class DraftRunConflictError extends Error {
+  constructor(message: string) { super(message); this.name = "DraftRunConflictError"; }
 }
 
-/** Options for `runSingleDomainDraft`. */
-export interface RunSingleDomainOptions {
-  /** Max attempts (first try + retries) before recording `failed`. Default 2. */
-  maxAttempts?: number;
-}
-
-export async function runSingleDomainDraft(
-  db: Db,
-  cycleId: string,
-  domain: Domain,
-  /** Overridable for tests (inject a failing/fake AgentPort); defaults to the real `getAgentPort()`. */
-  port: AgentPort = getAgentPort(),
-  options: RunSingleDomainOptions = {},
-): Promise<RunSingleDomainResult> {
-  const maxAttempts = options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
-
-  const cycleRows = await db.select().from(reviewCycles).where(eq(reviewCycles.id, cycleId));
-  const cycle = cycleRows[0];
-  if (!cycle) {
-    throw new Error(`runSingleDomainDraft: no review cycle ${cycleId}`);
-  }
-
-  // Backstop: never re-draft over a human signature.
-  const existingRows = await db
-    .select()
-    .from(reviewDecisions)
-    .where(and(eq(reviewDecisions.cycleId, cycleId), eq(reviewDecisions.domain, domain)));
-  if (existingRows[0]?.status === "signed") {
-    throw cannotRedraftSignedError(cycleId, domain);
-  }
-
-  const intake = await loadIntakeSnapshot(db, cycle.initiativeId);
-  const result = await draftWithRetry(port, cycleId, domain, intake, maxAttempts);
-  if (result.ok) {
-    // The pre-check above only guards against a signature that already
-    // existed when this call started. If a reviewer signs the row WHILE
-    // draftReview was in flight, `persistDraft`'s DB-level CAS refuses to
-    // overwrite it (returns false) — reported as `skipped: already signed`
-    // rather than thrown, because `runReviewAgent` (the audit-writing
-    // caller) records the outcome of every run, including a lost race.
-    const persisted = await persistDraft(db, cycleId, domain, result.value);
-    if (!persisted) {
-      return { cycleId, domain, status: "skipped", reason: "already signed" };
+async function runWithConcurrencyLimit<T, R>(items: readonly T[], limit: number, task: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let cursor = 0;
+  async function worker() {
+    while (cursor < items.length) {
+      const index = cursor++;
+      results[index] = await task(items[index]!);
     }
-    return { cycleId, domain, status: "drafted", draftMd: result.value.draftMarkdown };
   }
-  const persisted = await persistFailure(db, cycleId, domain, result.error);
-  if (!persisted) {
-    return { cycleId, domain, status: "skipped", reason: "already signed" };
-  }
-  return { cycleId, domain, status: "failed", error: describePortFailure(result.error) };
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(Math.floor(limit), items.length || 1)) }, worker));
+  return results;
 }
 
-/** Error for the already-signed pre-check in `runSingleDomainDraft`. */
-function cannotRedraftSignedError(cycleId: string, domain: Domain): Error {
-  return new Error(`runSingleDomainDraft: cannot re-draft a signed review (${cycleId}/${domain})`);
+function isRetryableFailure(error: PortFailure): boolean {
+  return error.kind === "provider" && error.retryable;
+}
+async function draftWithRetry(port: AgentPort, cycleId: string, domain: Domain, intake: IntakeSnapshot, options: RunSingleDomainOptions): Promise<PortResult<DraftReviewOutput>> {
+  const maxAttempts = Math.max(1, options.maxAttempts ?? 2);
+  const deadline = Date.now() + (options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+  let lastError: PortFailure = { kind: "provider", message: "Draft failed", retryable: false };
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    if (options.signal?.aborted) return { ok: false, error: { kind: "cancelled", reason: "Draft cancelled" } };
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) return { ok: false, error: { kind: "timeout", message: "Draft deadline exceeded", elapsedMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS } };
+    try {
+      const result = await port.draftReview({ reviewCycleId: cycleId, domain, intake }, {
+        signal: options.signal, timeoutMs: remaining, onProgress: options.onProgress,
+      });
+      if (options.signal?.aborted) return { ok: false, error: { kind: "cancelled", reason: "Draft cancelled" } };
+      if (result.ok) return result;
+      lastError = result.error;
+    } catch {
+      lastError = { kind: "provider", message: "Review agent failed. Try again.", retryable: true };
+    }
+    if (!isRetryableFailure(lastError)) break;
+  }
+  return { ok: false, error: lastError };
 }
 
-/** UI polling endpoint support (task brief: `getRunProgress(cycleId)`). */
+/** Same parent-row lock as sign/return/decide, always acquired before review rows. */
+async function lockCycle(tx: Tx, cycleId: string) {
+  const [reference] = await tx.select().from(reviewCycles).where(eq(reviewCycles.id, cycleId));
+  if (!reference) throw new Error(`no review cycle ${cycleId}`);
+  await tx.select({ id: initiatives.id }).from(initiatives).where(eq(initiatives.id, reference.initiativeId)).for("update");
+  const [cycle] = await tx.select().from(reviewCycles).where(eq(reviewCycles.id, cycleId));
+  return cycle!;
+}
+
+/** Count only actions that invalidate an in-flight draft, not stale workers' completion receipts. */
+async function claimVersion(tx: Tx, cycleId: string, domain: Domain): Promise<number> {
+  const [row] = await tx.select({ value: count() }).from(auditEvents).where(and(
+    inArray(auditEvents.action, ["review_draft_started", "review_signed", "review_returned"]),
+    sql`${auditEvents.metadata}->>'cycleId' = ${cycleId}`,
+    sql`${auditEvents.metadata}->>'domain' = ${domain}`,
+  ));
+  return Number(row!.value);
+}
+interface DraftClaim { decision: Decision; intake: IntakeSnapshot; initiativeId: string; version: number; attemptId: string }
+async function claimDraft(db: Db, cycleId: string, domain: Domain, force: boolean, actor?: Actor): Promise<DraftClaim | null> {
+  return db.transaction(async (tx) => {
+    const cycle = await lockCycle(tx, cycleId);
+    if (cycle.closedAt) throw new DraftRunConflictError(`review cycle ${cycleId} is closed`);
+    const [assessment] = await tx.select().from(riskAssessments).where(and(eq(riskAssessments.id, cycle.riskAssessmentId), eq(riskAssessments.initiativeId, cycle.initiativeId)));
+    if (!assessment || !assessment.requiredDomains.includes(domain)) throw new Error(`domain ${domain} is not required for review cycle ${cycleId}`);
+    const [intake] = await tx.select().from(intakeVersions).where(and(eq(intakeVersions.id, assessment.intakeVersionId), eq(intakeVersions.initiativeId, cycle.initiativeId)));
+    if (!intake) throw new Error(`review cycle ${cycleId} has no bound intake version`);
+    await tx.insert(reviewDecisions).values({ id: `rd-${randomUUID()}`, cycleId, domain, status: "pending", citations: [], createdAt: new Date() }).onConflictDoNothing();
+    const [decision] = await tx.select().from(reviewDecisions).where(and(eq(reviewDecisions.cycleId, cycleId), eq(reviewDecisions.domain, domain)));
+    if (decision!.status === "signed") {
+      if (force) throw new DraftRunConflictError(`cannot re-draft a signed review (${cycleId}/${domain})`);
+      return null;
+    }
+    if (!force && decision!.status !== "pending" && decision!.status !== "failed") return null;
+    const attemptId = `attempt-${randomUUID()}`;
+    await tx.insert(auditEvents).values({
+      id: `evt-${randomUUID()}`, initiativeId: cycle.initiativeId, ts: new Date(),
+      actor: actor?.id ?? "system", actorRole: actor?.role ?? "system", action: "review_draft_started",
+      detail: `Started ${domain} review draft.`, before: decision!.status, after: decision!.status,
+      metadata: { cycleId, domain, attemptId, intakeVersionId: intake.id },
+    });
+    return { decision: decision!, intake: { initiativeId: cycle.initiativeId, intakeVersionId: intake.id, answers: intake.fields }, initiativeId: cycle.initiativeId, version: await claimVersion(tx, cycleId, domain), attemptId };
+  });
+}
+function describePortFailure(error: PortFailure): string {
+  return error.kind === "cancelled" ? `cancelled${error.reason ? `: ${error.reason}` : ""}` : error.message;
+}
+
+/** The result and its attribution receipt commit together, including when receipt insertion fails. */
+async function finishDraft(
+  db: Db,
+  claim: DraftClaim,
+  result: PortResult<DraftReviewOutput>,
+  actor?: Actor,
+): Promise<RunSingleDomainResult> {
+  const { cycleId } = claim.decision;
+  const domain = claim.decision.domain as Domain;
+  return db.transaction(async (tx) => {
+    const cycle = await lockCycle(tx, cycleId);
+    const [current] = await tx.select().from(reviewDecisions).where(eq(reviewDecisions.id, claim.decision.id));
+    let reason: SkipReason | undefined;
+    if (cycle.closedAt) reason = "cycle closed";
+    else if (current?.status === "signed") reason = "already signed";
+    else if (!current || reviewDraftToken(current) !== reviewDraftToken(claim.decision)) reason = "review changed";
+    else if (await claimVersion(tx, cycleId, domain) !== claim.version) reason = "superseded";
+
+    let outcome: RunSingleDomainResult;
+    let afterStatus = current?.status ?? null;
+    if (reason) {
+      outcome = { cycleId, domain, status: "skipped", reason };
+    } else if (!result.ok && (current!.status === "drafted" || current!.status === "returned")) {
+      // A failed explicit retry cannot erase a valid draft or a human return.
+      // Its error belongs to this attempt's receipt and response.
+      outcome = { cycleId, domain, status: "failed", error: describePortFailure(result.error) };
+    } else {
+      const values = result.ok
+        ? {
+            status: "drafted", draftMd: result.value.draftMarkdown,
+            citations: [...result.value.citations], returnReason: null,
+            reviewer: null, signedAt: null,
+          }
+        : { status: "pending", returnReason: `draft failed: ${describePortFailure(result.error)}` };
+      const updated = await tx.update(reviewDecisions).set(values)
+        .where(reviewSnapshotCondition(claim.decision)).returning();
+      if (updated.length === 0) {
+        outcome = { cycleId, domain, status: "skipped", reason: "review changed" };
+      } else {
+        afterStatus = updated[0]!.status;
+        outcome = result.ok
+          ? { cycleId, domain, status: "drafted", draftMd: result.value.draftMarkdown }
+          : { cycleId, domain, status: "failed", error: describePortFailure(result.error) };
+      }
+    }
+    await tx.insert(auditEvents).values({
+      id: `evt-${randomUUID()}`,
+      initiativeId: claim.initiativeId,
+      ts: new Date(),
+      actor: actor?.id ?? "system",
+      actorRole: actor?.role ?? "system",
+      action: actor ? "review_agent_run" : "review_draft_completed",
+      detail: `Ran the ${domain} review agent: ${outcome.status}${outcome.reason ? ` (${outcome.reason})` : ""}.`,
+      before: current?.status ?? null,
+      after: afterStatus,
+      metadata: {
+        cycleId, domain, attemptId: claim.attemptId, status: outcome.status,
+        intakeVersionId: claim.intake.intakeVersionId,
+        ...(outcome.reason ? { reason: outcome.reason } : {}),
+        ...(!result.ok ? { errorKind: result.error.kind } : {}),
+      },
+    });
+    return outcome;
+  });
+}
+
+export async function runSingleDomainDraft(db: Db, cycleId: string, domain: Domain, port: AgentPort = getAgentPort(), options: RunSingleDomainOptions = {}): Promise<RunSingleDomainResult> {
+  const claim = await claimDraft(db, cycleId, domain, true, options.actor);
+  if (!claim) return { cycleId, domain, status: "skipped" };
+  const result = await draftWithRetry(port, cycleId, domain, claim.intake, options);
+  return finishDraft(db, claim, result, options.actor);
+}
+
+/** Resume only unfinished domains; duplicate request entries never consume extra calls. */
+export async function startDraftRun(db: Db, initiativeId: string, domains: Domain[], port: AgentPort = getAgentPort(), options: StartDraftRunOptions = {}): Promise<StartDraftRunResult> {
+  const [cycle] = await db.select().from(reviewCycles).where(eq(reviewCycles.initiativeId, initiativeId)).orderBy(desc(reviewCycles.openedAt), desc(reviewCycles.id)).limit(1);
+  if (!cycle) throw new Error(`startDraftRun: initiative ${initiativeId} has no review cycle`);
+  if (cycle.closedAt) throw new DraftRunConflictError(`review cycle ${cycle.id} is closed`);
+  const runId = `run-${randomUUID()}`;
+  const outcomes = await runWithConcurrencyLimit([...new Set(domains)], options.concurrency ?? 3, async (domain): Promise<DraftRunDomainOutcome> => {
+    const claim = await claimDraft(db, cycle.id, domain, false);
+    if (!claim) return { domain, status: "skipped" };
+    const result = await draftWithRetry(port, cycle.id, domain, claim.intake, options);
+    const persisted = await finishDraft(db, claim, result);
+    return { domain, status: persisted.status, ...(persisted.reason ? { reason: persisted.reason } : {}), ...(!result.ok && persisted.status === "failed" ? { error: result.error } : {}) };
+  });
+  await db.insert(auditEvents).values({
+    id: `evt-${randomUUID()}`, initiativeId, ts: new Date(), actor: "system", actorRole: "system", action: "draft_run_completed",
+    detail: `Draft run ${runId} for cycle ${cycle.id}: ${outcomes.filter((o) => o.status === "drafted").length} drafted, ${outcomes.filter((o) => o.status === "failed").length} failed, ${outcomes.filter((o) => o.status === "skipped").length} skipped.`,
+    before: null, after: null, metadata: { runId, outcomes },
+  });
+  return { runId, cycleId: cycle.id, outcomes };
+}
+
 export async function getRunProgress(db: Db, cycleId: string): Promise<DraftRunProgress> {
   const rows = await db.select().from(reviewDecisions).where(eq(reviewDecisions.cycleId, cycleId));
-  const progressRows: DraftRunProgressRow[] = rows
-    .slice()
-    .sort((a, b) => a.domain.localeCompare(b.domain))
-    .map((r) => ({
-      domain: r.domain as Domain,
-      status: r.status as DraftRunDomainStatus,
-      ...(r.returnReason && r.status === "pending" ? { lastError: r.returnReason } : {}),
-    }));
-  const complete = progressRows.every((r) => r.status === "drafted" || r.status === "signed" || r.status === "returned");
-  return { cycleId, rows: progressRows, complete };
+  const progressRows = rows.sort((a, b) => a.domain.localeCompare(b.domain)).map((r) => ({ domain: r.domain as Domain, status: r.status as DraftRunDomainStatus, ...(r.returnReason && r.status === "pending" ? { lastError: r.returnReason } : {}) }));
+  return { cycleId, rows: progressRows, complete: progressRows.every((r) => r.status === "drafted" || r.status === "signed" || r.status === "returned") };
 }

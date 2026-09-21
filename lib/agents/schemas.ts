@@ -1,26 +1,6 @@
-/**
- * Zod schemas for the per-agent structured-output shapes documented in each
- * agent directory's schema.md / instructions.md "Output" sections.
- *
- * These are the load-bearing artifacts `agents/README.md` refers to: the
- * `.md` files are the human-readable spec, but "if they drift, the Zod
- * schema wins at runtime." Both the openai adapter (real `generateText` +
- * `Output.object` calls) and the mock adapter (canned fixtures) are validated
- * against the same schemas here, so the two adapters cannot silently drift
- * apart.
- *
- * Nothing in this file is wired to `AgentPort` directly — `AgentPort`
- * (`lib/agents/ports.ts`) exposes the narrower `DraftReviewOutput` /
- * `TriageAssistOutput` / `CompletenessCheckOutput` shapes. The mapping from
- * this file's richer `ReviewerDraftOutput` down to the port's
- * `DraftReviewOutput` lives in `mapReviewerDraftToPortOutput` below (see
- * `agents/README.md`: "the adapter... is responsible for mapping that
- * richer shape down to the port's DraftReviewOutput").
- */
+/** Model-output schemas and the mapping into application-owned agent results. */
 import { z } from "zod";
-import { ADDITIONAL_ANSWER_MAX_LENGTH } from "@/lib/intake/additional-questions";
-
-const optionalIntakeAnswer = z.string().max(ADDITIONAL_ANSWER_MAX_LENGTH).nullable().default(null);
+import { intakeModelPayloadSchema } from "@/lib/intake/schema";
 import type { DraftReviewOutput, GovernanceDomain } from "./ports";
 
 /* -------------------------------------------------------------------------
@@ -64,62 +44,6 @@ export const reviewerDraftOutputSchema = z.object({
 export type ReviewerDraftOutput = z.infer<typeof reviewerDraftOutputSchema>;
 
 /* -------------------------------------------------------------------------
- * Triage agent — agents/triage/instructions.md "Output"
- * ---------------------------------------------------------------------- */
-
-export const triageFlagExplanationSchema = z.object({
-  flag: z.string().min(1),
-  answer: z.string().min(1),
-  why: z.string().min(1),
-});
-
-export const triageRationaleOutputSchema = z.object({
-  rationaleMd: z.string().min(1),
-  flagExplanations: z.array(triageFlagExplanationSchema),
-});
-
-export type TriageRationaleOutput = z.infer<typeof triageRationaleOutputSchema>;
-
-/* -------------------------------------------------------------------------
- * Ops-monitor agent — agents/ops-monitor/instructions.md "Output"
- *
- * NOTE: AgentPort (lib/agents/ports.ts) has exactly three methods —
- * draftReview, triageAssist, checkCompleteness. There is no ops-monitor
- * port method today, so this schema/type is exported for future use (e.g.
- * a WorkflowPort-driven breach-response flow) and is not wired to any
- * AgentPort implementation in lib/agents/mock-adapter.ts or
- * lib/agents/openai-adapter.ts beyond an exported generator function.
- * ---------------------------------------------------------------------- */
-
-/**
- * `suggestedScope` is documented in agents/ops-monitor/instructions.md as
- * `Domain[]` "matching lib/domain/types.ts values" — but per this task's
- * scope we must not create a dependency on lib/domain/types.ts. The value
- * set is identical to `GovernanceDomain` in `./ports` (same eight strings),
- * so we reuse that type/enum here instead of introducing a second import.
- */
-export const opsMonitorIncidentOutputSchema = z.object({
-  incidentSummaryMd: z.string().min(1),
-  suggestedScope: z.array(
-    z.enum([
-      "legal",
-      "procurement",
-      "tech-architecture",
-      "responsible-ai",
-      "security",
-      "privacy-hipaa",
-      "clinical-safety",
-      "data-governance",
-    ]),
-  ),
-  severityNote: z.string(),
-});
-
-export type OpsMonitorIncidentOutput = z.infer<
-  typeof opsMonitorIncidentOutputSchema
->;
-
-/* -------------------------------------------------------------------------
  * Auditor agent — agents/auditor/instructions.md "Output"
  *
  * Unlike the reviewer agent, there is no rich-to-port mapping step for the
@@ -151,137 +75,9 @@ export const auditorAnswerOutputSchema = z.object({
 export type AuditorAnswerOutput = z.infer<typeof auditorAnswerOutputSchema>;
 
 /* -------------------------------------------------------------------------
- * Intake agent — agents/intake/instructions.md "Output"
- *
- * Same no-mapping relationship as the auditor agent above: this schema's
- * `payload` field mirrors `lib/intake/types.ts`'s `IntakePayload` exactly
- * (same section names/field names), but every field is nullable/optional
- * per instructions.md's "partially filled, nulls/empty arrays for anything
- * not yet answered or not yet asked." We do not invent fields beyond what
- * `IntakePayload` declares, and we do not import `IntakePayload` itself
- * (lib/agents has no dependency on lib/intake — the mirrored shape here is
- * this file's own runtime validator, kept in sync with lib/intake/types.ts
- * by hand, the same way ports.ts's interfaces are kept in sync with this
- * file rather than importing it).
+ * Intake interview — shared save/create bounds with explicit nullable answers
+ * for strict model output (persistence also accepts legacy omitted answers).
  * ---------------------------------------------------------------------- */
-
-const intakeBasicsSchema = z.object({
-  title: z.string(),
-  sponsorOrg: z.string(),
-  requesterName: z.string(),
-  requesterEmail: z.string(),
-  businessProblem: z.string(),
-});
-
-const intakeUseCaseSchema = z.object({
-  currentWorkflow: optionalIntakeAnswer,
-  successMetrics: optionalIntakeAnswer,
-  primaryUsers: z.string(),
-  decisionInformed: z.string(),
-  expectedVolume: z
-    .enum(["<100/mo", "100-1k/mo", "1k-10k/mo", "10k-100k/mo", ">100k/mo"])
-    .nullable(),
-});
-
-const intakeDataSchema = z.object({
-  vendorDataReuse: optionalIntakeAnswer,
-  dataSources: z.array(z.string()),
-  phiCategories: z.array(
-    z.enum([
-      "Demographics",
-      "Diagnosis/ICD codes",
-      "Medications",
-      "Clinical notes/free text",
-      "Claims/billing",
-      "Lab results",
-      "Images",
-      "Other",
-    ]),
-  ),
-  phiCategoriesOtherText: z.string().nullable(),
-  retentionIntent: z
-    .enum([
-      "Session-only (no persistence)",
-      "<=30 days",
-      "<=1 year",
-      ">1 year",
-      "Indefinite/per-record-schedule",
-    ])
-    .nullable(),
-  retentionIntentNote: z.string().nullable(),
-  trainingVsInference: z
-    .enum(["Inference-only", "Fine-tuning/training", "Both"])
-    .nullable(),
-});
-
-const intakeModelVendorSchema = z.object({
-  buildOrBuy: z.enum(["Build (internal)", "Buy (vendor)", "Hybrid"]).nullable(),
-  vendorName: z.string().nullable(),
-  hosting: z.enum(["Vendor-hosted", "Self-hosted (Meridian infra)"]).nullable(),
-  modelType: z
-    .enum([
-      "LLM (generative)",
-      "Classical ML / classifier",
-      "OCR/extraction",
-      "Rules engine",
-      "Other",
-    ])
-    .nullable(),
-});
-
-const intakePopulationImpactSchema = z.object({
-  evaluationPlan: optionalIntakeAnswer,
-  affectedPopulations: z.array(z.string()),
-  expectedBenefits: z.string().nullable(),
-  expectedHarms: z.string().nullable(),
-});
-
-const intakeDeploymentSchema = z.object({
-  operationalOwner: optionalIntakeAnswer,
-  humanReviewProcess: optionalIntakeAnswer,
-  monitoringPlan: optionalIntakeAnswer,
-  fallbackPlan: optionalIntakeAnswer,
-  integrationPoints: z.array(z.string()),
-  rolloutPlan: z.string().nullable(),
-});
-
-/**
- * intake-spec §1(g) overlay questions — booleans, nullable per "never invent
- * an answer" (agents/intake/instructions.md): an unanswered overlay flag is
- * `null`, never coerced to `false`.
- */
-const intakeOverlaySchema = z.object({
-  touchesPHI: z.boolean().nullable(),
-  memberFacing: z.boolean().nullable(),
-  careCoverageInfluence: z.boolean().nullable(),
-  vendorHosted: z.boolean().nullable(),
-  humanInTheLoop: z.boolean().nullable(),
-  individualImpact: z.boolean().nullable(),
-});
-
-const evidenceAttachmentSchema = z.object({
-  controlId: z.string(),
-  fileName: z.string(),
-  uploadedAt: z.string(),
-});
-
-/**
- * Mirrors `IntakePayload` (lib/intake/types.ts) field-for-field. All string
- * fields are permitted to be empty strings (not just `z.string().min(1)`)
- * since an unasked/unanswered text field is documented as "" or null across
- * this codebase's own conventions (e.g. mock-adapter.ts's hasRetentionAnswer
- * treats an empty string the same as absent).
- */
-export const intakePayloadSchema = z.object({
-  basics: intakeBasicsSchema,
-  useCase: intakeUseCaseSchema,
-  data: intakeDataSchema,
-  modelVendor: intakeModelVendorSchema,
-  populationImpact: intakePopulationImpactSchema,
-  deployment: intakeDeploymentSchema,
-  overlay: intakeOverlaySchema,
-  evidenceAttachments: z.array(evidenceAttachmentSchema),
-});
 
 const intakeGapSchema = z.object({
   ruleId: z.string(),
@@ -290,7 +86,7 @@ const intakeGapSchema = z.object({
 });
 
 export const intakeInterviewOutputSchema = z.object({
-  payload: intakePayloadSchema,
+  payload: intakeModelPayloadSchema,
   gaps: z.array(intakeGapSchema),
   // instructions.md: "Conversational text you want the requester to
   // actually see... belongs in followUpQuestions" — an empty array is valid
@@ -305,65 +101,25 @@ export type IntakeInterviewOutput = z.infer<typeof intakeInterviewOutputSchema>;
  * Reviewer rich-shape -> port-shape mapping (agents/README.md)
  * ---------------------------------------------------------------------- */
 
-/**
- * Maps the rich `ReviewerDraftOutput` (what the reviewer agent actually
- * returns) down to the stable `DraftReviewOutput` port shape
- * (`lib/agents/ports.ts`). Used by both the openai adapter and the mock
- * adapter so the mapping logic — and its judgment calls — live in exactly
- * one place.
- *
- * Judgment calls (documented per agents/README.md's request that the port
- * stay stable even as the richer per-agent schema gains fields):
- *
- * 1. `domain` is passed through from the caller's input, not re-derived from
- *    the rich output (the rich schema doesn't carry `domain` itself).
- *
- * 2. `draftMarkdown` = `rich.assessmentMd`, optionally with an appended
- *    "## Evidence requests" bullet section when `evidenceRequests` is
- *    non-empty. This keeps the human-editable draft self-contained (a
- *    reviewer editing `draftMarkdown` alone still sees the gaps) without
- *    duplicating the full structured `evidenceRequests` data model inside
- *    the markdown — the port's own `missingEvidence` array remains the
- *    structured source of truth for gaps.
- *
- * 3. `recommendation` mapping:
- *      - "ready-for-signature"  -> "recommend-sign-off"
- *      - "return-with-gaps"     -> "recommend-conditional" when
- *        `suggestedConditions` is non-empty (a populated suggestedConditions
- *        array signals the domain's policy text supports conditional
- *        approval for this fact pattern per instructions.md's "Suggested
- *        conditions" section), else "recommend-return".
- *    "return-with-gaps" never maps to "recommend-sign-off" — the rich
- *    schema's binary vocabulary is deliberately coarser than the port's
- *    three-way recommendation, and conditional-vs-return is inferred from
- *    whether the agent populated suggestedConditions at all.
- *
- * 4. `suggestedConditions` (port: `string[]`) = `rich.suggestedConditions`
- *    mapped to just `.text`, dropping `controlId`. The port's
- *    `suggestedConditions` is documented as plain human-readable strings;
- *    `controlId` is retained on the rich shape for traceability but the
- *    port doesn't have a slot for it, so it is intentionally dropped here
- *    rather than concatenated into the text (keeps each condition string
- *    exactly what a human approver would read/adopt verbatim).
- *
- * 5. `missingEvidence` (port: `string[]`) = `rich.evidenceRequests` mapped
- *    to just `.description`, dropping `controlId` for the same reason as
- *    (4) — the port's `missingEvidence` is documented as "Evidence the
- *    agent could not find," a flat human-readable list, not a structured
- *    per-control record. `controlId` remains available on the rich shape
- *    (and, per (2), can still be surfaced in `draftMarkdown`'s prose) for
- *    any caller that wants it before mapping down to the port.
- */
+/** Preserve policy citations separately and retain reviewer context in the saved Markdown. */
 export function mapReviewerDraftToPortOutput(
   domain: GovernanceDomain,
   rich: ReviewerDraftOutput,
 ): DraftReviewOutput {
-  const evidenceSection =
-    rich.evidenceRequests.length > 0
-      ? `\n\n## Evidence requests\n${rich.evidenceRequests
-          .map((r) => `- ${r.description}`)
-          .join("\n")}`
-      : "";
+  const sections = [rich.assessmentMd];
+  if (rich.evidenceRequests.length > 0) {
+    sections.push(`## Evidence requests\n${rich.evidenceRequests
+      .map((request) => `- ${request.controlId}: ${request.description}`)
+      .join("\n")}`);
+  }
+  if (rich.suggestedConditions.length > 0) {
+    sections.push(`## Suggested conditions\n${rich.suggestedConditions
+      .map((condition) => `- ${condition.controlId}: ${condition.text}`)
+      .join("\n")}`);
+  }
+  if (rich.confidenceNotes.trim()) {
+    sections.push(`## Confidence notes\n${rich.confidenceNotes}`);
+  }
 
   const recommendation: DraftReviewOutput["recommendation"] =
     rich.recommendation === "ready-for-signature"
@@ -374,7 +130,8 @@ export function mapReviewerDraftToPortOutput(
 
   return {
     domain,
-    draftMarkdown: `${rich.assessmentMd}${evidenceSection}`,
+    citations: [...rich.citations],
+    draftMarkdown: sections.join("\n\n"),
     recommendation,
     suggestedConditions: rich.suggestedConditions.map((c) => c.text),
     missingEvidence: rich.evidenceRequests.map((r) => r.description),

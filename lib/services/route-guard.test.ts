@@ -9,7 +9,6 @@ import {
   extractSessionToken,
   getBudgetStoreForTests,
   issueDemoSession,
-  resetGuardStateForTests,
   resolveSessionActor,
   runMutationGuard,
 } from "./route-guard";
@@ -31,12 +30,23 @@ function reqWithBearer(token: string, forwardedFor = "1.2.3.4"): Request {
 describe("lib/services/route-guard", () => {
   beforeEach(async () => {
     testDb = await createTestDb();
-    resetGuardStateForTests();
   });
 
   afterEach(async () => {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
     await closeTestDb(testDb);
+  });
+
+  it.each([
+    ["db", ""],
+    [undefined, "postgresql://unused.invalid/injected-test-db"],
+  ] as const)("keeps provider %s interactive with database %s", async (mode, databaseUrl) => {
+    vi.stubEnv("DATA_PROVIDER", mode);
+    vi.stubEnv("DATABASE_URL", databaseUrl);
+    const session = await issueDemoSession(PASSCODE, PASSCODE, "priya-raman");
+    expect(session).not.toBeNull();
+    expect(await runMutationGuard(reqWithBearer(session!.token), undefined)).toMatchObject({ ok: true });
   });
 
   it.each(["session", "mutation"])("exhausting %s allowance does not consume the other limiter", async (first) => {

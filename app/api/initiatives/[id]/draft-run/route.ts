@@ -51,11 +51,13 @@ import { z } from "zod";
 import { eq } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
 import { initiatives, reviewCycles } from "@/lib/db/schema";
-import { startDraftRun, getRunProgress } from "@/lib/workflow/review-run";
+import { startDraftRun, getRunProgress, DraftRunConflictError } from "@/lib/workflow/review-run";
 import { runMutationGuard } from "@/lib/services/route-guard";
 import { workspaceMismatch } from "@/lib/services/workspace-guard";
 import { resolveViewerWorkspaceId } from "@/lib/services/viewer-workspace";
 import type { Domain } from "@/lib/domain/types";
+import { agentInitializationResponse } from "@/lib/services/agent-error-response";
+import { resolveAgentRuntimeConfig, reviewInvocationLimits } from "@/lib/agents/runtime";
 
 /** See file-level comment: only these roles trigger draft-run in any real flow. */
 const DRAFT_RUN_ALLOWED_ROLES = new Set(["requester", "admin"]);
@@ -75,38 +77,6 @@ const bodySchema = z.object({
   domains: z.array(z.enum(DOMAINS)).min(1).max(8),
 });
 
-/** Rough per-domain token estimate for the budget reserve — the mock adapter costs 0 for real, this only sizes the reservation. */
-const ESTIMATED_TOKENS_PER_DOMAIN = 1500;
-
-/**
- * Deep-review budget multiplier (`JEEVES_DEEP_REVIEW=1`).
- *
- * A standard draft is ONE structured model call per domain, which is what
- * `ESTIMATED_TOKENS_PER_DOMAIN` is sized for. A deep draft is an
- * Agents-SDK tool loop: the reviewer agent reads policy files and searches
- * the corpus, so a single domain becomes many model calls, each carrying a
- * growing transcript (instructions + every prior tool call and its file
- * contents). Reserving the standard amount for a deep run would make the
- * atomic per-day RunBudget (plan.md §3) a fiction — the cap would be
- * announced as 500k while real spend ran far past it.
- *
- * 10x is a deliberately conservative judgment call, not a measurement:
- * the adapter caps a deep draft at ~15 turns, so 10x sits below the
- * theoretical worst case while being far closer to reality than 1x. It is
- * better for the demo to refuse a deep run it cannot afford than to
- * under-reserve and overspend silently.
- *
- * This lives in the ROUTE, not the adapter: hard rule 4 — adapters return
- * data and never touch authoritative state, and the budget is authoritative
- * state (lib/security/budget.ts, reserved through runMutationGuard).
- */
-const DEEP_REVIEW_BUDGET_MULTIPLIER = 10;
-
-/** True when the deep, tool-using reviewer path is enabled for this deployment. */
-function deepReviewEnabled(): boolean {
-  return process.env.JEEVES_DEEP_REVIEW === "1";
-}
-
 export async function POST(
   req: Request,
   context: { params: Promise<{ id: string }> },
@@ -118,13 +88,12 @@ export async function POST(
     json = {};
   }
   const parsed = bodySchema.safeParse(json);
+  const limits = reviewInvocationLimits(resolveAgentRuntimeConfig());
 
   const guard = await runMutationGuard(req, undefined, {
     requiresBudget: true,
     estimatedTokens: parsed.success
-      ? parsed.data.domains.length *
-        ESTIMATED_TOKENS_PER_DOMAIN *
-        (deepReviewEnabled() ? DEEP_REVIEW_BUDGET_MULTIPLIER : 1)
+      ? new Set(parsed.data.domains).size * limits.estimatedTokens
       : 0,
   });
   if (!guard.ok) {
@@ -156,9 +125,17 @@ export async function POST(
   }
 
   try {
-    const result = await startDraftRun(db, id, [...parsed.data.domains] as Domain[]);
+    const result = await startDraftRun(db, id, [...new Set(parsed.data.domains)] as Domain[], undefined, {
+      signal: req.signal,
+      timeoutMs: limits.timeoutMs,
+    });
     return Response.json(result, { status: 200 });
-  } catch {
+  } catch (error) {
+    const unavailable = agentInitializationResponse(error);
+    if (unavailable) return unavailable;
+    if (error instanceof DraftRunConflictError) {
+      return Response.json({ error: "Review changed or the cycle closed. Refresh before running again." }, { status: 409 });
+    }
     // Security review finding #6: never echo raw error internals (this
     // catch-all previously leaked any thrown message, incl. DB errors).
     return Response.json({ error: "initiative or review cycle not found" }, { status: 404 });

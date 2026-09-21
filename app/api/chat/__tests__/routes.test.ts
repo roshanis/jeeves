@@ -8,9 +8,9 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { vi } from "vitest";
 import { createTestDb, closeTestDb, type TestDb } from "@/lib/db/test-client";
-import { resetGuardStateForTests } from "@/lib/services/route-guard";
 import { seedDatabase } from "@/scripts/seed";
 import * as agentsModule from "@/lib/agents";
+import { AgentInitializationError } from "@/lib/agents/initialization-error";
 
 let testDb: TestDb;
 
@@ -27,7 +27,6 @@ beforeEach(async () => {
   delete process.env.OPENAI_API_KEY;
   testDb = await createTestDb();
   await seedDatabase(testDb);
-  resetGuardStateForTests();
 });
 
 afterEach(async () => {
@@ -76,6 +75,26 @@ const EMPTY_INTAKE_PAYLOAD = {
   },
   evidenceAttachments: [],
 };
+
+describe("agent initialization failures", () => {
+  it.each(["intake", "auditor"])("returns a safe 503 from %s chat", async (kind) => {
+    const token = await issueSessionFor("priya-raman", "40.8.0.1");
+    const route = kind === "intake" ? await import("../intake/route") : await import("../auditor/route");
+    const factory = vi.spyOn(agentsModule, "getAgentPort").mockImplementationOnce(() => {
+      throw new AgentInitializationError(new Error("ENOENT /private/build/prompts"));
+    });
+    try {
+      const response = await route.POST(new Request(`http://localhost/api/chat/${kind}`, {
+        method: "POST", headers: bearer(token, "40.8.0.1"),
+        body: JSON.stringify(kind === "intake" ? { conversation: [], partialPayload: {} } : { question: "Which initiatives touch PHI?" }),
+      }));
+      expect(response.status).toBe(503);
+      expect(await response.json()).toEqual({ error: "Agent runtime could not initialize. Check the deployed prompts and policies.", code: "AGENT_INITIALIZATION_FAILED" });
+    } finally {
+      factory.mockRestore();
+    }
+  });
+});
 
 describe("POST /api/chat/auditor", () => {
   it("401s an unauthenticated request", async () => {
@@ -375,12 +394,9 @@ describe("POST /api/chat/intake", () => {
 });
 
 /**
- * Budget-exhaustion tests placed in their own describe block at the end of
- * the file (mirroring app/api/__tests__/routes.test.ts's placement): the
- * shared budget store (lib/services/route-guard.ts's module-scoped
- * `budgetStore`) is a process-wide singleton NOT cleared by
- * `resetGuardStateForTests()`, so exhausting "today"'s budget here must run
- * after every other test in this file that needs budget available.
+ * Budget-exhaustion tests use the current case's fresh PGlite database.
+ * The shared store delegates to getDb(), so prior cases cannot exhaust this
+ * case's allowance and test order does not provide isolation.
  */
 describe("budget-exhaustion 429 on chat routes", () => {
   it("429s POST /api/chat/auditor when the daily token budget is already exhausted", async () => {

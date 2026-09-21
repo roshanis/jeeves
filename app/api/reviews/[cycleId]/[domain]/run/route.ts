@@ -26,6 +26,9 @@ import {
 } from "@/lib/services/initiative-service";
 import { runMutationGuard } from "@/lib/services/route-guard";
 import type { Domain } from "@/lib/domain/types";
+import { agentInitializationResponse } from "@/lib/services/agent-error-response";
+import { resolveAgentRuntimeConfig, reviewInvocationLimits } from "@/lib/agents/runtime";
+import { DraftRunConflictError } from "@/lib/workflow/review-run";
 
 const DOMAINS = [
   "legal",
@@ -38,18 +41,16 @@ const DOMAINS = [
   "data-governance",
 ] as const;
 
-/** Rough per-run token estimate for the budget reserve (mock adapter costs 0; this only sizes the reservation). */
-const ESTIMATED_TOKENS = 1500;
-
 export async function POST(
   req: Request,
   context: { params: Promise<{ cycleId: string; domain: string }> },
 ): Promise<Response> {
+  const limits = reviewInvocationLimits(resolveAgentRuntimeConfig());
   // Guard first (session -> rate-limit -> budget) so an unauthenticated
   // caller gets 401 with no side effects, before any domain/authz check.
   const guard = await runMutationGuard(req, undefined, {
     requiresBudget: true,
-    estimatedTokens: ESTIMATED_TOKENS,
+    estimatedTokens: limits.estimatedTokens,
   });
   if (!guard.ok) {
     return Response.json({ error: guard.failure.message }, { status: guard.failure.status });
@@ -62,9 +63,17 @@ export async function POST(
 
   const db = getDb();
   try {
-    const result = await runReviewAgent(db, cycleId, domain as Domain, guard.actor, guard.workspaceId);
+    const result = await runReviewAgent(db, cycleId, domain as Domain, guard.actor, guard.workspaceId, undefined, {
+      signal: req.signal,
+      timeoutMs: limits.timeoutMs,
+    });
     return Response.json(result, { status: 200 });
   } catch (err) {
+    const unavailable = agentInitializationResponse(err);
+    if (unavailable) return unavailable;
+    if (err instanceof DraftRunConflictError) {
+      return Response.json({ error: "Review changed or the cycle closed. Refresh before running again." }, { status: 409 });
+    }
     if (err instanceof IllegalTransitionError) {
       return Response.json({ error: err.message }, { status: 403 });
     }

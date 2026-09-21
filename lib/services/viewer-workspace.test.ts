@@ -3,7 +3,7 @@ import { vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { closeTestDb, createTestDb, type TestDb } from "../db/test-client";
 import { deploymentVersions, initiatives, sessions } from "../db/schema";
-import { issueDemoSession, resetGuardStateForTests } from "./route-guard";
+import { issueDemoSession } from "./route-guard";
 import { signWorkspaceId } from "../security/workspace-cookie";
 import {
   deploymentWorkspaceMap,
@@ -24,7 +24,6 @@ vi.mock("@/lib/db/client", () => ({
 describe("lib/services/viewer-workspace", () => {
   beforeEach(async () => {
     testDb = await createTestDb();
-    resetGuardStateForTests();
     process.env.JEEVES_COOKIE_SECRET = COOKIE_SECRET;
   });
 

@@ -2,6 +2,8 @@
 // and the mock provider (lib/data/mock-provider.ts). UI imports ONLY from this file and
 // provider.ts. Changing shapes here requires updating both providers in the same commit.
 import type { Domain, LifecycleState, OverlayFlags, Tier } from "@/lib/domain/types";
+import type { StoredIntakeFields } from "@/lib/intake/stored-overlay";
+import type { ReviewDecisionReadiness } from "@/lib/approval/review-readiness";
 
 export interface InitiativeSummary {
   slug: string;
@@ -19,6 +21,8 @@ export interface InitiativeSummary {
   accountableApprover: string | null;
   domainsRequired: number;
   domainsSigned: number;
+  /** Exact current cycle projection; absent only in legacy/static fixtures. */
+  decisionReadiness?: ReviewDecisionReadiness;
   overdue: boolean;
   storyline: string; // short badge text, e.g. "fast-lane", "breach", "rejected"
   /**
@@ -30,6 +34,8 @@ export interface InitiativeSummary {
 }
 
 export interface ReviewRow {
+  /** Opaque server revision used to reject signing an unseen replacement draft. */
+  draftToken?: string;
   /** Exact cycle owning this draft; omitted only by legacy/static fixtures. */
   cycleId?: string;
   domain: Domain;
@@ -85,6 +91,8 @@ export interface TelemetrySeries {
 }
 
 export interface DeploymentRow {
+  /** Stable server identity; absent only on legacy/static fixtures. */
+  id?: string;
   version: string;
   status: "deployed" | "paused" | "awaiting_promotion_signoff" | "retired";
   at: string;
@@ -103,7 +111,7 @@ export interface InitiativeDetail {
   intake: {
     version: number;
     submitted: boolean;
-    fields: Record<string, string | boolean | null>;
+    fields: StoredIntakeFields;
     missing: string[]; // completeness gaps, e.g. ["data.retentionIntent"]
   } | null;
   reviews: ReviewRow[];
@@ -117,7 +125,7 @@ export interface InitiativeDetail {
 export interface OutcomeMetrics {
   medianReviewCycleDays: number;
   firstPassCompletenessPct: number;
-  reviewerHoursSaved: number;
+  reviewerHoursSavedPerReview: number;
   evidenceFresh: number;
   evidenceTotal: number;
   overdueControls: number;

@@ -92,8 +92,9 @@ have: two independent limiter instances over one database share a single
 allowance. It also covers a 12-request concurrent burst against a capacity of
 5, which yields exactly 5.
 
-The in-memory `TokenBucketRateLimiter` remains in the tree — it is still the
-right tool for a single-process context — but no longer guards any route.
+The unused in-memory `TokenBucketRateLimiter` and its exclusive tests were
+retired on 2026-09-19. Shared rate-limit types and the active database limiter
+remain; its focused tests cover burst, refill, isolation and shared allowance.
 
 **Correctly scoped already:** sessions and the daily token budget are *not*
 affected — both moved to Postgres. `DbBudgetStore.reserveAtomic()` is a single

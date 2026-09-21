@@ -31,6 +31,7 @@ import {
 import { useLiveSession } from "@/lib/client/session-context";
 import { isApiError, apiErrorToMessage } from "@/lib/client/api";
 import { LIVE_PERSONAS, PERSONA_ROLE_LABEL, type LivePersona } from "@/lib/client/personas";
+import { READ_ONLY_PREVIEW_MESSAGE } from "@/lib/data/provider-mode";
 
 const ROLE_GROUPS: LivePersona["role"][] = [
   "requester",
@@ -45,7 +46,7 @@ export function DemoModeChip() {
   // component that runs into the read-only gate can open THIS dialog rather
   // than telling the reader to come find this chip. The chip still owns the
   // dialog itself — there is one implementation, not a copy per caller.
-  const { session, login, logout, unlockPromptOpen: open, setUnlockPromptOpen: setOpen } =
+  const { session, liveModeAvailable = true, login, logout, unlockPromptOpen: open, setUnlockPromptOpen: setOpen } =
     useLiveSession();
   const [passcode, setPasscode] = React.useState("");
   const [personaKey, setPersonaKey] = React.useState(LIVE_PERSONAS[0]!.personaKey);
@@ -156,59 +157,61 @@ export function DemoModeChip() {
             without resorting to an aria-label that would shadow the visible
             text on desktop. */}
         <span className="label-mono sr-only whitespace-nowrap text-muted-foreground sm:not-sr-only sm:inline">
-          Read-only (public)
+          {liveModeAvailable ? "Read-only (public)" : "Read-only preview"}
         </span>
       </button>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Enter live demo mode</DialogTitle>
+            <DialogTitle>{liveModeAvailable ? "Enter live demo mode" : "Explore the read-only preview"}</DialogTitle>
             <DialogDescription>
-              Enter the demo passcode and pick a persona. Mutations run in a
-              session workspace with a daily token budget and rate limits
-              enforced server-side.
+              {liveModeAvailable
+                ? "Enter the demo passcode and pick a persona. Mutations run in a session workspace with a daily token budget and rate limits enforced server-side."
+                : READ_ONLY_PREVIEW_MESSAGE}
             </DialogDescription>
           </DialogHeader>
-          <form className="flex flex-col gap-3" onSubmit={handleSubmit}>
-            <label className="flex flex-col gap-1 text-sm">
-              <span className="font-medium">Demo passcode</span>
-              <input
-                type="password"
-                autoFocus
-                value={passcode}
-                onChange={(e) => setPasscode(e.target.value)}
-                data-slot="passcode-input"
-                className="h-8 rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
-              />
-            </label>
-            <label className="flex flex-col gap-1 text-sm">
-              <span className="font-medium">Persona</span>
-              <select
-                value={personaKey}
-                onChange={(e) => setPersonaKey(e.target.value)}
-                data-slot="persona-select"
-                className="h-8 rounded-lg border border-input bg-transparent px-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
-              >
-                {ROLE_GROUPS.map((role) => (
-                  <optgroup key={role} label={PERSONA_ROLE_LABEL[role]}>
-                    {LIVE_PERSONAS.filter((p) => p.role === role).map((p) => (
-                      <option key={p.personaKey} value={p.personaKey}>
-                        {p.label}
-                      </option>
-                    ))}
-                  </optgroup>
-                ))}
-              </select>
-            </label>
-            {error ? (
-              <p className="text-sm text-destructive" data-slot="login-error" role="alert">
-                {error}
-              </p>
-            ) : null}
-            <Button type="submit" disabled={pending || passcode.length === 0} data-slot="live-login-submit">
-              {pending ? "Checking…" : "Enter live mode"}
-            </Button>
-          </form>
+          {liveModeAvailable ? (
+            <form className="flex flex-col gap-3" onSubmit={handleSubmit}>
+              <label className="flex flex-col gap-1 text-sm">
+                <span className="font-medium">Demo passcode</span>
+                <input
+                  type="password"
+                  autoFocus
+                  value={passcode}
+                  onChange={(e) => setPasscode(e.target.value)}
+                  data-slot="passcode-input"
+                  className="h-8 rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-sm">
+                <span className="font-medium">Persona</span>
+                <select
+                  value={personaKey}
+                  onChange={(e) => setPersonaKey(e.target.value)}
+                  data-slot="persona-select"
+                  className="h-8 rounded-lg border border-input bg-transparent px-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+                >
+                  {ROLE_GROUPS.map((role) => (
+                    <optgroup key={role} label={PERSONA_ROLE_LABEL[role]}>
+                      {LIVE_PERSONAS.filter((p) => p.role === role).map((p) => (
+                        <option key={p.personaKey} value={p.personaKey}>
+                          {p.label}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ))}
+                </select>
+              </label>
+              {error ? (
+                <p className="text-sm text-destructive" data-slot="login-error" role="alert">
+                  {error}
+                </p>
+              ) : null}
+              <Button type="submit" disabled={pending || passcode.length === 0} data-slot="live-login-submit">
+                {pending ? "Checking…" : "Enter live mode"}
+              </Button>
+            </form>
+          ) : null}
         </DialogContent>
       </Dialog>
     </>

@@ -280,78 +280,6 @@ describe("openai-adapter — pre-call input validation", () => {
   });
 });
 
-describe("openai-adapter — triageAssist and checkCompleteness are implemented", () => {
-  // agents/triage/instructions.md: the model NEVER computes a tier — it only
-  // narrates one it was given. So the model returns the rich
-  // TriageRationaleOutput shape (rationaleMd + flagExplanations), and
-  // suggestedTier must come from the deterministic input
-  // (intake.answers["tier"] / ["suggestedTier"]), never from model output.
-  const RICH_TRIAGE_OBJECT = {
-    rationaleMd:
-      "This initiative influences a coverage decision with no human review before it takes effect.",
-    flagExplanations: [
-      {
-        flag: "careCoverageInfluence",
-        answer: "Yes",
-        why: "Coverage influence drives the highest routing weight.",
-      },
-      {
-        flag: "humanInLoop",
-        answer: "No",
-        why: "No human checkpoint before the decision takes effect.",
-      },
-    ],
-  };
-
-  it("triageAssist takes suggestedTier from intake.answers.tier, not from the model", async () => {
-    const model = new MockLanguageModelV4({
-      doGenerate: async () => textGenerateResult(RICH_TRIAGE_OBJECT),
-    });
-    const port = createOpenAIAgentPortWithModel(model);
-    const result = await port.triageAssist({
-      intake: intake({ phi: true, tier: "critical" }),
-    });
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.value.suggestedTier).toBe("critical");
-      expect(result.value.rationale).toBe(RICH_TRIAGE_OBJECT.rationaleMd);
-      expect(result.value.signals).toEqual([
-        "careCoverageInfluence",
-        "humanInLoop",
-      ]);
-    }
-  });
-
-  it("triageAssist falls back to medium when no tier is present in intake.answers", async () => {
-    const model = new MockLanguageModelV4({
-      doGenerate: async () => textGenerateResult(RICH_TRIAGE_OBJECT),
-    });
-    const port = createOpenAIAgentPortWithModel(model);
-    const result = await port.triageAssist({ intake: intake({ phi: true }) });
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.value.suggestedTier).toBe("medium");
-    }
-  });
-
-  it("checkCompleteness round-trips through the mock model", async () => {
-    const model = new MockLanguageModelV4({
-      doGenerate: async () =>
-        textGenerateResult({
-          complete: false,
-          missingFields: ["retentionIntent"],
-          notes: { retentionIntent: "Please provide a retention answer." },
-        }),
-    });
-    const port = createOpenAIAgentPortWithModel(model);
-    const result = await port.checkCompleteness({ intake: intake({}) });
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.value.complete).toBe(false);
-    }
-  });
-});
-
 /* -------------------------------------------------------------------------
  * auditorAnswer (M2)
  * ---------------------------------------------------------------------- */
@@ -401,9 +329,9 @@ describe("openai-adapter — auditorAnswer", () => {
     expect(userText).toContain("Member Chat Copilot");
   });
 
-  it("returns a valid AuditorAnswerOutput when the mock model returns a conformant object", async () => {
+  it("preserves caller queryUsed when the model echoes a different query", async () => {
     const model = new MockLanguageModelV4({
-      doGenerate: async () => textGenerateResult(VALID_AUDITOR_OBJECT),
+      doGenerate: async () => textGenerateResult({ ...VALID_AUDITOR_OBJECT, queryUsed: "model-selected-wrong-query" }),
     });
     const port = createOpenAIAgentPortWithModel(model);
     const result = await port.auditorAnswer(auditorInput());
@@ -468,7 +396,7 @@ const EMPTY_INTAKE_PAYLOAD = {
     requesterEmail: "",
     businessProblem: "",
   },
-  useCase: { primaryUsers: "", decisionInformed: "", expectedVolume: null },
+  useCase: { primaryUsers: "", decisionInformed: "", expectedVolume: null, currentWorkflow: null, successMetrics: null },
   data: {
     dataSources: [],
     phiCategories: [],
@@ -476,6 +404,7 @@ const EMPTY_INTAKE_PAYLOAD = {
     retentionIntent: null,
     retentionIntentNote: null,
     trainingVsInference: null,
+    vendorDataReuse: null,
   },
   modelVendor: {
     buildOrBuy: null,
@@ -487,8 +416,9 @@ const EMPTY_INTAKE_PAYLOAD = {
     affectedPopulations: [],
     expectedBenefits: null,
     expectedHarms: null,
+    evaluationPlan: null,
   },
-  deployment: { integrationPoints: [], rolloutPlan: null },
+  deployment: { integrationPoints: [], rolloutPlan: null, operationalOwner: null, humanReviewProcess: null, monitoringPlan: null, fallbackPlan: null },
   overlay: {
     touchesPHI: null,
     memberFacing: null,

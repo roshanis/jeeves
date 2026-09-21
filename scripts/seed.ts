@@ -1,11 +1,15 @@
 // Deterministic seed script — docs/seed-spec.md is the authoritative
-// dataset. Implements the "Meridian Health AI Portfolio" (9 actors, 12
+// dataset. Implements the "Meridian Health AI Portfolio" (13 actors, 12
 // initiatives, 16+1 control catalog, telemetry series, ~120-150 audit
 // events) with a fixed PRNG seed and fixed base date so two runs produce
 // byte-identical row sets (seed-spec header; plan §8 test 5).
 //
 // NO Date.now() / wall-clock reads anywhere in this file — every timestamp
 // is derived from BASE_DATE_MS via offsets.
+import { ACTORS, BASE_DATE_MS, CONTROL_SEEDS, INITIATIVE_SEEDS, type InitiativeSeed } from "../lib/demo/reference-data";
+import { reviewerNameForDomain } from "../lib/demo/personas";
+export { ACTORS, BASE_DATE_MS, CONTROL_SEEDS, INITIATIVE_SEEDS } from "../lib/demo/reference-data";
+
 import { deriveTier } from "../lib/triage/rules";
 import { requiredDomains } from "../lib/triage/routing";
 import type { Domain, OverlayFlags, Tier } from "../lib/domain/types";
@@ -34,7 +38,7 @@ import {
  * ---------------------------------------------------------------------- */
 
 export const SEED = "meridian-2026";
-export const BASE_DATE_MS = Date.parse("2026-07-01T00:00:00Z");
+
 
 function hashSeed(str: string): number {
   let h = 0;
@@ -64,133 +68,6 @@ function rngFor(...parts: string[]): () => number {
 const day = (n: number) => BASE_DATE_MS + n * 24 * 60 * 60 * 1000;
 const dateAt = (n: number) => new Date(day(n));
 
-/* -------------------------------------------------------------------------
- * §1 Actors
- * ---------------------------------------------------------------------- */
-
-export const ACTORS = {
-  priyaRaman: { name: "Priya Raman", role: "requester" as const },
-  danKowalski: { name: "Dan Kowalski", role: "requester" as const },
-  elenaVasquez: { name: "Dr. Elena Vasquez", role: "reviewer" as const },
-  marcusWebb: { name: "Marcus Webb", role: "reviewer" as const },
-  sofiaGrant: { name: "Sofia Grant", role: "reviewer" as const },
-  jamesLiu: { name: "James Liu", role: "reviewer" as const },
-  angelaTorres: { name: "Angela Torres", role: "approver" as const },
-  rayChen: { name: "Ray Chen", role: "admin" as const },
-  niaOkafor: { name: "Nia Okafor", role: "program" as const },
-} as const;
-
-/* -------------------------------------------------------------------------
- * §2 Initiatives — overlay flags in canonical order (PHI / member-facing /
- * care-coverage / vendor-hosted / human-in-the-loop / individual-impact).
- * ---------------------------------------------------------------------- */
-
-interface InitiativeSeed {
-  slug: string;
-  title: string;
-  requester: string;
-  flags: OverlayFlags;
-  expectedTier: Tier;
-}
-
-function flags(
-  phi: boolean,
-  memberFacing: boolean,
-  careCoverageInfluence: boolean,
-  vendorHosted: boolean,
-  humanInLoop: boolean,
-  individualImpact: boolean,
-): OverlayFlags {
-  return { phi, memberFacing, careCoverageInfluence, vendorHosted, humanInLoop, individualImpact };
-}
-
-export const INITIATIVE_SEEDS: InitiativeSeed[] = [
-  {
-    slug: "prior-auth-summarizer",
-    title: "Prior-Auth Clinical Summarizer",
-    requester: ACTORS.priyaRaman.name,
-    flags: flags(true, true, true, true, false, true),
-    expectedTier: "critical",
-  },
-  {
-    slug: "marketing-ab-tester",
-    title: "Marketing Copy A/B Tester",
-    requester: ACTORS.danKowalski.name,
-    flags: flags(false, false, false, true, true, false),
-    expectedTier: "low",
-  },
-  {
-    slug: "social-sentiment-miner",
-    title: "Member Social-Media Sentiment Miner",
-    requester: ACTORS.danKowalski.name,
-    flags: flags(true, true, false, true, true, false),
-    expectedTier: "high",
-  },
-  {
-    slug: "member-chat-copilot",
-    title: "Member Services Chat Copilot",
-    requester: ACTORS.priyaRaman.name,
-    flags: flags(true, true, false, false, true, false),
-    expectedTier: "high",
-  },
-  {
-    slug: "pa-correspondence-model",
-    title: "Prior-Auth Correspondence Drafting Model",
-    requester: ACTORS.priyaRaman.name,
-    flags: flags(true, false, true, false, false, true),
-    expectedTier: "critical",
-  },
-  {
-    slug: "claims-ocr-coder",
-    title: "Claims Document OCR + Coding Model",
-    requester: ACTORS.priyaRaman.name,
-    flags: flags(true, false, true, false, true, true),
-    expectedTier: "high",
-  },
-  {
-    slug: "provider-dedup-agent",
-    title: "Provider Directory Dedup Agent",
-    requester: ACTORS.niaOkafor.name,
-    flags: flags(false, false, false, false, true, true),
-    expectedTier: "medium",
-  },
-  {
-    slug: "nurse-triage-summarizer",
-    title: "Nurse Triage Line Summarizer",
-    requester: ACTORS.priyaRaman.name,
-    flags: flags(true, false, true, false, false, true),
-    expectedTier: "critical",
-  },
-  {
-    slug: "formulary-qa-bot",
-    title: "Member Formulary Q&A Bot",
-    requester: ACTORS.priyaRaman.name,
-    flags: flags(true, true, false, true, false, false),
-    expectedTier: "high",
-  },
-  {
-    slug: "fwa-anomaly-detector",
-    title: "Fraud, Waste & Abuse Anomaly Detector",
-    requester: ACTORS.niaOkafor.name,
-    flags: flags(true, false, true, false, true, true),
-    expectedTier: "high",
-  },
-  {
-    slug: "hr-resume-screener",
-    title: "HR Résumé Screener",
-    requester: ACTORS.niaOkafor.name,
-    flags: flags(false, false, false, true, true, true),
-    expectedTier: "medium",
-  },
-  {
-    slug: "callcenter-qa-scorer",
-    title: "Call Center QA Auto-Scorer",
-    requester: ACTORS.niaOkafor.name,
-    flags: flags(false, false, false, false, true, true),
-    expectedTier: "medium",
-  },
-];
-
 /** CRITICAL INVARIANT (task brief): deriveTier(flags) must agree with seed-spec's tier. */
 function assertTierInvariant(seed: InitiativeSeed): Tier {
   const tier = deriveTier(seed.flags);
@@ -201,257 +78,6 @@ function assertTierInvariant(seed: InitiativeSeed): Tier {
   }
   return tier;
 }
-
-/* -------------------------------------------------------------------------
- * §3 Control catalog — 16 domain controls + Q-01 runtime control.
- * policySource strings follow docs/policies/INDEX.md's "Primary section(s)"
- * column exactly, per the INDEX's own guidance for constructing a literal
- * per-control citation string.
- * ---------------------------------------------------------------------- */
-
-interface ControlSeed {
-  id: string;
-  domain: Domain | "runtime";
-  name: string;
-  applicability: string;
-  enforcementMode: "monitor" | "gate" | "block";
-  cadence: string;
-  requiredEvidence: string;
-  policySource: string | null;
-  owner: string;
-  exceptionProcess: string | null;
-  remediationOwner: string;
-  observationKind?: string;
-  tierDefaultThresholds?: Record<Tier, number>;
-  sustainedWindow?: number;
-}
-
-export const CONTROL_SEEDS: ControlSeed[] = [
-  {
-    id: "L-01",
-    domain: "legal",
-    name: "Vendor contract AI addendum",
-    applicability: "vendor=Y",
-    enforcementMode: "gate",
-    cadence: "once",
-    requiredEvidence: "signed addendum",
-    policySource: "MP-L v3 §MP-L-2",
-    owner: ACTORS.jamesLiu.name,
-    exceptionProcess: "Legal domain owner may grant a time-boxed exception with VP sign-off.",
-    remediationOwner: ACTORS.jamesLiu.name,
-  },
-  {
-    id: "L-02",
-    domain: "legal",
-    name: "Marketing-claims review",
-    applicability: "member-facing=Y",
-    enforcementMode: "monitor",
-    cadence: "quarterly",
-    requiredEvidence: "approved copy log",
-    policySource: "MP-L v3 §MP-L-3",
-    owner: ACTORS.jamesLiu.name,
-    exceptionProcess: null,
-    remediationOwner: ACTORS.jamesLiu.name,
-  },
-  {
-    id: "P-01",
-    domain: "procurement",
-    name: "Vendor risk assessment",
-    applicability: "vendor=Y",
-    enforcementMode: "gate",
-    cadence: "annual",
-    requiredEvidence: "VRA doc",
-    policySource: "MP-P v2 §MP-P-2",
-    owner: ACTORS.niaOkafor.name,
-    exceptionProcess: null,
-    remediationOwner: ACTORS.niaOkafor.name,
-  },
-  {
-    id: "P-02",
-    domain: "procurement",
-    name: "SaaS data-residency attestation",
-    applicability: "vendor=Y",
-    enforcementMode: "monitor",
-    cadence: "annual",
-    requiredEvidence: "attestation",
-    policySource: "MP-P v2 §MP-P-3",
-    owner: ACTORS.niaOkafor.name,
-    exceptionProcess: null,
-    remediationOwner: ACTORS.niaOkafor.name,
-  },
-  {
-    id: "T-01",
-    domain: "tech-architecture",
-    name: "Architecture review record",
-    applicability: "tier>=medium",
-    enforcementMode: "gate",
-    cadence: "once + on material change",
-    requiredEvidence: "ARB minutes",
-    policySource: "MP-T v2 §MP-T-2",
-    owner: ACTORS.rayChen.name,
-    exceptionProcess: null,
-    remediationOwner: ACTORS.rayChen.name,
-  },
-  {
-    id: "T-02",
-    domain: "tech-architecture",
-    name: "Disaster-recovery plan",
-    applicability: "tier>=high",
-    enforcementMode: "monitor",
-    cadence: "annual",
-    requiredEvidence: "DR test log",
-    policySource: "MP-T v2 §MP-T-3",
-    owner: ACTORS.rayChen.name,
-    exceptionProcess: null,
-    remediationOwner: ACTORS.rayChen.name,
-  },
-  {
-    id: "R-01",
-    domain: "responsible-ai",
-    name: "Bias & fairness testing",
-    applicability: "member-facing=Y or care-coverage=Y",
-    enforcementMode: "gate",
-    cadence: "semi-annual",
-    requiredEvidence: "test report",
-    policySource: "MP-R v4 §MP-R-2",
-    owner: ACTORS.sofiaGrant.name,
-    exceptionProcess: "Program Office may record a time-boxed waiver against a named accountable owner.",
-    remediationOwner: ACTORS.sofiaGrant.name,
-  },
-  {
-    id: "R-02",
-    domain: "responsible-ai",
-    name: "Model card published",
-    applicability: "tier>=medium",
-    enforcementMode: "monitor",
-    cadence: "on version change",
-    requiredEvidence: "model card",
-    policySource: "MP-R v4 §MP-R-3",
-    owner: ACTORS.sofiaGrant.name,
-    exceptionProcess: null,
-    remediationOwner: ACTORS.sofiaGrant.name,
-  },
-  {
-    id: "S-01",
-    domain: "security",
-    name: "Pen test / threat model",
-    applicability: "tier>=high",
-    enforcementMode: "gate",
-    cadence: "annual",
-    requiredEvidence: "report",
-    policySource: "MP-S v3 §MP-S-2",
-    owner: ACTORS.rayChen.name,
-    exceptionProcess: null,
-    remediationOwner: ACTORS.rayChen.name,
-  },
-  {
-    id: "S-02",
-    domain: "security",
-    name: "Secrets & access review",
-    applicability: "all",
-    enforcementMode: "monitor",
-    cadence: "quarterly",
-    requiredEvidence: "access matrix",
-    policySource: "MP-S v3 §MP-S-3",
-    owner: ACTORS.rayChen.name,
-    exceptionProcess: null,
-    remediationOwner: ACTORS.rayChen.name,
-  },
-  {
-    id: "H-01",
-    domain: "privacy-hipaa",
-    name: "PHI minimization & BAA",
-    applicability: "PHI=Y",
-    enforcementMode: "gate",
-    cadence: "once + on data change",
-    requiredEvidence: "DPIA + BAA",
-    policySource: "MP-H v3 §MP-H-2",
-    owner: ACTORS.marcusWebb.name,
-    exceptionProcess: null,
-    remediationOwner: ACTORS.marcusWebb.name,
-  },
-  {
-    id: "H-02",
-    domain: "privacy-hipaa",
-    name: "De-identification validation",
-    applicability: "PHI=Y and vendor=Y",
-    enforcementMode: "gate",
-    cadence: "annual",
-    requiredEvidence: "validation report",
-    policySource: "MP-H v3 §MP-H-3",
-    owner: ACTORS.marcusWebb.name,
-    exceptionProcess: null,
-    remediationOwner: ACTORS.marcusWebb.name,
-  },
-  {
-    id: "C-01",
-    domain: "clinical-safety",
-    name: "Clinician-in-the-loop protocol",
-    applicability: "care-coverage=Y",
-    enforcementMode: "gate",
-    cadence: "once",
-    requiredEvidence: "signed protocol",
-    policySource: "MP-C v3 §MP-C-2",
-    owner: ACTORS.elenaVasquez.name,
-    exceptionProcess: null,
-    remediationOwner: ACTORS.elenaVasquez.name,
-  },
-  {
-    id: "C-02",
-    domain: "clinical-safety",
-    name: "Adverse-event monitoring",
-    applicability: "care-coverage=Y",
-    enforcementMode: "monitor",
-    cadence: "continuous",
-    requiredEvidence: "incident log",
-    policySource: "MP-C v3 §MP-C-3",
-    owner: ACTORS.elenaVasquez.name,
-    exceptionProcess: null,
-    remediationOwner: ACTORS.elenaVasquez.name,
-  },
-  {
-    id: "D-01",
-    domain: "data-governance",
-    name: "Data lineage & sourcing approval",
-    applicability: "tier>=medium",
-    enforcementMode: "gate",
-    cadence: "once + on data change",
-    requiredEvidence: "lineage doc",
-    policySource: "MP-D v2 §MP-D-2",
-    owner: ACTORS.niaOkafor.name,
-    exceptionProcess: null,
-    remediationOwner: ACTORS.niaOkafor.name,
-  },
-  {
-    id: "D-02",
-    domain: "data-governance",
-    name: "Retention & disposal schedule",
-    applicability: "PHI=Y",
-    enforcementMode: "monitor",
-    cadence: "annual",
-    requiredEvidence: "schedule",
-    policySource: "MP-D v2 §MP-D-3",
-    owner: ACTORS.niaOkafor.name,
-    exceptionProcess: null,
-    remediationOwner: ACTORS.niaOkafor.name,
-  },
-  {
-    id: "Q-01",
-    domain: "runtime",
-    name: "Eval quality floor",
-    applicability: "all deployed initiatives with an eval_hallucination series",
-    enforcementMode: "block",
-    cadence: "continuous",
-    requiredEvidence: "monitor run output",
-    policySource: null, // intentionally not a policy-corpus citation (INDEX.md)
-    owner: ACTORS.rayChen.name,
-    exceptionProcess: null,
-    remediationOwner: ACTORS.rayChen.name,
-    observationKind: "eval_hallucination",
-    tierDefaultThresholds: { low: 0.08, medium: 0.08, high: 0.08, critical: 0.05 },
-    sustainedWindow: 3,
-  },
-];
 
 /* -------------------------------------------------------------------------
  * Deterministic id helpers — stable, human-readable, collision-free within
@@ -1195,7 +821,7 @@ async function seedInTransaction(db: SeedDb): Promise<RowCounts> {
         cycleId,
         domain: d,
         status: "signed",
-        reviewer: d === "responsible-ai" ? ACTORS.sofiaGrant.name : d === "privacy-hipaa" ? ACTORS.marcusWebb.name : ACTORS.jamesLiu.name,
+        reviewer: reviewerNameForDomain(d),
         draftMd: `${d} review approved for Member Services Chat Copilot.`,
         citations: [],
         signedAt: dateAt(-51),
@@ -1412,7 +1038,7 @@ async function seedInTransaction(db: SeedDb): Promise<RowCounts> {
         cycleId,
         domain: d,
         status: "signed",
-        reviewer: d === "clinical-safety" ? ACTORS.elenaVasquez.name : ACTORS.jamesLiu.name,
+        reviewer: reviewerNameForDomain(d),
         draftMd: `${d} review approved for Prior-Auth Correspondence Drafting Model.`,
         citations: [],
         signedAt: dateAt(-76),
@@ -1421,7 +1047,7 @@ async function seedInTransaction(db: SeedDb): Promise<RowCounts> {
       await insertAudit(ctx, {
         initiativeId: initId,
         ts: dateAt(-80),
-        actor: d === "clinical-safety" ? ACTORS.elenaVasquez.name : ACTORS.jamesLiu.name,
+        actor: reviewerNameForDomain(d),
         actorRole: "reviewer",
         action: "review_drafted",
         detail: `Drafted ${d} review for Prior-Auth Correspondence Drafting Model.`,
@@ -1430,7 +1056,7 @@ async function seedInTransaction(db: SeedDb): Promise<RowCounts> {
       await insertAudit(ctx, {
         initiativeId: initId,
         ts: dateAt(-76),
-        actor: d === "clinical-safety" ? ACTORS.elenaVasquez.name : ACTORS.jamesLiu.name,
+        actor: reviewerNameForDomain(d),
         actorRole: "reviewer",
         action: "review_signed",
         detail: `Signed ${d} review for Prior-Auth Correspondence Drafting Model.`,
@@ -1634,7 +1260,7 @@ async function seedInTransaction(db: SeedDb): Promise<RowCounts> {
         cycleId,
         domain: d,
         status: "signed",
-        reviewer: d === "clinical-safety" ? ACTORS.elenaVasquez.name : d === "privacy-hipaa" ? ACTORS.marcusWebb.name : ACTORS.jamesLiu.name,
+        reviewer: reviewerNameForDomain(d),
         draftMd: `${d} review approved for Claims Document OCR + Coding Model.`,
         citations: [],
         signedAt: dateAt(-66),
@@ -1643,7 +1269,7 @@ async function seedInTransaction(db: SeedDb): Promise<RowCounts> {
       await insertAudit(ctx, {
         initiativeId: initId,
         ts: dateAt(-66),
-        actor: d === "clinical-safety" ? ACTORS.elenaVasquez.name : d === "privacy-hipaa" ? ACTORS.marcusWebb.name : ACTORS.jamesLiu.name,
+        actor: reviewerNameForDomain(d),
         actorRole: "reviewer",
         action: "review_signed",
         detail: `Signed ${d} review for Claims Document OCR + Coding Model.`,
@@ -1775,7 +1401,7 @@ async function seedInTransaction(db: SeedDb): Promise<RowCounts> {
         cycleId,
         domain: d,
         status: "signed",
-        reviewer: ACTORS.jamesLiu.name,
+        reviewer: reviewerNameForDomain(d),
         draftMd: `${d} review approved for Provider Directory Dedup Agent.`,
         citations: [],
         signedAt: dateAt(-9),
@@ -1784,7 +1410,7 @@ async function seedInTransaction(db: SeedDb): Promise<RowCounts> {
       await insertAudit(ctx, {
         initiativeId: initId,
         ts: dateAt(-9),
-        actor: ACTORS.jamesLiu.name,
+        actor: reviewerNameForDomain(d),
         actorRole: "reviewer",
         action: "review_signed",
         detail: `Signed ${d} review for Provider Directory Dedup Agent.`,
@@ -1870,7 +1496,7 @@ async function seedInTransaction(db: SeedDb): Promise<RowCounts> {
         cycleId,
         domain: d,
         status: "signed",
-        reviewer: d === "clinical-safety" ? ACTORS.elenaVasquez.name : ACTORS.jamesLiu.name,
+        reviewer: reviewerNameForDomain(d),
         draftMd:
           d === "clinical-safety"
             ? "Clinical Safety: clinician-in-the-loop checkpoint present; conditional approval preferred over rejection per MP-C-5.2."
@@ -1882,7 +1508,7 @@ async function seedInTransaction(db: SeedDb): Promise<RowCounts> {
       await insertAudit(ctx, {
         initiativeId: initId,
         ts: dateAt(-12),
-        actor: d === "clinical-safety" ? ACTORS.elenaVasquez.name : ACTORS.jamesLiu.name,
+        actor: reviewerNameForDomain(d),
         actorRole: "reviewer",
         action: "review_signed",
         detail: `Signed ${d} review for Nurse Triage Line Summarizer.`,
@@ -2027,7 +1653,7 @@ async function seedInTransaction(db: SeedDb): Promise<RowCounts> {
           cycleId,
           domain: d,
           status: "signed",
-          reviewer: d === "privacy-hipaa" ? ACTORS.marcusWebb.name : ACTORS.jamesLiu.name,
+          reviewer: reviewerNameForDomain(d),
           draftMd: `${d} review approved for Member Formulary Q&A Bot.`,
           citations: [],
           signedAt: dateAt(-9),
@@ -2036,7 +1662,7 @@ async function seedInTransaction(db: SeedDb): Promise<RowCounts> {
         await insertAudit(ctx, {
           initiativeId: initId,
           ts: dateAt(-9),
-          actor: d === "privacy-hipaa" ? ACTORS.marcusWebb.name : ACTORS.jamesLiu.name,
+          actor: reviewerNameForDomain(d),
           actorRole: "reviewer",
           action: "review_signed",
           detail: `Signed ${d} review for Member Formulary Q&A Bot.`,
@@ -2136,7 +1762,7 @@ async function seedInTransaction(db: SeedDb): Promise<RowCounts> {
         cycleId,
         domain: d,
         status: "signed",
-        reviewer: d === "clinical-safety" ? ACTORS.elenaVasquez.name : d === "privacy-hipaa" ? ACTORS.marcusWebb.name : ACTORS.jamesLiu.name,
+        reviewer: reviewerNameForDomain(d),
         draftMd: `${d} review approved for FWA Anomaly Detector.`,
         citations: [],
         signedAt: dateAt(-426),
@@ -2145,7 +1771,7 @@ async function seedInTransaction(db: SeedDb): Promise<RowCounts> {
       await insertAudit(ctx, {
         initiativeId: initId,
         ts: dateAt(-426),
-        actor: d === "clinical-safety" ? ACTORS.elenaVasquez.name : d === "privacy-hipaa" ? ACTORS.marcusWebb.name : ACTORS.jamesLiu.name,
+        actor: reviewerNameForDomain(d),
         actorRole: "reviewer",
         action: "review_signed",
         detail: `Signed ${d} review for FWA Anomaly Detector.`,
@@ -2293,7 +1919,7 @@ async function seedInTransaction(db: SeedDb): Promise<RowCounts> {
         cycleId,
         domain: d,
         status: "signed",
-        reviewer: d === "responsible-ai" ? ACTORS.sofiaGrant.name : ACTORS.jamesLiu.name,
+        reviewer: reviewerNameForDomain(d),
         draftMd: `${d} review approved for HR Résumé Screener.`,
         citations: [],
         signedAt: dateAt(-186),
@@ -2302,7 +1928,7 @@ async function seedInTransaction(db: SeedDb): Promise<RowCounts> {
       await insertAudit(ctx, {
         initiativeId: initId,
         ts: dateAt(-186),
-        actor: d === "responsible-ai" ? ACTORS.sofiaGrant.name : ACTORS.jamesLiu.name,
+        actor: reviewerNameForDomain(d),
         actorRole: "reviewer",
         action: "review_signed",
         detail: `Signed ${d} review for HR Résumé Screener.`,
@@ -2465,7 +2091,7 @@ async function seedInTransaction(db: SeedDb): Promise<RowCounts> {
         cycleId,
         domain: d,
         status: "signed",
-        reviewer: d === "responsible-ai" ? ACTORS.sofiaGrant.name : ACTORS.jamesLiu.name,
+        reviewer: reviewerNameForDomain(d),
         draftMd: `${d} review approved for Call Center QA Auto-Scorer.`,
         citations: [],
         signedAt: dateAt(-142),
@@ -2474,7 +2100,7 @@ async function seedInTransaction(db: SeedDb): Promise<RowCounts> {
       await insertAudit(ctx, {
         initiativeId: initId,
         ts: dateAt(-142),
-        actor: d === "responsible-ai" ? ACTORS.sofiaGrant.name : ACTORS.jamesLiu.name,
+        actor: reviewerNameForDomain(d),
         actorRole: "reviewer",
         action: "review_signed",
         detail: `Signed ${d} review for Call Center QA Auto-Scorer.`,

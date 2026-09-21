@@ -1,6 +1,6 @@
 /**
  * Shared request-guard pipeline for `app/api/**` mutating route handlers
- * (task brief deliverable 3): session (passcode-issued) -> rate-limit ->
+ * (task brief deliverable 3): writable mode -> session (passcode-issued) -> rate-limit ->
  * input-size validation -> optional budget reserve. This module composes
  * the persistence and validation primitives while keeping route handlers
  * thin.
@@ -20,6 +20,7 @@ import type { Actor } from "../domain/types";
 import { eq } from "drizzle-orm";
 import { getDb } from "../db/client";
 import { sessions } from "../db/schema";
+import { READ_ONLY_PREVIEW_MESSAGE, resolveDataProviderMode } from "../data/provider-mode";
 
 /* -------------------------------------------------------------------------
  * Persistent session, budget and rate-limit state.
@@ -58,24 +59,21 @@ export async function checkSessionAttempt(
   return sessionAttemptLimiter.checkAndConsume(`session:${clientKey}`);
 }
 
-/** Test-only: reset all module-scoped guard state between test files/cases. */
-export function resetGuardStateForTests(): void {
-  // Nothing left to reset. Sessions, the daily budget AND the rate-limit
-  // buckets all live in Postgres now, and API tests provide a fresh PGlite
-  // database per case — so there is no module-scoped state to clear. Kept as
-  // a no-op because every API test file calls it; removing it would be churn
-  // for no benefit, and it stays the right hook if process-local state ever
-  // returns.
-}
-
-export type GuardFailureKind = "unauthorized" | "rate_limited" | "invalid_input" | "budget_exhausted";
+export type GuardFailureKind = "unauthorized" | "rate_limited" | "invalid_input" | "budget_exhausted" | "read_only";
 
 export interface GuardFailure {
   kind: GuardFailureKind;
-  status: 401 | 429 | 400;
+  status: 401 | 403 | 429 | 400;
   message: string;
   gaps?: InputGap[];
   retryAfterSeconds?: number;
+}
+
+/** Static preview reads cannot reflect writes, so reject before any DB access. */
+export function checkReadOnlyMode(): GuardFailure | null {
+  return resolveDataProviderMode(process.env.DATA_PROVIDER, !!process.env.DATABASE_URL) === "mock"
+    ? { kind: "read_only", status: 403, message: READ_ONLY_PREVIEW_MESSAGE }
+    : null;
 }
 
 /* -------------------------------------------------------------------------
@@ -90,7 +88,7 @@ export interface IssueSessionResult {
 
 /**
  * Verify the demo passcode and, if correct, issue + register a new session
- * bound to `personaKey`. Returns null on passcode mismatch/misconfiguration
+ * bound to `personaKey`. Returns null in preview mode or on passcode mismatch/misconfiguration
  * (caller maps to 401, no side effects — plan §3 "unauthenticated requests
  * -> 401 with no side effects").
  *
@@ -108,6 +106,7 @@ export async function issueDemoSession(
   personaKey: string,
   existingWorkspaceId?: string | null,
 ): Promise<IssueSessionResult | null> {
+  if (checkReadOnlyMode()) return null;
   const check = verifyPasscode(providedPasscode, expectedPasscode);
   if (!check.ok) return null;
   if (!resolveActor(personaKey)) return null;
@@ -224,8 +223,8 @@ function todayUtc(): string {
 }
 
 /**
- * Runs session -> rate-limit -> input-validation -> (optional) budget in
- * order, short-circuiting on the first failure — matching the task brief's
+ * Rejects static preview mode, then runs session -> rate-limit ->
+ * input-validation -> (optional) budget in order, short-circuiting on the first failure — matching the task brief's
  * required precedence ("401 with no side effects" happens before rate
  * limiting/budget can be consumed by an unauthenticated caller).
  */
@@ -234,6 +233,9 @@ export async function runMutationGuard(
   body: Record<string, string> | undefined,
   options: MutationGuardOptions = {},
 ): Promise<MutationGuardResult> {
+  const readOnlyFailure = checkReadOnlyMode();
+  if (readOnlyFailure) return { ok: false, failure: readOnlyFailure };
+
   const token = extractSessionToken(req);
   const { actor, workspaceId } = await resolveSession(token);
   if (!actor) {
@@ -282,9 +284,4 @@ export async function runMutationGuard(
 /** Exposed for tests that want to exhaust/reset the shared budget deterministically. */
 export function getBudgetStoreForTests(): BudgetStore {
   return budgetStore;
-}
-
-/** Exposed for tests that want to exhaust the shared rate limiter deterministically. */
-export function getRateLimiterForTests(): DbTokenBucketRateLimiter {
-  return rateLimiter;
 }

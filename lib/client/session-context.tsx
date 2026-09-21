@@ -21,12 +21,15 @@
  * clear the live-initiative registry (lib/client/live-registry.ts) — see
  * that module's header.
  *
+ * Console layout supplies runtime liveModeAvailable. Static previews neither
+ * read stored session data nor offer login; the stored value is preserved.
  * Must be mounted INSIDE RoleProvider (it calls useRole()).
  */
 import * as React from "react";
-import { postSession } from "./api";
+import { ApiError, postSession } from "./api";
 import { findPersona, type LivePersona } from "./personas";
 import { useRole } from "@/components/jeeves/role-context";
+import { READ_ONLY_PREVIEW_MESSAGE } from "@/lib/data/provider-mode";
 
 export interface LiveSession {
   token: string;
@@ -39,6 +42,7 @@ export interface LiveSession {
 
 export interface LiveSessionContextValue {
   session: LiveSession | null;
+  liveModeAvailable: boolean;
   login: (passcode: string, personaKey: string) => Promise<LiveSession>;
   logout: () => void;
   /**
@@ -145,10 +149,13 @@ export function resetLiveSessionForTests(): void {
 
 const LiveSessionContext = React.createContext<LiveSessionContextValue | null>(null);
 
-export function LiveSessionProvider({ children }: { children: React.ReactNode }) {
+export function LiveSessionProvider({ children, liveModeAvailable = true }: {
+  children: React.ReactNode;
+  liveModeAvailable?: boolean;
+}) {
   const session = React.useSyncExternalStore(
     subscribeSession,
-    getSessionSnapshot,
+    liveModeAvailable ? getSessionSnapshot : getSessionServerSnapshot,
     getSessionServerSnapshot,
   );
   const { setPersonaKey } = useRole();
@@ -167,6 +174,7 @@ export function LiveSessionProvider({ children }: { children: React.ReactNode })
 
   const login = React.useCallback(
     async (passcode: string, personaKey: string): Promise<LiveSession> => {
+      if (!liveModeAvailable) throw new ApiError(403, READ_ONLY_PREVIEW_MESSAGE);
       const persona = findPersona(personaKey);
       if (!persona) {
         throw new Error(`unknown persona: ${personaKey}`);
@@ -184,7 +192,7 @@ export function LiveSessionProvider({ children }: { children: React.ReactNode })
       setPersonaKey(personaKey);
       return next;
     },
-    [setPersonaKey],
+    [liveModeAvailable, setPersonaKey],
   );
 
   const logout = React.useCallback(() => {
@@ -195,8 +203,8 @@ export function LiveSessionProvider({ children }: { children: React.ReactNode })
   const openUnlockPrompt = React.useCallback(() => setUnlockPromptOpen(true), []);
 
   const value = React.useMemo(
-    () => ({ session, login, logout, unlockPromptOpen, setUnlockPromptOpen, openUnlockPrompt }),
-    [session, login, logout, unlockPromptOpen, openUnlockPrompt],
+    () => ({ session, liveModeAvailable, login, logout, unlockPromptOpen, setUnlockPromptOpen, openUnlockPrompt }),
+    [session, liveModeAvailable, login, logout, unlockPromptOpen, openUnlockPrompt],
   );
 
   return <LiveSessionContext.Provider value={value}>{children}</LiveSessionContext.Provider>;
