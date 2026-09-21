@@ -45,7 +45,8 @@ What you'll see at `http://localhost:3000`:
 
 - A read-only portfolio board of **12 seeded initiatives** (tiers, states,
   the outcome-metrics strip) — browsable without signing up.
-- **Try the demo** starts an isolated requester session and opens intake.
+- **Try the demo** starts an isolated requester session and opens the existing
+  Meridian Health Portfolio. **Create an initiative** opens an editable intake.
   Visitors can use the sample intake and switch roles in the header. Business
   actions require a server-issued session; shared examples and global defaults
   remain read-only to visitors.
@@ -121,7 +122,35 @@ npm run start        # next start (after build)
    > to `npm run db:migrate` but needs the `drizzle-kit` devDependency and
    > `drizzle.config.ts` (which throws unless `DATABASE_URL` is set).
 
-5. **Seed only an explicitly approved disposable demo database.**
+5. **Restore the shared Meridian Health portfolio additively on a hosted database.**
+
+   Generate a reviewable SQL artifact from the checked-out source:
+
+   ```sh
+   npx tsx scripts/export-demo-sql.ts > /tmp/meridian-demo.sql
+   ```
+
+   The generator uses a fresh in-memory PGlite database and never connects to
+   the configured hosted database. Review the resulting SQL, verify the target
+   database, and execute it through an authorized PostgreSQL connection or the
+   Supabase SQL Editor. Existing schema migrations must already be applied.
+
+   The import adds the 12 fictional shared initiatives and their complete
+   review, decision, control, monitoring and historical audit records. It uses
+   one transaction and an advisory lock, records synthetic-data provenance,
+   and verifies the full fixture before treating repeat runs as a no-op. A
+   conflicting slug, changed catalog, partial fixture, or mismatched import
+   marker aborts the transaction. Investigate conflicts rather than using the
+   reset seed. It does not alter visitor records, sessions, evidence, budgets,
+   permissions, or audit triggers. Shared examples are browseable by everyone;
+   visitor-created initiatives remain isolated and editable by their session.
+
+   Verify all 12 examples in `/portfolio`, detail pages, Reviews, Monitoring,
+   and Audit. Check one-click entry and the separate creation link. Repeat the
+   identical import to verify that row counts do not change.
+
+   **For an explicitly approved disposable database only**, the legacy reset
+   seed remains available:
 
    ```bash
    DATABASE_URL="<your Neon pooled connection string>" npm run db:seed

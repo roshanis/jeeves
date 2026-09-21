@@ -3,6 +3,8 @@ import { OutcomeMetricsStrip } from "@/components/jeeves/outcome-metrics-strip";
 import { RiskHeatmap } from "@/components/jeeves/risk-heatmap";
 import { PortfolioView } from "@/components/jeeves/portfolio-view";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import Link from "next/link";
+import { buttonVariants } from "@/components/ui/button";
 
 export default async function PortfolioPage() {
   const provider = getAppProvider();
@@ -25,6 +27,9 @@ export default async function PortfolioPage() {
           Every Meridian Health AI initiative, its risk tier, lifecycle state,
           review progress, and next action. Sort any column; filter with saved views.
         </p>
+        <Link href="/initiatives/new" className={buttonVariants({ className: "mt-4" })}>
+          Create an initiative
+        </Link>
       </div>
 
       <OutcomeMetricsStrip metrics={metrics} />

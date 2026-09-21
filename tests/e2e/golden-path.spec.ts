@@ -28,6 +28,10 @@ test.describe("champion storyline: read-only golden path", () => {
     ).toBeVisible();
 
     await page.getByRole("button", { name: "Try the demo" }).first().click();
+    await expect(page).toHaveURL(/\/portfolio$/);
+    await expect(page.getByRole("heading", { name: "All 12 initiatives", exact: true })).toBeVisible();
+    await expect(page.locator('[data-slot="initiative-row"]')).toHaveCount(12);
+    await page.getByRole("link", { name: "Create an initiative", exact: true }).click();
     await expect(page).toHaveURL(/\/initiatives\/new$/);
     await expect(page.locator('input[type="password"]')).toHaveCount(0);
     await expect(page.getByRole("combobox", { name: "Demo persona" })).toHaveValue("priya-raman");
