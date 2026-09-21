@@ -31,7 +31,7 @@ import { E2E_COOKIE_SECRET } from "./tests/e2e/constants";
 // Live-demo loop support:
 // - an independent test-only cookie secret preserves visitor workspaces;
 //   the visitor flow never supplies a password.
-// - OPENAI_API_KEY and DATABASE_URL are explicitly blanked so ambient env
+// - OPENAI_API_KEY and both database URL aliases are blanked so ambient env
 //   files cannot switch the suite to an external provider or database.
 //   lib/agents getAgentPort() therefore selects the
 //   deterministic offline mock adapter for draft runs (its documented
@@ -69,6 +69,9 @@ export default defineConfig({
     env: {
       PORT: String(PORT),
       DATABASE_URL: "",
+      POSTGRES_URL: "",
+      DATABASE_MIGRATION_URL: "",
+      VERCEL: "",
       OPENAI_API_KEY: "",
       DEMO_PASSCODE: "",
       JEEVES_COOKIE_SECRET: E2E_COOKIE_SECRET,

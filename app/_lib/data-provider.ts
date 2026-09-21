@@ -26,6 +26,7 @@ import type { DataProvider } from "@/lib/data/provider";
 import type { InitiativeDetail, InitiativeSummary } from "@/lib/data/dto";
 import { getProvider } from "@/lib/data";
 import { DbDataProvider } from "@/lib/data/db-provider";
+import { runtimeDatabaseUrl } from "@/lib/db/runtime-config";
 import { resolveWorkspaceCookieSecret, verifyWorkspaceCookie } from "@/lib/security/workspace-cookie";
 
 const WORKSPACE_COOKIE = "jeeves_workspace";
@@ -34,7 +35,7 @@ let dbSingleton: DataProvider | null = null;
 
 export function getAppProvider(): DataProvider {
   const mode = process.env.DATA_PROVIDER;
-  const useDb = mode === "db" || (mode !== "mock" && !!process.env.DATABASE_URL);
+  const useDb = mode === "db" || (mode !== "mock" && !!runtimeDatabaseUrl());
   if (useDb) {
     if (!dbSingleton) {
       dbSingleton = new DbDataProvider();
@@ -101,7 +102,7 @@ export async function getInitiativeDetailCoherent(
   slug: string,
 ): Promise<InitiativeDetail | null> {
   const mode = process.env.DATA_PROVIDER;
-  const pgliteDbMode = mode === "db" && !process.env.DATABASE_URL;
+  const pgliteDbMode = mode === "db" && !runtimeDatabaseUrl();
   if (!pgliteDbMode) {
     return getInitiativeDetailForViewer(slug);
   }

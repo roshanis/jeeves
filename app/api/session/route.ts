@@ -2,6 +2,7 @@
  * server-issued, workspace-bound session. No visitor password is required. */
 import { z } from "zod";
 import { checkSessionAttempt, clientKeyFor, issueDemoSession, extractSessionToken, resolveSession } from "@/lib/services/route-guard";
+import { resolveActor } from "@/lib/services/actors";
 import {
   resolveWorkspaceCookieSecret,
   signWorkspaceId,
@@ -56,22 +57,30 @@ const bodySchema = z.object({
   personaKey: z.string().min(1).max(100),
 });
 
+const SAFE_DRIVER_CODES = new Set([
+  "EROFS", "ECONNREFUSED", "ECONNRESET", "ETIMEDOUT", "ENOTFOUND",
+  "08000", "08003", "08006", "53300", "57P01",
+  "42P01", "42703", "28P01", "28000", "42501", "3D000",
+  "CERT_HAS_EXPIRED", "DEPTH_ZERO_SELF_SIGNED_CERT",
+  "UNABLE_TO_VERIFY_LEAF_SIGNATURE", "ERR_TLS_CERT_ALTNAME_INVALID",
+  "SELF_SIGNED_CERT_IN_CHAIN", "CERT_REJECTED",
+]);
+
+function storageUnavailable(error: unknown): Response {
+  const requestId = crypto.randomUUID();
+  const outer = error && typeof error === "object" ? error as { code?: unknown; cause?: unknown } : {};
+  const inner = outer.cause && typeof outer.cause === "object" ? outer.cause as { code?: unknown } : {};
+  const rawCode = typeof outer.code === "string" ? outer.code : inner.code;
+  const causeCode = typeof rawCode === "string" && SAFE_DRIVER_CODES.has(rawCode) ? rawCode : "UNKNOWN";
+  console.error("Demo session storage unavailable", { requestId, causeCode });
+  return Response.json(
+    { error: "Demo session storage is temporarily unavailable. Please try again later.", code: "DEMO_STORAGE_UNAVAILABLE", requestId },
+    { status: 503 },
+  );
+}
+
 export async function POST(req: Request): Promise<Response> {
-  // Validate any supplied parent session before applying its switch allowance.
-  const token = extractSessionToken(req);
-  const parent = token ? await resolveSession(token) : null;
-  const attempt = await checkSessionAttempt(clientKeyFor(req), Boolean(parent?.actor && parent.workspaceId));
-  if (!attempt.allowed) {
-    return Response.json(
-      { error: "too many attempts — try again later" },
-      { status: 429, headers: { "Retry-After": String(attempt.retryAfterSeconds) } },
-    );
-  }
-
-  if (token && (!parent?.actor || !parent.workspaceId)) {
-    return Response.json({ error: "session expired or invalid" }, { status: 401 });
-  }
-
+  // Parse and validate the public input before any database-backed guards.
   let json: unknown;
   try {
     json = await req.json();
@@ -84,17 +93,51 @@ export async function POST(req: Request): Promise<Response> {
     return Response.json({ error: "invalid request body" }, { status: 400 });
   }
 
+  if (!resolveActor(parsed.data.personaKey)) {
+    return Response.json({ error: "unauthorized" }, { status: 401 });
+  }
+
   const secret = resolveWorkspaceCookieSecret();
   if (!secret) {
     return Response.json({ error: "Demo workspace is not configured. Please try again later.", code: "DEMO_NOT_CONFIGURED" }, { status: 503 });
   }
+
+  let token: string | null;
+  try {
+    token = extractSessionToken(req);
+  } catch {
+    return Response.json({ error: "session expired or invalid" }, { status: 401 });
+  }
+
+  // These guards use persistent session and rate-limit state.
+  let parent;
+  let attempt;
+  try {
+    parent = token ? await resolveSession(token) : null;
+    attempt = await checkSessionAttempt(clientKeyFor(req), Boolean(parent?.actor && parent.workspaceId));
+  } catch (error) {
+    return storageUnavailable(error);
+  }
+  if (!attempt.allowed) {
+    return Response.json(
+      { error: "too many attempts — try again later" },
+      { status: 429, headers: { "Retry-After": String(attempt.retryAfterSeconds) } },
+    );
+  }
+
+  if (token && (!parent?.actor || !parent.workspaceId)) {
+    return Response.json({ error: "session expired or invalid" }, { status: 401 });
+  }
+
   // Authenticated workspace wins over a browser continuity hint.
   const existingWorkspaceId = parent?.workspaceId ?? verifyWorkspaceCookie(readWorkspaceCookie(req), secret);
 
-  const result = await issueDemoSession(
-    parsed.data.personaKey,
-    existingWorkspaceId,
-  );
+  let result;
+  try {
+    result = await issueDemoSession(parsed.data.personaKey, existingWorkspaceId);
+  } catch (error) {
+    return storageUnavailable(error);
+  }
   if (!result) {
     return Response.json({ error: "unauthorized" }, { status: 401 });
   }

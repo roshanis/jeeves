@@ -1,5 +1,6 @@
 import type { DataProvider } from "./provider";
 import { MockDataProvider } from "./mock-provider";
+import { runtimeDatabaseUrl } from "../db/runtime-config";
 
 let singleton: DataProvider | null = null;
 
@@ -21,7 +22,7 @@ let singleton: DataProvider | null = null;
 export function getProvider(): DataProvider {
   if (!singleton) {
     const mode = process.env.DATA_PROVIDER;
-    const useDb = mode === "db" || (mode !== "mock" && !!process.env.DATABASE_URL);
+    const useDb = mode === "db" || (mode !== "mock" && !!runtimeDatabaseUrl());
     if (useDb) {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const { DbDataProvider } = require("./db-provider") as typeof import("./db-provider");

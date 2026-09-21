@@ -1,27 +1,21 @@
-// DB client factory — plan.md §4 (Neon Postgres + Drizzle; no Docker) and
-// the M1-P1 task brief: use @neondatabase/serverless when DATABASE_URL is
-// set, otherwise fall back to a local PGlite instance so the app and tests
-// run with zero external services and no sign-up.
-//
-// - Production / anywhere DATABASE_URL is set: drizzle-orm/neon-serverless
-//   over a process-wide @neondatabase/serverless WebSocket Pool. This adds
-//   the `ws` dependency despite the earlier HTTP-driver preference because
-//   the application requires real interactive transaction support.
-// - Local dev without DATABASE_URL: PGlite with a persistent on-disk store
-//   at .pglite/ (gitignored) so `npm run dev` / `npm run db:seed` retain
-//   data across restarts.
-// - Tests: ALWAYS use a fresh in-memory PGlite instance (see
-//   lib/db/test-client.ts) regardless of DATABASE_URL, so test runs never
-//   depend on network access or shared local state.
+// DB client factory. Runtime URLs resolve from DATABASE_URL or Vercel's
+// POSTGRES_URL alias. Neon hosts use Neon's WebSocket driver; other
+// PostgreSQL hosts use node-postgres with bounded pool and Supabase TLS
+// settings. Local development without a URL uses persistent PGlite, while
+// Vercel fails closed rather than attempting an on-disk database. Tests use
+// fresh in-memory PGlite instances through lib/db/test-client.ts.
 import { neonConfig, Pool } from "@neondatabase/serverless";
 import { Pool as PgPool } from "pg";
 import { drizzle as drizzleNeon, type NeonDatabase } from "drizzle-orm/neon-serverless";
 import { drizzle as drizzleNodePg, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { drizzle as drizzlePglite, type PgliteDatabase } from "drizzle-orm/pglite";
 import { PGlite } from "@electric-sql/pglite";
+import { postgresPoolConfig } from "./connection-config";
+import { assertRuntimeDatabaseConfigured, runtimeDatabaseUrl } from "./runtime-config";
 import ws from "ws";
 import * as schema from "./schema";
 import { selectDriver } from "./driver-select";
+import type { DbDriver } from "./driver-select";
 
 export type Db =
   | NeonDatabase<typeof schema>
@@ -49,6 +43,12 @@ type DbCacheSlot = { db: Db | null; pool: Pool | null; pgPool: PgPool | null };
 const dbSlot: DbCacheSlot = ((globalThis as Record<symbol, unknown>)[
   DB_CACHE_KEY
 ] ??= { db: null, pool: null, pgPool: null }) as DbCacheSlot;
+const handleDrivers = new WeakMap<object, DbDriver>();
+
+/** Driver recorded at construction so operations can follow the actual handle. */
+export function getDbDriverForHandle(db: Db): DbDriver | undefined {
+  return handleDrivers.get(db);
+}
 
 /**
  * Returns the process-wide DB handle, creating it on first use. Safe to
@@ -56,11 +56,11 @@ const dbSlot: DbCacheSlot = ((globalThis as Record<symbol, unknown>)[
  * connection/instance is memoized on globalThis (see above).
  */
 export function getDb(): Db {
+  const databaseUrl = runtimeDatabaseUrl();
+  assertRuntimeDatabaseConfigured(databaseUrl, process.env.VERCEL);
   if (dbSlot.db) {
     return dbSlot.db;
   }
-
-  const databaseUrl = process.env.DATABASE_URL;
   // See ./driver-select.ts: the Neon serverless driver speaks to Neon's
   // WebSocket proxy, NOT the Postgres wire protocol, so it cannot be used
   // for a plain Postgres server (a container sidecar, RDS, a local install).
@@ -72,6 +72,7 @@ export function getDb(): Db {
     neonConfig.webSocketConstructor = ws;
     dbSlot.pool ??= new Pool({ connectionString: databaseUrl });
     dbSlot.db = drizzleNeon({ client: dbSlot.pool, schema });
+    handleDrivers.set(dbSlot.db, "neon");
     return dbSlot.db;
   }
 
@@ -79,14 +80,16 @@ export function getDb(): Db {
     // node-postgres: a real connection pool over the wire protocol. This is
     // the right driver for any long-lived process (a container), and the only
     // one that works against a non-Neon server.
-    dbSlot.pgPool ??= new PgPool({ connectionString: databaseUrl });
+    dbSlot.pgPool ??= new PgPool(postgresPoolConfig(databaseUrl!, process.env.DATABASE_SSL_CA));
     dbSlot.db = drizzleNodePg({ client: dbSlot.pgPool, schema });
+    handleDrivers.set(dbSlot.db, "pg");
     return dbSlot.db;
   }
 
   // No DATABASE_URL: local persistent PGlite store, not a network call.
   const client = new PGlite(localPgliteDirectory());
   dbSlot.db = drizzlePglite({ client, schema });
+  handleDrivers.set(dbSlot.db, "pglite");
   return dbSlot.db;
 }
 
