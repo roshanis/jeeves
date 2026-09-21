@@ -13,7 +13,6 @@ import {
   resolveViewerWorkspaceId,
 } from "./viewer-workspace";
 
-const PASSCODE = "correct-horse-battery-staple";
 const COOKIE_SECRET = "test-cookie-secret";
 let testDb: TestDb;
 
@@ -47,7 +46,7 @@ describe("lib/services/viewer-workspace", () => {
     });
 
     it("returns the session's workspaceId for a valid bearer token", async () => {
-      const session = (await issueDemoSession(PASSCODE, PASSCODE, "priya-raman"))!;
+      const session = (await issueDemoSession("priya-raman"))!;
       const req = new Request("http://localhost/api/x", {
         headers: { authorization: `Bearer ${session.token}` },
       });
@@ -55,7 +54,7 @@ describe("lib/services/viewer-workspace", () => {
     });
 
     it("returns the session's workspaceId for a valid jeeves_session cookie", async () => {
-      const session = (await issueDemoSession(PASSCODE, PASSCODE, "priya-raman"))!;
+      const session = (await issueDemoSession("priya-raman"))!;
       const req = new Request("http://localhost/api/x", {
         headers: { cookie: `jeeves_session=${session.token}` },
       });
@@ -77,8 +76,15 @@ describe("lib/services/viewer-workspace", () => {
       expect(await resolveViewerWorkspaceId(req)).toBeNull();
     });
 
+    it("degrades a malformed percent-encoded workspace cookie to the seeded-only view", async () => {
+      const req = new Request("http://localhost/api/x", {
+        headers: { cookie: "jeeves_workspace=%" },
+      });
+      await expect(resolveViewerWorkspaceId(req)).resolves.toBeNull();
+    });
+
     it("prefers a valid session's workspaceId over a DIFFERENT workspace cookie", async () => {
-      const session = (await issueDemoSession(PASSCODE, PASSCODE, "priya-raman"))!;
+      const session = (await issueDemoSession("priya-raman"))!;
       const otherSigned = signWorkspaceId("ws_someone_elses_workspace", COOKIE_SECRET);
       const req = new Request("http://localhost/api/x", {
         headers: {
@@ -102,7 +108,7 @@ describe("lib/services/viewer-workspace", () => {
     });
 
     it("deletes an expired session and falls back to the workspace cookie", async () => {
-      const session = (await issueDemoSession(PASSCODE, PASSCODE, "priya-raman"))!;
+      const session = (await issueDemoSession("priya-raman"))!;
       await testDb.update(sessions).set({ expiresAt: Date.now() }).where(eq(sessions.token, session.token));
       const signed = signWorkspaceId("ws_after_expiry_1234567890", COOKIE_SECRET);
       const req = new Request("http://localhost/api/x", {

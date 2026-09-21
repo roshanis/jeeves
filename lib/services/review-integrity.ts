@@ -2,7 +2,7 @@ import { desc, eq } from "drizzle-orm";
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import type * as schema from "../db/schema";
 import { initiatives, reviewCycles } from "../db/schema";
-import { workspaceMismatch } from "./workspace-guard";
+import { mutationWorkspaceMismatch } from "./workspace-guard";
 
 export type ReviewTx = PgDatabase<PgQueryResultHKT, typeof schema>;
 
@@ -30,7 +30,7 @@ export async function lockCurrentReviewCycle(
   if (!owner) throw new ReviewIntegrityError("not_found", "Review cycle not found.");
   const [initiative] = await tx.select().from(initiatives)
     .where(eq(initiatives.id, owner.initiativeId)).for("update");
-  if (!initiative || (sessionWorkspaceId !== undefined && workspaceMismatch(initiative.workspaceId, sessionWorkspaceId))) {
+  if (!initiative || (sessionWorkspaceId !== undefined && mutationWorkspaceMismatch(initiative.workspaceId, sessionWorkspaceId))) {
     throw new ReviewIntegrityError("not_found", "Review cycle not found.");
   }
   const [cycle] = await tx.select().from(reviewCycles).where(eq(reviewCycles.id, cycleId));

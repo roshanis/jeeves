@@ -75,8 +75,8 @@ governance, end to end:
   signals), the approver sees decisions awaiting sign-off, admin sees
   operations/paused deployments, and program office sees a portfolio-wide
   view.
-- **Public read-only mode + passcode-gated live mode** — anyone can browse
-  the seeded portfolio with no login. A demo passcode unlocks a live,
+- **Public visitor playground** — anyone can browse the sample portfolio,
+  click **Try the demo**, and start a passwordless,
   mutable workspace with **per-browser workspace isolation** (a cookie-scoped
   demo playground, not a fresh empty workspace per login, so a requester →
   reviewer → approver walkthrough in one browser sees the same data).
@@ -154,15 +154,19 @@ through (or go straight to `/inbox`) for the governance operations
 console — a read-only portfolio board of 12 seeded initiatives with no
 further configuration.
 
-### Live mode (passcode-gated, mutable)
+### Interactive visitor demo
 
 ```bash
-DATA_PROVIDER=db DEMO_PASSCODE=<choose-a-passcode> npm run dev
+DATA_PROVIDER=db JEEVES_COOKIE_SECRET=<server-signing-key> npm run dev
 ```
 
-Then, in the browser, click the **"Read-only (public)"** chip in the top bar
-and enter the passcode to unlock the live workspace (intake, triage,
-draft-run, sign, decide, monitor, admin actions). Point `DATABASE_URL` at a
+Click **Try the demo** to enter as a requester and open intake. Click **Use a
+sample initiative** to fill the form, then submit it. The header's **Demo
+persona** picker lets you become a reviewer or approver while keeping the
+same workspace. You can also click **Start demo** from the console. Shared
+examples and global defaults remain read-only; play with your own records.
+Use a random server signing key (for example, generate one with
+`openssl rand -hex 32`); visitors never enter this key. Point `DATABASE_URL` at a
 real Neon Postgres connection string to run against Neon instead of PGlite;
 set `OPENAI_API_KEY` (+ optionally `OPENAI_MODEL`) only if you want genuinely
 live-generated draft text — see `.env.example` for the full variable list.
@@ -215,11 +219,11 @@ recommend, route, and flag missing evidence — they never approve.**
 **Demo reset ritual** — before a live walkthrough, run:
 
 ```bash
-DEMO_PASSCODE=<passcode> npm run reset:demo
+npm run reset:demo
 ```
 
 It re-seeds to the canonical state, clears live session + budget state, and
-prints a pre-flight checklist (passcode, agent/telemetry connector status,
+prints a pre-flight checklist (workspace signing, agent/telemetry connector status,
 cron secret, build SHA, and a 12-initiative smoke count).
 
 See `docs/deploy.md` for the full Vercel + Neon deployment runbook, known
@@ -242,7 +246,7 @@ because approver identity is self-asserted rather than authenticated.
 
 ```bash
 npm test              # Vitest — unit/integration tests against in-memory PGlite
-npm run test:e2e      # Playwright — golden-path.spec.ts (needs DEMO_PASSCODE in the runner env)
+npm run test:e2e      # Playwright — golden-path.spec.ts (passwordless, with an isolated test signing key)
 npm run lint          # eslint
 npm run typecheck     # tsc --noEmit
 ```
@@ -258,18 +262,18 @@ conditional approval — against a real (mocked-LLM) run.
 
 ## Security posture
 
-- **Public visitors are strictly read-only.** There is no unauthenticated
-  mutation endpoint anywhere in the app.
-- **Every mutation is passcode-gated and bearer-authenticated** with
-  DB-backed sessions (not in-memory) issued only after the demo passcode is
-  verified.
+- **Visitors can play without signing up.** Public session entry selects a
+  fictional persona; it does not verify a real identity.
+- **Every business mutation requires a valid, non-null workspace session.**
+  Sessions are issued and validated in the database. Shared sample records
+  and global control defaults cannot be changed by visitor sessions.
 - **Atomic per-day token budget** — LLM usage is capped per day via a
   conditional `INSERT ... ON CONFLICT DO UPDATE` reservation, so concurrent
   requests can't race past the cap.
 - **Requester-ownership and reviewer-domain authorization** — a reviewer can
   only sign/return reviews in their own assigned domain; a requester can
   only submit/edit their own initiatives.
-- **Per-browser workspace isolation** for the live demo, so a passcode
+- **Per-browser workspace isolation** for the live demo, so a demo
   session doesn't leak into or collide with another visitor's session or the
   seeded baseline.
 - **Security headers** set at the framework level, and input-length caps on
@@ -302,7 +306,7 @@ lib/
   workflow/             Bounded-concurrency, resumable multi-domain draft fan-out
   services/             Transactional use cases + the route-guard pipeline
                         (session -> rate-limit -> budget -> authz)
-  security/             Passcode/session, rate limiting, token budget, input caps
+  security/             Session/workspace signing, rate limiting, token budget, input caps
   data/                 The DataProvider swap point (db vs mock), env-selected
   db/                   Drizzle schema + the Neon-or-PGlite client factory
   client/               Client-safe persona/session mirrors for UI components
@@ -339,3 +343,11 @@ organization, a real patient, or real PHI/PII, and no real integration
 MIT — see [LICENSE](LICENSE). The license covers the code; it makes no claim
 over the fictional scenario, the framework names referenced in the mapping
 pages, or any third-party dependency, each of which carries its own terms.
+
+Visitor session entry requires a server-side `JEEVES_COOKIE_SECRET` for signed
+browser continuity. Existing `DEMO_PASSCODE` configuration is accepted only as
+a deprecated signing fallback to sign new cookies and verify existing ones; it is never checked
+as a visitor password. New deployments should use an independent random key.
+With neither signing source configured, entry returns 503 without creating a
+session. Anonymous entry and authenticated persona changes have separate,
+persistent rate limits; all existing model-budget limits still apply.

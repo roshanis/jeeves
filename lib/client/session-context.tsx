@@ -15,7 +15,7 @@
  *
  * Login and rehydration select the exact authenticated persona in the role
  * context, keeping visible identity, reviewer domain, and API authorization
- * aligned. Public preview switching is disabled while this session exists.
+ * aligned. The persona picker exchanges sessions to explore each role in the same workspace.
  *
  * `logout()` returns the app to read-only mode; it intentionally does NOT
  * clear the live-initiative registry (lib/client/live-registry.ts) — see
@@ -24,7 +24,7 @@
  * Must be mounted INSIDE RoleProvider (it calls useRole()).
  */
 import * as React from "react";
-import { postSession } from "./api";
+import { apiErrorToMessage, isApiError, postSession } from "./api";
 import { findPersona, type LivePersona } from "./personas";
 import { useRole } from "@/components/jeeves/role-context";
 
@@ -39,21 +39,12 @@ export interface LiveSession {
 
 export interface LiveSessionContextValue {
   session: LiveSession | null;
-  login: (passcode: string, personaKey: string) => Promise<LiveSession>;
+  login: (personaKey: string) => Promise<LiveSession>;
   logout: () => void;
-  /**
-   * Whether the passcode dialog is open. Lives here rather than inside
-   * DemoModeChip so that anything which runs into the read-only gate can
-   * offer the way past it — the intake form's read-only notice used to end
-   * "(use the chip in the header)", sending the reader off to hunt for a
-   * control instead of giving them one. The chip still OWNS the dialog; this
-   * is only the open state, so there is one implementation rather than a
-   * copy per caller.
-   */
-  unlockPromptOpen: boolean;
-  setUnlockPromptOpen: (open: boolean) => void;
-  /** Convenience for the common case: "let me in from here". */
-  openUnlockPrompt: () => void;
+  pending: boolean;
+  startError: string | null;
+  /** Start a requester session directly from an action's entry point. */
+  startDemo: () => void;
 }
 
 /* -------------------------------------------------------------------------
@@ -165,38 +156,63 @@ export function LiveSessionProvider({ children }: { children: React.ReactNode })
     return () => window.clearTimeout(timer);
   }, [session, setPersonaKey]);
 
-  const login = React.useCallback(
-    async (passcode: string, personaKey: string): Promise<LiveSession> => {
-      const persona = findPersona(personaKey);
-      if (!persona) {
-        throw new Error(`unknown persona: ${personaKey}`);
+  const [pending, setPending] = React.useState(false);
+  const [startError, setStartError] = React.useState<string | null>(null);
+  const entryRequest = React.useRef<Promise<LiveSession> | null>(null);
+  const version = React.useRef(0);
+
+  const login = React.useCallback((personaKey: string): Promise<LiveSession> => {
+    // All entry controls share one request, including rapid double clicks.
+    if (entryRequest.current) return entryRequest.current;
+    const persona = findPersona(personaKey);
+    if (!persona) return Promise.reject(new Error("Unknown demo persona."));
+    const requestVersion = ++version.current;
+    setPending(true);
+    setStartError(null);
+    const request = (async () => {
+      try {
+        const current = getSessionSnapshot();
+        const token = current && current.expiresAt > Date.now() ? current.token : undefined;
+        const result = await postSession(personaKey, token);
+        if (requestVersion !== version.current) throw new Error("Demo entry cancelled.");
+        const next: LiveSession = {
+          ...result, personaKey, personaLabel: persona.label, role: persona.role,
+        };
+        setStoredSession(next);
+        setPersonaKey(personaKey);
+        return next;
+      } catch (err) {
+        if (requestVersion === version.current) {
+          if (isApiError(err) && err.status === 401) setStoredSession(null);
+          setStartError(isApiError(err) ? apiErrorToMessage(err) : "Could not start the demo. Try again.");
+        }
+        throw err;
+      } finally {
+        if (requestVersion === version.current) {
+          entryRequest.current = null;
+          setPending(false);
+        }
       }
-      const result = await postSession(passcode, personaKey);
-      const next: LiveSession = {
-        token: result.token,
-        workspaceId: result.workspaceId,
-        expiresAt: result.expiresAt,
-        personaKey,
-        personaLabel: persona.label,
-        role: persona.role,
-      };
-      setStoredSession(next);
-      setPersonaKey(personaKey);
-      return next;
-    },
-    [setPersonaKey],
-  );
+    })();
+    entryRequest.current = request;
+    return request;
+  }, [setPersonaKey]);
 
   const logout = React.useCallback(() => {
+    version.current++;
+    entryRequest.current = null;
+    setPending(false);
+    setStartError(null);
     setStoredSession(null);
   }, []);
 
-  const [unlockPromptOpen, setUnlockPromptOpen] = React.useState(false);
-  const openUnlockPrompt = React.useCallback(() => setUnlockPromptOpen(true), []);
+  const startDemo = React.useCallback(() => {
+    void login("priya-raman").catch(() => { /* startError is rendered by entry controls. */ });
+  }, [login]);
 
   const value = React.useMemo(
-    () => ({ session, login, logout, unlockPromptOpen, setUnlockPromptOpen, openUnlockPrompt }),
-    [session, login, logout, unlockPromptOpen, openUnlockPrompt],
+    () => ({ session, login, logout, pending, startError, startDemo }),
+    [session, login, logout, pending, startError, startDemo],
   );
 
   return <LiveSessionContext.Provider value={value}>{children}</LiveSessionContext.Provider>;

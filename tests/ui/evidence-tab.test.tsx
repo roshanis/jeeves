@@ -8,12 +8,12 @@ import { EvidenceTab } from '@/components/jeeves/evidence-tab';
 afterEach(()=>{cleanup();vi.clearAllMocks();});
 describe('evidence requester guidance',()=>{
  it('explains private evidence and offers unlock without showing upload controls to public visitors',()=>{mocks.session.mockReturnValue(null);render(<EvidenceTab slug="demo"/>);expect(screen.getByText(/fictional documents only/i)).toBeTruthy();expect(screen.queryByLabelText('Choose document')).toBeNull();});
- it('does not claim seeded metadata is an uploaded document',async()=>{mocks.session.mockReturnValue({session:{token:'token'},openUnlockPrompt:vi.fn()});mocks.request.mockRejectedValue(new Error('Evidence workspace not found.'));render(<EvidenceTab slug="demo"/>);expect(await screen.findByRole('alert')).toBeTruthy();expect(screen.queryByText('Accepted')).toBeNull();});
+ it('does not claim seeded metadata is an uploaded document',async()=>{mocks.session.mockReturnValue({session:{token:'token'},startDemo:vi.fn()});mocks.request.mockRejectedValue(new Error('Evidence workspace not found.'));render(<EvidenceTab slug="demo"/>);expect(await screen.findByRole('alert')).toBeTruthy();expect(screen.queryByText('Accepted')).toBeNull();});
 });
 
 const evidenceState={initiativeId:'i',cycleId:'c',canEdit:true,reviewerDomain:null,documents:[],requirements:[],draft:null,latest:null,history:[],usedBytes:0};
 it('keeps the same upload request ID after an uncertain response',async()=>{
- mocks.session.mockReturnValue({session:{token:'token'},openUnlockPrompt:vi.fn()});mocks.base64.mockResolvedValue('cGRm');
+ mocks.session.mockReturnValue({session:{token:'token'},startDemo:vi.fn()});mocks.base64.mockResolvedValue('cGRm');
  mocks.request.mockImplementation((_slug,_token,body)=>body?Promise.reject(new Error('Connection lost')):Promise.resolve(evidenceState));
  render(<EvidenceTab slug="demo"/>);
  fireEvent.change(await screen.findByLabelText('Choose document'),{target:{files:[new File(['pdf'],'demo.pdf',{type:'application/pdf'})]}});
@@ -25,13 +25,13 @@ it('keeps the same upload request ID after an uncertain response',async()=>{
  const calls=mocks.request.mock.calls.filter(call=>call[2]?.action==='upload');expect(calls[0][2].requestId).toBe(calls[1][2].requestId);
 });
 it('labels changed draft bindings separately from accepted submitted evidence',async()=>{
- mocks.session.mockReturnValue({session:{token:'token'},openUnlockPrompt:vi.fn()});
+ mocks.session.mockReturnValue({session:{token:'token'},startDemo:vi.fn()});
  mocks.request.mockResolvedValue({...evidenceState,draft:{id:'draft',revision:1,entries:[{controlId:'H-01',documentId:'new',pageReference:'',note:''}]},requirements:[{id:'H-01',name:'Retention',domain:'privacy-hipaa',description:'Policy',policySource:null,status:'accepted',entry:{controlId:'H-01',documentId:'old',pageReference:'',note:''},assessment:null,signed:false}]});
  render(<EvidenceTab slug="demo"/>);expect(await screen.findByText(/Draft changes are not submitted/)).toBeTruthy();
 });
 
 it.each(['submit response', 'refresh'])('retries the same packet after a lost %s without saving a duplicate draft',async(failure)=>{
- mocks.session.mockReturnValue({session:{token:'token'},openUnlockPrompt:vi.fn()});
+ mocks.session.mockReturnValue({session:{token:'token'},startDemo:vi.fn()});
  const entry={controlId:'H-01',documentId:'doc',pageReference:'',note:'Fictional policy'};
  const draft={id:'packet',revision:1,entries:[entry]};
  const initial={...evidenceState,draft,requirements:[{id:'H-01',name:'Retention',domain:'privacy-hipaa',description:'Policy',policySource:null,status:'missing',entry:null,assessment:null,signed:false}]};

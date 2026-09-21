@@ -159,6 +159,23 @@ describe("lib/services/admin-service", () => {
       expect(defaults.high).toBe(0.08); // other tiers untouched
     });
 
+    it("rejects a visitor workspace for global tier defaults without changing the control or audit trail", async () => {
+      const [beforeDef] = await db.select().from(controlDefinitions).where(eq(controlDefinitions.id, "Q-01"));
+      const beforeEvents = await db.select().from(auditEvents);
+      await expect(setEvalThreshold(db, RAY_CHEN, "ws-visitor", {
+        controlId: "Q-01",
+        initiativeId: null,
+        tier: "critical",
+        newValue: 0.04,
+        reason: "Visitor must not edit global defaults.",
+      })).rejects.toThrow(ForbiddenError);
+
+      const [afterDef] = await db.select().from(controlDefinitions).where(eq(controlDefinitions.id, "Q-01"));
+      const afterEvents = await db.select().from(auditEvents);
+      expect(afterDef!.tierDefaultThresholds).toEqual(beforeDef!.tierDefaultThresholds);
+      expect(afterEvents).toHaveLength(beforeEvents.length);
+    });
+
     it("returns NotFoundError for a foreign project before loading its deployment/control", async () => {
       const initiativeId = await memberChatCopilotId(db);
       await db
@@ -293,7 +310,7 @@ describe("lib/services/admin-service", () => {
       ).resolves.toMatchObject({ after: "paused" });
     });
 
-    it("resumeDeployment checks workspace before lifecycle state and allows null-workspace rows", async () => {
+    it("resumeDeployment checks workspace before lifecycle state and allows internal null-workspace calls", async () => {
       const initiativeId = await memberChatCopilotId(db);
       await db
         .update(initiatives)
@@ -313,7 +330,7 @@ describe("lib/services/admin-service", () => {
         .set({ status: "paused" })
         .where(eq(deploymentVersions.initiativeId, initiativeId));
       await expect(
-        resumeDeployment(db, RAY_CHEN, "ws-any", initiativeId, "shared resume"),
+        resumeDeployment(db, RAY_CHEN, null, initiativeId, "shared resume"),
       ).resolves.toMatchObject({ after: "deployed" });
     });
   });
@@ -589,13 +606,16 @@ describe("lib/services/admin-service", () => {
         ).rejects.toThrow(NotFoundError);
       });
 
-      it("a seeded (null-workspace) initiative's override is changeable from ANY session workspace", async () => {
+      it("a non-null session cannot change a null-workspace initiative's override, with no partial write", async () => {
         const { initiativeId } = await initiativeWithDeploymentInWorkspace(null);
-        const result = await setEvalThreshold(db, RAY_CHEN, "ws-anything-at-all", {
+        await expect(setEvalThreshold(db, RAY_CHEN, "ws-anything-at-all", {
           controlId: "Q-01",
           initiativeId,
           newValue: 0.06,
           reason: "r",
+        })).rejects.toThrow(NotFoundError);
+        const result = await setEvalThreshold(db, RAY_CHEN, null, {
+          controlId: "Q-01", initiativeId, newValue: 0.06, reason: "r",
         });
         expect(result.after).toBe(0.06);
       });
@@ -637,9 +657,13 @@ describe("lib/services/admin-service", () => {
         await expect(pauseDeployment(db, RAY_CHEN, null, initiativeId, "reason")).rejects.toThrow(NotFoundError);
       });
 
-      it("a seeded (null-workspace) initiative's deployment is pausable from ANY session workspace", async () => {
+      it("a non-null session cannot pause a null-workspace initiative, with no partial write", async () => {
         const { initiativeId } = await initiativeWithDeploymentInWorkspace(null, "deployed", "deployed");
-        const result = await pauseDeployment(db, RAY_CHEN, "ws-anything-at-all", initiativeId, "reason");
+        await expect(pauseDeployment(db, RAY_CHEN, "ws-anything-at-all", initiativeId, "reason"))
+          .rejects.toThrow(NotFoundError);
+        const [unchanged] = await db.select().from(initiatives).where(eq(initiatives.id, initiativeId));
+        expect(unchanged!.state).toBe("deployed");
+        const result = await pauseDeployment(db, RAY_CHEN, null, initiativeId, "reason");
         expect(result.after).toBe("paused");
       });
 
@@ -680,9 +704,13 @@ describe("lib/services/admin-service", () => {
         await expect(resumeDeployment(db, RAY_CHEN, null, initiativeId, "reason")).rejects.toThrow(NotFoundError);
       });
 
-      it("a seeded (null-workspace) initiative's deployment is resumable from ANY session workspace", async () => {
+      it("a non-null session cannot resume a null-workspace initiative, with no partial write", async () => {
         const { initiativeId } = await initiativeWithDeploymentInWorkspace(null, "paused", "paused");
-        const result = await resumeDeployment(db, RAY_CHEN, "ws-anything-at-all", initiativeId, "reason");
+        await expect(resumeDeployment(db, RAY_CHEN, "ws-anything-at-all", initiativeId, "reason"))
+          .rejects.toThrow(NotFoundError);
+        const [unchanged] = await db.select().from(initiatives).where(eq(initiatives.id, initiativeId));
+        expect(unchanged!.state).toBe("paused");
+        const result = await resumeDeployment(db, RAY_CHEN, null, initiativeId, "reason");
         expect(result.after).toBe("deployed");
       });
 

@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { EvidenceTab } from "@/components/jeeves/evidence-tab";
 import { notFound } from "next/navigation";
 import { getInitiativeDetailCoherent } from "@/app/_lib/data-provider";
@@ -85,6 +86,11 @@ export default async function InitiativeDetailPage({
 
   return (
     <div className="flex flex-col gap-6">
+      {summary.isSeeded ? (
+        <aside className="rounded-lg border bg-muted/40 px-4 py-3 text-sm" aria-label="Sample initiative">
+          This is a shared example. <Link className="font-medium text-primary underline" href="/initiatives/new">Create your own initiative</Link> to try submitting, reviewing, and approving it.
+        </aside>
+      ) : null}
       <header className="panel card-quiet overflow-hidden" data-slot="case-file-header">
         <div className="p-5">
           {/* Line 1 — title + tier/lifecycle badges (the h1's immediate

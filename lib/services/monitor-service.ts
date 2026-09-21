@@ -65,7 +65,7 @@ import { getAgentPort } from "../agents";
 import { generateMockIncidentSummary } from "../agents/mock-adapter";
 import type { GovernanceDomain } from "../agents/ports";
 import { SYSTEM_ACTOR } from "./actors";
-import { workspaceMismatch } from "./workspace-guard";
+import { mutationWorkspaceMismatch } from "./workspace-guard";
 import { ConflictError } from "./initiative-service";
 
 /**
@@ -228,7 +228,7 @@ async function loadDeployedCandidates(
     if (!initiative || !initiative.tier) continue;
     if (
       workspaceScope !== UNSCOPED_WORKSPACE &&
-      workspaceMismatch(initiative.workspaceId, workspaceScope)
+      mutationWorkspaceMismatch(initiative.workspaceId, workspaceScope)
     ) {
       continue;
     }

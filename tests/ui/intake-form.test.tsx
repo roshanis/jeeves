@@ -20,7 +20,7 @@ function renderForm() {
 }
 
 function loadChampion() {
-  fireEvent.click(screen.getByRole("button", { name: "Load champion example" }));
+  fireEvent.click(screen.getByRole("button", { name: "Use a sample initiative" }));
 }
 
 describe("IntakeForm — empty state", () => {
@@ -110,6 +110,6 @@ describe("IntakeForm — read-only public mode (no live session)", () => {
     // The banner now carries the way in rather than describing it — it used
     // to end "(use the chip in the header)", pointing the reader at a control
     // elsewhere on the page. Same gate, discoverable affordance.
-    expect(screen.getByRole("button", { name: /enter the demo passcode/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /start the demo/i })).toBeTruthy();
   });
 });

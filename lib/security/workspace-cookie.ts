@@ -12,8 +12,7 @@ import { createHash, createHmac, timingSafeEqual } from "node:crypto";
  * capability token by itself — but since a session's `workspaceId` now
  * gates MUTATIONS (via the workspace-authorization checks added alongside
  * this module), the cookie must be tamper-evident. Format: `"<id>.<hex
- * hmac-sha256>"`. Mirrors lib/security/passcode.ts's constant-time-compare
- * style.
+ * hmac-sha256>"`.
  */
 
 /** Safe shape for a workspace id. Real ids are `ws_` + 64 hex chars (67
@@ -58,7 +57,7 @@ export function verifyWorkspaceCookie(
   const expectedMac = createHmac("sha256", secret).update(id).digest("hex");
 
   // Constant-time compare, length-normalized first (timingSafeEqual requires
-  // equal-length buffers) — mirrors lib/security/passcode.ts#verifyPasscode.
+  // equal-length buffers).
   const expectedBuf = Buffer.from(expectedMac, "utf8");
   const providedBuf = Buffer.from(providedMac, "utf8");
   const normalizedProvided = Buffer.alloc(expectedBuf.length);
@@ -72,7 +71,7 @@ export function verifyWorkspaceCookie(
 /**
  * Resolve the secret used to sign/verify the workspace cookie:
  *   1. `JEEVES_COOKIE_SECRET` env var, if set and non-empty.
- *   2. Otherwise, a secret DERIVED from `DEMO_PASSCODE` (domain-separated —
+ *   2. Legacy compatibility only: a signing secret DERIVED from `DEMO_PASSCODE` (domain-separated —
  *      never sign the workspace cookie with the raw passcode bytes; a leak
  *      of one secret should not automatically leak the other even though
  *      they currently share a root env var).
@@ -80,6 +79,9 @@ export function verifyWorkspaceCookie(
  *      or trust a workspace cookie in this case (fresh workspace every
  *      time; see `verifyWorkspaceCookie`).
  */
+// DEMO_PASSCODE is never checked during entry. Until operators configure
+// JEEVES_COOKIE_SECRET, this deprecated fallback signs new cookies and verifies
+// existing ones using the same deployment signing material.
 export function resolveWorkspaceCookieSecret(): string | null {
   const explicit = process.env.JEEVES_COOKIE_SECRET;
   if (explicit && explicit.length > 0) return explicit;

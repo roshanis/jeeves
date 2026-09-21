@@ -52,7 +52,7 @@ import {
 } from "@/components/ui/table";
 import { TierBadge } from "@/components/jeeves/tier-badge";
 import { SyntheticDataLabel } from "@/components/jeeves/synthetic-data-label";
-import { DisableWithTooltip, DEMO_PASSCODE_TOOLTIP } from "@/components/jeeves/role-gate";
+import { DisableWithTooltip, DEMO_SESSION_TOOLTIP } from "@/components/jeeves/role-gate";
 import {
   PromotionDialog,
   type PromotionAttestationInput,
@@ -101,10 +101,10 @@ function RollbackButton({
   }
 
   const tooltip = !session
-    ? DEMO_PASSCODE_TOOLTIP
+    ? DEMO_SESSION_TOOLTIP
     : !roleOk
-      ? "Requires the approver or admin role — switch persona via the demo mode chip"
-      : (disabledReason ?? DEMO_PASSCODE_TOOLTIP);
+      ? "Requires the approver or admin role — choose a persona in the header"
+      : (disabledReason ?? DEMO_SESSION_TOOLTIP);
 
   return (
     <Tooltip>

@@ -23,7 +23,7 @@ in the standard entry format. Default collaboration: Codex implements, Claude re
 
 ## Hard Rules (from the Codex plan review — do not violate)
 1. Agents draft, recommend, route, and flag missing evidence — they NEVER approve. Low-risk fast-lane = deterministic pre-approved policy with a named accountable approver.
-2. Public visitors are read-only. Every mutation/LLM endpoint requires demo passcode + isolated demo workspace + atomic `run_budget` check + rate limit + input length caps.
+2. Public visitors may start a passwordless demo session and choose fictional personas. Every mutation/LLM endpoint requires a valid session with a non-null isolated workspace, atomic `run_budget` check where applicable, rate limit and input length caps. Visitor sessions cannot mutate shared seed records or global control defaults. Human authorization: 2026-09-19, "lets visitors play".
 3. `AuditEvent` is append-only at the DB level (role permissions/trigger), not just in app code.
 4. Authoritative state transitions live in application code + Postgres — never inside eve/fallback adapters. Adapters implement app-owned `AgentPort`/`WorkflowPort` types only.
 5. Separation of duties: Admin cannot approve initiatives or sign reviews. Admin's two live actions (eval-threshold change, pause/resume) require a reason and write audit events.

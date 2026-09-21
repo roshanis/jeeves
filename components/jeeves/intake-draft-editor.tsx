@@ -26,7 +26,7 @@ export function IntakeDraftEditor({ initiativeId }: { initiativeId: string }) {
     return () => { active = false; };
   }, [initiativeId, session, logout]);
 
-  if (!session) return <Alert><AlertTitle>Live session required</AlertTitle><AlertDescription>Enter the demo passcode as the requester who owns this draft.</AlertDescription></Alert>;
+  if (!session) return <Alert><AlertTitle>Live session required</AlertTitle><AlertDescription>Start the demo as the requester who owns this draft.</AlertDescription></Alert>;
   const error = failure?.token === session.token && failure.initiativeId === initiativeId ? failure.message : null;
   const draft = loaded?.token === session.token && loaded.initiativeId === initiativeId ? loaded.draft : null;
   if (error) return <Alert variant="destructive"><AlertTitle>Draft unavailable</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>;

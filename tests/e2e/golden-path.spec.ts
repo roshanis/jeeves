@@ -1,5 +1,4 @@
 import { test, expect } from "@playwright/test";
-import { E2E_DEMO_PASSCODE } from "./constants";
 import { ADDITIONAL_ANSWERS, EXPANDED_INTAKE } from "../fixtures/expanded-intake";
 
 // plan.md §8 test 12 — Playwright golden path (required, AGENTS.md hard rule
@@ -29,8 +28,11 @@ test.describe("champion storyline: read-only golden path", () => {
       ),
     ).toBeVisible();
 
-    await page.getByRole("link", { name: "Explore the live demo" }).first().click();
-    await expect(page).toHaveURL(/\/inbox$/);
+    await page.getByRole("button", { name: "Try the demo" }).first().click();
+    await expect(page).toHaveURL(/\/initiatives\/new$/);
+    await expect(page.locator('input[type="password"]')).toHaveCount(0);
+    await expect(page.getByRole("combobox", { name: "Demo persona" })).toHaveValue("priya-raman");
+    await page.goto("/inbox");
     await expect(
       page.getByRole("heading", { name: /what needs attention/i }),
     ).toBeVisible();
@@ -200,28 +202,19 @@ test.describe("champion storyline: read-only golden path", () => {
 // decision event. (8-domain honesty: every required domain is drafted
 // live, not 4-live-plus-4-seeded.)
 //
-// The runner and web server share a fixed, test-only passcode from
-// tests/e2e/constants.ts. This story is mandatory and never self-skips.
+// Passwordless visitor entry is mandatory and never self-skips.
 test.describe("live demo loop: create → triage → draft run → sign → decide", () => {
-  /** Log in through the demo-mode chip dialog as the given persona. */
+  /** Enter directly, then explore roles without leaving the workspace. */
   async function loginAs(page: import("@playwright/test").Page, personaKey: string) {
-    const dialog = page.getByRole("dialog", { name: "Enter live demo mode" });
-    // A cold streamed page can expose its shell before the client handlers attach.
-    await expect(async () => {
-      if (!(await dialog.isVisible())) {
-        await page.getByRole("button", { name: "Read-only (public)", exact: true }).click();
-      }
-      await expect(dialog).toBeVisible({ timeout: 1000 });
-    }).toPass({ timeout: 10_000 });
-    await dialog.locator('[data-slot="passcode-input"]').fill(E2E_DEMO_PASSCODE);
-    await dialog.locator('[data-slot="persona-select"]').selectOption(personaKey);
-    await dialog.locator('[data-slot="live-login-submit"]').click();
+    if (await page.getByRole("button", { name: "Start demo", exact: true }).isVisible()) {
+      await page.getByRole("button", { name: "Start demo", exact: true }).click();
+      await expect(page.getByRole("button", { name: "Exit demo" })).toBeVisible();
+    }
+    const picker = page.getByRole("combobox", { name: "Demo persona" });
+    if (await picker.inputValue() !== personaKey) await picker.selectOption(personaKey);
+    await expect(picker).toHaveValue(personaKey);
+    await expect(picker).toBeEnabled();
     await expect(page.getByText("Live demo (session workspace)")).toBeVisible();
-  }
-
-  async function resetToReadOnly(page: import("@playwright/test").Page) {
-    await page.locator('[data-slot="live-reset"]').click();
-    await expect(page.getByText("Read-only (public)")).toBeVisible();
   }
 
   test("additional intake answers survive reopening, editing, and submission", async ({ page }) => {
@@ -405,7 +398,6 @@ test.describe("live demo loop: create → triage → draft run → sign → deci
     // Sign as the Privacy/HIPAA reviewer (Marcus Webb) — reviewer-domain
     // assignment (M2.5 inc.3) only lets a reviewer sign their own domain, so
     // Elena Vasquez (Clinical Safety) could not sign this row.
-    await resetToReadOnly(page);
     await loginAs(page, "marcus-webb");
 
     const phiRow = page.locator('[data-slot="review-row"][data-domain="privacy-hipaa"]');
@@ -435,7 +427,6 @@ test.describe("live demo loop: create → triage → draft run → sign → deci
     ).toBeVisible({ timeout: 30_000 });
 
     // --- Approver: conditionally approve with one condition --------------
-    await resetToReadOnly(page);
     await loginAs(page, "angela-torres");
 
     await page.locator('[data-slot="record-decision"]').click();
@@ -484,23 +475,18 @@ test.describe("live demo loop: create → triage → draft run → sign → deci
 test('requester evidence: upload, return, revision, acceptance and download history', async ({page}) => {
   test.setTimeout(120_000);
   await page.setExtraHTTPHeaders({'x-forwarded-for':'evidence-browser-test'});
-  async function login(persona:string) {
-    await expect(async () => {
-      if (!await page.getByRole('dialog').isVisible()) {
-        await page.locator('[data-slot="demo-mode-chip"]:visible').first().click();
-      }
-      await expect(page.getByRole('dialog')).toBeVisible({timeout:500});
-    }).toPass({timeout:10_000});
-    await page.locator('[data-slot="passcode-input"]').fill(E2E_DEMO_PASSCODE);
-    await page.locator('[data-slot="persona-select"]').selectOption(persona);
-    await page.locator('[data-slot="live-login-submit"]').click();
-    await expect(page.getByText('Live demo (session workspace)')).toBeVisible();
+  async function login(persona: string) {
+    const start = page.getByRole("button", { name: "Start demo", exact: true });
+    if (await start.isVisible()) {
+      await start.click();
+      await expect(page.getByRole("button", { name: "Exit demo" })).toBeVisible();
+    }
+    const picker = page.getByRole("combobox", { name: "Demo persona" });
+    if (await picker.inputValue() !== persona) await picker.selectOption(persona);
+    await expect(picker).toHaveValue(persona);
+    await expect(picker).toBeEnabled();
   }
-  async function switchPersona(persona:string) {
-    await page.locator('[data-slot="live-reset"]').click();
-    await expect(page.getByText('Read-only (public)')).toBeVisible();
-    await login(persona);
-  }
+  async function switchPersona(persona: string) { await login(persona); }
   await page.goto('/initiatives/new');await login('priya-raman');
   await page.locator('[data-slot="load-champion"]').click();
   await page.getByRole('textbox',{name:'Initiative title'}).fill('Evidence browser journey');
