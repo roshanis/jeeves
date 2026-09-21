@@ -2,7 +2,7 @@ import { defineConfig, devices } from "@playwright/test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { E2E_COOKIE_SECRET, E2E_DEMO_PASSCODE } from "./tests/e2e/constants";
+import { E2E_COOKIE_SECRET } from "./tests/e2e/constants";
 
 // webServer runs a PRODUCTION server (`db:seed && build && start`), not
 // `next dev`. This is load-bearing for the live-demo loop, not just a
@@ -29,8 +29,8 @@ import { E2E_COOKIE_SECRET, E2E_DEMO_PASSCODE } from "./tests/e2e/constants";
 // collide with them or need to kill/reuse a process it didn't start.
 //
 // Live-demo loop support:
-// - the passcode and cookie secret are fixed test-only values shared with
-//   the spec, so the mutation story always runs.
+// - an independent test-only cookie secret preserves visitor workspaces;
+//   the visitor flow never supplies a password.
 // - OPENAI_API_KEY and DATABASE_URL are explicitly blanked so ambient env
 //   files cannot switch the suite to an external provider or database.
 //   lib/agents getAgentPort() therefore selects the
@@ -70,7 +70,7 @@ export default defineConfig({
       PORT: String(PORT),
       DATABASE_URL: "",
       OPENAI_API_KEY: "",
-      DEMO_PASSCODE: E2E_DEMO_PASSCODE,
+      DEMO_PASSCODE: "",
       JEEVES_COOKIE_SECRET: E2E_COOKIE_SECRET,
       JEEVES_PGLITE_DIR: disposablePgliteDir,
       DATA_PROVIDER: "db",

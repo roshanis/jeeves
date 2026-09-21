@@ -51,21 +51,20 @@ describe("postSession", () => {
     fetchMock.mockResolvedValueOnce(
       jsonResponse(200, { token: "tok-1", workspaceId: "ws-1", expiresAt: 123 }),
     );
-    const session = await postSession("pass", "priya-raman");
+    const session = await postSession("priya-raman");
     expect(session).toEqual({ token: "tok-1", workspaceId: "ws-1", expiresAt: 123 });
 
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe("/api/session");
     expect(init.method).toBe("POST");
     expect(JSON.parse(init.body as string)).toEqual({
-      passcode: "pass",
       personaKey: "priya-raman",
     });
   });
 
-  it("throws ApiError(401) on a wrong passcode", async () => {
+  it("throws ApiError(401) on an invalid persona", async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse(401, { error: "unauthorized" }));
-    await expect(postSession("wrong", "priya-raman")).rejects.toMatchObject({
+    await expect(postSession("unknown-persona")).rejects.toMatchObject({
       status: 401,
       message: "unauthorized",
     });
@@ -231,7 +230,7 @@ describe("error mapping", () => {
     expect(isApiError(err)).toBe(true);
     expect(err.status).toBe(401);
     expect(apiErrorToMessage(err)).toBe(
-      "Session expired or invalid — enter the demo passcode again.",
+      "Session expired or invalid — start the demo again.",
     );
   });
 
@@ -282,7 +281,7 @@ describe("error mapping", () => {
     expect(isApiError(err)).toBe(true);
     expect(err.status).toBe(401);
     expect(apiErrorToMessage(err)).toBe(
-      "Session expired or invalid — enter the demo passcode again.",
+      "Session expired or invalid — start the demo again.",
     );
   });
 

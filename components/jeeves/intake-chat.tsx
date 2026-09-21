@@ -111,7 +111,7 @@ export function IntakeChat({ payload, onPayloadChange, onReview }: {
       <Alert data-slot="intake-chat">
         <AlertTitle>Read-only mode</AlertTitle>
         <AlertDescription>
-          Enter demo passcode to chat with the intake assistant — this mode is
+          Start demo to chat with the intake assistant — this mode is
           only available with a live demo session active (use the chip in the
           header).
         </AlertDescription>

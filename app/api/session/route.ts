@@ -1,19 +1,7 @@
-/**
- * POST /api/session — passcode -> demo session token (task brief deliverable 3).
- *
- * Body:  { passcode: string, personaKey: string }
- * 200:   { token: string, workspaceId: string, expiresAt: number }
- * 401:   { error: string }  (wrong passcode, misconfigured passcode, or
- *                            unknown personaKey — never distinguished in the
- *                            response, to avoid leaking which part failed)
- * 400:   { error: string }  (malformed body)
- *
- * This route intentionally does NOT go through `runMutationGuard` (there is
- * no session yet to check) — it is the one mutating endpoint that is
- * reachable pre-session, gated by the passcode itself instead.
- */
+/** Public demo entry and persona switching. Every action still needs a
+ * server-issued, workspace-bound session. No visitor password is required. */
 import { z } from "zod";
-import { checkSessionAttempt, clientKeyFor, issueDemoSession } from "@/lib/services/route-guard";
+import { checkSessionAttempt, clientKeyFor, issueDemoSession, extractSessionToken, resolveSession } from "@/lib/services/route-guard";
 import {
   resolveWorkspaceCookieSecret,
   signWorkspaceId,
@@ -47,7 +35,8 @@ function readWorkspaceCookie(req: Request): string | null {
     .split(";")
     .map((p) => p.trim())
     .find((p) => p.startsWith(`${WORKSPACE_COOKIE}=`));
-  return match ? decodeURIComponent(match.slice(WORKSPACE_COOKIE.length + 1)) : null;
+  try { return match ? decodeURIComponent(match.slice(WORKSPACE_COOKIE.length + 1)) : null; }
+  catch { return null; }
 }
 
 function workspaceCookieHeader(workspaceId: string, secret: string): string {
@@ -64,20 +53,23 @@ function workspaceCookieHeader(workspaceId: string, secret: string): string {
 }
 
 const bodySchema = z.object({
-  passcode: z.string().min(1).max(200),
   personaKey: z.string().min(1).max(100),
 });
 
 export async function POST(req: Request): Promise<Response> {
-  // Security review finding #1: brute-force gate — this route sits
-  // pre-session, outside runMutationGuard. Limiter lives in route-guard so
-  // resetGuardStateForTests() clears it between tests.
-  const attempt = await checkSessionAttempt(clientKeyFor(req));
+  // Validate any supplied parent session before applying its switch allowance.
+  const token = extractSessionToken(req);
+  const parent = token ? await resolveSession(token) : null;
+  const attempt = await checkSessionAttempt(clientKeyFor(req), Boolean(parent?.actor && parent.workspaceId));
   if (!attempt.allowed) {
     return Response.json(
       { error: "too many attempts — try again later" },
       { status: 429, headers: { "Retry-After": String(attempt.retryAfterSeconds) } },
     );
+  }
+
+  if (token && (!parent?.actor || !parent.workspaceId)) {
+    return Response.json({ error: "session expired or invalid" }, { status: 401 });
   }
 
   let json: unknown;
@@ -93,14 +85,13 @@ export async function POST(req: Request): Promise<Response> {
   }
 
   const secret = resolveWorkspaceCookieSecret();
-  // verifyWorkspaceCookie(...,  null) always returns null (never reuse
-  // without a secret) — no separate branch needed here.
-  const existingWorkspaceId = verifyWorkspaceCookie(readWorkspaceCookie(req), secret);
+  if (!secret) {
+    return Response.json({ error: "Demo workspace is not configured. Please try again later.", code: "DEMO_NOT_CONFIGURED" }, { status: 503 });
+  }
+  // Authenticated workspace wins over a browser continuity hint.
+  const existingWorkspaceId = parent?.workspaceId ?? verifyWorkspaceCookie(readWorkspaceCookie(req), secret);
 
-  const expected = process.env.DEMO_PASSCODE ?? "";
   const result = await issueDemoSession(
-    parsed.data.passcode,
-    expected,
     parsed.data.personaKey,
     existingWorkspaceId,
   );
@@ -108,12 +99,6 @@ export async function POST(req: Request): Promise<Response> {
     return Response.json({ error: "unauthorized" }, { status: 401 });
   }
 
-  // Set (or refresh) the per-browser workspace cookie so subsequent logins in
-  // this browser reuse the same workspace. No secret available -> skip
-  // setting the cookie entirely rather than emitting an unsignable/unsigned
-  // value (never reuse without a secret).
-  const headers: HeadersInit | undefined = secret
-    ? { "Set-Cookie": workspaceCookieHeader(result.workspaceId, secret) }
-    : undefined;
+  const headers = { "Set-Cookie": workspaceCookieHeader(result.workspaceId, secret) };
   return Response.json(result, { status: 200, headers });
 }

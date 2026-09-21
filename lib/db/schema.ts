@@ -332,7 +332,7 @@ export const runBudget = pgTable(
 );
 
 /* -------------------------------------------------------------------------
- * Demo sessions — DB-backed (M2.5 inc.1) so a passcode-issued session and
+ * Demo sessions — DB-backed (M2.5 inc.1) so a server-issued session and
  * its bound persona survive a process restart / span multiple serverless
  * instances, instead of living in a module-scoped Map. One row per issued
  * session token; expiry enforced in app code (`expiresAt` is an epoch-ms
@@ -407,7 +407,7 @@ export const controlExceptions = pgTable(
  *
  * The limiter used to keep buckets in a module-scoped Map, so on a
  * serverless fan-out every instance had its own allowance and a cold start
- * reset it. That made the passcode brute-force gate on POST /api/session
+ * reset it. That made the anonymous workspace-creation gate on POST /api/session
  * worth 5 attempts PER WARM INSTANCE rather than 5 overall
  * (docs/production-readiness.md §1.2). Sessions and the daily token budget
  * moved to Postgres for the same reason; this was the last piece of

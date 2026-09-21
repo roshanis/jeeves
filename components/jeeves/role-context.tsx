@@ -1,8 +1,8 @@
 "use client";
 
-// Client-side role switcher context (ui-spec §0, §8.2). Switching role is
-// instant and client-side — it never re-fetches a different data set, only
-// changes which actions/saved-views render. No route is role-scoped.
+// UI persona context (ui-spec §0, §8.2). The runtime picker exchanges a
+// server-issued demo session before updating this visible role. The workspace
+// stays the same across personas. No route is role-scoped.
 //
 // The SOURCE OF TRUTH is now the selected persona (personaKey), not the
 // role: personaKey drives roleKey/persona/reviewerDomain by lookup against

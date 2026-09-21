@@ -12,7 +12,7 @@ import { MAX_FILE_BYTES, type EvidenceDocument, type EvidenceEntry, type Evidenc
 const inputClass='w-full rounded-md border bg-background px-3 py-2 text-sm disabled:opacity-60';
 const statusLabels={missing:'Missing',submitted:'Submitted',accepted:'Reviewer accepted',changes_requested:'Changes requested'};
 function message(error:unknown) {
-  if(error instanceof ApiError && error.status===401)return 'Your session expired. Enter the demo passcode again.';
+  if(error instanceof ApiError && error.status===401)return 'Your session expired. Start the demo again.';
   if(error instanceof ApiError && error.status===404)return 'Evidence uploads are available for initiatives created in your live demo workspace. Shared sample initiatives are read-only here.';
   return error instanceof Error?error.message:'Evidence could not be loaded. Please retry.';
 }
@@ -21,7 +21,7 @@ export function EvidenceTab({slug}:{slug:string}) {
   return <section className="space-y-5" aria-label="Evidence" data-slot="evidence-tab">
     <div><h2 className="text-lg font-semibold">Evidence</h2><p className="mt-1 text-sm text-muted-foreground">Attach documents to the requirements they support. Reviewers assess each requirement separately.</p></div>
     <div className="rounded-lg border bg-muted/40 p-3 text-sm"><strong>Fictional documents only.</strong> PDF or DOCX, up to 2 MiB each. Files are <strong>not malware scanned</strong>. Upload only synthetic Meridian Health material. Documents are downloaded as attachments; Jeeves does not parse them or send them to AI.</div>
-    {!live?.session?<div className="rounded-lg border p-5"><p className="text-sm">Enter the demo passcode to work with private evidence in your workspace.</p><Button className="mt-3" onClick={()=>live?.openUnlockPrompt()}>Enter demo passcode</Button></div>:<EvidenceWorkspace key={`${slug}:${live.session.token}`} slug={slug} token={live.session.token}/>}
+    {!live?.session?<div className="rounded-lg border p-5"><p className="text-sm">Start the demo to work with private evidence in your workspace.</p><Button className="mt-3" onClick={()=>live?.startDemo()}>Start demo</Button></div>:<EvidenceWorkspace key={`${slug}:${live.session.token}`} slug={slug} token={live.session.token}/>}
   </section>;
 }
 function EvidenceWorkspace({slug,token}:{slug:string;token:string}) {

@@ -1,3 +1,6 @@
+import type React from "react";
+import { RoleProvider } from "@/components/jeeves/role-context";
+import { LiveSessionProvider } from "@/lib/client/session-context";
 // LandingPage (components/jeeves/landing-page.tsx) — the static, public
 // marketing hero at "/". It is a pure server component (no hooks, no data
 // fetching), so it can be rendered directly without RoleProvider/session
@@ -9,8 +12,8 @@
 // across every marketing route, not just "/") — its exact-banner-string
 // assertion now lives in tests/ui/marketing-pages.test.tsx's
 // "MarketingLayout" describe block, which renders that layout directly.
-import { afterEach, describe, expect, it } from "vitest";
-import { cleanup, render } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { cleanup, render as rtlRender } from "@testing-library/react";
 import { LandingPage } from "@/components/jeeves/landing-page";
 import { CONTACT_URL } from "@/lib/marketing/site-config";
 
@@ -39,15 +42,8 @@ describe("LandingPage", () => {
     }) as HTMLAnchorElement;
     expect(bookAssessment.getAttribute("href")).toBe(CONTACT_URL);
 
-    // "Explore the live demo" appears twice (hero secondary CTA + final CTA
-    // band) — both must point at /inbox.
-    const exploreDemoLinks = getAllByRole("link", {
-      name: "Explore the live demo",
-    }) as HTMLAnchorElement[];
-    expect(exploreDemoLinks.length).toBeGreaterThan(0);
-    for (const link of exploreDemoLinks) {
-      expect(link.getAttribute("href")).toBe("/inbox");
-    }
+    const entries = getAllByRole("button", { name: "Try the demo" });
+    expect(entries).toHaveLength(2);
   });
 
   it("has no console sidebar bleed-through", () => {
@@ -83,3 +79,9 @@ describe("LandingPage", () => {
     expect(diagram.tagName.toLowerCase()).toBe("svg");
   });
 });
+
+function render(ui: React.ReactElement) {
+  return rtlRender(<RoleProvider><LiveSessionProvider>{ui}</LiveSessionProvider></RoleProvider>);
+}
+
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }) }));

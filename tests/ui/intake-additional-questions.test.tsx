@@ -26,7 +26,7 @@ describe("additional intake questions", () => {
     mocks.create.mockResolvedValue({ initiativeId: "new-intake", slug: "new-intake", version: 1 });
     mocks.submit.mockResolvedValue({ submitted: true, completenessPct: 95 });
     render(<IntakeForm />);
-    fireEvent.click(screen.getByRole("button", { name: "Load champion example" }));
+    fireEvent.click(screen.getByRole("button", { name: "Use a sample initiative" }));
     expect(screen.getByRole("button", { name: "Submit intake" })).not.toHaveProperty("disabled", true);
     for (const [question, answer] of ADDITIONAL_ANSWERS) {
       const field = screen.getByRole("textbox", { name: question });
