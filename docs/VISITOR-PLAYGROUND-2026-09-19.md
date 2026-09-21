@@ -1,6 +1,6 @@
 # Visitor playground
 
-Implemented locally following the user's request to remove passwords and let visitors play. Branch: `codex/visitor-playground-20260920`, based on cached `origin/main` at `ac9404e`. This supersedes the earlier proposed password-removal plan in the original dirty checkout.
+Implemented following the user's request to remove passwords and let visitors play. Branch: `codex/visitor-playground-20260920`, initially based on `origin/main` at `ac9404e` and integrated with refreshed main `7414d90` under the subsequent explicit merge instruction. This supersedes the earlier proposed password-removal plan in the original dirty checkout.
 
 ## Visitor experience
 
@@ -22,7 +22,7 @@ This is fictional role-play, not verified customer identity. Existing tokens fol
 
 New deployments use a random server-only `JEEVES_COOKIE_SECRET`. The visitor never enters it. Existing `DEMO_PASSCODE` configuration remains solely as a deprecated signing fallback: it signs new workspace cookies and verifies existing ones until an independent key is configured. No passcode is verified at session entry. With neither signing source configured, entry returns a safe 503 without creating a session. Replacing signing material invalidates prior workspace cookies but does not revoke unexpired session tokens.
 
-No credential files or hosted configuration were accessed or changed. No database migration is required. A local preview runs at http://localhost:3121 using a newly created disposable PGlite directory, a process-only random signing key, and mocked agent providers.
+No credential files or hosted configuration were accessed or changed. The visitor playground adds no database migration; migrations already required by upstream main remain applicable. A local preview runs at http://localhost:3121 using a newly created disposable PGlite directory, a process-only random signing key, and mocked agent providers.
 
 ## Validation
 
@@ -33,4 +33,10 @@ No credential files or hosted configuration were accessed or changed. No databas
 - Focused specialist-reviewed regressions passed: 190 service tests and 60 API tests. Independent Luna backend/frontend/final diff review found no remaining functional or safety blockers; documentation findings were corrected.
 - Direct in-app browser review of the isolated preview verified one-click entry, editable sample intake, no password dialog, and no captured browser errors on that path. Browser suite logs contain one destination-stream-closed warning during navigation; this is not a blanket error-free or hosted readiness claim.
 
-Existing dependencies were reused through a local untracked symlink; no packages were installed or changed. Existing unrelated original-checkout files were fingerprinted and preserved; only the required original build-log append belongs to this task. No commit, push, merge, production deployment, hosted database change, or live-provider request was performed. A production rollout still needs the normal human merge approval and verification of deployed signing configuration.
+Existing dependencies were reused through a local untracked symlink; no packages were installed or changed. Existing unrelated original-checkout files were fingerprinted and preserved; only the required original build-log append belongs to this task. The original implementation involved no production deployment, hosted database change or live-provider request. The user subsequently authorized merge to main. Hosted signing configuration and live providers have not been validated by these local checks.
+
+## Integration for approved merge
+
+Refreshed main includes newer review revision/locking, evidence grounding, draft deadlines and budget-reservation safeguards. Integration preserves these changes and both build-log histories. The shared review-lock helper now uses strict mutation workspace ownership while retaining its explicitly trusted internal-call path. A service regression reproduced shared-review signing by a visitor before this integration correction and passed afterward. API regression coverage also protects the corresponding review endpoints. Malformed percent-encoded workspace cookies now degrade to the public seeded-only read view; a failing-then-passing regression covers this path.
+
+The first integrated production build passed all 28 Playwright checks and the packaged runtime relocation/missing-asset/network-denial checks. Typecheck, lint and the production dependency audit pass (zero production vulnerabilities). The merge is gated on the final PR's full coverage and browser CI, and independent review of the integrated changes. All model execution in these checks is mocked.

@@ -181,6 +181,19 @@ describe("opsMonitorIncidentOutputSchema", () => {
 });
 
 describe("mapReviewerDraftToPortOutput", () => {
+  it("preserves actual citations, control-linked gaps, and confidence separately", () => {
+    const rich = validReviewerDraft({
+      evidenceRequests: [{ controlId: "H-01", description: "Missing DPIA." }],
+      confidenceNotes: "Uploaded document bytes were not inspected.",
+    });
+    const port = mapReviewerDraftToPortOutput("privacy-hipaa", rich);
+    expect(port.citations).toEqual(["MP-H v3 §MP-H-2"]);
+    expect(port.evidenceRequests).toEqual(rich.evidenceRequests);
+    expect(port.confidenceNotes).toBe(rich.confidenceNotes);
+    expect(port.missingEvidence).toEqual(["Missing DPIA."]);
+    expect(port.citations).not.toContain("Missing DPIA.");
+  });
+
   it('maps "ready-for-signature" -> "recommend-sign-off"', () => {
     const rich = validReviewerDraft({ recommendation: "ready-for-signature" });
     const port = mapReviewerDraftToPortOutput("privacy-hipaa", rich);

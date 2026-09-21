@@ -11,7 +11,7 @@ export function DemoModeChip() {
     <div className="flex flex-col items-start gap-1" data-slot="demo-mode-chip">
       {session ? (
         <div className="flex items-center gap-2">
-          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-primary">
+          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-primary" title="Session workspace active — daily estimated token reservations and request rate limits are enforced. Reservations do not measure provider usage or spend.">
             <span className="h-1.5 w-1.5 rounded-full bg-primary" aria-hidden />
             <span className="hidden lg:inline">Live demo (session workspace)</span>
             <span className="lg:hidden">Playing</span>

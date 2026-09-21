@@ -4,9 +4,10 @@ import type { EvidenceState } from "@/lib/evidence/types";
 import { ApiError } from "@/lib/client/api";
 import { useState } from "react";
 
-const mocks = vi.hoisted(() => ({ session: vi.fn(), request: vi.fn(), download: vi.fn(), refresh: vi.fn() }));
+const mocks = vi.hoisted(() => ({ session: vi.fn(), request: vi.fn(), download: vi.fn(), refresh: vi.fn(), mutate: vi.fn() }));
 vi.mock("@/lib/client/session-context", () => ({ useLiveSessionOptional: mocks.session }));
 vi.mock("@/lib/client/evidence-api", () => ({ evidenceRequest: mocks.request, downloadEvidenceFile: mocks.download }));
+vi.mock("@/lib/client/review-actions", async (importOriginal) => ({ ...await importOriginal<typeof import("@/lib/client/review-actions")>(), performReviewMutation: mocks.mutate }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: mocks.refresh }) }));
 import { ReviewEvidenceWorkspace } from "@/components/jeeves/review-evidence-workspace";
 import { ReviewWorkbench, type ReviewQueueRow } from "@/components/jeeves/review-workbench";
@@ -30,6 +31,7 @@ function workspace(slug = "case-one") {
 beforeEach(() => {
   mocks.session.mockReturnValue({ session, logout: vi.fn(), startDemo: vi.fn() });
   mocks.request.mockResolvedValue(fixture());
+  mocks.mutate.mockResolvedValue({ status: "signed" });
 });
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
 
@@ -145,10 +147,10 @@ describe("evidence-led review", () => {
   });
 
   it("disables real review actions on a cycle mismatch and keeps human drafts scoped to their cycle", async () => {
-    const row: ReviewQueueRow = { slug: "case-one", title: "Changing cycle", tier: "high", review: { cycleId: "cycle", domain: "privacy-hipaa", status: "drafted", reviewer: null, createdAt: "2026-09-19T12:00:00Z", signedAt: null, draftMd: "Original draft", citations: [] } };
+    const row: ReviewQueueRow = { slug: "case-one", title: "Changing cycle", tier: "high", review: { revision: 4, cycleId: "cycle", domain: "privacy-hipaa", status: "drafted", reviewer: null, createdAt: "2026-09-19T12:00:00Z", signedAt: null, draftMd: "Original draft", citations: [] } };
     function Harness() {
       const [cycleId, setCycleId] = useState("cycle");
-      return <><button onClick={() => setCycleId("new-cycle")}>Load new review</button><ReviewWorkbench rows={[{ ...row, review: { ...row.review, cycleId, draftMd: cycleId === "cycle" ? "Original draft" : "New cycle draft" } }]} /></>;
+      return <><button onClick={() => setCycleId("new-cycle")}>Load new review</button><ReviewWorkbench rows={[{ ...row, review: { revision: 4, ...row.review, cycleId, draftMd: cycleId === "cycle" ? "Original draft" : "New cycle draft" } }]} /></>;
     }
     renderWithProviders(<Harness />);
     fireEvent.click(screen.getByRole("button", { name: "Open Privacy/HIPAA review for Changing cycle" }));
@@ -178,7 +180,7 @@ describe("evidence-led review", () => {
   });
 
   it("preserves a human draft while switching sources and reviews", async () => {
-    const rows: ReviewQueueRow[] = ["one", "two"].map((slug) => ({ slug, title: `Case ${slug}`, tier: "high", review: { domain: "privacy-hipaa", status: "drafted", reviewer: null, createdAt: "2026-09-19T12:00:00Z", signedAt: null, draftMd: "Agent draft", citations: ["MP-H v3 §MP-H-2"] } }));
+    const rows: ReviewQueueRow[] = ["one", "two"].map((slug) => ({ slug, title: `Case ${slug}`, tier: "high", review: { revision: 4, domain: "privacy-hipaa", status: "drafted", reviewer: null, createdAt: "2026-09-19T12:00:00Z", signedAt: null, draftMd: "Agent draft", citations: ["MP-H v3 §MP-H-2"] } }));
     renderWithProviders(<ReviewWorkbench rows={rows} />);
     fireEvent.click(screen.getByRole("button", { name: "Open Privacy/HIPAA review for Case one" }));
     await screen.findByRole("heading", { name: "retention-v2.pdf" });
@@ -200,7 +202,7 @@ describe("evidence-led review", () => {
     const state = fixture();
     state.requirements[0].status = "accepted";
     mocks.request.mockResolvedValue(state);
-    const row: ReviewQueueRow = { slug: "unregistered", title: "Reloaded case", tier: "high", review: { domain: "privacy-hipaa", status: "drafted", reviewer: null, createdAt: "2026-09-19T12:00:00Z", signedAt: null, draftMd: "Agent draft", citations: [] } };
+    const row: ReviewQueueRow = { slug: "unregistered", title: "Reloaded case", tier: "high", review: { revision: 4, domain: "privacy-hipaa", status: "drafted", reviewer: null, createdAt: "2026-09-19T12:00:00Z", signedAt: null, draftMd: "Agent draft", citations: [] } };
     function Harness() {
       const [, update] = useState(0);
       return <><button onClick={() => update((value) => value + 1)}>Refresh session</button><ReviewWorkbench rows={[row]} /></>;
@@ -214,5 +216,81 @@ describe("evidence-led review", () => {
     await screen.findByRole("heading", { name: "retention-v2.pdf" });
     expect((screen.getByRole("button", { name: "Sign" }) as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByLabelText("Assessment text") as HTMLTextAreaElement).disabled).toBe(true);
+  });
+});
+
+
+describe("review snapshot integrity", () => {
+  const row: ReviewQueueRow = { slug: "case-one", title: "Versioned case", tier: "high", review: { cycleId: "cycle", revision: 4, domain: "privacy-hipaa", status: "drafted", reviewer: null, createdAt: "2026-09-19T12:00:00Z", signedAt: null, draftMd: "Original assessment", citations: [] } };
+  function acceptedEvidence() {
+    const state = fixture();
+    state.requirements[0].status = "accepted";
+    mocks.request.mockResolvedValue(state);
+  }
+  async function openReview() {
+    fireEvent.click(screen.getByRole("button", { name: "Open Privacy/HIPAA review for Versioned case" }));
+    await screen.findByRole("heading", { name: "retention-v2.pdf" });
+  }
+  it("binds a signature to the displayed review revision and submitted evidence packet", async () => {
+    acceptedEvidence();
+    renderWithProviders(<ReviewWorkbench rows={[row]} />);
+    await openReview();
+    fireEvent.click(screen.getByRole("button", { name: "Sign" }));
+    await waitFor(() => expect(mocks.mutate).toHaveBeenCalledWith("reviewer-token", "cycle", "privacy-hipaa", { kind: "sign", expectedRevision: 4, expectedEvidencePacketId: "packet-2", editedDraftMd: undefined }));
+  });
+  it("preserves human edits across a newer render and requires explicit re-review", async () => {
+    acceptedEvidence();
+    function Harness() {
+      const [revision, setRevision] = useState(4);
+      return <><button onClick={() => setRevision(5)}>Load newer revision</button><ReviewWorkbench rows={[{ ...row, review: { ...row.review, revision, draftMd: revision === 4 ? "Original assessment" : "New agent assessment" } }]} /></>;
+    }
+    renderWithProviders(<Harness />);
+    await openReview();
+    fireEvent.change(screen.getByLabelText("Assessment text"), { target: { value: "My careful edits" } });
+    fireEvent.click(screen.getByRole("button", { name: "Load newer revision" }));
+    expect((screen.getByLabelText("Assessment text") as HTMLTextAreaElement).value).toBe("My careful edits");
+    expect((screen.getByRole("button", { name: "Sign" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(mocks.mutate).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "I reviewed the refreshed draft and evidence" }));
+    fireEvent.click(screen.getByRole("button", { name: "Sign" }));
+    await waitFor(() => expect(mocks.mutate).toHaveBeenCalledWith("reviewer-token", "cycle", "privacy-hipaa", { kind: "sign", expectedRevision: 5, expectedEvidencePacketId: "packet-2", editedDraftMd: "My careful edits" }));
+  });
+  it("requires re-review when retained edits were based on a different evidence packet", async () => {
+    acceptedEvidence();
+    renderWithProviders(<ReviewWorkbench rows={[row]} />);
+    await openReview();
+    fireEvent.change(screen.getByLabelText("Assessment text"), { target: { value: "Finding based on packet two" } });
+    const next = fixture();
+    next.requirements[0].status = "accepted";
+    next.latest = { ...next.latest!, id: "packet-3", version: 3 };
+    mocks.request.mockResolvedValue(next);
+    fireEvent.click(screen.getByRole("button", { name: "Refresh evidence" }));
+    await screen.findByText("Submitted packet · v3");
+    expect((screen.getByRole("button", { name: "Sign" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByLabelText("Assessment text") as HTMLTextAreaElement).value).toBe("Finding based on packet two");
+    fireEvent.click(screen.getByRole("button", { name: "I reviewed the refreshed draft and evidence" }));
+    fireEvent.click(screen.getByRole("button", { name: "Sign" }));
+    await waitFor(() => expect(mocks.mutate).toHaveBeenCalledWith("reviewer-token", "cycle", "privacy-hipaa", { kind: "sign", expectedRevision: 4, expectedEvidencePacketId: "packet-3", editedDraftMd: "Finding based on packet two" }));
+  });
+  it("keeps edits after 409 and requires refreshing and re-reviewing before another signature", async () => {
+    acceptedEvidence();
+    mocks.mutate.mockRejectedValueOnce(new ApiError(409, "Review changed"));
+    renderWithProviders(<ReviewWorkbench rows={[row]} />);
+    await openReview();
+    fireEvent.change(screen.getByLabelText("Assessment text"), { target: { value: "Retain this finding" } });
+    fireEvent.click(screen.getByRole("button", { name: "Sign" }));
+    await screen.findByText(/Refresh.*review.*again/i);
+    expect((screen.getByLabelText("Assessment text") as HTMLTextAreaElement).value).toBe("Retain this finding");
+    expect((screen.getByRole("button", { name: "Sign" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(mocks.mutate).toHaveBeenCalledTimes(1);
+  });
+  it("labels historical references as unverified and keeps missing evidence separate", async () => {
+    render(<ReviewEvidenceWorkspace slug="case-one" domain="privacy-hipaa" citations={["Legacy stored text"]} citationProvenance="legacy-unverified" missingEvidence={["Missing retention policy"]} evidenceRequests={[{ controlId: "H-01", description: "Supply the policy version" }]} reviewStatus="drafted">{() => null}</ReviewEvidenceWorkspace>);
+    await screen.findByRole("heading", { name: "retention-v2.pdf" });
+    fireEvent.click(screen.getByRole("button", { name: /Legacy stored text/ }));
+    expect(screen.getByText(/legacy.*unverified/i)).toBeTruthy();
+    expect(screen.queryByText("Policy citation")).toBeNull();
+    expect(screen.getByText("Missing retention policy")).toBeTruthy();
+    expect(screen.getByText("H-01 · Supply the policy version")).toBeTruthy();
   });
 });

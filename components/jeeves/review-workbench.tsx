@@ -104,7 +104,8 @@ export function ReviewWorkbench({ rows }: { rows: ReviewQueueRow[] }) {
   const live = useLiveSessionOptional();
   const sessionKey = live?.session?.token ?? "public";
   const [selected, setSelected] = React.useState<{ slug: string; domain: Domain } | null>(null);
-  const [drafts, setDrafts] = React.useState<Record<string, string>>({});
+  const [drafts, setDrafts] = React.useState<Record<string, { text: string; revision: number | undefined; evidencePacketId: string | null }>>({});
+  const [returnReasons, setReturnReasons] = React.useState<Record<string, string>>({});
   const [queueOpen, setQueueOpen] = React.useState(true);
   const [override, setOverride] = React.useState<Domain | "all" | null>(null);
   // Queue aging clock — null on server/first render (placeholder), then the
@@ -302,25 +303,37 @@ export function ReviewWorkbench({ rows }: { rows: ReviewQueueRow[] }) {
             slug={visibleSelected.slug}
             domain={visibleSelected.review.domain}
             citations={visibleSelected.review.citations}
+            citationProvenance={visibleSelected.review.citationProvenance}
+            missingEvidence={visibleSelected.review.missingEvidence}
+            evidenceRequests={visibleSelected.review.evidenceRequests}
             reviewStatus={visibleSelected.review.status}
             reviewCycleId={visibleSelected.review.cycleId}
           >
-            {({ signingBlock, cycleId, cycleChanged }) => (
+            {({ signingBlock, cycleId, cycleChanged, evidencePacketId }) => (
             <AssessmentPane
               key={draftKey}
               row={visibleSelected}
               signingBlock={signingBlock}
               evidenceCycleId={cycleId}
               cycleChanged={cycleChanged}
+              evidencePacketId={evidencePacketId}
+              editedRevision={drafts[draftKey]?.revision}
+              editedEvidencePacketId={drafts[draftKey]?.evidencePacketId}
+              returnReason={returnReasons[draftKey] ?? ""}
+              onReturnReasonChange={(reason) => setReturnReasons((current) => ({ ...current, [draftKey]: reason }))}
+              onReviewedRevision={() => setDrafts((current) => ({
+                ...current,
+                [draftKey]: { text: current[draftKey]?.text ?? visibleSelected.review.draftMd ?? "", revision: visibleSelected.review.revision, evidencePacketId },
+              }))}
               editedText={
-                drafts[draftKey] ??
+                drafts[draftKey]?.text ??
                 visibleSelected.review.draftMd ??
                 ""
               }
               onEditedTextChange={(value) =>
                 setDrafts((current) => ({
                   ...current,
-                  [draftKey]: value,
+                  [draftKey]: { text: value, revision: current[draftKey]?.revision ?? visibleSelected.review.revision, evidencePacketId: current[draftKey] ? current[draftKey].evidencePacketId : evidencePacketId },
                 }))
               }
             />
@@ -349,6 +362,12 @@ function AssessmentPane({
   signingBlock,
   evidenceCycleId,
   cycleChanged,
+  evidencePacketId,
+  editedRevision,
+  editedEvidencePacketId,
+  onReviewedRevision,
+  returnReason,
+  onReturnReasonChange,
 }: {
   row: ReviewQueueRow;
   editedText: string;
@@ -356,6 +375,12 @@ function AssessmentPane({
   signingBlock: string | null;
   evidenceCycleId: string | null;
   cycleChanged: boolean;
+  evidencePacketId: string | null;
+  editedRevision?: number;
+  editedEvidencePacketId?: string | null;
+  onReviewedRevision: () => void;
+  returnReason: string;
+  onReturnReasonChange: (reason: string) => void;
 }) {
   const router = useRouter();
   const live = useLiveSessionOptional();
@@ -366,24 +391,32 @@ function AssessmentPane({
   const [pending, setPending] = React.useState(false);
   const [running, setRunning] = React.useState(false);
   const [returnOpen, setReturnOpen] = React.useState(false);
+  const [returnRevision, setReturnRevision] = React.useState<number | null>(null);
+  const [conflict, setConflict] = React.useState<{ revision: number; packetId: string | null } | null>(null);
+  const staleEdits = (editedRevision !== undefined && editedRevision !== row.review.revision) ||
+    (editedEvidencePacketId !== undefined && editedEvidencePacketId !== evidencePacketId);
+  const mustReviewAgain = staleEdits || Boolean(conflict);
+  const refreshedAfterConflict = !conflict || conflict.revision !== row.review.revision || conflict.packetId !== evidencePacketId;
 
   const eligibility = getReviewActionEligibility(
     session,
     cycleId,
     row.review.domain,
     row.review.status,
+    row.review.revision,
   );
   const alreadySigned = row.review.status === "signed";
   const hasDraft = Boolean(row.review.draftMd);
 
   async function handleRunAgent() {
-    if (!session || !cycleId) return;
+    if (!session || !cycleId || !eligibility.canRunAgent || pending || mustReviewAgain) return;
     setRunning(true);
     try {
-      const res = await runReviewAgent(session.token, cycleId, row.review.domain);
+      const res = await runReviewAgent(session.token, cycleId, row.review.domain, row.review.revision);
       if (res.status === "drafted") {
-        if (res.draftMd) onEditedTextChange(res.draftMd);
         toast.success(`${DOMAIN_LABEL[row.review.domain]} agent drafted a fresh assessment.`);
+      } else if (res.status === "skipped") {
+        toast.info(`Agent result was not applied (${res.reason ?? "review changed"}). Refresh and review the current assessment.`);
       } else {
         toast.error(`Agent run failed: ${res.error ?? "unknown error"}`);
       }
@@ -397,7 +430,7 @@ function AssessmentPane({
   }
 
   async function handleSign() {
-    if (!session || !cycleId || signingBlock || pending || running) return;
+    if (!session || !cycleId || signingBlock || pending || running || !eligibility.canSignOrReturn || mustReviewAgain || row.review.revision === undefined) return;
     setPending(true);
     try {
       await performReviewMutation(
@@ -406,6 +439,8 @@ function AssessmentPane({
         row.review.domain,
         {
           kind: "sign",
+          expectedRevision: row.review.revision,
+          expectedEvidencePacketId: evidencePacketId,
           editedDraftMd:
             editedText !== (row.review.draftMd ?? "") ? editedText : undefined,
         },
@@ -413,6 +448,7 @@ function AssessmentPane({
       toast.success(`${DOMAIN_LABEL[row.review.domain]} review signed.`);
       router.refresh();
     } catch (err) {
+      if (isApiError(err) && err.status === 409) setConflict({ revision: row.review.revision, packetId: evidencePacketId });
       toast.error(isApiError(err) ? apiErrorToMessage(err) : "Sign failed.");
       if (isApiError(err) && err.status === 401) live?.logout();
     } finally {
@@ -421,17 +457,23 @@ function AssessmentPane({
   }
 
   async function handleReturn(reason: string) {
-    if (!session || !cycleId) return;
+    if (!session || !cycleId || returnRevision === null || pending || running || mustReviewAgain) return;
     setPending(true);
+    onReturnReasonChange(reason);
     try {
       await performReviewMutation(session.token, cycleId, row.review.domain, {
         kind: "return",
         reason,
+        expectedRevision: returnRevision,
       });
       setReturnOpen(false);
       toast.success(`${DOMAIN_LABEL[row.review.domain]} review returned.`);
       router.refresh();
     } catch (err) {
+      if (isApiError(err) && err.status === 409) {
+        setConflict({ revision: returnRevision, packetId: evidencePacketId });
+        setReturnOpen(false);
+      }
       toast.error(isApiError(err) ? apiErrorToMessage(err) : "Return failed.");
       if (isApiError(err) && err.status === 401) live?.logout();
     } finally {
@@ -455,7 +497,7 @@ function AssessmentPane({
             <button
               type="button"
               onClick={() => void handleRunAgent()}
-              disabled={running || alreadySigned}
+              disabled={running || pending || alreadySigned || mustReviewAgain}
               data-slot="run-agent-button"
               className="inline-flex items-center justify-center gap-2 rounded-md border px-3 py-2 text-sm font-medium text-primary transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
             >
@@ -478,13 +520,19 @@ function AssessmentPane({
           aria-label="Assessment text"
           data-slot="assessment-textarea"
         />
+        {row.review.revision === undefined && !alreadySigned ? <p role="status" className="text-sm text-muted-foreground">Refresh this review to load its version before editing or signing.</p> : null}
+        {mustReviewAgain && !alreadySigned ? <div role="alert" className="space-y-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
+          <p>This review or its evidence changed. Refresh and review the latest draft and evidence again. Your assessment edits are preserved.</p>
+          <button type="button" className="rounded-md border px-3 py-2 font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50" disabled={Boolean(signingBlock) || !refreshedAfterConflict || row.review.revision === undefined} onClick={() => { onReviewedRevision(); setConflict(null); }}>I reviewed the refreshed draft and evidence</button>
+          <p className="text-xs">Compare the AI draft above with your assessment, check the submitted sources, and update your edits before acknowledging.</p>
+        </div> : null}
         {signingBlock && !alreadySigned ? <p role="status" className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">{signingBlock}</p> : null}
         {alreadySigned ? <p className="rounded-lg border bg-muted/30 p-3 text-sm">Signed by {row.review.reviewer ?? "the assigned reviewer"}{row.review.signedAt ? ` on ${row.review.signedAt.slice(0, 10)}` : ""}. This domain review is read-only.</p> : null}
         <div className="flex flex-wrap gap-2">
           <GatedActionButton
             label="Sign"
             requiresRole="reviewer"
-            pending={pending || running || Boolean(signingBlock)}
+            pending={pending || running || Boolean(signingBlock) || mustReviewAgain}
             pendingLabel={pending ? "Signing…" : "Sign"}
             onAction={eligibility.canSignOrReturn ? () => void handleSign() : undefined}
           />
@@ -492,8 +540,8 @@ function AssessmentPane({
             label="Return"
             variant="outline"
             requiresRole="reviewer"
-            pending={pending}
-            onAction={eligibility.canSignOrReturn ? () => setReturnOpen(true) : undefined}
+            pending={pending || running || mustReviewAgain}
+            onAction={eligibility.canSignOrReturn ? () => { setReturnRevision(row.review.revision!); setReturnOpen(true); } : undefined}
           />
         </div>
         <p className="text-xs text-muted-foreground">
@@ -507,6 +555,7 @@ function AssessmentPane({
         onOpenChange={setReturnOpen}
         domainLabel={DOMAIN_LABEL[row.review.domain]}
         pending={pending}
+        initialReason={returnReason}
         onConfirm={(reason) => void handleReturn(reason)}
       />
     </Card>

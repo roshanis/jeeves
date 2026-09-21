@@ -9,6 +9,7 @@ import {
   initiativeDecisions,
   initiatives,
   reviewCycles,
+  reviewDecisions,
 } from "../db/schema";
 import { setEvalThreshold } from "../services/admin-service";
 import type { ControlRow } from "./dto";
@@ -109,6 +110,12 @@ describe("lib/data/db-provider", () => {
       expect(cycles).toHaveLength(1);
       expect(detail!.reviews.length).toBeGreaterThan(0);
       expect(new Set(detail!.reviews.map((review) => review.cycleId))).toEqual(new Set([cycles[0].id]));
+      const storedReviews = await db.select().from(reviewDecisions).where(eq(reviewDecisions.cycleId, cycles[0].id));
+      for (const review of detail!.reviews) {
+        const stored = storedReviews.find((candidate) => candidate.domain === review.domain)!;
+        expect(review).toMatchObject({ revision: stored.revision, citations: stored.citations, missingEvidence: stored.missingEvidence, evidenceRequests: stored.evidenceRequests, citationProvenance: stored.citationProvenance });
+        expect(review.citationProvenance).toBe("legacy-unverified");
+      }
     });
 
     it("returns null for an unknown slug", async () => {

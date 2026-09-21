@@ -62,6 +62,16 @@ function draftInput(
 }
 
 describe("buildMockReviewerDraft — citation fixtures per domain", () => {
+  it("labels canned output as synthetic and preserves citations through the port", async () => {
+    const result = await createMockAgentPort().draftReview(draftInput("privacy-hipaa"));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.draftMarkdown).toContain("Synthetic data — demo");
+    expect(result.value.citations).toContain("MP-H v3 §MP-H-2");
+    expect(result.value.evidenceRequests?.[0]?.controlId).toBe("H-01");
+    expect(result.value.generationMetadata).toMatchObject({ adapter: "mock", synthetic: true });
+  });
+
   for (const domain of ALL_DOMAINS) {
     it(`${domain}: citations include a real anchor for this domain's controls`, () => {
       const rich = buildMockReviewerDraft(

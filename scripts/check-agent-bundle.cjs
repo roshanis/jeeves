@@ -50,11 +50,14 @@ function checkBundle() {
   require(path.join(root, ".next/server/app/api/initiatives/[id]/draft-run/route.js"));
   // Resolve the compiled port module by its runtime selector, rather than a
   // webpack module number that changes across builds. No test-only API route.
-  const entry = Object.entries(load.m).find(([, factory]) => String(factory).includes("JEEVES_AGENT_RUNTIME"));
-  assert(entry, "Compiled agent runtime selector was not found");
-  const exports = Object.values(load(entry[0]));
-  const getPort = exports.find((value) => typeof value === "function" && String(value).includes("OPENAI_API_KEY"));
-  assert(getPort, "Compiled getAgentPort export was not found");
+  // Other modules (for example the draft budget policy) also inspect the
+  // runtime setting, so never assume the first matching module owns the port.
+  const entries = Object.entries(load.m).filter(([, factory]) => String(factory).includes("JEEVES_AGENT_RUNTIME"));
+  assert(entries.length > 0, "Compiled agent runtime selector was not found");
+  const portExports = entries.flatMap(([id]) => Object.values(load(id)))
+    .filter((value) => typeof value === "function" && String(value).includes("OPENAI_API_KEY"));
+  assert.equal(portExports.length, 1, "Expected exactly one compiled getAgentPort export");
+  const [getPort] = portExports;
 
   process.env.OPENAI_API_KEY = "";
   assert.equal(typeof getPort().draftReview, "function");

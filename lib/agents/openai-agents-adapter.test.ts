@@ -78,6 +78,20 @@ const VALID_REVIEWER_OBJECT = {
   confidenceNotes: "None.",
 };
 
+it.each([false, true])("preserves review provenance in Agents SDK deep mode=%s", async (deep) => {
+  process.env.OPENAI_TERRA_MODEL = "configured-review-model";
+  process.env.JEEVES_DEEP_REVIEW = deep ? "1" : "0";
+  const port = createOpenAiAgentsAdapterWithRunner(async () => ({ finalOutput: VALID_REVIEWER_OBJECT }));
+  const result = await port.draftReview(draftInput());
+  expect(result.ok).toBe(true);
+  if (!result.ok) return;
+  expect(result.value.citations).toEqual(VALID_REVIEWER_OBJECT.citations);
+  expect(result.value.generationMetadata).toMatchObject({ adapter: "openai-agents-sdk", configuredModelId: "configured-review-model", mode: deep ? "deep" : "standard", promptHashScope: "initial-input" });
+  expect(result.value.generationMetadata?.systemPromptHash).toMatch(/^[a-f0-9]{64}$/);
+  expect(result.value.generationMetadata?.userPromptHash).toMatch(/^[a-f0-9]{64}$/);
+  expect(result.value.generationMetadata).not.toHaveProperty("servedModelId");
+});
+
 const RICH_TRIAGE_OBJECT = {
   rationaleMd:
     "This initiative influences a coverage decision with no human review before it takes effect.",

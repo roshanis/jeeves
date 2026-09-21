@@ -76,6 +76,13 @@ describe("lib/services/viewer-workspace", () => {
       expect(await resolveViewerWorkspaceId(req)).toBeNull();
     });
 
+    it("degrades a malformed percent-encoded workspace cookie to the seeded-only view", async () => {
+      const req = new Request("http://localhost/api/x", {
+        headers: { cookie: "jeeves_workspace=%" },
+      });
+      await expect(resolveViewerWorkspaceId(req)).resolves.toBeNull();
+    });
+
     it("prefers a valid session's workspaceId over a DIFFERENT workspace cookie", async () => {
       const session = (await issueDemoSession("priya-raman"))!;
       const otherSigned = signWorkspaceId("ws_someone_elses_workspace", COOKIE_SECRET);

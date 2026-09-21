@@ -85,6 +85,13 @@
       "when": 1783738680657,
       "tag": "0011_evidence_submission",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1783738680658,
+      "tag": "0012_review_integrity",
+      "breakpoints": true
     }
   ]
 }

@@ -5,6 +5,8 @@ import {
   deploymentVersions,
   effectiveControls,
   initiatives,
+  reviewCycles,
+  reviewDecisions,
 } from "@/lib/db/schema";
 import { CHAMPION_PREFILL_PAYLOAD } from "@/lib/intake/champion-prefill";
 import { resetGuardStateForTests } from "@/lib/services/route-guard";
@@ -475,5 +477,73 @@ describe("remaining mutation routes enforce session workspace authorization", ()
     expect(((await ownerResponse.json()) as { incidentsCreated: number }).incidentsCreated).toBe(0);
     const [afterOwner] = await testDb.select().from(initiatives).where(eq(initiatives.id, breachInitiative!.id));
     expect(afterOwner!.state).toBe("deployed");
+  });
+
+  it("returns 404 and preserves a shared seeded review when a visitor tries to sign, return, or run it", async () => {
+    const [initiative] = await testDb.select().from(initiatives).where(eq(initiatives.slug, "provider-dedup-agent"));
+    expect(initiative!.workspaceId).toBeNull();
+    const [cycle] = await testDb.select().from(reviewCycles).where(eq(reviewCycles.initiativeId, initiative!.id));
+    expect(cycle).toBeTruthy();
+    const pending = await testDb.select().from(reviewDecisions).where(eq(reviewDecisions.cycleId, cycle!.id));
+    const reviewerForDomain: Record<string, string> = {
+      "clinical-safety": "elena-vasquez",
+      "privacy-hipaa": "marcus-webb",
+      "responsible-ai": "sofia-grant",
+      legal: "james-liu",
+      security: "devon-clarke",
+      "tech-architecture": "wei-zhang",
+      "data-governance": "grace-kim",
+      procurement: "tom-brennan",
+    };
+    const decision = pending.find((row) => row.status === "pending" && reviewerForDomain[row.domain]);
+    expect(decision).toBeTruthy();
+    const token = (await issueSession(reviewerForDomain[decision!.domain], "70.0.7.1")).token;
+    const before = {
+      status: decision!.status,
+      revision: decision!.revision,
+      draftMd: decision!.draftMd,
+      signedAt: decision!.signedAt,
+      returnReason: decision!.returnReason,
+    };
+    const params = Promise.resolve({ cycleId: cycle!.id, domain: decision!.domain });
+
+    const { POST: sign } = await import("../reviews/[cycleId]/[domain]/sign/route");
+    const signResponse = await sign(new Request(`http://localhost/api/reviews/${cycle!.id}/${decision!.domain}/sign`, {
+      method: "POST",
+      headers: bearer(token, "70.0.7.2"),
+      body: JSON.stringify({ expectedRevision: decision!.revision, expectedEvidencePacketId: null, editedDraftMd: "visitor attempt" }),
+    }), { params });
+    expect(signResponse.status).toBe(404);
+
+    const { POST: returnReview } = await import("../reviews/[cycleId]/[domain]/return/route");
+    const returnResponse = await returnReview(new Request(`http://localhost/api/reviews/${cycle!.id}/${decision!.domain}/return`, {
+      method: "POST",
+      headers: bearer(token, "70.0.7.3"),
+      body: JSON.stringify({ expectedRevision: decision!.revision, reason: "visitor attempt" }),
+    }), { params });
+    expect(returnResponse.status).toBe(404);
+
+    const agentsModule = await import("@/lib/agents");
+    const getAgentPort = vi.spyOn(agentsModule, "getAgentPort");
+    try {
+      const { POST: runReview } = await import("../reviews/[cycleId]/[domain]/run/route");
+      const runResponse = await runReview(new Request(`http://localhost/api/reviews/${cycle!.id}/${decision!.domain}/run`, {
+        method: "POST",
+        headers: bearer(token, "70.0.7.4"),
+      }), { params });
+      expect(runResponse.status).toBe(404);
+      expect(getAgentPort).not.toHaveBeenCalled();
+    } finally {
+      getAgentPort.mockRestore();
+    }
+
+    const [after] = await testDb.select().from(reviewDecisions).where(eq(reviewDecisions.id, decision!.id));
+    expect({
+      status: after!.status,
+      revision: after!.revision,
+      draftMd: after!.draftMd,
+      signedAt: after!.signedAt,
+      returnReason: after!.returnReason,
+    }).toEqual(before);
   });
 });

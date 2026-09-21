@@ -4,7 +4,7 @@
 // view built from the cost_tokens_usd_day TelemetrySeries every initiative
 // already carries, plus a static daily token-budget reference line.
 //
-// The real per-day token usage lives in the run_budget table (lib/db/schema.ts),
+// Estimated per-day token reservations live in run_budget (lib/db/schema.ts),
 // which this UI-only task must not read directly (lib/services/route-guard.ts,
 // which enforces DAILY_TOKEN_CAP = 500_000, is a server-only module and must
 // not be imported into a client/page bundle). So this card renders the cost
@@ -123,19 +123,17 @@ export function CostBudgetCard({ points }: { points: PortfolioCostPoint[] }) {
   return (
     <Card data-slot="cost-budget-card">
       <CardHeader className="border-b bg-muted/40 py-3">
-        <CardTitle className="kicker">Cost &amp; daily token budget</CardTitle>
+        <CardTitle className="kicker">Cost &amp; estimated token reservations</CardTitle>
       </CardHeader>
       <CardContent>
         <SyntheticDataLabel>
           <p className="text-xs text-muted-foreground">
-            Portfolio daily cost (sum of each deployment&apos;s cost_tokens_usd_day
-            series). Daily token budget reference:{" "}
+            Synthetic portfolio daily cost. Daily reservation reference:{" "}
             <span className="stat-value text-foreground">
               {DAILY_TOKEN_BUDGET_REFERENCE.toLocaleString()}
             </span>{" "}
-            tokens/day (static demo cap) — this chart plots USD cost, not raw
-            token counts, so the budget line is shown as an annotation, not a
-            literal axis value.
+            estimated tokens/day. Reservations limit demo requests; they do not
+            measure provider token usage or billed spend.
           </p>
           {data.length === 0 ? (
             <div className="flex h-[200px] flex-col items-center justify-center gap-1.5 rounded-md border border-dashed border-border text-center">
@@ -190,8 +188,8 @@ export function CostBudgetCard({ points }: { points: PortfolioCostPoint[] }) {
             </div>
           )}
           <p className="font-mono text-[11px] tabular-nums text-muted-foreground">
-            Daily token budget: {DAILY_TOKEN_BUDGET_REFERENCE.toLocaleString()} (synthetic demo cap
-            — not read from a live budget store).
+            Daily estimated token reservations: {DAILY_TOKEN_BUDGET_REFERENCE.toLocaleString()}
+            {" "}(static demo reference; the live reservation balance is not displayed).
           </p>
         </SyntheticDataLabel>
       </CardContent>

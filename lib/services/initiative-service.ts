@@ -27,7 +27,7 @@ import { evidenceForSignature, EvidenceError } from './evidence-service';
  * transactional isolation being real, not simulated.
  */
 import { createHash, randomUUID } from "node:crypto";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, isNull } from "drizzle-orm";
 import type { Db } from "../db/client";
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import type * as schema from "../db/schema";
@@ -45,7 +45,7 @@ import {
 } from "../db/schema";
 import type { Actor, Domain, LifecycleState, OverlayFlags, Tier } from "../domain/types";
 import { transition, IllegalTransitionError, type AuditEventPayload } from "../lifecycle/transitions";
-import { runSingleDomainDraft } from "../workflow/review-run";
+import { runSingleDomainDraft, type RunSingleDomainOptions } from "../workflow/review-run";
 import type { AgentPort } from "../agents/ports";
 import { evaluateCompleteness } from "../intake/completeness";
 import type { IntakePayload } from "../intake/types";
@@ -56,6 +56,7 @@ import { fastLaneEligibility } from "../approval/eligibility";
 import { applicabilityApplies } from "./applicability";
 import { ACTOR_DIRECTORY, FAST_LANE_POLICY, SYSTEM_ACTOR, isPersonaKey, reviewerDomainFor } from "./actors";
 import { mutationWorkspaceMismatch } from "./workspace-guard";
+import { lockCurrentReviewCycle, ReviewIntegrityError } from "./review-integrity";
 
 /* -------------------------------------------------------------------------
  * Shared errors
@@ -316,9 +317,9 @@ async function latestReviewCycle(
   tx: Tx,
   initiativeId: string,
 ): Promise<typeof reviewCycles.$inferSelect | null> {
-  const rows = await tx.select().from(reviewCycles).where(eq(reviewCycles.initiativeId, initiativeId));
-  if (rows.length === 0) return null;
-  return rows.slice().sort((a, b) => b.openedAt.getTime() - a.openedAt.getTime())[0]!;
+  const [row] = await tx.select().from(reviewCycles).where(eq(reviewCycles.initiativeId, initiativeId))
+    .orderBy(desc(reviewCycles.openedAt), desc(reviewCycles.id)).limit(1);
+  return row ?? null;
 }
 
 /* -------------------------------------------------------------------------
@@ -807,93 +808,89 @@ function requireReviewerDomainMatch(actor: Actor, domain: Domain): void {
   }
 }
 
+async function lockReviewForMutation(tx: Tx, cycleId: string, domain: Domain, sessionWorkspaceId: string | null) {
+  try {
+    return await lockCurrentReviewCycle(tx, cycleId, sessionWorkspaceId);
+  } catch (error) {
+    if (error instanceof ReviewIntegrityError) {
+      if (error.kind === "not_found") throw new NotFoundError("reviewDecision", `${cycleId}/${domain}`);
+      throw new ConflictError(error.message);
+    }
+    throw error;
+  }
+}
+
+function assertReviewRevision(decision: typeof reviewDecisions.$inferSelect, expectedRevision: number): void {
+  if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) {
+    throw new ValidationError("An explicit non-negative expected review revision is required.");
+  }
+  if (decision.revision !== expectedRevision) {
+    throw new ConflictError("This review changed since it was loaded. Refresh and inspect the latest revision.");
+  }
+}
+
 export interface SignReviewResult {
   cycleId: string;
   domain: Domain;
   status: "signed";
 }
 
-/**
- * Reviewer signs off a domain's review, recording the edited draft
- * (`editedDraftMd`, defaulting to the existing draft when omitted) as the
- * signed content. Reviewer-only (SoD); does not by itself transition the
- * initiative lifecycle state — `decide()` closes out the initiative once
- * enough domains are signed, matching plan.md §5 (ReviewDecision is
- * per-domain, distinct from the initiative-level Decision).
- */
+export interface SignReviewInput {
+  expectedRevision: number;
+  expectedEvidencePacketId: string | null;
+  editedDraftMd?: string;
+}
+
+/** Sign exactly the revision and evidence packet that the reviewer inspected. */
 export async function signReview(
   db: Db,
   cycleId: string,
   domain: Domain,
   actor: Actor,
   sessionWorkspaceId: string | null,
-  editedDraftMd?: string,
+  input: SignReviewInput,
 ): Promise<SignReviewResult> {
   requireReviewerRole(actor);
   requireReviewerDomainMatch(actor, domain);
   return db.transaction(async (tx) => {
+    const { initiative } = await lockReviewForMutation(tx, cycleId, domain, sessionWorkspaceId);
     const decision = await loadReviewDecisionOrThrow(tx, cycleId, domain);
-
-    // Resolve the owning initiative's workspace up front (also needed below
-    // for the audit event's initiativeId — one lookup, reused) and enforce
-    // workspace authorization BEFORE any business-logic validation.
-    const cycle = await tx.select().from(reviewCycles).where(eq(reviewCycles.id, cycleId));
-    const initiativeId = cycle[0]?.initiativeId ?? null;
-    if (initiativeId) {
-      const [initiative] = await tx
-        .select({ workspaceId: initiatives.workspaceId })
-        .from(initiatives)
-        .where(eq(initiatives.id, initiativeId)).for("update");
-      if (initiative) {
-        assertWorkspaceAccess(
-          initiative.workspaceId,
-          sessionWorkspaceId,
-          "reviewDecision",
-          `${cycleId}/${domain}`,
-        );
-      }
+    assertReviewRevision(decision, input?.expectedRevision);
+    if (input.expectedEvidencePacketId !== null && typeof input.expectedEvidencePacketId !== "string") {
+      throw new ValidationError("An explicit expected evidence packet identity is required.");
     }
-
-    let evidenceSnapshot = null;
-    if (initiativeId) {
-      try { evidenceSnapshot = await evidenceForSignature(tx, initiativeId, cycleId, domain); }
-      catch (error) { if (error instanceof EvidenceError) throw new ValidationError(error.message); throw error; }
-    }
-
     if (decision.status === "signed") {
       throw new ValidationError(`review for ${domain} in cycle ${cycleId} is already signed`);
     }
-    const draftMd = editedDraftMd ?? decision.draftMd;
-    if (!draftMd) {
+    let evidenceSnapshot;
+    try { evidenceSnapshot = await evidenceForSignature(tx, initiative.id, cycleId, domain); }
+    catch (error) { if (error instanceof EvidenceError) throw new ValidationError(error.message); throw error; }
+    if ((evidenceSnapshot?.packetId ?? null) !== input.expectedEvidencePacketId) {
+      throw new ConflictError("The evidence packet changed since it was loaded. Refresh and inspect the latest evidence.");
+    }
+    const draftMd = input.editedDraftMd ?? decision.draftMd;
+    if (typeof draftMd !== "string" || !draftMd.trim()) {
       throw new ValidationError(`cannot sign ${domain} in cycle ${cycleId}: no draft content`);
     }
-
-    // Compare-and-set (external-review finding #3): only write if the row's
-    // status is still what THIS transaction observed it to be.
-    const updated = await tx
-      .update(reviewDecisions)
-      .set({ status: "signed", reviewer: actor.id, draftMd, signedAt: new Date(nowTs()) })
-      .where(and(eq(reviewDecisions.id, decision.id), eq(reviewDecisions.status, decision.status)))
-      .returning();
-    if (updated.length === 0) {
-      throw new ConflictError(
-        `review ${domain} in cycle ${cycleId} changed concurrently (expected status '${decision.status}')`,
-      );
-    }
-
+    const signatureEventId = `evt-${randomUUID()}`;
+    const revision = decision.revision + 1;
+    const signedAt = new Date(nowTs());
+    const updated = await tx.update(reviewDecisions).set({
+      status: "signed", reviewer: actor.id, draftMd, signedAt, revision, signatureEventId,
+      returnReason: null, activeAttemptId: null, activeAttemptExpiresAt: null,
+    }).where(and(eq(reviewDecisions.id, decision.id), eq(reviewDecisions.status, decision.status),
+      eq(reviewDecisions.revision, decision.revision))).returning();
+    if (updated.length === 0) throw new ConflictError(`review ${domain} in cycle ${cycleId} changed concurrently`);
     await tx.insert(auditEvents).values({
-      id: `evt-${randomUUID()}`,
-      initiativeId,
-      ts: new Date(nowTs()),
-      actor: actor.id,
-      actorRole: actor.role,
-      action: "review_signed",
-      detail: `Signed ${domain} review for cycle ${cycleId}.`,
-      before: decision.status,
-      after: "signed",
-      metadata: { domain, cycleId, evidenceSnapshot },
+      id: signatureEventId, initiativeId: initiative.id, ts: signedAt,
+      actor: actor.id, actorRole: actor.role, action: "review_signed",
+      detail: `Signed ${domain} review for cycle ${cycleId}.`, before: decision.status, after: "signed",
+      metadata: { domain, cycleId, reviewDecisionId: decision.id, signatureEventId, revision,
+        signedMd: draftMd, signedMdSha256: createHash("sha256").update(draftMd).digest("hex"),
+        evidenceSnapshot, citations: decision.citations, citationProvenance: decision.citationProvenance,
+        missingEvidence: decision.missingEvidence, evidenceRequests: decision.evidenceRequests,
+        sourceMetadata: decision.sourceMetadata },
     });
-
     return { cycleId, domain, status: "signed" };
   });
 }
@@ -904,7 +901,7 @@ export interface ReturnReviewResult {
   status: "returned";
 }
 
-/** Reviewer returns a domain review with a required reason (routes back to the requester). */
+/** An open-cycle return invalidates in-flight drafts but preserves the signed receipt. */
 export async function returnReview(
   db: Db,
   cycleId: string,
@@ -912,56 +909,29 @@ export async function returnReview(
   actor: Actor,
   sessionWorkspaceId: string | null,
   reason: string,
+  expectedRevision: number,
 ): Promise<ReturnReviewResult> {
   requireReviewerRole(actor);
   requireReviewerDomainMatch(actor, domain);
-  if (!reason || reason.trim().length === 0) {
-    throw new ValidationError("returnReview requires a non-empty reason");
-  }
   return db.transaction(async (tx) => {
+    const { initiative } = await lockReviewForMutation(tx, cycleId, domain, sessionWorkspaceId);
     const decision = await loadReviewDecisionOrThrow(tx, cycleId, domain);
-
-    const cycle = await tx.select().from(reviewCycles).where(eq(reviewCycles.id, cycleId));
-    const initiativeId = cycle[0]?.initiativeId ?? null;
-    if (initiativeId) {
-      const [initiative] = await tx
-        .select({ workspaceId: initiatives.workspaceId })
-        .from(initiatives)
-        .where(eq(initiatives.id, initiativeId));
-      if (initiative) {
-        assertWorkspaceAccess(
-          initiative.workspaceId,
-          sessionWorkspaceId,
-          "reviewDecision",
-          `${cycleId}/${domain}`,
-        );
-      }
-    }
-
-    const updated = await tx
-      .update(reviewDecisions)
-      .set({ status: "returned", reviewer: actor.id, returnReason: reason })
-      .where(and(eq(reviewDecisions.id, decision.id), eq(reviewDecisions.status, decision.status)))
-      .returning();
-    if (updated.length === 0) {
-      throw new ConflictError(
-        `review ${domain} in cycle ${cycleId} changed concurrently (expected status '${decision.status}')`,
-      );
-    }
-
+    assertReviewRevision(decision, expectedRevision);
+    if (!reason || reason.trim().length === 0) throw new ValidationError("returnReview requires a non-empty reason");
+    const revision = decision.revision + 1;
+    const updated = await tx.update(reviewDecisions).set({
+      status: "returned", reviewer: actor.id, returnReason: reason, revision,
+      activeAttemptId: null, activeAttemptExpiresAt: null,
+    }).where(and(eq(reviewDecisions.id, decision.id), eq(reviewDecisions.status, decision.status),
+      eq(reviewDecisions.revision, decision.revision))).returning();
+    if (updated.length === 0) throw new ConflictError(`review ${domain} in cycle ${cycleId} changed concurrently`);
     await tx.insert(auditEvents).values({
-      id: `evt-${randomUUID()}`,
-      initiativeId,
-      ts: new Date(nowTs()),
-      actor: actor.id,
-      actorRole: actor.role,
-      action: "review_returned",
+      id: `evt-${randomUUID()}`, initiativeId: initiative.id, ts: new Date(nowTs()),
+      actor: actor.id, actorRole: actor.role, action: "review_returned",
       detail: `Returned ${domain} review for cycle ${cycleId}: ${reason}`,
-      before: decision.status,
-      after: "returned",
-      metadata: { domain, cycleId, reason },
+      before: decision.status, after: "returned",
+      metadata: { domain, cycleId, reason, revision, previousSignatureEventId: decision.signatureEventId },
     });
-
     return { cycleId, domain, status: "returned" };
   });
 }
@@ -970,113 +940,38 @@ export async function returnReview(
  * 4b. runReviewAgent — reviewer runs their domain's drafting agent on demand
  * ---------------------------------------------------------------------- */
 
-export interface RunReviewAgentResult {
-  cycleId: string;
-  domain: Domain;
-  status: "drafted" | "failed" | "skipped";
-  /** Fresh draft markdown — present only when status === "drafted". */
-  draftMd?: string;
-  /** Human-readable failure reason — present only when status === "failed". */
-  error?: string;
-  /** Present when a concurrent human signature wins the persistence race. */
-  reason?: "already signed";
-}
+export type RunReviewAgentResult = Awaited<ReturnType<typeof runSingleDomainDraft>>;
 
-/**
- * A reviewer runs the drafting agent for THEIR domain on demand (M3 operate
- * loop — the "Run agent" button in the workbench). Same authz as
- * sign/return: reviewer-role only, and only for the domain that reviewer is
- * assigned to (`requireReviewerDomainMatch`) — so no reviewer can trigger
- * another domain's agent. Refuses to re-draft a review that is already
- * `signed` (a human decision; the reviewer must `return` it first). Delegates
- * the actual (re)draft to `runSingleDomainDraft` and records ONE
- * actor-attributed `review_agent_run` audit event — distinct from the
- * `system` `draft_run_completed` event the fan-out writes.
- *
- * NOT wrapped in a single `db.transaction`: the draft persist happens inside
- * `runSingleDomainDraft` immediately after the (slow, network) LLM call, and
- * holding a DB transaction open across that call would be wrong. The audit
- * row is appended right after; the only failure window (draft saved, audit
- * append failed) is benign for an append-only log and never corrupts
- * lifecycle state (a draft is not a lifecycle transition).
- */
+/** Reviewer authz is checked here; workflow atomically persists its draft and actor-attributed receipt. */
 export async function runReviewAgent(
   db: Db,
   cycleId: string,
   domain: Domain,
   actor: Actor,
   sessionWorkspaceId: string | null,
-  /** Overridable for tests (inject a fake AgentPort); defaults to the real port inside runSingleDomainDraft. */
   port?: AgentPort,
+  options?: RunSingleDomainOptions,
 ): Promise<RunReviewAgentResult> {
   requireReviewerRole(actor);
   requireReviewerDomainMatch(actor, domain);
-
-  // The (cycle, domain) review must exist and must not already be signed.
-  const decisionRows = await db
-    .select()
-    .from(reviewDecisions)
-    .where(and(eq(reviewDecisions.cycleId, cycleId), eq(reviewDecisions.domain, domain)));
-  const decision = decisionRows[0];
-  if (!decision) throw new NotFoundError("reviewDecision", `${cycleId}/${domain}`);
-
-  // Not wrapped in a transaction (see file comment above) — best-effort
-  // workspace check against the current committed state, same as every
-  // other read/write in this function.
-  const cycleRows = await db.select().from(reviewCycles).where(eq(reviewCycles.id, cycleId));
-  const initiativeId = cycleRows[0]?.initiativeId ?? null;
-  if (initiativeId) {
-    const [initiative] = await db
-      .select({ workspaceId: initiatives.workspaceId })
-      .from(initiatives)
-      .where(eq(initiatives.id, initiativeId));
-    if (initiative) {
-      assertWorkspaceAccess(
-        initiative.workspaceId,
-        sessionWorkspaceId,
-        "reviewDecision",
-        `${cycleId}/${domain}`,
-      );
+  // Authenticate and reject a signed row before any provider invocation. The
+  // workflow rechecks eligibility under the same lock when claiming its attempt.
+  await db.transaction(async (tx) => {
+    await lockReviewForMutation(tx, cycleId, domain, sessionWorkspaceId);
+    const decision = await loadReviewDecisionOrThrow(tx, cycleId, domain);
+    if (decision.status === "signed") {
+      throw new ValidationError(`review for ${domain} in cycle ${cycleId} is already signed; return it before re-drafting`);
     }
-  }
-
-  if (decision.status === "signed") {
-    throw new ValidationError(
-      `review for ${domain} in cycle ${cycleId} is already signed; return it before re-drafting`,
-    );
-  }
-
-  const outcome = await runSingleDomainDraft(db, cycleId, domain, port);
-  const detail =
-    outcome.status === "drafted"
-      ? `Ran the ${domain} review agent on demand — fresh draft generated.`
-      : outcome.status === "failed"
-        ? `Ran the ${domain} review agent on demand — draft failed: ${outcome.error ?? "unknown error"}.`
-        : `Ran the ${domain} review agent on demand — persistence skipped because the review was already signed.`;
-  await db.insert(auditEvents).values({
-    id: `evt-${randomUUID()}`,
-    initiativeId,
-    ts: new Date(nowTs()),
-    actor: actor.id,
-    actorRole: actor.role,
-    action: "review_agent_run",
-    detail,
-    before: decision.status,
-    after:
-      outcome.status === "drafted"
-        ? "drafted"
-        : outcome.status === "skipped"
-          ? "signed"
-          : decision.status,
-    metadata: {
-      domain,
-      cycleId,
-      status: outcome.status,
-      ...(outcome.reason ? { reason: outcome.reason } : {}),
-    },
   });
-
-  return outcome;
+  try {
+    return await runSingleDomainDraft(db, cycleId, domain, port, { ...options, actor, sessionWorkspaceId });
+  } catch (error) {
+    if (error instanceof ReviewIntegrityError) {
+      if (error.kind === "not_found") throw new NotFoundError("reviewDecision", `${cycleId}/${domain}`);
+      throw new ConflictError(error.message);
+    }
+    throw error;
+  }
 }
 
 /* -------------------------------------------------------------------------
@@ -1133,7 +1028,7 @@ export async function decide(
   }
 
   return db.transaction(async (tx) => {
-    const initiative = await loadInitiativeOrThrow(tx, initiativeId);
+    const initiative = await loadInitiativeOrThrow(tx, initiativeId, true);
     assertWorkspaceAccess(initiative.workspaceId, sessionWorkspaceId, "initiative", initiativeId);
     const cycle = await latestReviewCycle(tx, initiativeId);
     if (!cycle) {
@@ -1144,6 +1039,9 @@ export async function decide(
     // transition() enforces SoD/role FIRST (only an approver may decide) — so
     // a non-approver gets IllegalTransitionError before any completeness rule.
     const result = transition(initiative.state as LifecycleState, action, actor, { ts: nowTs() });
+
+    if (cycle.closedAt !== null) throw new ConflictError(`review cycle ${cycle.id} is already closed`);
+    const reviewSnapshots: Record<string, unknown>[] = [];
 
     // Required-review completeness gate (M2.5, hardened for external-review
     // finding P2-6 "vacuous completeness gate"): an approval cannot outrun
@@ -1214,6 +1112,21 @@ export async function decide(
           `cannot ${decision}: ${blockingDescriptions.length} of ${cycleRequiredDomains.length} required domain review(s) not ${need} (${blockingDescriptions.join(", ")})`,
         );
       }
+      for (const domain of cycleRequiredDomains) {
+        const row = byDomain.get(domain)!;
+        reviewSnapshots.push({
+          reviewDecisionId: row.id, domain, status: row.status, revision: row.revision,
+          signatureEventId: row.status === "signed" ? row.signatureEventId : null,
+          provenance: row.status === "signed"
+            ? row.signatureEventId ? "signature-receipt" : "legacy-decision-time-snapshot"
+            : "decision-time-draft",
+          draftMd: row.draftMd,
+          draftMdSha256: row.draftMd === null ? null : createHash("sha256").update(row.draftMd).digest("hex"),
+          citations: row.citations, citationProvenance: row.citationProvenance,
+          missingEvidence: row.missingEvidence, evidenceRequests: row.evidenceRequests,
+          sourceMetadata: row.sourceMetadata,
+        });
+      }
     }
 
     // Compare-and-set (external-review finding #3 — "governance transitions
@@ -1266,7 +1179,7 @@ export async function decide(
       initiativeId,
       result.auditEvent,
       `${decision} by ${actor.id}${conditions.length > 0 ? ` with ${conditions.length} condition(s)` : ""}.`,
-      { conditions, citations },
+      { conditions, citations, cycleId: cycle.id, decisionId, reviewSnapshots },
     );
 
     // External-review finding #4 ("the live champion workflow stops before

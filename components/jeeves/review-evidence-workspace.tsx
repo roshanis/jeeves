@@ -30,12 +30,16 @@ export interface EvidenceReviewContext {
   signingBlock: string | null;
   cycleId: string | null;
   cycleChanged: boolean;
+  evidencePacketId: string | null;
 }
 
 interface Props {
   slug: string;
   domain: Domain;
   citations: string[];
+  citationProvenance?: ReviewRow["citationProvenance"];
+  missingEvidence?: string[];
+  evidenceRequests?: ReviewRow["evidenceRequests"];
   reviewStatus: ReviewRow["status"];
   reviewCycleId?: string;
   children: (context: EvidenceReviewContext) => React.ReactNode;
@@ -79,7 +83,7 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Evidence could not be loaded.";
 }
 
-function EvidenceWorkspace({ slug, domain, citations, reviewStatus, reviewCycleId, session, onExpired, onUnlock, children }: Props & {
+function EvidenceWorkspace({ slug, domain, citations, citationProvenance, missingEvidence = [], evidenceRequests = [], reviewStatus, reviewCycleId, session, onExpired, onUnlock, children }: Props & {
   session: LiveSession | null;
   onExpired: () => void;
   onUnlock: () => void;
@@ -167,7 +171,7 @@ function EvidenceWorkspace({ slug, domain, citations, reviewStatus, reviewCycleI
     <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-card px-4 py-3">
       <div className="flex min-w-0 items-center gap-2 text-sm">
         <LockKeyhole className="size-4 shrink-0 text-primary" aria-hidden />
-        <span>{cycleChanged ? "Review refresh required" : state?.latest ? `Submitted packet · v${state.latest.version}` : "Evidence and policy references"}</span>
+        <span>{cycleChanged ? "Review refresh required" : state?.latest ? `Submitted packet · v${state.latest.version}` : "Evidence and draft references"}</span>
         {!cycleChanged && state?.latest?.submittedAt ? <span className="hidden text-xs text-muted-foreground sm:inline">{state.latest.submittedAt.slice(0, 10)}</span> : null}
       </div>
       <div className="flex items-center gap-3 text-xs">
@@ -176,7 +180,7 @@ function EvidenceWorkspace({ slug, domain, citations, reviewStatus, reviewCycleI
       </div>
     </div>
     {!session ? <div className="flex flex-wrap items-center gap-3 rounded-lg border bg-muted/30 px-4 py-3 text-sm">
-      <p>Start the demo to view private submitted evidence. Policy references remain read-only.</p>
+      <p>Start the demo to view private submitted evidence. Draft references remain read-only.</p>
       <Button variant="outline" size="sm" onClick={onUnlock}>Start demo</Button>
     </div> : null}
     {error ? <div role="alert" className="space-y-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
@@ -196,10 +200,12 @@ function EvidenceWorkspace({ slug, domain, citations, reviewStatus, reviewCycleI
               const Icon = source.kind === "requirement" ? FileText : source.kind === "citation" ? BookOpen : source.id === "arize" ? Activity : Database;
               return <button type="button" key={source.id} aria-pressed={active} aria-controls={sourcePanelId} onClick={() => setSelectedId(source.id)} className={`flex min-w-0 gap-2.5 rounded-md border-l-2 px-3 py-3 text-left text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${active ? "border-primary bg-primary/10 text-foreground" : "border-transparent hover:bg-muted"}`}>
                 <Icon className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden />
-                <span className="min-w-0 space-y-1"><span className="line-clamp-2 break-words font-medium" title={source.label}>{source.kind === "requirement" ? `${source.requirement.id} · ` : ""}{source.label}</span><span className="block text-xs text-muted-foreground">{source.kind === "requirement" ? STATUS_LABEL[source.requirement.status] : source.kind === "citation" ? "Policy citation" : "Not connected"}</span></span>
+                <span className="min-w-0 space-y-1"><span className="line-clamp-2 break-words font-medium" title={source.label}>{source.kind === "requirement" ? `${source.requirement.id} · ` : ""}{source.label}</span><span className="block text-xs text-muted-foreground">{source.kind === "requirement" ? STATUS_LABEL[source.requirement.status] : source.kind === "citation" ? "Unverified reference" : "Not connected"}</span></span>
               </button>;
             })}
           </nav>
+          {missingEvidence.length > 0 ? <section aria-label="Agent-reported missing evidence" className="space-y-2 border-t px-2 pt-3 text-sm"><h3 className="font-medium">Missing evidence reported by the agent</h3><ul className="list-inside list-disc space-y-1">{missingEvidence.map((gap, i) => <li key={i}>{gap}</li>)}</ul></section> : null}
+          {evidenceRequests.length > 0 ? <section aria-label="Agent evidence requests" className="space-y-2 border-t px-2 pt-3 text-sm"><h3 className="font-medium">Evidence requested by the agent</h3><ul className="list-inside list-disc space-y-1">{evidenceRequests.map((request, i) => <li key={i}>{request.controlId} · {request.description}</li>)}</ul></section> : null}
           <p className="border-t px-2 pt-3 text-xs leading-relaxed text-muted-foreground">Uploaded drafts are not submitted evidence. Each requirement is assessed separately.</p>
         </CardContent>
       </Card>
@@ -217,11 +223,11 @@ function EvidenceWorkspace({ slug, domain, citations, reviewStatus, reviewCycleI
           onDownload={download}
           evidenceHref={evidenceHref}
         /> : selected?.kind === "citation" ? <>
-          <CardHeader className="border-b py-4"><p className="kicker">Policy reference</p><CardTitle className="break-words leading-snug">{selected.label}</CardTitle></CardHeader>
+          <CardHeader className="border-b py-4"><p className="kicker">Unverified reference</p><CardTitle className="break-words leading-snug">{selected.label}</CardTitle></CardHeader>
           <CardContent className="space-y-5 pt-6 text-sm leading-relaxed">
             <BookOpen className="size-9 text-primary/70" aria-hidden />
-            <p>This citation was supplied with the agent draft. Check the named policy and version before signing.</p>
-            <p className="rounded-lg border bg-muted/30 p-4 text-muted-foreground">The policy text is not included in this evidence packet. A citation alone does not demonstrate that a requirement is satisfied.</p>
+            <p>{citationProvenance === "agent-supplied" ? "This reference was supplied by the drafting agent and has not been verified. Check the named source and version before signing." : "This legacy reference is unverified. Historical entries may contain missing-evidence descriptions. Check the original source before treating it as a policy citation."}</p>
+            <p className="rounded-lg border bg-muted/30 p-4 text-muted-foreground">The source text is not included in this evidence packet. A reference alone does not demonstrate that a requirement is satisfied.</p>
             <Link href={evidenceHref} className="font-medium text-primary hover:underline">View requirements and submitted evidence</Link>
           </CardContent>
         </> : <>
@@ -234,7 +240,7 @@ function EvidenceWorkspace({ slug, domain, citations, reviewStatus, reviewCycleI
           </CardContent>
         </>}
       </Card>
-      {children({ signingBlock, cycleId: cycleChanged ? null : state?.cycleId ?? null, cycleChanged })}
+      {children({ signingBlock, cycleId: cycleChanged ? null : state?.cycleId ?? null, cycleChanged, evidencePacketId: cycleChanged ? null : state?.latest?.id ?? null })}
     </div>
     <p className="flex items-start gap-2 px-1 text-xs leading-relaxed text-muted-foreground"><LockKeyhole className="mt-0.5 size-3.5 shrink-0" aria-hidden />Submitted documents and requirement assessments are versioned. Domain signatures and the accountable approver’s decision remain separate.</p>
   </div>;
