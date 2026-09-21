@@ -6,7 +6,7 @@ import { useLiveSession } from "@/lib/client/session-context";
 import type { ComponentProps } from "react";
 import { READ_ONLY_PREVIEW_MESSAGE } from "@/lib/data/provider-mode";
 
-/** One click from the public site to an editable requester intake. */
+/** One click from the public site to the existing Meridian Health portfolio. */
 export function TryDemoButton({ className, size = "lg", variant }: Pick<ComponentProps<typeof Button>, "className" | "size" | "variant">) {
   const { login, liveModeAvailable = true, pending, startError } = useLiveSession();
   const router = useRouter();
@@ -15,7 +15,7 @@ export function TryDemoButton({ className, size = "lg", variant }: Pick<Componen
       <Button className={className} size={size} variant={variant} disabled={!liveModeAvailable || pending} onClick={async () => {
         try {
           await login("priya-raman");
-          router.push("/initiatives/new");
+          router.push("/portfolio");
         } catch { /* The provider keeps a visible, retryable error. */ }
       }}>
         {pending ? "Starting…" : "Try the demo"}

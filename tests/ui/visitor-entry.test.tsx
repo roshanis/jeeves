@@ -44,7 +44,7 @@ describe("visitor entry", () => {
     const button = screen.getByRole("button", { name: "Try the demo" });
     expect(button).toHaveProperty("disabled", mode === "mock");
     fireEvent.click(button);
-    if (mode === "db") await waitFor(() => expect(push).toHaveBeenCalledWith("/initiatives/new"));
+    if (mode === "db") await waitFor(() => expect(push).toHaveBeenCalledWith("/portfolio"));
     else expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -72,11 +72,11 @@ describe("visitor entry", () => {
     expect(JSON.parse(sessionStorage.getItem("jeeves_live_session")!)).toMatchObject({ personaKey: "marcus-webb", workspaceId: "visitor-workspace" });
   });
 
-  it("one click starts a requester workspace and opens an editable intake", async () => {
+  it("one click starts a requester session and opens the existing portfolio", async () => {
     fetchMock.mockResolvedValue(new Response(JSON.stringify({ token: "test-token", workspaceId: "test-workspace", expiresAt: Date.now() + 60_000 })));
     show();
     fireEvent.click(screen.getByRole("button", { name: "Try the demo" }));
-    await waitFor(() => expect(push).toHaveBeenCalledWith("/initiatives/new"));
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/portfolio"));
     expect(JSON.parse(fetchMock.mock.calls[0]![1].body)).toEqual({ personaKey: "priya-raman" });
     expect(document.querySelector('input[type="password"]')).toBeNull();
     expect(screen.queryByRole("dialog")).toBeNull();
