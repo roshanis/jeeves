@@ -32,8 +32,9 @@ test.describe("champion storyline: read-only golden path", () => {
     await expect(page.locator('input[type="password"]')).toHaveCount(0);
     await expect(page.getByRole("combobox", { name: "Demo persona" })).toHaveValue("priya-raman");
     await page.goto("/inbox");
+    await expect(page.getByRole("combobox", { name: "Demo persona" })).toHaveValue("priya-raman");
     await expect(
-      page.getByRole("heading", { name: "Your initiatives", exact: true }),
+      page.getByRole("heading", { name: "Your initiatives", exact: true, level: 1 }),
     ).toBeVisible();
   });
 

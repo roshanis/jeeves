@@ -4,9 +4,9 @@ Implemented locally on `codex/simplification-fixes-20260919`, following the user
 R2 review and explicit instruction to fix. Astra xhigh specialists implemented
 separate areas and reviewed one another's changes. The original dirty checkout
 was not used for implementation. The user subsequently authorized merging; the
-integration incorporates current main `69d971c`, including PR14's review-integrity
-protections and PR15's passwordless visitor workspaces, with independent Astra
-review of the combined behavior.
+integration incorporates current main `68e8490`, including PR14's review-integrity
+protections, PR15's passwordless visitor workspaces and PR16's incident notice
+update, with independent Astra review of the combined behavior.
 
 ## What became simpler
 
@@ -47,13 +47,14 @@ directly because project scripts use it; no package version was upgraded.
 
 The integrated tree removes **1,630 net production source lines** across 70 changed
 production paths, counting new files as well as deletions. The comparison is
-against `origin/main` at `69d971c`, so it excludes the separately merged runtime,
-review-integrity and visitor-workspace changes. This counts TypeScript/JavaScript source, including configuration
+against `origin/main` at `68e8490`, so it excludes the separately merged runtime,
+review-integrity, visitor-workspace and incident-notice changes. This counts TypeScript/JavaScript source, including configuration
 and scripts, and excludes tests, documentation and generated files.
 
 ## Verification
 
-- Integrated unit/API/UI suite: **148 files, 1,436 tests passed**; coverage
+- Integrated unit/API/UI suite before the final incident-notice update:
+  **148 files, 1,436 tests passed**; coverage
   thresholds pass with **89.48% lines**, 87.32% statements, 79.7% branches and
   93.07% functions. The subsequent root-provider correction passed 32 focused
   UI tests, including a new actual-layout navigation regression, plus an
