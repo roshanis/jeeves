@@ -49,7 +49,7 @@ function ageValue(i: InitiativeSummary): number {
 }
 
 function reviewsFraction(i: InitiativeSummary) {
-  return i.domainsRequired === 0 ? 1 : i.domainsSigned / i.domainsRequired;
+  return i.domainsRequired === 0 ? 1 : (i.domainsSigned + (i.domainsAbstained ?? 0)) / i.domainsRequired;
 }
 
 function initials(name: string): string {
@@ -270,7 +270,8 @@ export function InitiativeTable({
                   )}
                 </td>
                 <td className="hidden px-2 py-1.5 text-right font-mono tabular-nums text-muted-foreground @2xl:table-cell">
-                  {i.domainsSigned}/{i.domainsRequired}
+                  {i.domainsSigned}/{i.domainsRequired} signed
+                  {(i.domainsAbstained ?? 0) > 0 ? <span className="block">{i.domainsAbstained} abstained</span> : null}
                 </td>
                 <td className="hidden px-2 py-1.5 text-xs text-muted-foreground @4xl:table-cell">
                   {(i.state === "in_review" || i.state === "re_review") && i.decisionReadiness

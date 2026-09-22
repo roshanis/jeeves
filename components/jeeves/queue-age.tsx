@@ -79,7 +79,7 @@ export function oldestUnsignedAgeMs(
 ): number | null {
   if (nowMs === null) return null;
   const ages = reviews
-    .filter((r) => r.status !== "signed")
+    .filter((r) => r.status !== "signed" && r.status !== "abstained")
     .map((r) => ageMsSince(r.createdAt, nowMs));
   return ages.length > 0 ? Math.max(...ages) : null;
 }
@@ -151,7 +151,7 @@ export function QueueAgeCell({
   status: ReviewRow["status"];
   nowMs: number | null;
 }) {
-  if (status === "signed") {
+  if (status === "signed" || status === "abstained") {
     return <span className="text-muted-foreground">—</span>;
   }
   if (nowMs === null) {

@@ -28,7 +28,7 @@ import { AuditTab } from "@/components/jeeves/audit-tab";
 
 /** Segmented review-progress gauge — one filled tick per signed review, with
  * a mono "0/8 signed" readout so the instrument reads at a glance. */
-function ReviewProgressBar({ signed, total }: { signed: number; total: number }) {
+function ReviewProgressBar({ signed, abstained, total }: { signed: number; abstained: number; total: number }) {
   if (total === 0) {
     return <span className="text-sm text-muted-foreground">No required domains</span>;
   }
@@ -37,20 +37,20 @@ function ReviewProgressBar({ signed, total }: { signed: number; total: number })
       <div
         className="flex gap-0.5"
         role="img"
-        aria-label={`${signed} of ${total} reviews signed`}
+        aria-label={`${signed} of ${total} reviews signed${abstained > 0 ? `, ${abstained} abstained` : ""}`}
       >
         {Array.from({ length: total }).map((_, i) => (
           <span
             key={i}
             className={cn(
               "h-2.5 w-1.5 rounded-[1px]",
-              i < signed ? "bg-status-good" : "bg-status-neutral-bg",
+              i < signed ? "bg-status-good" : i < signed + abstained ? "bg-amber-400" : "bg-status-neutral-bg",
             )}
           />
         ))}
       </div>
       <span className="stat-value text-xs text-foreground">
-        {signed}/{total} signed
+        {signed}/{total} signed{abstained > 0 ? ` · ${abstained} abstained` : ""}
       </span>
     </div>
   );
@@ -135,7 +135,7 @@ export default async function InitiativeDetailPage({
 
           <div className="flex flex-col gap-1.5">
             <span className="kicker">Reviews</span>
-            <ReviewProgressBar signed={signedReviews} total={detail.reviews.length} />
+            <ReviewProgressBar signed={signedReviews} abstained={summary.domainsAbstained ?? 0} total={detail.reviews.length} />
           </div>
 
           <div className="flex flex-col gap-1.5">

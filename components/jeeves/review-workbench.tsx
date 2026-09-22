@@ -409,7 +409,7 @@ function AssessmentPane({
   const router = useRouter();
   const live = useLiveSessionOptional();
   const session = live?.session ?? null;
-  const cycleId = cycleChanged || row.isSeeded === true ? null : row.review.cycleId ?? evidenceCycleId ?? null;
+  const cycleId = cycleChanged || row.isSeeded === true || row.review.cycleOpen === false ? null : row.review.cycleId ?? evidenceCycleId ?? null;
 
   const [pending, setPending] = React.useState(false);
   const [running, setRunning] = React.useState(false);
@@ -532,7 +532,7 @@ function AssessmentPane({
         kind === "abstain" ? { kind, reason: reason!, expectedRevision } : { kind, expectedRevision });
       if (!mounted.current) return;
       setAbstainRevision(null);
-      toast.success(kind === "abstain" ? "Abstention recorded. This required review remains incomplete." : "Review resumed. Complete the review before signing.");
+      toast.success(kind === "abstain" ? "Abstention recorded. The review can continue without your sign-off." : "Review resumed. Complete the review before signing.");
       router.refresh();
     } catch (err) {
       if (!mounted.current) return;
@@ -595,9 +595,9 @@ function AssessmentPane({
         {signingBlock && !alreadySigned ? <p role="status" className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">{signingBlock}</p> : null}
         {alreadySigned ? <p className="rounded-lg border bg-muted/30 p-3 text-sm">Signed by {row.review.reviewer ?? "the assigned reviewer"}{row.review.signedAt ? ` on ${row.review.signedAt.slice(0, 10)}` : ""}. This domain review is read-only.</p> : null}
         {row.review.status === "abstained" ? <div role="status" className="space-y-1 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
-          <p className="font-medium">Abstained · Required review incomplete</p>
+          <p className="font-medium">{row.review.abstention ? "Abstained · Review continues without your sign-off" : "Abstained · Audit record unavailable"}</p>
           {row.review.abstention ? <><p>{row.review.abstention.reason}</p><p className="text-xs">Recorded by {row.review.abstention.reviewer} on {row.review.abstention.at.slice(0, 10)}.</p></> : <p>Refresh to load the abstention record.</p>}
-          <p>The assigned reviewer must resume this review before assessing evidence, drafting, or signing.</p>
+          <p>{row.review.cycleOpen === false ? "This review cycle is closed. The abstention is retained in the decision history." : "You may resume before the final decision if you choose to participate. The review can continue without you."}</p>
         </div> : null}
         <div className="flex flex-wrap gap-2">
           {eligibility.canAbstain ? <button type="button" className="rounded-md border px-3 py-2 text-sm font-medium disabled:opacity-50" disabled={pending} onClick={() => { setAbstainError(null); setAbstainRevision(row.review.revision!); }}>Abstain</button> : null}
@@ -619,7 +619,7 @@ function AssessmentPane({
         </div>
         <p className="text-xs text-muted-foreground">
           Sign records this domain’s review, not overall initiative approval.
-          Return and Abstain require a reason. Abstain leaves the required review incomplete. These actions write an audit event.
+          Return and Abstain require a reason and are audited. Abstention is not a signature; the other reviewers continue and the approver decides.
         </p>
       </CardContent>
 
@@ -627,7 +627,7 @@ function AssessmentPane({
         open={abstainRevision !== null}
         onOpenChange={(open) => { if (!open && !pending) setAbstainRevision(null); }}
         title={`Abstain from ${DOMAIN_LABEL[row.review.domain]} review`}
-        description="Record why you cannot provide this review. Abstention does not approve the initiative or complete this required review. You can explicitly resume it later."
+        description="Record why you cannot provide this review. The remaining reviews continue without your sign-off, and the approver makes the final decision. You can resume before that decision closes the review cycle."
         confirmLabel="Record abstention"
         pendingLabel="Recording abstention…"
         pending={pending}

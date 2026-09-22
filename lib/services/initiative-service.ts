@@ -926,7 +926,7 @@ export async function returnReview(
   });
 }
 
-/** Abstention leaves the required review incomplete and fences any draft in flight. */
+/** Recorded abstention removes this reviewer from decision quorum and fences any draft in flight. */
 export async function abstainReview(
   db: Db, cycleId: string, domain: Domain, actor: Actor, sessionWorkspaceId: string | null,
   reason: string, expectedRevision: number,
@@ -1095,41 +1095,50 @@ export async function decide(
 
     // Requirements belong to this exact cycle and initiative; readiness is shared
     // with the read model. Preserve the immutable review receipts in the decision.
+    const [cycleRa] = await tx.select({ requiredDomains: riskAssessments.requiredDomains })
+      .from(riskAssessments)
+      .where(and(eq(riskAssessments.id, cycle.riskAssessmentId), eq(riskAssessments.initiativeId, initiativeId)));
+    const decisions = await tx.select().from(reviewDecisions).where(eq(reviewDecisions.cycleId, cycle.id));
+    const abstentionEvents = decisions.some(row => row.status === "abstained")
+      ? await tx.select().from(auditEvents).where(and(eq(auditEvents.initiativeId, initiativeId), eq(auditEvents.action, "review_abstained")))
+      : [];
+    const reviews = decisions.map(row => ({ ...row, abstention: currentAbstention(row, abstentionEvents) }));
     if (decision === "approved" || decision === "conditionally_approved") {
-      const [cycleRa] = await tx.select({ requiredDomains: riskAssessments.requiredDomains })
-        .from(riskAssessments)
-        .where(and(eq(riskAssessments.id, cycle.riskAssessmentId), eq(riskAssessments.initiativeId, initiativeId)));
-      const decisions = await tx.select().from(reviewDecisions).where(eq(reviewDecisions.cycleId, cycle.id));
       const readiness = reviewDecisionReadiness({
         state: initiative.state as LifecycleState,
         cycleOpen: !cycle.closedAt,
         requiredDomains: cycleRa?.requiredDomains ?? null,
-        reviews: decisions,
+        reviews,
       });
       if (!readiness.hasRequiredDomains) {
         throw new ValidationError(`cannot ${decision}: review cycle ${cycle.id} has no resolvable required-domain set in its linked risk assessment`);
       }
       const blocking = decision === "approved" ? readiness.approvalBlockers : readiness.conditionalBlockers;
       if (blocking.length > 0) {
-        const need = decision === "approved" ? "signed" : "drafted or signed";
+        const need = decision === "approved" ? "signed or validly abstained" : "drafted, signed or validly abstained";
         throw new ValidationError(`cannot ${decision}: ${blocking.length} of ${cycleRa.requiredDomains.length} required domain review(s) not ${need} (${blocking.join(", ")})`);
       }
-      const byDomain = new Map(decisions.map((row) => [row.domain, row]));
-      for (const domain of cycleRa.requiredDomains) {
-        const row = byDomain.get(domain)!;
-        reviewSnapshots.push({
-          reviewDecisionId: row.id, domain, status: row.status, revision: row.revision,
-          signatureEventId: row.status === "signed" ? row.signatureEventId : null,
-          provenance: row.status === "signed"
+    }
+    const byDomain = new Map(reviews.map((row) => [row.domain, row]));
+    for (const domain of cycleRa?.requiredDomains ?? reviews.map(row => row.domain)) {
+      const row = byDomain.get(domain);
+      // Rejection may conclude before all domain rows exist.
+      if (!row) continue;
+      reviewSnapshots.push({
+        reviewDecisionId: row.id, domain, status: row.status, revision: row.revision,
+        signatureEventId: row.status === "signed" ? row.signatureEventId : null,
+        provenance: row.status === "abstained"
+          ? row.abstention ? "abstention-receipt" : "unverified-abstention"
+          : row.status === "signed"
             ? row.signatureEventId ? "signature-receipt" : "legacy-decision-time-snapshot"
             : "decision-time-draft",
-          draftMd: row.draftMd,
-          draftMdSha256: row.draftMd === null ? null : createHash("sha256").update(row.draftMd).digest("hex"),
-          citations: row.citations, citationProvenance: row.citationProvenance,
-          missingEvidence: row.missingEvidence, evidenceRequests: row.evidenceRequests,
-          sourceMetadata: row.sourceMetadata,
-        });
-      }
+        ...(row.status === "abstained" ? { abstention: row.abstention } : {}),
+        draftMd: row.draftMd,
+        draftMdSha256: row.draftMd === null ? null : createHash("sha256").update(row.draftMd).digest("hex"),
+        citations: row.citations, citationProvenance: row.citationProvenance,
+        missingEvidence: row.missingEvidence, evidenceRequests: row.evidenceRequests,
+        sourceMetadata: row.sourceMetadata,
+      });
     }
 
     // Compare-and-set (external-review finding #3 — "governance transitions

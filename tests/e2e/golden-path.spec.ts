@@ -438,13 +438,13 @@ test.describe("live demo loop: create → triage → draft run → sign → deci
     await page.goBack();
     await expect(page).toHaveURL(/domain=privacy-hipaa$/);
     await expect(assessment.getByRole("button", { name: "Sign", exact: true })).toBeEnabled();
-    // A domain reviewer can abstain with a reason, without completing the required review.
+    // A domain reviewer can record abstention, then explicitly resume before a decision.
     await assessment.getByRole("button", { name: "Abstain", exact: true }).click();
     const abstentionDialog = page.getByRole("dialog", { name: "Abstain from Privacy/HIPAA review" });
     await expect(abstentionDialog.getByRole("button", { name: "Record abstention" })).toBeDisabled();
     await abstentionDialog.getByLabel("Reason (required)").fill("I contributed to this proposal and need to resolve a conflict of interest.");
     await abstentionDialog.getByRole("button", { name: "Record abstention" }).click();
-    await expect(assessment).toContainText("Abstained · Required review incomplete");
+    await expect(assessment).toContainText("Abstained · Review continues without your sign-off");
     await page.reload();
     await expect(assessment).toContainText("I contributed to this proposal and need to resolve a conflict of interest.");
     await expect(assessment.getByRole("button", { name: "Sign", exact: true })).toBeDisabled();
@@ -467,6 +467,19 @@ test.describe("live demo loop: create → triage → draft run → sign → deci
     await page.getByRole("link", { name: "Prior-Auth Clinical Summarizer", exact: true }).click();
     await expect(page).toHaveURL(`${caseUrl}?tab=reviews`);
     await expect(phiRow.locator('[data-slot="review-status"][data-status="signed"]')).toBeVisible();
+
+    // Clinical Safety abstains permanently from this cycle. Other reviews
+    // continue, and the approver can conclude without this signature.
+    await loginAs(page, "elena-vasquez");
+    await page.getByRole("link", { name: "Open Clinical Safety review", exact: true }).click();
+    await assessment.getByRole("button", { name: "Abstain", exact: true }).click();
+    const clinicalAbstention = page.getByRole("dialog", { name: "Abstain from Clinical Safety review" });
+    await clinicalAbstention.getByLabel("Reason (required)").fill("I contributed to this fictional proposal and will not participate in its review.");
+    await clinicalAbstention.getByRole("button", { name: "Record abstention" }).click();
+    await expect(assessment).toContainText("Abstained · Review continues without your sign-off");
+    await page.getByRole("link", { name: "Prior-Auth Clinical Summarizer", exact: true }).click();
+    await expect(page.locator('[data-slot="case-file-header"]')).toContainText("1 abstained");
+    await expect(page.getByRole("region", { name: "Recorded abstentions" })).toContainText("Clinical Safety");
 
     // --- Approver: conditionally approve with one condition --------------
     await loginAs(page, "angela-torres");
@@ -494,6 +507,16 @@ test.describe("live demo loop: create → triage → draft run → sign → deci
       timeout: 30_000,
     });
     await expect(auditTab).toContainText("1 condition(s)");
+    await expect(auditTab).toContainText("review_abstained");
+    await expect(auditTab).toContainText("I contributed to this fictional proposal and will not participate in its review.");
+    // Closure makes the abstained review read-only; Resume is no longer offered.
+    await loginAs(page, "elena-vasquez");
+    await page.getByRole("tab", { name: "Reviews", exact: true }).click();
+    await page.getByRole("link", { name: "Open Clinical Safety review", exact: true }).click();
+    await expect(assessment.getByRole("button", { name: "Resume review", exact: true })).toHaveCount(0);
+    await expect(assessment).toContainText("Abstained");
+    await page.getByRole("link", { name: "Prior-Auth Clinical Summarizer", exact: true }).click();
+
 
     // --- Deployments + Controls: the live decision generates them too ----
     // (external-review finding #4: "the live champion workflow stops

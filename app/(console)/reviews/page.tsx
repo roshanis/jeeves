@@ -24,7 +24,7 @@ export default async function ReviewsPage() {
   }
 
   // Keep blocked and incomplete reviews ahead of completed signatures.
-  const order = { returned: 0, abstained: 1, drafted: 2, pending: 3, signed: 4 } as const;
+  const order = { returned: 0, drafted: 1, pending: 2, abstained: 3, signed: 4 } as const;
   rows.sort(
     (a, b) =>
       order[a.review.status] - order[b.review.status] ||

@@ -736,7 +736,7 @@ const DOMAIN_FOCUS: Record<Domain, string> = {
   procurement: "Vendor terms, sourcing, and contract lifecycle.",
 };
 
-const REVIEW_QUEUE_STATUSES = new Set<ReviewRow["status"]>(["pending", "drafted", "returned", "abstained"]);
+const REVIEW_QUEUE_STATUSES = new Set<ReviewRow["status"]>(["pending", "drafted", "returned"]);
 
 function DomainReviewQueueTable({
   rows,
@@ -903,12 +903,12 @@ function ReviewerView({
   // null, fall back to the original generic reviewer view.
   if (!reviewerDomain) {
     const queue = initiatives.filter(
-      (i) => i.state === "in_review" && i.domainsSigned < i.domainsRequired,
+      (i) => i.state === "in_review" && i.domainsSigned + (i.domainsAbstained ?? 0) < i.domainsRequired,
     );
     const inReviewCount = initiatives.filter((i) => i.state === "in_review").length;
     const returned = initiatives.filter((i) => i.overdue).length;
     const signedThrough = initiatives.filter(
-      (i) => i.state === "in_review" && i.domainsSigned === i.domainsRequired,
+      (i) => i.state === "in_review" && i.domainsSigned + (i.domainsAbstained ?? 0) === i.domainsRequired,
     ).length;
 
     return (
@@ -946,7 +946,7 @@ function ReviewerView({
             {
               icon: CheckCircle2,
               value: signedThrough,
-              label: "Signed-through",
+              label: "Reviews resolved",
               context: shareText(signedThrough, initiatives.length),
               fraction: shareFraction(signedThrough, initiatives.length),
             },
