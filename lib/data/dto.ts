@@ -21,6 +21,8 @@ export interface InitiativeSummary {
   accountableApprover: string | null;
   domainsRequired: number;
   domainsSigned: number;
+  /** Recorded abstentions are separate from signatures and do not block a decision. */
+  domainsAbstained?: number;
   /** Exact current cycle projection; absent only in legacy/static fixtures. */
   decisionReadiness?: ReviewDecisionReadiness;
   overdue: boolean;
@@ -36,6 +38,8 @@ export interface InitiativeSummary {
 export interface ReviewRow {
   /** Exact cycle owning this draft; omitted only by legacy/static fixtures. */
   cycleId?: string;
+  /** Closed review cycles are immutable, including abstention resumption. */
+  cycleOpen?: boolean;
   /** Exact displayed revision; absent legacy fixtures remain read-only. */
   revision?: number;
   domain: Domain;

@@ -393,3 +393,18 @@ describe("review snapshot integrity", () => {
    fireEvent.click(screen.getByRole("button",{name:"Resume review"}));
    await waitFor(() => expect(mocks.mutate).toHaveBeenCalledWith("reviewer-token","cycle","privacy-hipaa",{kind:"resume",expectedRevision:5}));
  });
+
+it("retains the abstention reason without offering Resume after the approver closes the cycle", async () => {
+  const row: ReviewQueueRow = {
+    slug: "closed-case", title: "Closed Case", tier: "high", isSeeded: false,
+    review: { cycleId: "cycle", cycleOpen: false, revision: 5, domain: "privacy-hipaa", status: "abstained", reviewer: "marcus-webb", createdAt: "2026-09-19T12:00:00Z", signedAt: null, draftMd: null, citations: [], abstention: { reason: "Conflict of interest", reviewer: "marcus-webb", at: "2026-09-21T12:00:00Z" } },
+  };
+  renderWithProviders(<ReviewWorkbench rows={[row]} selection={{ slug: row.slug, domain: row.review.domain }} />);
+  await screen.findByRole("heading", { name: "retention-v2.pdf" });
+  expect(screen.getByText("Conflict of interest")).toBeTruthy();
+  expect(screen.getByText(/This review cycle is closed/)).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Resume review" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Abstain" })).toBeNull();
+  expect((screen.getByRole("button", { name: "Sign" }) as HTMLButtonElement).disabled).toBe(true);
+  expect(mocks.mutate).not.toHaveBeenCalled();
+});

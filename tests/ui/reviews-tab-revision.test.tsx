@@ -101,7 +101,7 @@ it("does not retry abstained domains or claim their draft completed", async () =
   mocks.draftRun.mockResolvedValue({cycleId:"cycle",runId:"run",outcomes:[{domain:"privacy-hipaa",status:"skipped",reason:"reviewer abstained"}]});
   renderWithProviders(<ReviewsTab slug="case-one" initiativeId="initiative" isSeeded={false} reviews={[{...review,status:"pending"}]} />);
   fireEvent.click(screen.getByRole("button",{name:"Start draft run (1 domains)"}));
-  await waitFor(()=>expect(mocks.info).toHaveBeenCalledWith(expect.stringMatching(/Abstained reviews remain incomplete/)));
+  await waitFor(()=>expect(mocks.info).toHaveBeenCalledWith(expect.stringMatching(/Abstained reviewers are skipped/)));
   expect(mocks.success).not.toHaveBeenCalled();
   expect(screen.queryByRole("button",{name:/Retry remaining/})).toBeNull();
 });

@@ -144,7 +144,7 @@ function deriveBlockers(detail: InitiativeDetail): Blocker[] {
 
   for (const review of detail.reviews) {
     if (review.status === "abstained") {
-      blockers.push({ label: `Reviewer abstained: ${DOMAIN_LABEL[review.domain]} — required review incomplete`, severity: "amber" });
+      if (!review.abstention) blockers.push({ label: `Abstention record unavailable: ${DOMAIN_LABEL[review.domain]} — refresh and inspect Audit`, severity: "amber" });
     } else if (review.status === "returned") {
       blockers.push({
         label: `Review returned: ${DOMAIN_LABEL[review.domain]}`,
@@ -266,6 +266,16 @@ export function InitiativeBlockersRail({ detail }: { detail: InitiativeDetail })
           )}
         </div>
       </div>
+
+      {detail.reviews.some(review => review.status === "abstained" && review.abstention) ? (
+        <section className="panel space-y-2 p-4" aria-label="Recorded abstentions">
+          <h3 className="kicker">Recorded abstentions</h3>
+          <p className="text-sm text-muted-foreground">These reviewers do not block a decision. Abstention is not a signature.</p>
+          {detail.reviews.filter(review => review.status === "abstained" && review.abstention).map(review => (
+            <p key={review.domain} className="text-sm"><strong>{DOMAIN_LABEL[review.domain]}</strong>: {review.abstention!.reason}</p>
+          ))}
+        </section>
+      ) : null}
 
       <div className="panel overflow-hidden">
         <div className="flex items-center gap-2 border-b border-border px-4 py-2.5">

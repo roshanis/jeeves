@@ -6,17 +6,17 @@ import { cn } from "@/lib/utils";
 
 const TIERS: Tier[] = ["critical", "high", "medium", "low"];
 
-type DomainStatus = "All signed" | "In progress" | "Blocked/Returned" | "Overdue";
-const STATUSES: DomainStatus[] = ["All signed", "In progress", "Blocked/Returned", "Overdue"];
+type DomainStatus = "Reviews resolved" | "In progress" | "Blocked/Returned" | "Overdue";
+const STATUSES: DomainStatus[] = ["Reviews resolved", "In progress", "Blocked/Returned", "Overdue"];
 
 function classify(init: InitiativeSummary): DomainStatus {
   if (init.overdue) return "Overdue";
   if (init.state === "rejected") return "Blocked/Returned";
-  if (init.state === "in_review" && init.domainsSigned < init.domainsRequired) {
+  if (init.state === "in_review" && init.domainsSigned + (init.domainsAbstained ?? 0) < init.domainsRequired) {
     return "In progress";
   }
-  if (init.domainsSigned >= init.domainsRequired && init.domainsRequired > 0) {
-    return "All signed";
+  if (init.domainsSigned + (init.domainsAbstained ?? 0) >= init.domainsRequired && init.domainsRequired > 0) {
+    return "Reviews resolved";
   }
   return "In progress";
 }

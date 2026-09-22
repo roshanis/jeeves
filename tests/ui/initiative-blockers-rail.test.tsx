@@ -32,3 +32,11 @@ describe("InitiativeBlockersRail — incomplete governance", () => {
     expect(screen.getByText("Review awaiting signature: Legal")).toBeTruthy();
   });
 });
+
+it("records abstention without blocking progress while preserving independent control blockers", async () => {
+  const detail = (await new MockDataProvider().getInitiativeDetail("member-chat-copilot"))!;
+  renderWithProviders(<InitiativeBlockersRail detail={{ ...detail, summary: { ...detail.summary, state: "in_review" }, reviews: [{ ...detail.reviews[0]!, domain: "legal", status: "abstained", abstention: { reason: "Conflict of interest", reviewer: "reviewer", at: "2026-09-21T12:00:00Z" } }] }} />);
+  expect(screen.queryByText(/required review incomplete/)).toBeNull();
+  expect(screen.getByText(/Conflict of interest/)).toBeTruthy();
+  expect(screen.getByText("Control Q-01: breached")).toBeTruthy();
+});

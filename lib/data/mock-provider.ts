@@ -369,6 +369,7 @@ function buildReviews(init: InitiativeFixture): ReviewRow[] {
     return {
       domain,
       status,
+      cycleOpen: init.state === "in_review" || init.state === "re_review",
       reviewer,
       createdAt,
       signedAt,
@@ -721,6 +722,7 @@ function toSummary(init: InitiativeFixture): InitiativeSummary {
     accountableApprover: init.accountableApprover,
     domainsRequired: domains.length,
     domainsSigned: init.domainsSigned,
+    domainsAbstained: 0,
     decisionReadiness: reviewDecisionReadiness({
       state: init.state,
       cycleOpen: init.state === "in_review" || init.state === "re_review",

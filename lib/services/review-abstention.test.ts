@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { and, eq } from "drizzle-orm";
 import { createTestDb, closeTestDb, type TestDb } from "../db/test-client";
-import { auditEvents, initiatives, initiativeDecisions, reviewCycles, reviewDecisions } from "../db/schema";
+import { auditEvents, controlDefinitions, initiatives, initiativeDecisions, reviewCycles, reviewDecisions } from "../db/schema";
 import { CHAMPION_PREFILL_PAYLOAD } from "../intake/champion-prefill";
 import { createMockAgentPort } from "../agents/mock-adapter";
 import type { DraftReviewOutput, PortResult } from "../agents/ports";
@@ -9,6 +9,8 @@ import { DbDataProvider } from "../data/db-provider";
 import { runSingleDomainDraft, startDraftRun } from "../workflow/review-run";
 import { reviewDecisionReadiness } from "../approval/review-readiness";
 import * as svc from "./initiative-service";
+import { ACTOR_DIRECTORY, reviewerDomainFor } from "./actors";
+import { CONTROL_SEEDS } from "../../scripts/seed";
 
 const requester = { id: "priya-raman", role: "requester" as const };
 const reviewer = { id: "elena-vasquez", role: "reviewer" as const };
@@ -23,6 +25,7 @@ describe("domain reviewer abstention", () => {
   let cycleId: string;
   beforeEach(async () => {
     db = await createTestDb();
+    await db.insert(controlDefinitions).values(CONTROL_SEEDS.map(control => ({ ...control })));
     ({ initiativeId, slug } = await svc.createDraft(db, { payload: CHAMPION_PREFILL_PAYLOAD, requesterActor: requester, requesterName: "Priya Raman", workspaceId: workspace }));
     await svc.submitIntake(db, initiativeId, requester, workspace);
     const result = await svc.triage(db, initiativeId, undefined, workspace);
@@ -127,19 +130,81 @@ describe("domain reviewer abstention", () => {
     expect((await db.select().from(auditEvents)).filter(e=>e.action==="review_resumed")).toHaveLength(0);
   });
 
-  it("blocks approval and conditional approval even when every other domain is signed", async () => {
-    await db.update(reviewDecisions).set({status:"signed",draftMd:"Signed assessment"}).where(eq(reviewDecisions.cycleId,cycleId));
-    const selected = await row();
-    await db.update(reviewDecisions).set({status:"drafted"}).where(eq(reviewDecisions.id,selected.id));
-    await abstain();
-    for (const decision of ["approved","conditionally_approved"] as const) {
-      await expect(svc.decide(db,initiativeId,{id:"angela-torres",role:"approver"},workspace,{decision,conditions:[{text:"Pilot controls",controlId:"H-01"}]})).rejects.toThrow(/abstained/);
+  const approver = { id: "angela-torres", role: "approver" as const };
+  async function abstainAll() {
+    const rows = await db.select().from(reviewDecisions).where(eq(reviewDecisions.cycleId, cycleId));
+    for (const review of rows) {
+      const actor = Object.values(ACTOR_DIRECTORY).find(actor => reviewerDomainFor(actor.id) === review.domain)!;
+      await svc.abstainReview(db, cycleId, review.domain as Parameters<typeof svc.abstainReview>[2], { id: actor.id, role: "reviewer" }, workspace, reason, review.revision);
     }
+  }
+
+  it.each(["approved", "conditionally_approved", "rejected"] as const)("records an explicit %s conclusion with an abstained reviewer", async (decision) => {
+    await db.update(reviewDecisions).set({ status: "signed", draftMd: "Signed assessment" }).where(eq(reviewDecisions.cycleId, cycleId));
+    await db.update(reviewDecisions).set({ status: "drafted" }).where(eq(reviewDecisions.id, (await row()).id));
+    await abstain();
+    const before = await new DbDataProvider(db).getInitiativeDetail(slug, { viewerWorkspaceId: workspace });
+    expect(before?.summary).toMatchObject({ domainsSigned: 7, domainsAbstained: 1, decisionReadiness: { canApprove: true, canConditionallyApprove: true } });
     expect(await db.select().from(initiativeDecisions)).toHaveLength(0);
-    expect((await db.select().from(initiatives))[0].state).toBe("in_review");
-    const port={...createMockAgentPort(),draftReview:vi.fn()};
-    expect(await svc.runReviewAgent(db,cycleId,domain,reviewer,workspace,port,{expectedRevision:1})).toMatchObject({status:"skipped",reason:"reviewer abstained"});
-    expect(port.draftReview).not.toHaveBeenCalled();
+    await svc.decide(db, initiativeId, approver, workspace, { decision, conditions: [{ text: "Pilot controls", controlId: "H-01" }] });
+    expect((await db.select().from(initiatives))[0]).toMatchObject({ state: decision, accountableApprover: approver.id });
+    expect((await db.select().from(reviewCycles))[0].closedAt).not.toBeNull();
+    const event = (await db.select().from(auditEvents)).find(event => event.metadata?.reviewSnapshots);
+    const snapshots = event?.metadata?.reviewSnapshots as Record<string, unknown>[];
+    expect(snapshots.find(snapshot => snapshot.domain === domain)).toMatchObject({
+      status: "abstained", signatureEventId: null, provenance: "abstention-receipt",
+      abstention: { reason, reviewer: reviewer.id, eventId: expect.any(String) },
+    });
+    await expect(svc.resumeReview(db, cycleId, domain, reviewer, workspace, 1)).rejects.toThrow(svc.ConflictError);
+    expect((await row()).status).toBe("abstained");
+    const after = await new DbDataProvider(db).getInitiativeDetail(slug, { viewerWorkspaceId: workspace });
+    expect(after?.reviews.find(review => review.domain === domain)).toMatchObject({ cycleOpen: false });
+    expect(after?.summary.domainsSigned).toBe(7);
   });
 
+  it.each(["approved", "conditionally_approved"] as const)("permits %s with zero signatures only after all reviewers abstain and an approver acts", async (decision) => {
+    await abstainAll();
+    expect(await db.select().from(initiativeDecisions)).toHaveLength(0);
+    expect((await db.select().from(initiatives))[0].state).toBe("in_review");
+    for (const actor of [requester, reviewer, { id: "ray-chen", role: "admin" as const }]) {
+      await expect(svc.decide(db, initiativeId, actor, workspace, { decision, conditions: [{ text: "Pilot controls", controlId: "H-01" }] })).rejects.toThrow(svc.IllegalTransitionError);
+    }
+    await svc.decide(db, initiativeId, approver, workspace, { decision, conditions: [{ text: "Pilot controls", controlId: "H-01" }] });
+    const detail = await new DbDataProvider(db).getInitiativeDetail(slug, { viewerWorkspaceId: workspace });
+    expect(detail?.summary).toMatchObject({ state: decision, domainsRequired: 8, domainsSigned: 0, domainsAbstained: 8 });
+    expect(detail?.controls.length).toBeGreaterThan(0);
+    expect(detail?.controls.some(control => control.status !== "met")).toBe(true);
+    expect(detail?.reviews.every(review => review.status === "abstained" && review.signedAt === null)).toBe(true);
+  });
+
+  it("restores the participation requirement when a reviewer resumes before a decision", async () => {
+    await abstainAll();
+    await svc.resumeReview(db, cycleId, domain, reviewer, workspace, 1);
+    await expect(svc.decide(db, initiativeId, approver, workspace, { decision: "approved" })).rejects.toThrow(/clinical-safety:pending/);
+    expect(await db.select().from(initiativeDecisions)).toHaveLength(0);
+    const detail = await new DbDataProvider(db).getInitiativeDetail(slug, { viewerWorkspaceId: workspace });
+    expect(detail?.summary).toMatchObject({ domainsAbstained: 7, decisionReadiness: { canApprove: false, canConditionallyApprove: false } });
+  });
+
+  it.each(["missing", "stale", "duplicate", "blank reason"])("keeps a %s abstention receipt blocking in both server and read model", async (corruption) => {
+    await abstainAll();
+    const review = await row();
+    if (corruption === "stale") await db.update(reviewDecisions).set({ revision: 2 }).where(eq(reviewDecisions.id, review.id));
+    else {
+      // The production audit is append-only: simulate corruption with an extra receipt, or an unreceipted row revision.
+      const original = (await db.select().from(auditEvents)).find(event => event.metadata?.reviewDecisionId === review.id)!;
+      if (corruption === "missing") await db.update(reviewDecisions).set({ id: "unreceipted-review" }).where(eq(reviewDecisions.id, review.id));
+      else {
+        if (corruption === "blank reason") await db.update(reviewDecisions).set({ revision: 2 }).where(eq(reviewDecisions.id, review.id));
+        await db.insert(auditEvents).values({ ...original, id: `extra-${corruption}`, metadata: { ...original.metadata, ...(corruption === "blank reason" ? { reason: " ", revision: 2 } : {}) } });
+      }
+    }
+    for (const decision of ["approved", "conditionally_approved"] as const) {
+      await expect(svc.decide(db, initiativeId, approver, workspace, { decision, conditions: [{ text: "Pilot controls", controlId: "H-01" }] })).rejects.toThrow(/abstained/);
+    }
+    const detail = await new DbDataProvider(db).getInitiativeDetail(slug, { viewerWorkspaceId: workspace });
+    expect(detail?.summary.decisionReadiness).toMatchObject({ canApprove: false, canConditionallyApprove: false });
+    expect(await db.select().from(initiativeDecisions)).toHaveLength(0);
+    expect((await db.select().from(reviewCycles))[0].closedAt).toBeNull();
+  });
 });

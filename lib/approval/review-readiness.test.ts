@@ -32,3 +32,26 @@ describe("review decision readiness", () => {
     expect(reviewDecisionReadiness({ ...input, cycleOpen: false })).toMatchObject({ canApprove: false, canConditionallyApprove: false, canReject: false });
   });
 });
+
+const receipt = { reason: "Conflict of interest", reviewer: "reviewer", at: "2026-09-21T12:00:00Z" };
+describe("nonblocking recorded abstention", () => {
+  it.each(["signed", "drafted"])("continues with a %s participating reviewer and a recorded abstention", (status) => {
+    const reviews = [{ domain: "legal", status }, { domain: "security", status: "abstained", abstention: receipt }];
+    const result = reviewDecisionReadiness({ ...input, reviews });
+    expect(result).toMatchObject({ canApprove: status === "signed", canConditionallyApprove: true, conditionalBlockers: [] });
+    expect(result.reason).toMatch(/abstain/i);
+    expect(result.reason).not.toMatch(/all required reviews signed/i);
+  });
+  it("lets a human decide when all required reviewers have recorded abstentions", () => {
+    const reviews = input.reviews.map(row => ({ ...row, status: "abstained", abstention: receipt }));
+    expect(reviewDecisionReadiness({ ...input, reviews })).toMatchObject({ canApprove: true, canConditionallyApprove: true, canReject: true });
+  });
+  it("keeps an abstention without a validated receipt blocking", () => {
+    expect(reviewDecisionReadiness({ ...input, reviews: [{ domain: "legal", status: "signed" }, { domain: "security", status: "abstained" }] }))
+      .toMatchObject({ canApprove: false, canConditionallyApprove: false, approvalBlockers: ["security:abstained"] });
+  });
+  it.each(["pending", "returned", "missing"])("does not hide another %s obligation", (status) => {
+    const reviews = [{ domain: "legal", status: "abstained", abstention: receipt }, ...(status === "missing" ? [] : [{ domain: "security", status }])];
+    expect(reviewDecisionReadiness({ ...input, reviews })).toMatchObject({ canApprove: false, canConditionallyApprove: false, approvalBlockers: [`security:${status}`] });
+  });
+});

@@ -140,7 +140,7 @@ function ReviewsTabContent({ reviews, slug, initiativeId, isSeeded }: {
         toast.info(`${remainingDomains.length} domain${remainingDomains.length === 1 ? "" : "s"} did not complete. A run may still be active or the review changed. Refresh and review the current status before retrying.`);
       } else if (result.outcomes.some((outcome) => outcome.reason === "reviewer abstained")) {
         setSelectionState({ cycleId: result.cycleId, domains: [] });
-        toast.info("Abstained reviews remain incomplete. Their assigned reviewers must resume them before drafting.");
+        toast.info("Abstained reviewers are skipped. The remaining reviews can continue to an approver decision.");
       } else {
         setSelectionState({ cycleId: result.cycleId, domains: [] });
         toast.success("Draft run finished — all requested domains completed.");

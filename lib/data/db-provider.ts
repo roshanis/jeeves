@@ -356,6 +356,10 @@ export class DbDataProvider implements DataProvider {
       : [];
 
     const ecs = this.controlsOf(snap, init.id);
+    const cycleReviews = cycleDecisions.map(row => ({
+      ...row,
+      abstention: currentAbstention(row, snap.auditEvents.filter(event => event.initiativeId === init.id)),
+    }));
 
     return {
       slug: init.slug,
@@ -369,11 +373,12 @@ export class DbDataProvider implements DataProvider {
       accountableApprover: init.accountableApprover,
       domainsRequired: ra ? ra.requiredDomains.length : 0,
       domainsSigned: cycleDecisions.filter((rd) => rd.status === "signed").length,
+      domainsAbstained: cycleReviews.filter(row => row.abstention).length,
       decisionReadiness: reviewDecisionReadiness({
         state: init.state as LifecycleState,
         cycleOpen: Boolean(cycle && !cycle.closedAt),
         requiredDomains: snap.riskAssessments.find((row) => row.id === cycle?.riskAssessmentId && row.initiativeId === init.id)?.requiredDomains ?? null,
-        reviews: cycleDecisions,
+        reviews: cycleReviews,
       }),
       overdue: ecs.some((ec) => ec.status === "overdue"),
       storyline: this.storylineOf(snap, init),
@@ -437,6 +442,7 @@ export class DbDataProvider implements DataProvider {
         return {
           ...(receipt ? { abstention: { reason: receipt.reason, reviewer: receipt.reviewer, at: receipt.at } } : {}),
           cycleId: rd.cycleId,
+          cycleOpen: Boolean(cycle && !cycle.closedAt),
           revision: rd.revision,
           domain: rd.domain as Domain,
           status: rd.status as ReviewRow["status"],
