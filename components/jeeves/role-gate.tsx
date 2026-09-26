@@ -12,8 +12,7 @@
 // 2. `DisableWithTooltip` — authentication-state gating, orthogonal to role.
 //    Without a live demo session, every mutation-looking control (Sign,
 //    Return, Submit intake, Run monitor, Edit threshold, Pause/Resume)
-//    renders visibly but disabled, with the tooltip text "Enter demo
-//    passcode to enable" (exact string; tests match on it).
+//    renders visibly but disabled, with a Start demo tooltip.
 //
 //    LIVE MODE (additive): a call site may pass `onAction` (and optionally
 //    `requiresRole`). When a live session exists (LiveSessionProvider) and
@@ -36,7 +35,7 @@ import {
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
-export const DEMO_PASSCODE_TOOLTIP = "Enter demo passcode to enable";
+export const DEMO_SESSION_TOOLTIP = "Start the demo to try this action";
 
 /**
  * Mechanism 1: hides children entirely when the active role is Admin.
@@ -106,8 +105,8 @@ export function DisableWithTooltip({
 
   const tooltip =
     session && requiresRole && !roleSatisfied
-      ? `Requires the ${requiresRole} role — switch persona via the demo mode chip`
-      : DEMO_PASSCODE_TOOLTIP;
+      ? `Requires the ${requiresRole} role — choose a persona in the header`
+      : DEMO_SESSION_TOOLTIP;
 
   return (
     <Tooltip>

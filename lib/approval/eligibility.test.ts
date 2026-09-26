@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it } from "vitest";
 import type { OverlayFlags, Tier } from "../domain/types";
 import { fastLaneEligibility, type FastLanePolicy } from "./eligibility";

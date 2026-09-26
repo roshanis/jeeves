@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { closeTestDb, createTestDb, type TestDb } from "@/lib/db/test-client";
 import { controlDefinitions, deploymentVersions, incidents, initiatives } from "@/lib/db/schema";
 import { loadIncidentsForViewer } from "./incident-data";
@@ -52,6 +52,15 @@ describe("loadIncidentsForViewer", () => {
 
   afterAll(async () => {
     await closeTestDb(db);
+  });
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("loads incidents when Vercel supplies only the POSTGRES_URL integration variable", async () => {
+    vi.stubEnv("DATABASE_URL", "");
+    vi.stubEnv("POSTGRES_URL", "postgres://fixture:fixture@db.example.test/fixture");
+    vi.stubEnv("DATA_PROVIDER", "");
+    const result = await loadIncidentsForViewer("ws-owner", { db });
+    expect(result.status === "success" ? result.incidents.map((row) => row.id) : result).toEqual(["incident-owned"]);
   });
 
   it("reports preview incident data as unavailable without opening a database", async () => {

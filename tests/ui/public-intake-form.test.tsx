@@ -1,21 +1,20 @@
-// The public can submit a request without a passcode.
+// The intake page offers two ways in, and they go to different places.
 //
-// This reverses what the read-only notice used to say. The notice was
-// accurate when it was written — submitting genuinely required a session —
-// so the change has to reach the copy as well as the gate, or the form tells
-// visitors they cannot do the thing they are about to do.
+// "Start the demo" is the passwordless playground: a requester persona in the
+// visitor's own sandbox, where they can switch roles and review their own
+// fictional initiative. Nothing leaves it. "Send a real request" is a
+// `public` session whose submission reaches the site's operators.
 //
-// The passcode path stays exactly where it was. It is still what a demo
-// walkthrough uses, and it is still the only way to reach anything past
-// submission: QC, triage, the review fan-out and every decision remain with
-// named, passcode-holding humans.
+// The copy is the control here. A visitor has to be able to tell which door
+// reaches a human before they type anything, so the tests pin the wording as
+// well as the wiring.
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { renderWithProviders } from "./helpers";
 import { LiveSessionProvider, resetLiveSessionForTests } from "@/lib/client/session-context";
 import { IntakeForm } from "@/components/jeeves/intake-form";
 
-const mocks = vi.hoisted(() => ({ postPublicSession: vi.fn() }));
+const mocks = vi.hoisted(() => ({ postPublicSession: vi.fn(), postSession: vi.fn() }));
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), refresh: vi.fn(), replace: vi.fn() }),
@@ -24,7 +23,7 @@ vi.mock("next/navigation", () => ({
 
 vi.mock("@/lib/client/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/client/api")>();
-  return { ...actual, postPublicSession: mocks.postPublicSession };
+  return { ...actual, postPublicSession: mocks.postPublicSession, postSession: mocks.postSession };
 });
 
 function render() {
@@ -35,7 +34,7 @@ function render() {
   );
 }
 
-describe("IntakeForm — public submission", () => {
+describe("IntakeForm — two ways in", () => {
   beforeEach(() => {
     resetLiveSessionForTests();
     mocks.postPublicSession.mockReset();
@@ -44,59 +43,57 @@ describe("IntakeForm — public submission", () => {
       workspaceId: "public-ws_abc",
       expiresAt: Date.now() + 1_800_000,
     });
+    mocks.postSession.mockReset();
   });
 
   afterEach(() => {
     resetLiveSessionForTests();
   });
 
-  it("offers a way to submit without a passcode", () => {
+  it("offers both doors, labelled for where they lead", () => {
     render();
-    expect(screen.getByRole("button", { name: /start a request/i })).toBeDefined();
+    expect(screen.getByRole("button", { name: /start the demo/i })).toBeDefined();
+    expect(screen.getByRole("button", { name: /send a real request/i })).toBeDefined();
+    // The sentence that makes the choice an informed one.
+    expect(screen.getByText(/stays in your own sandbox/i)).toBeDefined();
+    expect(screen.getByText(/goes to the team running this site/i)).toBeDefined();
   });
 
-  it("no longer tells the visitor the form is non-interactive", () => {
+  it("mentions no passcode — there isn't one any more", () => {
     render();
-    expect(screen.queryByText(/read-only mode/i)).toBeNull();
-    expect(screen.queryByText(/visible but non-interactive/i)).toBeNull();
-  });
-
-  it("keeps the demo passcode path available for the walkthrough", () => {
-    render();
-    expect(screen.getByRole("button", { name: /enter the demo passcode/i })).toBeDefined();
+    expect(screen.queryByText(/passcode/i)).toBeNull();
   });
 
   it("warns against entering real personal or health information", () => {
     render();
-    // Strangers will be typing into a form themed as a healthcare payer's
-    // intake. Saying this plainly is the cheapest control available.
     expect(screen.getByText(/do not enter real/i)).toBeDefined();
   });
 
-  it("mints a public session and enables the form", async () => {
+  it("'Send a real request' starts a public session — not a demo persona — and says where it goes", async () => {
     render();
-
-    const submitBefore = screen.getAllByRole("button", { name: /submit intake/i })[0]!;
-    expect((submitBefore as HTMLButtonElement).disabled).toBe(true);
-
-    fireEvent.click(screen.getByRole("button", { name: /start a request/i }));
+    fireEvent.click(screen.getByRole("button", { name: /send a real request/i }));
 
     await waitFor(() => expect(mocks.postPublicSession).toHaveBeenCalledTimes(1));
-    // No passcode is sent, because there isn't one.
     expect(mocks.postPublicSession).toHaveBeenCalledWith();
+    expect(mocks.postSession).not.toHaveBeenCalled();
 
-    await waitFor(() =>
-      expect(screen.queryByRole("button", { name: /start a request/i })).toBeNull(),
-    );
+    await waitFor(() => expect(screen.getByText(/sending a real request/i)).toBeDefined());
+    expect(screen.getByText(/not into the demo/i)).toBeDefined();
   });
 
-  it("does not pretend a public submitter is a demo persona", async () => {
+  it("does not present a real-request sender as a demo persona", async () => {
     render();
-    fireEvent.click(screen.getByRole("button", { name: /start a request/i }));
-
+    fireEvent.click(screen.getByRole("button", { name: /send a real request/i }));
     await waitFor(() => expect(mocks.postPublicSession).toHaveBeenCalled());
-    // The role switcher must not silently show them as Program Office, which
-    // is what the defensive persona fallback would otherwise do.
-    await waitFor(() => expect(screen.queryByText(/viewing as nia okafor/i)).toBeNull());
+    // The persona fallback would otherwise show them as the Program Office.
+    await waitFor(() => expect(screen.queryByText(/viewing as/i)).toBeNull());
+  });
+
+  it("coalesces a double click into one session", async () => {
+    render();
+    const send = screen.getByRole("button", { name: /send a real request/i });
+    fireEvent.click(send);
+    fireEvent.click(send);
+    await waitFor(() => expect(mocks.postPublicSession).toHaveBeenCalledTimes(1));
   });
 });

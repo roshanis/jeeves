@@ -38,7 +38,7 @@ export default function PrivacyPage() {
       </LegalSection>
 
       <LegalSection heading="What we store when you use the demo">
-        <p>If you start a session — either with the demo passcode or by starting a public request — we store:</p>
+        <p>If you start a session — either by starting the demo or by sending a real request — we store:</p>
         <ul className="ml-5 list-disc space-y-1.5">
           <li>
             <span className="font-medium">A session cookie</span> (<code className="font-mono text-xs">jeeves_workspace</code>),
@@ -76,23 +76,33 @@ export default function PrivacyPage() {
 
       <LegalSection heading="Where it is stored, and who can see it">
         <p>
-          Submissions are stored in a hosted Postgres database. Records you
-          create in a demo session are scoped to your own workspace and are
-          not visible to other visitors. Requests sent through the public
-          intake form are visible to whoever operates this deployment, so that
-          they can be read and responded to — that is the purpose of sending
-          one.
+          Everything is stored in a hosted Postgres database. There are two
+          ways in, and they differ in who can see what you write:
         </p>
+        <ul className="ml-5 list-disc space-y-1.5">
+          <li>
+            <span className="font-medium">The demo.</span> Records you create
+            while trying the demo — in any role — are scoped to your own
+            browser&rsquo;s workspace and are not visible to other visitors.
+          </li>
+          <li>
+            <span className="font-medium">A real request.</span> What you send
+            through &ldquo;Send a real request&rdquo; is visible to the people
+            running this site, so that they can read it and reply to the email
+            address you give — that is the purpose of sending one. It is not
+            visible to other visitors, whatever role they pick in the demo.
+          </li>
+        </ul>
       </LegalSection>
 
       <LegalSection heading="AI processing">
         <p>
-          When the demo runs its review agents, the contents of the initiative
-          being reviewed are sent to OpenAI&rsquo;s API for processing. This happens
-          only for actions taken by a passcode-holding demo user; submitting a
-          public request does not send anything to an AI provider. If no API
-          key is configured the demo uses a deterministic local mock and
-          nothing leaves the server.
+          In the demo, some actions — running the review agents, or using the
+          intake assistant — send the contents of the initiative you are
+          working on to OpenAI&rsquo;s API for processing. Sending a real
+          request does not send anything to an AI provider. If no API key is
+          configured the demo uses a deterministic local mock and nothing
+          leaves the server.
         </p>
       </LegalSection>
 

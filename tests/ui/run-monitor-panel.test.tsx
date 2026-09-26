@@ -102,7 +102,7 @@ describe("RunMonitorPanel — live session", () => {
   // Mirrors auditor-chat.test.tsx / demo-mode-chip.test.tsx's fetch-mocked
   // login flow: drive `login()` directly via a tiny capture component
   // mounted alongside RunMonitorPanel under one shared LiveSessionProvider.
-  let capturedLogin: ((passcode: string, personaKey: string) => Promise<unknown>) | null = null;
+  let capturedLogin: ((personaKey: string) => Promise<unknown>) | null = null;
 
   function LoginCapture() {
     const { login } = useLiveSession();
@@ -125,7 +125,7 @@ describe("RunMonitorPanel — live session", () => {
         expiresAt: Date.now() + 60_000,
       }),
     );
-    await capturedLogin!("correct-pass", "ray-chen");
+    await capturedLogin!("ray-chen");
 
     return utils;
   }

@@ -1,3 +1,4 @@
+import Link from "next/link";
 // Blockers / required-evidence right rail (case-file reshape): a compact,
 // sticky sidebar next to an initiative's tabs that surfaces what is
 // currently blocking progress and what evidence is still outstanding, so a
@@ -145,7 +146,9 @@ function deriveBlockers(detail: InitiativeDetail): Blocker[] {
   }
 
   for (const review of detail.reviews) {
-    if (review.status === "returned") {
+    if (review.status === "abstained") {
+      if (!review.abstention) blockers.push({ label: `Abstention record unavailable: ${DOMAIN_LABEL[review.domain]} — refresh and inspect Audit`, severity: "amber" });
+    } else if (review.status === "returned") {
       blockers.push({
         label: `Review returned: ${DOMAIN_LABEL[review.domain]}`,
         severity: "high",
@@ -267,6 +270,16 @@ export function InitiativeBlockersRail({ detail }: { detail: InitiativeDetail })
         </div>
       </div>
 
+      {detail.reviews.some(review => review.status === "abstained" && review.abstention) ? (
+        <section className="panel space-y-2 p-4" aria-label="Recorded abstentions">
+          <h3 className="kicker">Recorded abstentions</h3>
+          <p className="text-sm text-muted-foreground">These reviewers do not block a decision. Abstention is not a signature.</p>
+          {detail.reviews.filter(review => review.status === "abstained" && review.abstention).map(review => (
+            <p key={review.domain} className="text-sm"><strong>{DOMAIN_LABEL[review.domain]}</strong>: {review.abstention!.reason}</p>
+          ))}
+        </section>
+      ) : null}
+
       <div className="panel overflow-hidden">
         <div className="flex items-center gap-2 border-b border-border px-4 py-2.5">
           <span className="kicker">Required evidence</span>
@@ -275,6 +288,7 @@ export function InitiativeBlockersRail({ detail }: { detail: InitiativeDetail })
           ) : null}
         </div>
         <div className="scroll-thin max-h-80 space-y-3 overflow-y-auto p-4">
+          <Link className="inline-flex min-h-11 items-center text-sm underline underline-offset-4" href={`/initiatives/${detail.summary.slug}?tab=evidence`}>Open document checklist and reviewer feedback</Link>
           {evidence.length === 0 ? (
             <p className="text-sm text-muted-foreground">
               {noOutstandingEvidenceMessage(detail)}

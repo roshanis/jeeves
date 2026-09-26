@@ -1,11 +1,14 @@
 import { loadPortfolioDetails } from "@/app/_lib/portfolio-data";
 import { getAppProvider, getCurrentWorkspaceId } from "@/app/_lib/data-provider";
-import {
-  ReviewWorkbench,
-  type ReviewQueueRow,
-} from "@/components/jeeves/review-workbench";
+import type { ReviewQueueRow } from "@/components/jeeves/review-workbench";
+import { ReviewWorkbenchRoute } from "./review-workbench-route";
 import { ReviewRequestQueue } from "@/components/jeeves/review-request-queue";
-import { PublicIntakeQueue } from "@/components/jeeves/public-intake-queue";
+import {
+  deliveryTransportStatus,
+  undeliveredNotifications,
+  type ReviewNotificationRow,
+} from "@/lib/services/notification-service";
+import { getDb } from "@/lib/db/client";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
@@ -13,12 +16,6 @@ export const metadata: Metadata = {
   description:
     "All domain reviews across the portfolio, with the outbound review-request queue. Agents draft; humans sign — signing authority never sits with agents or Admin.",
 };
-import {
-  deliveryTransportStatus,
-  undeliveredNotifications,
-  type ReviewNotificationRow,
-} from "@/lib/services/notification-service";
-import { getDb } from "@/lib/db/client";
 
 export default async function ReviewsPage() {
   const provider = getAppProvider();
@@ -48,13 +45,14 @@ export default async function ReviewsPage() {
         slug: detail.summary.slug,
         title: detail.summary.title,
         tier: detail.summary.tier,
+        isSeeded: detail.summary.isSeeded,
         review,
       });
     }
   }
 
-  // Returned first (bottlenecks), then drafted (awaiting signature), then signed.
-  const order = { returned: 0, drafted: 1, signed: 2, pending: 3 } as const;
+  // Keep blocked and incomplete reviews ahead of completed signatures.
+  const order = { returned: 0, drafted: 1, pending: 2, abstained: 3, signed: 4 } as const;
   rows.sort(
     (a, b) =>
       order[a.review.status] - order[b.review.status] ||
@@ -70,11 +68,8 @@ export default async function ReviewsPage() {
           decide — signing authority never sits with agents or Admin.
         </p>
       </div>
-      <ReviewWorkbench rows={rows} />
+      <ReviewWorkbenchRoute rows={rows} />
       <ReviewRequestQueue notifications={requests} transport={deliveryTransportStatus()} />
-      {/* Renders nothing unless the viewer holds a Program Office or Admin
-          session — public submissions are not the portfolio's to show. */}
-      <PublicIntakeQueue />
     </div>
   );
 }

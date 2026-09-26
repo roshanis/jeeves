@@ -9,7 +9,7 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
 describe("IntakeModeToggle", () => {
   it("keeps structured draft answers when switching through chat", () => {
     renderWithProviders(<LiveSessionProvider><IntakeModeToggle /></LiveSessionProvider>);
-    fireEvent.click(screen.getByRole("button", { name: "Load champion example" }));
+    fireEvent.click(screen.getByRole("button", { name: "Use a sample initiative" }));
     expect((screen.getByLabelText("Initiative title") as HTMLInputElement).value).toBe("Prior-Auth Clinical Summarizer");
     fireEvent.click(screen.getByRole("tab", { name: "Chat with intake assistant" }));
     fireEvent.click(screen.getByRole("tab", { name: "Structured form" }));

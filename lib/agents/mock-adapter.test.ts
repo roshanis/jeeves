@@ -2,17 +2,13 @@ import { describe, expect, it } from "vitest";
 import {
   buildMockReviewerDraft,
   createMockAgentPort,
-  generateMockIncidentSummary,
-  generateMockTriageRationale,
 } from "@/lib/agents/mock-adapter";
 import type {
   AuditorAnswerInput,
-  CompletenessCheckInput,
   DraftReviewInput,
   GovernanceDomain,
   IntakeInterviewInput,
   IntakeSnapshot,
-  TriageAssistInput,
 } from "@/lib/agents/ports";
 
 /** Real citation anchors per domain (docs/policies/INDEX.md), keyed by
@@ -62,6 +58,16 @@ function draftInput(
 }
 
 describe("buildMockReviewerDraft — citation fixtures per domain", () => {
+  it("labels canned output as synthetic and preserves citations through the port", async () => {
+    const result = await createMockAgentPort().draftReview(draftInput("privacy-hipaa"));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.draftMarkdown).toContain("Synthetic data — demo");
+    expect(result.value.citations).toContain("MP-H v3 §MP-H-2");
+    expect(result.value.evidenceRequests?.[0]?.controlId).toBe("H-01");
+    expect(result.value.generationMetadata).toMatchObject({ adapter: "mock", synthetic: true });
+  });
+
   for (const domain of ALL_DOMAINS) {
     it(`${domain}: citations include a real anchor for this domain's controls`, () => {
       const rich = buildMockReviewerDraft(
@@ -125,24 +131,6 @@ describe("createMockAgentPort — determinism and AgentPort contract", () => {
     expect(first).toEqual(second);
   });
 
-  it("triageAssist: same input -> deep-equal output across 2 calls", async () => {
-    const input: TriageAssistInput = {
-      intake: intake({ phi: true, careCoverageInfluence: true }),
-    };
-    const first = await port.triageAssist(input);
-    const second = await port.triageAssist(input);
-    expect(first).toEqual(second);
-  });
-
-  it("checkCompleteness: same input -> deep-equal output across 2 calls", async () => {
-    const input: CompletenessCheckInput = {
-      intake: intake({ retentionIntent: "<=1 year" }),
-    };
-    const first = await port.checkCompleteness(input);
-    const second = await port.checkCompleteness(input);
-    expect(first).toEqual(second);
-  });
-
   it("draftReview never emits an approval — recommendation matches /^recommend-/", async () => {
     const result = await port.draftReview(draftInput("clinical-safety"));
     expect(result.ok).toBe(true);
@@ -177,26 +165,6 @@ describe("createMockAgentPort — determinism and AgentPort contract", () => {
     controller.abort();
     const result = await promise;
     expect(result).toEqual({ ok: false, error: { kind: "cancelled" } });
-  });
-
-  it("checkCompleteness flags missing retention answer", async () => {
-    const result = await port.checkCompleteness({ intake: intake({}) });
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.value.complete).toBe(false);
-      expect(result.value.missingFields).toContain("retentionIntent");
-    }
-  });
-
-  it("checkCompleteness reports complete when retention answer is present", async () => {
-    const result = await port.checkCompleteness({
-      intake: intake({ retentionIntent: "<=1 year" }),
-    });
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.value.complete).toBe(true);
-      expect(result.value.missingFields).toEqual([]);
-    }
   });
 });
 
@@ -238,50 +206,6 @@ describe("createMockAgentPort — timeoutMs deadline (ports.ts InvokeOptions)", 
       ok: false,
       error: { kind: "cancelled" },
     });
-  });
-});
-
-describe("generateMockTriageRationale — rich shape", () => {
-  it("is deterministic for the same input", () => {
-    const input: TriageAssistInput = {
-      intake: intake({ phi: true, careCoverageInfluence: true }),
-    };
-    expect(generateMockTriageRationale(input)).toEqual(
-      generateMockTriageRationale(input),
-    );
-  });
-
-  it("produces rationaleMd and flagExplanations", () => {
-    const result = generateMockTriageRationale({
-      intake: intake({ phi: true }),
-    });
-    expect(typeof result.rationaleMd).toBe("string");
-    expect(result.rationaleMd.length).toBeGreaterThan(0);
-    expect(Array.isArray(result.flagExplanations)).toBe(true);
-  });
-});
-
-describe("generateMockIncidentSummary — deterministic canned generator", () => {
-  it("is deterministic for the same input", () => {
-    const payload = {
-      controlId: "Q-01",
-      initiativeId: "init-1",
-      domain: "clinical-safety" as GovernanceDomain,
-    };
-    expect(generateMockIncidentSummary(payload)).toEqual(
-      generateMockIncidentSummary(payload),
-    );
-  });
-
-  it("produces the OpsMonitorIncidentOutput shape", () => {
-    const result = generateMockIncidentSummary({
-      controlId: "Q-01",
-      initiativeId: "init-1",
-      domain: "clinical-safety" as GovernanceDomain,
-    });
-    expect(typeof result.incidentSummaryMd).toBe("string");
-    expect(Array.isArray(result.suggestedScope)).toBe(true);
-    expect(typeof result.severityNote).toBe("string");
   });
 });
 
@@ -471,6 +395,44 @@ function intakeInput(
 }
 
 describe("createMockAgentPort — intakeInterview", () => {
+  it.each(["review and submit", "submit", "continue"])("does not store the navigation command %s as an answer", async (command) => {
+    const port = createMockAgentPort();
+    const partialPayload = { overlay: { touchesPHI: false, memberFacing: false, careCoverageInfluence: false, vendorHosted: false, humanInTheLoop: true, individualImpact: false }, useCase: { currentWorkflow: null } };
+    const result = await port.intakeInterview(intakeInput({
+      partialPayload,
+      conversation: [{ role: "assistant", content: "Optional: How is this work handled today? You can say skip or review and submit when ready." }, { role: "user", content: command }],
+    }));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.payload).toEqual(partialPayload);
+    expect(result.value.followUpQuestions.join(" ")).toContain("Review and submit");
+  });
+  it("collects optional context after overlay questions and lets requesters skip", async () => {
+    const port = createMockAgentPort();
+    const partialPayload = { overlay: { touchesPHI: false, memberFacing: false, careCoverageInfluence: false, vendorHosted: false, humanInTheLoop: true, individualImpact: false } };
+    const first = await port.intakeInterview(intakeInput({ partialPayload, conversation: [] }));
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+    expect(first.value.followUpQuestions[0]).toContain("How is this work handled today?");
+    const conversation = [
+      { role: "assistant" as const, content: first.value.followUpQuestions.join(" ") },
+      { role: "user" as const, content: "A coordinator checks each fictional packet by hand." },
+    ];
+    const second = await port.intakeInterview(intakeInput({ partialPayload: first.value.payload, conversation }));
+    expect(second.ok).toBe(true);
+    if (!second.ok) return;
+    expect(second.value.payload).toMatchObject({ useCase: { currentWorkflow: conversation[1].content } });
+    expect(second.value.followUpQuestions[0]).toContain("How will success be measured");
+    const skipped = await port.intakeInterview(intakeInput({
+      partialPayload: second.value.payload,
+      conversation: [...conversation, { role: "assistant", content: second.value.followUpQuestions.join(" ") }, { role: "user", content: "I don't know" }],
+    }));
+    expect(skipped.ok).toBe(true);
+    if (!skipped.ok) return;
+    expect(skipped.value.payload).toMatchObject({ useCase: { currentWorkflow: conversation[1].content, successMetrics: null } });
+    expect(skipped.value.followUpQuestions[0]).toContain("Can the vendor retain");
+    expect(skipped.value.gaps).toEqual([]);
+  });
   const port = createMockAgentPort();
 
   it("asks the first overlay question (touchesPHI) verbatim, with its helper line, when overlay is entirely null", async () => {
@@ -502,7 +464,7 @@ describe("createMockAgentPort — intakeInterview", () => {
     }
   });
 
-  it("returns a deterministic closing acknowledgment once all six overlay questions are answered", async () => {
+  it("offers optional context once all six overlay questions are answered", async () => {
     const overlay = {
       touchesPHI: true,
       memberFacing: false,

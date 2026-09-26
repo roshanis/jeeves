@@ -1,4 +1,6 @@
 import type { Metadata } from "next";
+import Link from "next/link";
+import { EvidenceTab } from "@/components/jeeves/evidence-tab";
 import { notFound } from "next/navigation";
 import { getInitiativeDetailCoherent } from "@/app/_lib/data-provider";
 import { TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -17,7 +19,8 @@ import { ReviewsTab } from "@/components/jeeves/reviews-tab";
 import { DecisionsTab } from "@/components/jeeves/decisions-tab";
 import { ControlsTab } from "@/components/jeeves/controls-tab";
 import { EvalsTab } from "@/components/jeeves/operate-tab";
-import { DeploymentsTab, DEPLOYMENT_STATUS_LABEL } from "@/components/jeeves/deployments-tab";
+import { DeploymentRecovery } from "@/components/jeeves/deployment-recovery";
+import { DEPLOYMENT_STATUS_LABEL } from "@/components/jeeves/deployments-tab";
 import {
   InitiativeBlockersRail,
   summarizeBlockers,
@@ -26,7 +29,7 @@ import { AuditTab } from "@/components/jeeves/audit-tab";
 
 /** Segmented review-progress gauge — one filled tick per signed review, with
  * a mono "0/8 signed" readout so the instrument reads at a glance. */
-function ReviewProgressBar({ signed, total }: { signed: number; total: number }) {
+function ReviewProgressBar({ signed, abstained, total }: { signed: number; abstained: number; total: number }) {
   if (total === 0) {
     return <span className="text-sm text-muted-foreground">No required domains</span>;
   }
@@ -35,20 +38,20 @@ function ReviewProgressBar({ signed, total }: { signed: number; total: number })
       <div
         className="flex gap-0.5"
         role="img"
-        aria-label={`${signed} of ${total} reviews signed`}
+        aria-label={`${signed} of ${total} reviews signed${abstained > 0 ? `, ${abstained} abstained` : ""}`}
       >
         {Array.from({ length: total }).map((_, i) => (
           <span
             key={i}
             className={cn(
               "h-2.5 w-1.5 rounded-[1px]",
-              i < signed ? "bg-status-good" : "bg-status-neutral-bg",
+              i < signed ? "bg-status-good" : i < signed + abstained ? "bg-amber-400" : "bg-status-neutral-bg",
             )}
           />
         ))}
       </div>
       <span className="stat-value text-xs text-foreground">
-        {signed}/{total} signed
+        {signed}/{total} signed{abstained > 0 ? ` · ${abstained} abstained` : ""}
       </span>
     </div>
   );
@@ -107,6 +110,11 @@ export default async function InitiativeDetailPage({
 
   return (
     <div className="flex flex-col gap-6">
+      {summary.isSeeded ? (
+        <aside className="rounded-lg border bg-muted/40 px-4 py-3 text-sm" aria-label="Sample initiative">
+          This is a shared example. <Link className="font-medium text-primary underline" href="/initiatives/new">Create your own initiative</Link> to try submitting, reviewing, and approving it.
+        </aside>
+      ) : null}
       <header className="panel card-quiet overflow-hidden" data-slot="case-file-header">
         <div className="p-5">
           {/* Line 1 — title + tier/lifecycle badges (the h1's immediate
@@ -150,7 +158,7 @@ export default async function InitiativeDetailPage({
 
           <div className="flex flex-col gap-1.5">
             <span className="kicker">Reviews</span>
-            <ReviewProgressBar signed={signedReviews} total={detail.reviews.length} />
+            <ReviewProgressBar signed={signedReviews} abstained={summary.domainsAbstained ?? 0} total={detail.reviews.length} />
           </div>
 
           <div className="flex flex-col gap-1.5">
@@ -211,7 +219,7 @@ export default async function InitiativeDetailPage({
         </div>
       ) : null}
 
-      <LiveActionsBar slug={summary.slug} state={summary.state} />
+      <LiveActionsBar initiativeId={summary.initiativeId} isSeeded={summary.isSeeded} state={summary.state} decisionReadiness={summary.decisionReadiness} />
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_18rem]">
         <InitiativeTabs initialTab={tab}>
@@ -235,6 +243,7 @@ export default async function InitiativeDetailPage({
           <TabsList className="scroll-thin scroll-x-pane max-w-full flex-nowrap justify-start overflow-x-auto [&>*]:shrink-0">
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="intake">Intake</TabsTrigger>
+            <TabsTrigger value="evidence">Evidence</TabsTrigger>
             <TabsTrigger value="reviews">Reviews</TabsTrigger>
             <TabsTrigger value="decisions">Decisions</TabsTrigger>
             <TabsTrigger value="controls">Controls</TabsTrigger>
@@ -248,8 +257,9 @@ export default async function InitiativeDetailPage({
           <TabsContent value="intake">
             <IntakeTab intake={detail.intake} summary={summary} />
           </TabsContent>
+          <TabsContent value="evidence"><EvidenceTab slug={summary.slug} /></TabsContent>
           <TabsContent value="reviews">
-            <ReviewsTab reviews={detail.reviews} slug={summary.slug} />
+            <ReviewsTab reviews={detail.reviews} slug={summary.slug} initiativeId={summary.initiativeId} isSeeded={summary.isSeeded} />
           </TabsContent>
           <TabsContent value="decisions">
             <DecisionsTab slug={summary.slug} decisions={detail.decisions} />
@@ -261,7 +271,7 @@ export default async function InitiativeDetailPage({
             <EvalsTab slug={summary.slug} telemetry={detail.telemetry} />
           </TabsContent>
           <TabsContent value="deployments">
-            <DeploymentsTab deployments={detail.deployments} />
+            <DeploymentRecovery initiativeId={summary.initiativeId} initiativeTitle={summary.title} deployments={detail.deployments} isSeeded={summary.isSeeded} />
           </TabsContent>
           <TabsContent value="audit">
             <AuditTab events={detail.events} />

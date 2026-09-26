@@ -1,13 +1,14 @@
 import { test, expect } from "@playwright/test";
-import { E2E_DEMO_PASSCODE } from "./constants";
+import { ADDITIONAL_ANSWERS, EXPANDED_INTAKE } from "../fixtures/expanded-intake";
+import { SAMPLE_INITIATIVE_PAYLOAD } from "../../lib/intake/champion-prefill";
+import { ADDITIONAL_INTAKE_QUESTIONS } from "../../lib/intake/additional-questions";
 
 // plan.md §8 test 12 — Playwright golden path (required, AGENTS.md hard rule
-// 8): a read-only champion storyline covering the public landing page, the
+// 8): a champion storyline covering passwordless entry, the public
 // home pipeline board, an initiative detail page's Intake/Evals tabs, the
-// audit query console, and the control catalog. This suite is read-only end
-// to end — it never submits, signs, approves, or mutates anything
-// (AGENTS.md hard rule 2: the public/demo surfaces this test drives are
-// read-only for every role).
+// audit query console, and the control catalog. These cases create no
+// initiatives, signatures or decisions; later journeys exercise mutations
+// inside the visitor's isolated workspace.
 test.describe("champion storyline: read-only golden path", () => {
   test("landing page shows the hero and routes into the console", async ({
     page,
@@ -28,10 +29,14 @@ test.describe("champion storyline: read-only golden path", () => {
       ),
     ).toBeVisible();
 
-    await page.getByRole("link", { name: "Explore the live demo" }).first().click();
-    await expect(page).toHaveURL(/\/inbox$/);
+    await page.getByRole("button", { name: "Try the demo" }).first().click();
+    await expect(page).toHaveURL(/\/initiatives\/new$/);
+    await expect(page.locator('input[type="password"]')).toHaveCount(0);
+    await expect(page.getByRole("combobox", { name: "Demo persona" })).toHaveValue("priya-raman");
+    await page.goto("/inbox");
+    await expect(page.getByRole("combobox", { name: "Demo persona" })).toHaveValue("priya-raman");
     await expect(
-      page.getByRole("heading", { name: /what needs attention/i }),
+      page.getByRole("heading", { name: "Your initiatives", exact: true, level: 1 }),
     ).toBeVisible();
   });
 
@@ -199,22 +204,87 @@ test.describe("champion storyline: read-only golden path", () => {
 // decision event. (8-domain honesty: every required domain is drafted
 // live, not 4-live-plus-4-seeded.)
 //
-// The runner and web server share a fixed, test-only passcode from
-// tests/e2e/constants.ts. This story is mandatory and never self-skips.
+// Passwordless visitor entry is mandatory and never self-skips.
 test.describe("live demo loop: create → QC → triage → draft run → sign → decide", () => {
-  /** Log in through the demo-mode chip dialog as the given persona. */
+  /** Enter directly, then explore roles without leaving the workspace. */
   async function loginAs(page: import("@playwright/test").Page, personaKey: string) {
-    await page.locator('[data-slot="demo-mode-chip"]').click();
-    await page.locator('[data-slot="passcode-input"]').fill(E2E_DEMO_PASSCODE);
-    await page.locator('[data-slot="persona-select"]').selectOption(personaKey);
-    await page.locator('[data-slot="live-login-submit"]').click();
+    if (await page.getByRole("button", { name: "Start demo", exact: true }).isVisible()) {
+      await page.getByRole("button", { name: "Start demo", exact: true }).click();
+      await expect(page.getByRole("button", { name: "Exit demo" })).toBeVisible();
+    }
+    const picker = page.getByRole("combobox", { name: "Demo persona" });
+    if (await picker.inputValue() !== personaKey) await picker.selectOption(personaKey);
+    await expect(picker).toHaveValue(personaKey);
+    await expect(picker).toBeEnabled();
     await expect(page.getByText("Live demo (session workspace)")).toBeVisible();
   }
 
-  async function resetToReadOnly(page: import("@playwright/test").Page) {
-    await page.locator('[data-slot="live-reset"]').click();
-    await expect(page.getByText("Read-only (public)")).toBeVisible();
-  }
+  test("additional intake answers survive reopening, editing, and submission", async ({ page }) => {
+    test.setTimeout(60_000);
+    // This is a separate client journey. Keep its requests (and retries) out
+    // of the existing full-loop test's shared, persistent rate-limit bucket.
+    const clientHeaders = { "x-forwarded-for": `192.0.2.${10 + test.info().retry}` };
+    await page.context().setExtraHTTPHeaders(clientHeaders);
+    const errors: { phase: string; message: string }[] = [];
+    let phase = "new intake";
+    page.on("pageerror", (error) => errors.push({ phase, message: error.message }));
+    await page.goto("/initiatives/new");
+    const sessionResponse = page.waitForResponse((response) => response.url().endsWith("/api/session") && response.request().method() === "POST");
+    await loginAs(page, "priya-raman");
+    const { token } = await (await sessionResponse).json();
+    const created = await page.request.post("/api/initiatives", {
+      headers: { ...clientHeaders, authorization: `Bearer ${token}` },
+      data: { payload: { ...EXPANDED_INTAKE, basics: { ...EXPANDED_INTAKE.basics, title: "Optional intake review example" } }, requestId: "e2e-optional-intake-questions" },
+    });
+    expect(created.ok()).toBe(true);
+    const { slug } = await created.json();
+    phase = "reopen draft";
+    await page.goto(`/initiatives/${slug}/edit`);
+    for (const [question, answer] of ADDITIONAL_ANSWERS) {
+      await expect(page.getByRole("textbox", { name: question, exact: true })).toHaveValue(answer);
+    }
+    await page.getByRole("textbox", { name: ADDITIONAL_ANSWERS[0][0], exact: true })
+      .locator('xpath=ancestor::*[@data-slot="card"][1]')
+      .screenshot({ path: test.info().outputPath("intake-use-case-desktop.png") });
+    await page.getByRole("textbox", { name: ADDITIONAL_ANSWERS[2][0], exact: true })
+      .locator('xpath=ancestor::*[@data-slot="card"][1]')
+      .screenshot({ path: test.info().outputPath("intake-data-desktop.png") });
+    await page.setViewportSize({ width: 393, height: 852 });
+    const fallback = page.getByRole("textbox", { name: ADDITIONAL_ANSWERS[7][0], exact: true });
+    await fallback.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: test.info().outputPath("intake-mobile.png") });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    const revisedFallback = "The on-call team pauses generation and restores the manual queue.";
+    await fallback.fill(revisedFallback);
+    phase = "submit draft";
+    await page.locator('[data-slot="submit-intake"]').click();
+    await expect(page).toHaveURL(new RegExp(`/initiatives/${slug}$`));
+    phase = "open intake tab";
+    await page.getByRole("tab", { name: "Intake", exact: true }).click();
+    await expect(page).toHaveURL(/\?tab=intake$/);
+    await expect(page.getByRole("tabpanel", { name: "Intake", exact: true })).toBeVisible();
+    phase = "reload submitted intake";
+    await page.reload();
+    for (const [question, answer] of ADDITIONAL_ANSWERS) {
+      const row = page.locator('[data-slot="intake-tab"]').getByRole("row").filter({ hasText: question });
+      await expect(row).toContainText(question === ADDITIONAL_ANSWERS[7][0] ? revisedFallback : answer);
+    }
+    // Authenticated detail-page hydration also emits #418 on unchanged main,
+    // including Overview without ever opening Intake. Keep that existing issue
+    // visible in the report while failing new errors and checking every answer.
+    const baselineHydrationWarnings = errors.filter(
+      (error) => error.phase === "reload submitted intake" && error.message.startsWith("Minified React error #418;"),
+    );
+    expect(baselineHydrationWarnings.length).toBeLessThanOrEqual(1);
+    if (baselineHydrationWarnings.length > 0) {
+      test.info().annotations.push({ type: "known-baseline-issue", description: "React #418 on authenticated detail reload also reproduces on unchanged main." });
+      await test.info().attach("baseline-detail-hydration-warning", {
+        body: JSON.stringify(baselineHydrationWarnings, null, 2),
+        contentType: "application/json",
+      });
+    }
+    expect(errors.filter((error) => !baselineHydrationWarnings.includes(error))).toEqual([]);
+  });
 
   test("full live loop across requester, reviewer, and approver personas", async ({
     page,
@@ -228,6 +298,19 @@ test.describe("live demo loop: create → QC → triage → draft run → sign �
     await loginAs(page, "priya-raman");
 
     await page.locator('[data-slot="load-champion"]').click();
+
+    const sampleAnswers = Object.entries(ADDITIONAL_INTAKE_QUESTIONS).flatMap(([section, questions]) =>
+      questions.map(({ key, question }) => [
+        question,
+        (SAMPLE_INITIATIVE_PAYLOAD[section as keyof typeof ADDITIONAL_INTAKE_QUESTIONS] as Record<string, unknown>)[key] as string,
+      ] as const),
+    );
+    for (const [question, answer] of sampleAnswers) {
+      expect(answer.trim()).not.toBe("");
+      await expect(page.getByRole("textbox", { name: question, exact: true })).toHaveValue(answer);
+    }
+    await expect(page.getByRole("combobox", { name: "Data retention intent", exact: true })).toHaveValue("<=30 days");
+    await expect(page.getByRole("textbox", { name: "Retention note (optional)", exact: true })).toHaveValue(SAMPLE_INITIATIVE_PAYLOAD.data.retentionIntentNote!);
 
     // Exercise the real mocked chat route and the shared payload handoff.
     // The structured champion answers must survive a Chat round-trip and
@@ -247,17 +330,21 @@ test.describe("live demo loop: create → QC → triage → draft run → sign �
     await expect(page.getByRole("textbox", { name: "Initiative title" })).toHaveValue(
       "Prior-Auth Clinical Summarizer",
     );
+    for (const [question, answer] of sampleAnswers) {
+      await expect(page.getByRole("textbox", { name: question, exact: true })).toHaveValue(answer);
+    }
 
     // Live tier preview: rule 1 -> Critical, all 8 domains.
     const preview = page.locator('[data-slot="tier-preview"]');
     await expect(preview).toContainText("Critical");
     await expect(preview).toContainText("8 required domains");
 
-    // Completeness meter: RFT-02 retention gap flagged, submit not blocked.
+    // All form answers are filled; evidence still requires separate submission.
     const meter = page
       .locator('[data-slot="intake-form"]')
       .locator('[data-slot="completeness-meter"]');
-    await expect(meter).toContainText("RFT-02");
+    await expect(meter).not.toContainText("RFT-02");
+    await expect(meter).toContainText("No evidence pre-attached");
     await expect(meter).toContainText("Submission is not blocked");
 
     // Submit: create -> submit -> redirect to the new initiative's page
@@ -270,21 +357,40 @@ test.describe("live demo loop: create → QC → triage → draft run → sign �
       page.getByRole("heading", { name: "Prior-Auth Clinical Summarizer" }),
     ).toBeVisible();
 
+    const caseUrl = new URL(page.url()).pathname;
+
     // --- QC gate: submitted work is checked before anyone is asked -------
     // triage() opens all 8 domain reviews at once, so the gate sits here:
     // this is the last point at which an incomplete intake costs nobody
     // else time. `submitted --triage-->` was removed from the transition
     // table, so this step is mandatory, not decorative.
     //
-    // It also cannot be done by the requester who submitted it — QC is
-    // Program Office or Admin — hence the persona switch.
+    // QC is Program Office or Admin, so switch to Nia in place — the picker
+    // keeps the same workspace — then back to the requester, who runs
+    // triage and the draft run exactly as before (draft-run is requester or
+    // admin only; leaving Nia in the seat would 403 the next step).
     await expect(page.locator('[data-slot="start-qc"]')).toBeVisible();
-    await resetToReadOnly(page);
     await loginAs(page, "nia-okafor");
     await page.locator('[data-slot="start-qc"]').click();
     await expect(page.locator('[data-slot="run-triage"]')).toBeVisible({ timeout: 30_000 });
+    await loginAs(page, "priya-raman");
+    await expect(page.locator('[data-slot="run-triage"]')).toBeVisible({ timeout: 30_000 });
 
     // --- Triage: Critical, 8 required domains, review branch -------------
+    await page.getByRole("tab", { name: "Intake", exact: true }).click();
+    for (const [question, answer] of sampleAnswers) {
+      const row = page.locator('[data-slot="intake-tab"]').getByRole("row").filter({ hasText: question });
+      await expect(row).toContainText(answer);
+    }
+    for (const [label, answer] of [
+      ["Data retention", SAMPLE_INITIATIVE_PAYLOAD.data.retentionIntent!],
+      ["Retention note", SAMPLE_INITIATIVE_PAYLOAD.data.retentionIntentNote!],
+    ]) {
+      const row = page.locator('[data-slot="intake-tab"]').getByRole("row").filter({
+        has: page.getByRole("cell", { name: label, exact: true }),
+      });
+      await expect(row).toContainText(answer);
+    }
     await page.locator('[data-slot="run-triage"]').click();
     const triageResult = page.locator('[data-slot="triage-result"]');
     await expect(triageResult).toBeVisible({ timeout: 30_000 });
@@ -303,7 +409,21 @@ test.describe("live demo loop: create → QC → triage → draft run → sign �
     await expect(draftPanel.locator('[data-slot="start-draft-run"]')).toContainText(
       "8 domains",
     );
+    // A packaging/configuration failure must give the presenter a concrete
+    // recovery action, leave the domains selected and allow a clean retry.
+    await page.route("**/api/initiatives/*/draft-run", route => route.fulfill({
+      status: 503,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "Agent runtime could not initialize.", code: "AGENT_INITIALIZATION_FAILED" }),
+    }), { times: 1 });
     await draftPanel.locator('[data-slot="start-draft-run"]').click();
+    await expect(page.getByText("Agents could not start. Test the connection on the Agents page, then retry.")).toBeVisible();
+    await expect(draftPanel.locator('[data-slot="start-draft-run"]')).toBeEnabled();
+    const draftResponsePromise = page.waitForResponse(response => response.url().includes('/draft-run') && response.request().method() === 'POST');
+    await draftPanel.locator('[data-slot="start-draft-run"]').click();
+    const draftResponse = await draftResponsePromise;
+    const draftBody = await draftResponse.text();
+    expect(draftResponse.status(), draftBody).toBe(200);
 
     // The synchronous run returns after the deterministic mock adapter has
     // drafted every selected domain; the refreshed rows must show all 8.
@@ -318,24 +438,68 @@ test.describe("live demo loop: create → QC → triage → draft run → sign �
     // Sign as the Privacy/HIPAA reviewer (Marcus Webb) — reviewer-domain
     // assignment (M2.5 inc.3) only lets a reviewer sign their own domain, so
     // Elena Vasquez (Clinical Safety) could not sign this row.
-    await resetToReadOnly(page);
     await loginAs(page, "marcus-webb");
 
     const phiRow = page.locator('[data-slot="review-row"][data-domain="privacy-hipaa"]');
-    const clinicalRow = page.locator('[data-slot="review-row"][data-domain="clinical-safety"]');
-    await expect(phiRow.getByRole("button", { name: "Sign" })).toBeEnabled({
+    await phiRow.getByRole("link", { name: "Open Privacy/HIPAA review", exact: true }).click();
+    await expect(page).toHaveURL(/\/reviews\?initiative=.+&domain=privacy-hipaa$/);
+    const assessment = page.locator('[data-slot="review-assessment"]');
+    await expect(assessment.getByRole("button", { name: "Sign", exact: true })).toBeEnabled({
       timeout: 15_000,
     });
-    await expect(clinicalRow.getByRole("button", { name: "Sign" })).toBeDisabled({
-      timeout: 15_000,
-    });
-    await phiRow.getByRole("button", { name: "Sign" }).click();
-    await expect(
-      phiRow.locator('[data-slot="review-status"][data-status="signed"]'),
-    ).toBeVisible({ timeout: 30_000 });
+    // Domain authority still applies when a copied link selects another review.
+    await page.getByRole("button", { name: "Change review", exact: true }).click();
+    await page.getByRole("button", { name: /^Clinical Safety/ }).click();
+    await page.getByRole("button", { name: "Open Clinical Safety review for Prior-Auth Clinical Summarizer", exact: true }).click();
+    await expect(assessment.getByRole("button", { name: "Sign", exact: true })).toBeDisabled();
+    await page.goBack();
+    await page.goBack();
+    await expect(page).toHaveURL(/domain=privacy-hipaa$/);
+    await expect(assessment.getByRole("button", { name: "Sign", exact: true })).toBeEnabled();
+    // A domain reviewer can record abstention, then explicitly resume before a decision.
+    await assessment.getByRole("button", { name: "Abstain", exact: true }).click();
+    const abstentionDialog = page.getByRole("dialog", { name: "Abstain from Privacy/HIPAA review" });
+    await expect(abstentionDialog.getByRole("button", { name: "Record abstention" })).toBeDisabled();
+    await abstentionDialog.getByLabel("Reason (required)").fill("I contributed to this proposal and need to resolve a conflict of interest.");
+    await abstentionDialog.getByRole("button", { name: "Record abstention" }).click();
+    await expect(assessment).toContainText("Abstained · Review continues without your sign-off");
+    await page.reload();
+    await expect(assessment).toContainText("I contributed to this proposal and need to resolve a conflict of interest.");
+    await expect(assessment.getByRole("button", { name: "Sign", exact: true })).toBeDisabled();
+    await expect(assessment.getByRole("button", { name: "Return", exact: true })).toBeDisabled();
+    await expect(assessment.getByRole("button", { name: "Re-run agent", exact: true })).toHaveCount(0);
+    await assessment.getByRole("button", { name: "Resume review", exact: true }).click();
+    await expect(assessment.getByRole("button", { name: "Sign", exact: true })).toBeEnabled();
+    await expect(assessment.getByRole("button", { name: "Abstain", exact: true })).toBeVisible();
+    await assessment.getByLabel("Assessment text").fill("Privacy review completed against the recorded intake and policy requirements.");
+    await expect(page.getByText("No evidence submitted yet.")).toBeVisible();
+    const signResponsePromise = page.waitForResponse(response => response.url().endsWith('/privacy-hipaa/sign') && response.request().method() === 'POST');
+    await assessment.getByRole("button", { name: "Sign", exact: true }).click();
+    const signResponse = await signResponsePromise;
+    const signRequest = signResponse.request().postDataJSON();
+    expect(Number.isSafeInteger(signRequest.expectedRevision)).toBe(true);
+    expect(signRequest.expectedRevision).toBeGreaterThanOrEqual(0);
+    expect(signRequest.expectedEvidencePacketId).toBeNull();
+    expect(signResponse.status(), await signResponse.text()).toBe(200);
+    await expect(assessment).toContainText("Signed by", { timeout: 30_000 });
+    await page.getByRole("link", { name: "Prior-Auth Clinical Summarizer", exact: true }).click();
+    await expect(page).toHaveURL(`${caseUrl}?tab=reviews`);
+    await expect(phiRow.locator('[data-slot="review-status"][data-status="signed"]')).toBeVisible();
+
+    // Clinical Safety abstains permanently from this cycle. Other reviews
+    // continue, and the approver can conclude without this signature.
+    await loginAs(page, "elena-vasquez");
+    await page.getByRole("link", { name: "Open Clinical Safety review", exact: true }).click();
+    await assessment.getByRole("button", { name: "Abstain", exact: true }).click();
+    const clinicalAbstention = page.getByRole("dialog", { name: "Abstain from Clinical Safety review" });
+    await clinicalAbstention.getByLabel("Reason (required)").fill("I contributed to this fictional proposal and will not participate in its review.");
+    await clinicalAbstention.getByRole("button", { name: "Record abstention" }).click();
+    await expect(assessment).toContainText("Abstained · Review continues without your sign-off");
+    await page.getByRole("link", { name: "Prior-Auth Clinical Summarizer", exact: true }).click();
+    await expect(page.locator('[data-slot="case-file-header"]')).toContainText("1 abstained");
+    await expect(page.getByRole("region", { name: "Recorded abstentions" })).toContainText("Clinical Safety");
 
     // --- Approver: conditionally approve with one condition --------------
-    await resetToReadOnly(page);
     await loginAs(page, "angela-torres");
 
     await page.locator('[data-slot="record-decision"]').click();
@@ -361,6 +525,16 @@ test.describe("live demo loop: create → QC → triage → draft run → sign �
       timeout: 30_000,
     });
     await expect(auditTab).toContainText("1 condition(s)");
+    await expect(auditTab).toContainText("review_abstained");
+    await expect(auditTab).toContainText("I contributed to this fictional proposal and will not participate in its review.");
+    // Closure makes the abstained review read-only; Resume is no longer offered.
+    await loginAs(page, "elena-vasquez");
+    await page.getByRole("tab", { name: "Reviews", exact: true }).click();
+    await page.getByRole("link", { name: "Open Clinical Safety review", exact: true }).click();
+    await expect(assessment.getByRole("button", { name: "Resume review", exact: true })).toHaveCount(0);
+    await expect(assessment).toContainText("Abstained");
+    await page.getByRole("link", { name: "Prior-Auth Clinical Summarizer", exact: true }).click();
+
 
     // --- Deployments + Controls: the live decision generates them too ----
     // (external-review finding #4: "the live champion workflow stops
@@ -378,4 +552,156 @@ test.describe("live demo loop: create → QC → triage → draft run → sign �
     await expect(controlsTab).toBeVisible({ timeout: 30_000 });
     await expect(controlsTab.locator("tbody tr").first()).toBeVisible();
   });
+});
+
+// A real browser -> authenticated API -> private DB document loop; no LLM calls.
+test('requester evidence: upload, return, revision, acceptance and download history', async ({page}) => {
+  test.setTimeout(120_000);
+  await page.setExtraHTTPHeaders({'x-forwarded-for':'evidence-browser-test'});
+  async function login(persona: string) {
+    const start = page.getByRole("button", { name: "Start demo", exact: true });
+    if (await start.isVisible()) {
+      await start.click();
+      await expect(page.getByRole("button", { name: "Exit demo" })).toBeVisible();
+    }
+    const picker = page.getByRole("combobox", { name: "Demo persona" });
+    if (await picker.inputValue() !== persona) await picker.selectOption(persona);
+    await expect(picker).toHaveValue(persona);
+    await expect(picker).toBeEnabled();
+  }
+  async function switchPersona(persona: string) { await login(persona); }
+  await page.goto('/initiatives/new');await login('priya-raman');
+  await page.locator('[data-slot="load-champion"]').click();
+  await page.getByRole('textbox',{name:'Initiative title'}).fill('Evidence browser journey');
+  await page.locator('[data-slot="submit-intake"]').click();
+  await expect(page).toHaveURL(/\/initiatives\/evidence-browser-journey-/,{timeout:30000});
+  const caseUrl = page.url();
+  // QC gate before the fan-out: the Program Office opens QC, then the
+  // requester runs triage as before.
+  await switchPersona('nia-okafor');
+  await page.locator('[data-slot="start-qc"]').click();
+  await expect(page.locator('[data-slot="run-triage"]')).toBeVisible({timeout:30000});
+  await switchPersona('priya-raman');
+  await page.locator('[data-slot="run-triage"]').click();
+  await expect(page.locator('[data-slot="triage-result"]')).toBeVisible({timeout:30000});
+  await page.getByRole('tab',{name:'Evidence',exact:true}).click();
+  const panel=page.locator('[data-slot="evidence-tab"]');
+  const pdf=Buffer.from('%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF\n');
+  async function upload(name:string) {
+    await panel.getByLabel('Choose document',{exact:true}).setInputFiles({name,mimeType:'application/pdf',buffer:pdf});
+    await panel.getByRole('checkbox',{name:/This document is fictional/}).check();
+    await panel.getByRole('button',{name:'Upload document',exact:true}).click();
+    await expect(panel.getByRole('status')).toContainText('Document saved privately');
+  }
+  await upload('retention-v1.pdf');
+  const requirement=panel.getByRole('article',{name:/^H-01 /});
+  await requirement.getByRole('combobox',{name:'Document for H-01',exact:true}).selectOption({label:'retention-v1.pdf · v1'});
+  await requirement.getByLabel('Relevant pages for H-01 (optional)').fill('1–2');
+  await requirement.getByLabel('What this demonstrates for H-01').fill('Fictional retention policy for review.');
+  await panel.getByRole('button',{name:'Save evidence draft',exact:true}).click();
+  await expect(panel.getByRole('status')).toContainText('Draft saved');
+  await page.reload();
+  await expect(requirement.getByLabel('What this demonstrates for H-01')).toHaveValue('Fictional retention policy for review.');
+  await panel.getByRole('button',{name:'Submit evidence for review',exact:true}).click();
+  await expect(panel.getByRole('status')).toContainText('Evidence submitted');
+  await switchPersona('marcus-webb');
+  await requirement.getByLabel('Reviewer reason for H-01').fill('Specify the retention duration.');
+  await requirement.getByRole('button',{name:'Request changes',exact:true}).click();
+  await expect(requirement).toContainText('Changes requested');
+  await switchPersona('priya-raman');
+  await panel.getByLabel('Document version',{exact:true}).selectOption({label:'New version of retention-v1.pdf (v1)'});
+  await upload('retention-v2.pdf');
+  await requirement.getByLabel('What this demonstrates for H-01').fill('Retention duration is 30 days for this fictional example.');
+  const privacyRequirement = panel.getByRole('article', {name:/^H-02 /});
+  await privacyRequirement.getByRole('combobox', {name:'Document for H-02', exact:true}).selectOption({label:'retention-v2.pdf · v2'});
+  await privacyRequirement.getByLabel('Relevant pages for H-02 (optional)').fill('3');
+  await privacyRequirement.getByLabel('What this demonstrates for H-02').fill('The same synthetic document supports the second privacy requirement.');
+  await panel.getByRole('button',{name:'Submit revised evidence',exact:true}).click();
+  await expect(panel.getByRole('status')).toContainText('Evidence submitted');
+  await switchPersona('marcus-webb');
+  const reviewErrors: string[] = [];
+  const recordReviewError = (error: Error) => reviewErrors.push(error.message);
+  page.on('pageerror', recordReviewError);
+  await page.locator('aside').getByRole('link', {name:'Reviews', exact:true}).click();
+  await expect(page).toHaveURL(/\/reviews$/);
+  await page.getByRole('button', {name:'Open Privacy/HIPAA review for Evidence browser journey', exact:true}).click();
+  const workbench = page.locator('[data-slot="evidence-review-workspace"]');
+  const selectedSource = workbench.getByRole('region', {name:'Selected evidence source'});
+  await expect(selectedSource.getByRole('heading', {name:'retention-v2.pdf', exact:true})).toBeVisible();
+  await expect(selectedSource).toContainText('Retention duration is 30 days for this fictional example.');
+  await expect(selectedSource).toContainText('1–2');
+  await workbench.getByRole('button', {name:'Run agent to draft', exact:true}).click();
+  await expect(workbench.getByLabel('Assessment text')).toBeEnabled({timeout:30_000});
+  // The completed draft remounts its evidence workspace. Observe the loaded
+  // packet before binding human edits to that draft/evidence snapshot.
+  await expect(workbench.getByText('Submitted packet · v2', {exact:true})).toBeVisible();
+  await workbench.getByLabel('Assessment text').fill('Human finding based on the submitted retention policy.');
+  await workbench.getByRole('button', {name:/Arize evaluations/}).click();
+  await expect(selectedSource.getByRole('heading', {name:'Evaluation evidence is not connected'})).toBeVisible();
+  await expect(workbench.getByLabel('Assessment text')).toHaveValue('Human finding based on the submitted retention policy.');
+  await workbench.getByRole('button', {name:/W&B training provenance/}).click();
+  await expect(selectedSource.getByRole('heading', {name:'Training provenance is not connected'})).toBeVisible();
+  await workbench.getByRole('button', {name:/H-01 ·/}).click();
+  await selectedSource.getByLabel('Evidence assessment reason').fill('The duration and scope are documented.');
+  await selectedSource.getByRole('button', {name:'Accept evidence', exact:true}).click();
+  await expect(selectedSource.getByRole('region', {name:'Recorded evidence assessment'})).toContainText('Reviewer accepted');
+  // H-02 still awaits its own acceptance: accepting H-01 never signs the domain.
+  await expect(workbench.getByRole('button', {name:'Sign', exact:true})).toBeDisabled();
+  const submittedDownload = page.waitForEvent('download');
+  await selectedSource.getByRole('button', {name:'Download submitted document', exact:true}).click();
+  expect((await submittedDownload).suggestedFilename()).toBe('retention-v2.pdf');
+  await page.setViewportSize({width:1600, height:1100});
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.screenshot({path:'test-results/review-evidence-desktop.png', fullPage:true});
+  await page.setViewportSize({width:390, height:844});
+  await expect(workbench.getByRole('heading', {name:'Your assessment', exact:true})).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.screenshot({path:'test-results/review-evidence-mobile.png', fullPage:true});
+  // Complete the evidence-backed signature through the same canonical surface.
+  // Reusing one document never implies acceptance of its other requirement.
+  await workbench.getByRole('button', {name:/H-02 ·/}).click();
+  await expect(selectedSource).toContainText('The same synthetic document supports the second privacy requirement.');
+  await selectedSource.getByLabel('Evidence assessment reason').fill('Reviewed the second requirement against its submitted source and page reference.');
+  const finalAssessmentResponse = page.waitForResponse(response => response.url().endsWith('/evidence') && response.request().method() === 'POST' && response.request().postDataJSON().controlId === 'H-02');
+  await selectedSource.getByRole('button', {name:'Accept evidence', exact:true}).click();
+  const acceptedResponse = await finalAssessmentResponse;
+  expect(acceptedResponse.status()).toBe(200);
+  const acceptedPacketId = acceptedResponse.request().postDataJSON().packetId;
+  expect(typeof acceptedPacketId).toBe('string');
+  await expect(selectedSource.getByRole('region', {name:'Recorded evidence assessment'})).toContainText('Reviewer accepted');
+  await expect(workbench.getByLabel('Assessment text')).toHaveValue('Human finding based on the submitted retention policy.');
+  // If a refreshed source arrived while editing, complete the same explicit
+  // re-review required of a human; evidence acceptance does not bypass it.
+  const acknowledge = workbench.getByRole('button', {name:'I reviewed the refreshed draft and evidence', exact:true});
+  if (await acknowledge.isVisible()) {
+    await expect(workbench.getByRole('button', {name:'Sign', exact:true})).toBeDisabled();
+    await expect(acknowledge).toBeEnabled();
+    await acknowledge.click();
+    await expect(workbench.getByLabel('Assessment text')).toHaveValue('Human finding based on the submitted retention policy.');
+  }
+  await expect(workbench.getByRole('button', {name:'Sign', exact:true})).toBeEnabled();
+  const signResponse = page.waitForResponse(response => response.url().includes('/privacy-hipaa/sign') && response.request().method() === 'POST');
+  await workbench.getByRole('button', {name:'Sign', exact:true}).click();
+  const signedResponse = await signResponse;
+  expect(signedResponse.status(), await signedResponse.text()).toBe(200);
+  const signature = signedResponse.request().postDataJSON();
+  expect(Number.isSafeInteger(signature.expectedRevision)).toBe(true);
+  expect(signature.expectedEvidencePacketId).toBe(acceptedPacketId);
+  await expect(workbench).toContainText('Signed by', {timeout:30_000});
+  await expect(workbench.getByLabel('Assessment text')).toBeDisabled();
+  page.off('pageerror', recordReviewError);
+  expect(reviewErrors).toEqual([]);
+  await page.goto(`${caseUrl}?tab=evidence`);
+  await expect(requirement).toContainText('Reviewer accepted');
+  await panel.getByText('Document library and version history (2)',{exact:true}).click();
+  const downloaded=page.waitForEvent('download');
+  await panel.getByRole('button',{name:'Download retention-v1.pdf v1',exact:true}).click();
+  expect((await downloaded).suggestedFilename()).toBe('retention-v1.pdf');
+  await panel.getByText('Submission history (2)',{exact:true}).click();
+  await expect(panel).toContainText('Specify the retention duration.');
+  await page.setViewportSize({width:390,height:844});
+  await expect(panel.getByRole('heading',{name:'Evidence',exact:true})).toBeVisible();
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1)).toBe(true);
+  await page.screenshot({path:'test-results/evidence-mobile.png',fullPage:true});
 });

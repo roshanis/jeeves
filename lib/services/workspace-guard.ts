@@ -7,15 +7,15 @@
  * any other workspace's live-created rows via a guessed/enumerated id).
  *
  * `initiatives.workspaceId` (lib/db/schema.ts) is nullable:
- *   - NULL       -> a seeded/shared demo row. Visible + MUTABLE by any
- *                   authenticated demo session, by design (this is the
+ *   - NULL       -> a seeded/shared demo row. Visible to every
+ *                   visitor, with writes reserved for trusted internal operations (this is the
  *                   read-only-visitor-safe seed dataset every persona
  *                   shares).
  *   - non-null   -> created by a live, workspace-bound session. Only a
  *                   session bound to that SAME workspaceId may mutate it.
  *
  * A session whose own `workspaceId` is null (should not normally happen for
- * a passcode-issued session, but defensively handled) may only touch
+ * a server-issued session, but defensively handled) may only touch
  * null-workspace rows — it does not get a wildcard.
  */
 
@@ -30,4 +30,12 @@ export function workspaceMismatch(
   sessionWorkspaceId: string | null,
 ): boolean {
   return resourceWorkspaceId !== null && resourceWorkspaceId !== sessionWorkspaceId;
+}
+
+/** Visitor sessions can mutate only their own records, never shared examples. */
+export function mutationWorkspaceMismatch(
+  resourceWorkspaceId: string | null,
+  sessionWorkspaceId: string | null,
+): boolean {
+  return resourceWorkspaceId !== sessionWorkspaceId;
 }

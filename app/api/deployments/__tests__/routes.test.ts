@@ -4,15 +4,14 @@
  * POST /api/deployments/promotions/[id]/promote (approver-only promotion
  * action). Mirrors app/api/admin/__tests__/routes.test.ts's conventions —
  * createTestDb/closeTestDb/seedDatabase, vi.mock("@/lib/db/client"),
- * resetGuardStateForTests(), a real session issued via POST /api/session.
+ * a fresh test database and real session issued via POST /api/session.
  */
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { createTestDb, closeTestDb, type TestDb } from "@/lib/db/test-client";
-import { resetGuardStateForTests } from "@/lib/services/route-guard";
 import { seedDatabase } from "@/scripts/seed";
-import { deploymentVersions, initiatives } from "@/lib/db/schema";
+import { deploymentVersions, initiatives, sessions } from "@/lib/db/schema";
 import { createDraft } from "@/lib/services/initiative-service";
 import { CHAMPION_PREFILL_PAYLOAD } from "@/lib/intake/champion-prefill";
 
@@ -22,13 +21,12 @@ vi.mock("@/lib/db/client", () => ({
   getDb: () => testDb,
 }));
 
-const PASSCODE = "demo-passcode-for-tests";
+const COOKIE_SECRET = "test-only-workspace-cookie-secret";
 
 beforeEach(async () => {
-  process.env.DEMO_PASSCODE = PASSCODE;
+  process.env.JEEVES_COOKIE_SECRET = COOKIE_SECRET;
   testDb = await createTestDb();
   await seedDatabase(testDb);
-  resetGuardStateForTests();
 });
 
 afterEach(async () => {
@@ -45,7 +43,7 @@ async function issueSessionFor(personaKey: string, ip: string): Promise<string> 
     new Request("http://localhost/api/session", {
       method: "POST",
       headers: { "content-type": "application/json", "x-forwarded-for": ip },
-      body: JSON.stringify({ passcode: PASSCODE, personaKey }),
+      body: JSON.stringify({ personaKey }),
     }),
   );
   expect(res.status).toBe(200);
@@ -66,7 +64,7 @@ async function issueSessionWithWorkspace(
     new Request("http://localhost/api/session", {
       method: "POST",
       headers: { "content-type": "application/json", "x-forwarded-for": ip },
-      body: JSON.stringify({ passcode: PASSCODE, personaKey }),
+      body: JSON.stringify({ personaKey }),
     }),
   );
   const json = await res.json();
@@ -117,6 +115,11 @@ async function v21DeploymentId(): Promise<string> {
   const [init] = await testDb.select().from(initiatives).where(eq(initiatives.slug, "pa-correspondence-model"));
   const rows = await testDb.select().from(deploymentVersions).where(eq(deploymentVersions.initiativeId, init!.id));
   return rows.find((d) => d.version === "v2.1")!.id;
+}
+
+async function assignInitiativeToSession(initiativeId: string, token: string): Promise<void> {
+  const [session] = await testDb.select({ workspaceId: sessions.workspaceId }).from(sessions).where(eq(sessions.token, token));
+  await testDb.update(initiatives).set({ workspaceId: session!.workspaceId }).where(eq(initiatives.id, initiativeId));
 }
 
 const FULL_ATTESTATION = {
@@ -203,6 +206,8 @@ describe("POST /api/deployments/promotions/[id]/promote", () => {
   it("200s the happy path for the approver persona, and a second call on the same id is rejected", async () => {
     const token = await issueSessionFor("angela-torres", "40.0.0.5");
     const deploymentVersionId = await v21DeploymentId();
+    const [initiative] = await testDb.select().from(initiatives).where(eq(initiatives.slug, "pa-correspondence-model"));
+    await assignInitiativeToSession(initiative!.id, token);
     const { POST } = await import("../promotions/[id]/promote/route");
     const res = await POST(
       new Request(`http://localhost/api/deployments/promotions/${deploymentVersionId}/promote`, {
@@ -267,6 +272,7 @@ describe("POST /api/deployments/promotions/[id]/promote", () => {
     const token = await issueSessionFor("angela-torres", "40.0.0.8");
     const deploymentVersionId = await v21DeploymentId();
     const [init] = await testDb.select().from(initiatives).where(eq(initiatives.slug, "pa-correspondence-model"));
+    await assignInitiativeToSession(init!.id, token);
     const rows = await testDb.select().from(deploymentVersions).where(eq(deploymentVersions.initiativeId, init!.id));
     const v20Id = rows.find((d) => d.version === "v2.0")!.id;
 
@@ -371,6 +377,7 @@ describe("POST /api/deployments/[id]/rollback", () => {
     const initiativeId = await paCorrespondenceModelId();
     const priorId = await seedPriorRetiredVersion(initiativeId);
     const token = await issueSessionFor("angela-torres", "41.0.0.2");
+    await assignInitiativeToSession(initiativeId, token);
     const { POST } = await import("../[id]/rollback/route");
     const res = await POST(
       new Request(`http://localhost/api/deployments/${initiativeId}/rollback`, {

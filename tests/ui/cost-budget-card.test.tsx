@@ -8,7 +8,7 @@ beforeAll(() => {
 });
 
 describe("CostBudgetCard", () => {
-  it("renders the daily token budget reference and Synthetic data label", () => {
+  it("renders the estimated reservation reference and Synthetic data label", () => {
     renderWithProviders(
       <CostBudgetCard
         points={[
@@ -19,7 +19,7 @@ describe("CostBudgetCard", () => {
     );
 
     expect(screen.getByText("Synthetic data — demo")).toBeDefined();
-    expect(screen.getByText(/Daily token budget: 500,000/)).toBeDefined();
+    expect(screen.getByText(/Daily estimated token reservations: 500,000/)).toBeDefined();
   });
 
   it("renders a fallback message when there are no cost points", () => {

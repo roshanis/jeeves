@@ -4,7 +4,7 @@
 // minimal, budget-gated probe (POST /api/agents/health) so a user who just
 // added an OPENAI_API_KEY can confirm the agents will run live. Requires a
 // live demo session (the probe is session-gated); without one it points the
-// user at the top-bar passcode login rather than failing silently.
+// user at the top-bar demo entry rather than failing silently.
 import * as React from "react";
 import { CircleCheck, CircleX, Loader2, PlugZap } from "lucide-react";
 import { testAgentConnection, isApiError, apiErrorToMessage, type ConnectorHealth } from "@/lib/client/api";
@@ -51,7 +51,7 @@ export function AgentConnectionTest() {
         </button>
         {!session ? (
           <span className="text-xs text-muted-foreground">
-            Enter the demo passcode in the top bar to run a live connection test.
+            Start the demo in the top bar to run a live connection test.
           </span>
         ) : null}
       </div>

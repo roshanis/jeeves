@@ -15,18 +15,22 @@
  *
  * Login and rehydration select the exact authenticated persona in the role
  * context, keeping visible identity, reviewer domain, and API authorization
- * aligned. Public preview switching is disabled while this session exists.
+ * aligned. The persona picker exchanges sessions to explore each role in the same workspace.
  *
  * `logout()` returns the app to read-only mode; it intentionally does NOT
  * clear the live-initiative registry (lib/client/live-registry.ts) — see
  * that module's header.
  *
+ * The root layout owns one provider with runtime liveModeAvailable, preserving
+ * pending entry across route groups. Previews neither read stored session data
+ * nor offer login; the stored value is preserved.
  * Must be mounted INSIDE RoleProvider (it calls useRole()).
  */
 import * as React from "react";
-import { postPublicSession, postSession } from "./api";
+import { ApiError, apiErrorToMessage, isApiError, postPublicSession, postSession } from "./api";
 import { findPersona, type LivePersona } from "./personas";
 import { useRole } from "@/components/jeeves/role-context";
+import { READ_ONLY_PREVIEW_MESSAGE } from "@/lib/data/provider-mode";
 
 export interface LiveSession {
   token: string;
@@ -47,23 +51,16 @@ export const PUBLIC_PERSONA_KEY = "public";
 
 export interface LiveSessionContextValue {
   session: LiveSession | null;
-  login: (passcode: string, personaKey: string) => Promise<LiveSession>;
-  /** Passcode-free session for a public visitor submitting a request. */
+  liveModeAvailable: boolean;
+  login: (personaKey: string) => Promise<LiveSession>;
+  /** Passcode-free session for a public visitor sending a REAL request to the
+   *  operator — distinct from startDemo, which opens the sandbox playground. */
   startPublicSession: () => Promise<LiveSession>;
   logout: () => void;
-  /**
-   * Whether the passcode dialog is open. Lives here rather than inside
-   * DemoModeChip so that anything which runs into the read-only gate can
-   * offer the way past it — the intake form's read-only notice used to end
-   * "(use the chip in the header)", sending the reader off to hunt for a
-   * control instead of giving them one. The chip still OWNS the dialog; this
-   * is only the open state, so there is one implementation rather than a
-   * copy per caller.
-   */
-  unlockPromptOpen: boolean;
-  setUnlockPromptOpen: (open: boolean) => void;
-  /** Convenience for the common case: "let me in from here". */
-  openUnlockPrompt: () => void;
+  pending: boolean;
+  startError: string | null;
+  /** Start a requester session directly from an action's entry point. */
+  startDemo: () => void;
 }
 
 /* -------------------------------------------------------------------------
@@ -165,10 +162,13 @@ export function resetLiveSessionForTests(): void {
 
 const LiveSessionContext = React.createContext<LiveSessionContextValue | null>(null);
 
-export function LiveSessionProvider({ children }: { children: React.ReactNode }) {
+export function LiveSessionProvider({ children, liveModeAvailable = true }: {
+  children: React.ReactNode;
+  liveModeAvailable?: boolean;
+}) {
   const session = React.useSyncExternalStore(
     subscribeSession,
-    getSessionSnapshot,
+    liveModeAvailable ? getSessionSnapshot : getSessionServerSnapshot,
     getSessionServerSnapshot,
   );
   const { setPersonaKey } = useRole();
@@ -191,64 +191,117 @@ export function LiveSessionProvider({ children }: { children: React.ReactNode })
     return () => window.clearTimeout(timer);
   }, [session, setPersonaKey]);
 
-  const login = React.useCallback(
-    async (passcode: string, personaKey: string): Promise<LiveSession> => {
-      const persona = findPersona(personaKey);
-      if (!persona) {
-        throw new Error(`unknown persona: ${personaKey}`);
+  const [pending, setPending] = React.useState(false);
+  const [startError, setStartError] = React.useState<string | null>(null);
+  const entryRequest = React.useRef<Promise<LiveSession> | null>(null);
+  const version = React.useRef(0);
+
+  const login = React.useCallback((personaKey: string): Promise<LiveSession> => {
+    if (!liveModeAvailable) {
+      setStartError(READ_ONLY_PREVIEW_MESSAGE);
+      return Promise.reject(new ApiError(403, READ_ONLY_PREVIEW_MESSAGE));
+    }
+    // All entry controls share one request, including rapid double clicks.
+    if (entryRequest.current) return entryRequest.current;
+    const persona = findPersona(personaKey);
+    if (!persona) return Promise.reject(new Error("Unknown demo persona."));
+    const requestVersion = ++version.current;
+    setPending(true);
+    setStartError(null);
+    const request = (async () => {
+      try {
+        const current = getSessionSnapshot();
+        const token = current && current.expiresAt > Date.now() ? current.token : undefined;
+        const result = await postSession(personaKey, token);
+        if (requestVersion !== version.current) throw new Error("Demo entry cancelled.");
+        const next: LiveSession = {
+          ...result, personaKey, personaLabel: persona.label, role: persona.role,
+        };
+        setStoredSession(next);
+        setPersonaKey(personaKey);
+        return next;
+      } catch (err) {
+        if (requestVersion === version.current) {
+          if (isApiError(err) && err.status === 401) setStoredSession(null);
+          setStartError(isApiError(err) ? apiErrorToMessage(err) : "Could not start the demo. Try again.");
+        }
+        throw err;
+      } finally {
+        if (requestVersion === version.current) {
+          entryRequest.current = null;
+          setPending(false);
+        }
       }
-      const result = await postSession(passcode, personaKey);
-      const next: LiveSession = {
-        token: result.token,
-        workspaceId: result.workspaceId,
-        expiresAt: result.expiresAt,
-        personaKey,
-        personaLabel: persona.label,
-        role: persona.role,
-      };
-      setStoredSession(next);
-      setPersonaKey(personaKey);
-      return next;
-    },
-    [setPersonaKey],
-  );
+    })();
+    entryRequest.current = request;
+    return request;
+  }, [liveModeAvailable, setPersonaKey]);
 
   /**
-   * Begin a passcode-free public session. No credential, no persona — just
+   * Begin a public session for sending a REAL request to the operator — as
+   * opposed to startDemo, which opens the sandbox playground. No persona: just
    * an identity to hang one submission and one isolated workspace on.
+   *
+   * Shares login()'s discipline rather than its own ad-hoc path: the same
+   * read-only-preview refusal, the same single in-flight request (so a double
+   * click cannot mint two sessions), and the same version fence — a response
+   * that lands after Exit, or after the visitor switched to the playground,
+   * must not resurrect a session they have already left.
    */
-  const startPublicSession = React.useCallback(async (): Promise<LiveSession> => {
-    const result = await postPublicSession();
-    const next: LiveSession = {
-      token: result.token,
-      workspaceId: result.workspaceId,
-      expiresAt: result.expiresAt,
-      personaKey: PUBLIC_PERSONA_KEY,
-      personaLabel: "Public visitor",
-      role: "public",
-    };
-    setStoredSession(next);
-    return next;
-  }, []);
+  const startPublicSession = React.useCallback((): Promise<LiveSession> => {
+    if (!liveModeAvailable) {
+      setStartError(READ_ONLY_PREVIEW_MESSAGE);
+      return Promise.reject(new ApiError(403, READ_ONLY_PREVIEW_MESSAGE));
+    }
+    if (entryRequest.current) return entryRequest.current;
+    const requestVersion = ++version.current;
+    setPending(true);
+    setStartError(null);
+    const request = (async () => {
+      try {
+        const result = await postPublicSession();
+        if (requestVersion !== version.current) throw new Error("Request start cancelled.");
+        const next: LiveSession = {
+          token: result.token,
+          workspaceId: result.workspaceId,
+          expiresAt: result.expiresAt,
+          personaKey: PUBLIC_PERSONA_KEY,
+          personaLabel: "Public visitor",
+          role: "public",
+        };
+        setStoredSession(next);
+        return next;
+      } catch (err) {
+        if (requestVersion === version.current) {
+          setStartError(isApiError(err) ? apiErrorToMessage(err) : "Could not start a request. Try again.");
+        }
+        throw err;
+      } finally {
+        if (requestVersion === version.current) {
+          entryRequest.current = null;
+          setPending(false);
+        }
+      }
+    })();
+    entryRequest.current = request;
+    return request;
+  }, [liveModeAvailable]);
 
   const logout = React.useCallback(() => {
+    version.current++;
+    entryRequest.current = null;
+    setPending(false);
+    setStartError(null);
     setStoredSession(null);
   }, []);
 
-  const [unlockPromptOpen, setUnlockPromptOpen] = React.useState(false);
-  const openUnlockPrompt = React.useCallback(() => setUnlockPromptOpen(true), []);
+  const startDemo = React.useCallback(() => {
+    void login("priya-raman").catch(() => { /* startError is rendered by entry controls. */ });
+  }, [login]);
 
   const value = React.useMemo(
-    () => ({
-      session,
-      login,
-      startPublicSession,
-      logout,
-      unlockPromptOpen,
-      setUnlockPromptOpen,
-      openUnlockPrompt,
-    }),
-    [session, login, startPublicSession, logout, unlockPromptOpen, openUnlockPrompt],
+    () => ({ session, liveModeAvailable, login, logout, pending, startError, startDemo, startPublicSession }),
+    [session, liveModeAvailable, login, logout, pending, startError, startDemo, startPublicSession],
   );
 
   return <LiveSessionContext.Provider value={value}>{children}</LiveSessionContext.Provider>;

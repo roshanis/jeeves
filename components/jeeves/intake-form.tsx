@@ -9,9 +9,9 @@
  * - Completeness meter: calls the REAL evaluateCompleteness
  *   (lib/intake/completeness.ts) on every change; BLOCKING gaps gate the
  *   submit button, REQUIRED-FOR-TIER/ADVISORY gaps render as warnings only
- *   (the champion case submits WITH its RFT-02 retention gap by design).
- * - "Load champion example" populates the whole form from
- *   CHAMPION_PREFILL_PAYLOAD (intake-spec §4).
+ *   (existing incomplete drafts can still submit with tier-level gaps).
+ * - "Use a sample initiative" populates the whole form from
+ *   SAMPLE_INITIATIVE_PAYLOAD, including optional context and retention.
  * - Read-only public mode (no live session): fields render but are
  *   non-interactive (one <fieldset disabled> wrapper) and Submit is the
  *   standard disabled-with-tooltip gate (ui-spec §4 states / §8.4).
@@ -22,11 +22,13 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import type { IntakePayload } from "@/lib/intake/types";
+import { EMPTY_INTAKE_PAYLOAD as EMPTY_PAYLOAD } from "@/lib/intake/defaults";
+import { ADDITIONAL_INTAKE_QUESTIONS, ADDITIONAL_ANSWER_MAX_LENGTH } from "@/lib/intake/additional-questions";
 import {
   evaluateCompleteness,
   type CompletenessGap,
 } from "@/lib/intake/completeness";
-import { CHAMPION_PREFILL_PAYLOAD } from "@/lib/intake/champion-prefill";
+import { SAMPLE_INITIATIVE_PAYLOAD } from "@/lib/intake/champion-prefill";
 import { previewTier } from "@/lib/client/tier-preview";
 import {
   createInitiative,
@@ -129,37 +131,6 @@ const OVERLAY_QUESTIONS: {
   },
 ];
 
-export const EMPTY_PAYLOAD: IntakePayload = {
-  basics: {
-    title: "",
-    sponsorOrg: "",
-    requesterName: "",
-    requesterEmail: "",
-    businessProblem: "",
-  },
-  useCase: { primaryUsers: "", decisionInformed: "", expectedVolume: null },
-  data: {
-    dataSources: [],
-    phiCategories: [],
-    phiCategoriesOtherText: null,
-    retentionIntent: null,
-    retentionIntentNote: null,
-    trainingVsInference: null,
-  },
-  modelVendor: { buildOrBuy: null, vendorName: null, hosting: null, modelType: null },
-  populationImpact: { affectedPopulations: [], expectedBenefits: null, expectedHarms: null },
-  deployment: { integrationPoints: [], rolloutPlan: null },
-  overlay: {
-    touchesPHI: null,
-    memberFacing: null,
-    careCoverageInfluence: null,
-    vendorHosted: null,
-    humanInTheLoop: null,
-    individualImpact: null,
-  },
-  evidenceAttachments: [],
-};
-
 /* -------------------------------------------------------------------------
  * Small presentational helpers
  * ---------------------------------------------------------------------- */
@@ -216,6 +187,31 @@ function TextAreaField({
   );
 }
 
+function AdditionalQuestions<K extends string>({ questions, values, onChange }: {
+  questions: readonly { key: K; question: string; hint: string }[];
+  values: Partial<Record<K, string | null>>;
+  onChange: (key: K, value: string | null) => void;
+}) {
+  const id = React.useId();
+  return <div className="col-span-full flex flex-col gap-3">
+    <p className="text-xs text-muted-foreground">Additional questions (optional). Share what you know; you can leave unanswered questions blank.</p>
+    {questions.map(({ key, question, hint }) => (
+      <div key={key} className="flex flex-col gap-1 text-sm">
+        <label htmlFor={`${id}-${key}`} className="font-medium">{question}</label>
+        <textarea
+          id={`${id}-${key}`}
+          aria-describedby={`${id}-${key}-hint`}
+          value={values[key] ?? ""}
+          maxLength={ADDITIONAL_ANSWER_MAX_LENGTH}
+          onChange={(event) => onChange(key, event.target.value.trim() === "" ? null : event.target.value)}
+          className={textareaClass}
+        />
+        <span id={`${id}-${key}-hint`} className="text-xs text-muted-foreground">{hint} Optional, up to {ADDITIONAL_ANSWER_MAX_LENGTH} characters.</span>
+      </div>
+    ))}
+  </div>;
+}
+
 function SelectField<T extends string>({
   label,
   value,
@@ -270,8 +266,7 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
   initialSlug?: string;
 } = {}) {
   const router = useRouter();
-  const { session, logout, openUnlockPrompt, startPublicSession } = useLiveSession();
-  const [startingPublic, setStartingPublic] = React.useState(false);
+  const { session, logout, startDemo, startPublicSession, pending } = useLiveSession();
 
   const [internalPayload, setInternalPayload] = React.useState<IntakePayload>(initialPayload ?? EMPTY_PAYLOAD);
   const payload = initialPayload ?? internalPayload;
@@ -317,8 +312,8 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
   }
 
   function loadChampion() {
-    if (onPayloadChange) onPayloadChange(CHAMPION_PREFILL_PAYLOAD);
-    else setInternalPayload(CHAMPION_PREFILL_PAYLOAD);
+    if (onPayloadChange) onPayloadChange(SAMPLE_INITIATIVE_PAYLOAD);
+    else setInternalPayload(SAMPLE_INITIATIVE_PAYLOAD);
   }
 
   const preview = previewTier(payload.overlay);
@@ -326,23 +321,20 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
   const gapsByLevel = (level: CompletenessGap["level"]) =>
     completeness.gaps.filter((g) => g.level === level);
 
-  // Who may author an intake. `public` is a passcode-free visitor: they can
-  // fill in and submit this form and nothing else — QC, triage, the review
-  // fan-out and every decision still belong to named, passcode-holding
-  // humans, enforced server-side in lib/services/route-guard.ts.
+  // Who may author an intake: a requester persona (the playground) or a
+  // `public` session (a real request to the operator). The public role can
+  // fill in and submit this form and nothing else — enforced server-side by
+  // runMutationGuard's deny-by-default in lib/services/route-guard.ts.
   const canAuthorIntake = session?.role === "requester" || session?.role === "public";
   const isRequester = canAuthorIntake;
 
-  async function handleStartPublic() {
-    setStartingPublic(true);
+  function handleStartPublic() {
     setError(null);
-    try {
-      await startPublicSession();
-    } catch {
+    // Pending state and the error message are owned by the session context,
+    // shared with the demo entry button, so the two doors cannot race.
+    return startPublicSession().catch(() => {
       setError("Could not start a request just now. Please try again in a moment.");
-    } finally {
-      setStartingPublic(false);
-    }
+    });
   }
 
   async function handleSubmit() {
@@ -381,7 +373,9 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
         // governance state, and dropping a member of the public into it
         // answers none of the questions they actually have.
         if (session.role === "public") {
-          toast.success("Request received — the Program Office will check it.");
+          // Not "the Program Office": in the playground anyone can play that
+          // persona. A real request goes to the people running this site.
+          toast.success("Request sent — the team running this site will reply by email.");
           router.push("/thank-you");
         } else {
           toast.success(
@@ -421,52 +415,61 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
       <div className="flex flex-col gap-4">
         {!session ? (
           <Alert>
-            <AlertTitle>Submit a governance request</AlertTitle>
+            <AlertTitle>Try it, or send a real request</AlertTitle>
             <AlertDescription className="flex flex-col items-start gap-2.5">
               <span>
-                Anyone can send a request in. Your submission goes to the
-                Program Office, who check it before any review is opened —
-                nothing is routed, reviewed or decided automatically.
+                There are two ways in, and they go to different places.
               </span>
+              <div className="flex flex-col gap-1.5">
+                <span>
+                  <span className="font-medium text-foreground">Try the demo</span>{" "}
+                  — fill in a fictional initiative, then switch roles to review
+                  and approve it yourself. It stays in your own sandbox;
+                  nobody else sees it.
+                </span>
+                <span>
+                  <span className="font-medium text-foreground">Send a real request</span>{" "}
+                  — it goes to the team running this site, who read every one
+                  and reply by email to the address you give.
+                </span>
+              </div>
               {/* Said plainly because strangers are about to type into a form
                   themed as a healthcare payer's intake. This is a synthetic
                   demo and the cheapest control available is telling them. */}
               <span className="font-medium">
-                Do not enter real personal, member or health information —
-                this is a demonstration system holding synthetic data.
+                Either way, do not enter real personal, member or health
+                information — this is a demonstration system.
               </span>
               <div className="flex flex-wrap items-center gap-2">
                 <Button
                   type="button"
                   size="sm"
-                  onClick={() => void handleStartPublic()}
-                  disabled={startingPublic}
-                  data-slot="start-public-request"
+                  onClick={startDemo}
+                  disabled={pending}
+                  data-slot="intake-unlock"
                 >
-                  {startingPublic ? "Starting…" : "Start a request"}
+                  Start the demo
                 </Button>
-                {/* The passcode path stays exactly where it was: it is what a
-                    demo walkthrough uses, and the only way to reach anything
-                    past submission. */}
                 <Button
                   type="button"
                   size="sm"
                   variant="outline"
-                  onClick={openUnlockPrompt}
-                  data-slot="intake-unlock"
+                  onClick={() => void handleStartPublic()}
+                  disabled={pending}
+                  data-slot="start-public-request"
                 >
-                  Enter the demo passcode
+                  Send a real request
                 </Button>
               </div>
             </AlertDescription>
           </Alert>
         ) : session.role === "public" ? (
           <Alert>
-            <AlertTitle>Submitting as a public visitor</AlertTitle>
+            <AlertTitle>Sending a real request</AlertTitle>
             <AlertDescription>
-              Fill in what you can and submit — the Program Office will check
-              it and come back to you. Do not enter real personal, member or
-              health information. This is a demonstration system.
+              This goes to the team running this site, not into the demo. Fill
+              in what you can — include an email address you check — and
+              submit. Do not enter real personal, member or health information.
             </AlertDescription>
           </Alert>
         ) : !isRequester ? (
@@ -475,14 +478,14 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
             <AlertDescription>
               You are viewing intake as {session.role} — only Requesters may
               create and submit new initiatives. Switch to a requester persona
-              via the demo mode chip to submit.
+              using the persona picker in the header to submit.
             </AlertDescription>
           </Alert>
         ) : null}
 
         <div>
           <Button type="button" variant="outline" onClick={loadChampion} disabled={submitting} data-slot="load-champion">
-            Load champion example
+            Use a sample initiative
           </Button>
         </div>
 
@@ -561,6 +564,11 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
                 onChange={(v) =>
                   patch((p) => ({ ...p, useCase: { ...p.useCase, expectedVolume: v } }))
                 }
+              />
+              <AdditionalQuestions
+                questions={ADDITIONAL_INTAKE_QUESTIONS.useCase}
+                values={payload.useCase}
+                onChange={(key, value) => patch((p) => ({ ...p, useCase: { ...p.useCase, [key]: value } }))}
               />
             </CardContent>
           </Card>
@@ -642,6 +650,11 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
                 onChange={(v) =>
                   patch((p) => ({ ...p, data: { ...p.data, trainingVsInference: v } }))
                 }
+              />
+              <AdditionalQuestions
+                questions={ADDITIONAL_INTAKE_QUESTIONS.data}
+                values={payload.data}
+                onChange={(key, value) => patch((p) => ({ ...p, data: { ...p.data, [key]: value } }))}
               />
             </CardContent>
           </Card>
@@ -731,6 +744,11 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
                   }))
                 }
               />
+              <AdditionalQuestions
+                questions={ADDITIONAL_INTAKE_QUESTIONS.populationImpact}
+                values={payload.populationImpact}
+                onChange={(key, value) => patch((p) => ({ ...p, populationImpact: { ...p.populationImpact, [key]: value } }))}
+              />
             </CardContent>
           </Card>
 
@@ -759,6 +777,11 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
                     deployment: { ...p.deployment, rolloutPlan: v === "" ? null : v },
                   }))
                 }
+              />
+              <AdditionalQuestions
+                questions={ADDITIONAL_INTAKE_QUESTIONS.deployment}
+                values={payload.deployment}
+                onChange={(key, value) => patch((p) => ({ ...p, deployment: { ...p.deployment, [key]: value } }))}
               />
             </CardContent>
           </Card>

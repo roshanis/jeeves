@@ -1,7 +1,7 @@
 import { describe, expect, it, beforeAll } from "vitest";
 import { screen } from "@testing-library/react";
 import { OutcomeMetricsStrip } from "@/components/jeeves/outcome-metrics-strip";
-import { getProvider } from "@/lib/data";
+import { MockDataProvider } from "@/lib/data/mock-provider";
 import { installResizeObserverStub, renderWithProviders } from "./helpers";
 
 beforeAll(() => {
@@ -10,7 +10,7 @@ beforeAll(() => {
 
 describe("OutcomeMetricsStrip", () => {
   it("renders exactly 5 metric cards", async () => {
-    const metrics = await getProvider().outcomeMetrics();
+    const metrics = await new MockDataProvider().outcomeMetrics();
     const { container } = renderWithProviders(
       <OutcomeMetricsStrip metrics={metrics} />,
     );
@@ -22,7 +22,7 @@ describe("OutcomeMetricsStrip", () => {
   });
 
   it("shows the seed-spec outcome metric values", async () => {
-    const metrics = await getProvider().outcomeMetrics();
+    const metrics = await new MockDataProvider().outcomeMetrics();
     renderWithProviders(<OutcomeMetricsStrip metrics={metrics} />);
 
     expect(screen.getByText("11d")).toBeDefined();

@@ -1,77 +1,67 @@
-# agents/ — Jeeves agent instruction corpus
+# Jeeves agent instructions and contracts
 
-This directory is the **source of truth for agent prompts and output contracts**. It is not
-executable code — it is the content that `lib/agents/` adapters load at call time. Nothing in
-here imports or is imported by TypeScript; the relationship is "documentation the adapter reads
-(or a human keeps in sync with the adapter's inlined prompt)," not a module dependency.
+The Markdown files under this directory supply prompts and document model-output
+shapes. Runtime validators live in `lib/agents/schemas.ts`; the intake payload
+schema is shared with request validation in `lib/intake/schema.ts`.
+Both schemas use one field definition list: saved drafts may omit historical
+answers, while strict model output supplies every answer and uses `null` for unknowns.
 
-## Why eve doesn't apply here
+## Implemented capabilities
 
-`plan.md` §4 records the P0 gate decision (2026-07-11): **Vercel AI SDK + Workflow SDK**, not eve
-— see `agents-build-log.md` 04:40Z/04:45Z entries. Concretely, that means every agent invocation in
-Jeeves is a single `generateText` (or equivalent) call with `Output.object` structured output
-against an app-owned Zod schema, not an eve agent graph. The `agents/<name>/` directory-per-agent
-layout is kept as **our own convention** for organizing prompts and their schemas — a filesystem
-mirror of the `AgentPort` capability, not an eve artifact. If eve is reconsidered post-GA as an
-optional adapter (plan.md §4, backlogged), this directory's content is what that adapter would also
-need to load; nothing here is framework-specific.
+`AgentPort` exposes three methods used by application callers:
 
-## Directory-to-adapter mapping
+- `draftReview`: prepares one domain review for a human to edit and sign.
+- `intakeInterview`: continues an intake conversation; application code computes
+  authoritative completeness from the returned payload.
+- `auditorAnswer`: answers from structured query rows already fetched by the caller.
 
-Each subdirectory is one agent capability. Two files per agent:
+Tier selection, review routing and completeness checks are deterministic application
+code. They do not invoke an AI triage/completeness method. Monitoring likewise uses
+deterministic breach evaluation and incident narration; `ops-monitor/instructions.md`
+records the narration specification, not an active LLM invocation.
 
-| File | Role |
-|---|---|
-| `instructions.md` | The **system prompt**, verbatim. The adapter passes this as the `system` parameter to `generateText`. Nothing outside this file is prepended or appended except the per-call input payload (policy text, control rows, computed tier, etc. — all supplied as user/context content, never baked into the system prompt). |
-| `schema.md` | Documents the **exact JSON shape** the call must return. This is the human-readable source; the load-bearing artifact is the corresponding Zod schema in `lib/agents/` (not yet written as of this commit — a separate worktree owns `lib/`). `schema.md` and the Zod schema must describe the same shape; if they drift, the Zod schema wins at runtime and `schema.md` is stale and should be fixed to match. |
+The application owns fan-out, retries and persisted per-domain review progress.
+There is no implemented generic `WorkflowPort`, workflow event stream or cancel
+endpoint. Provider invocation cancellation/deadlines are distinct from durable
+workflow cancellation.
 
-Concretely, today's `AgentPort` (`lib/agents/ports.ts`) exposes three capability methods —
-`draftReview`, `triageAssist`, `checkCompleteness` — with their own port-level input/output types.
-The richer per-agent schemas documented under `agents/*/schema.md` (e.g. `reviewer/schema.md`'s
-`assessmentMd` + `citations` + `evidenceRequests[]`) are what the underlying `generateText` call
-actually returns; the adapter implementing `AgentPort.draftReview` is responsible for mapping that
-richer shape down to the port's `DraftReviewOutput` (`draftMarkdown` / `recommendation` /
-`suggestedConditions` / `missingEvidence`). The port stays stable even if a given agent's internal
-schema gains fields, which is the point of the port boundary (AGENTS.md rule 4).
+## Runtime choices
 
-Other conventions every adapter must follow:
+Without an API key the mock adapter runs offline. With a configured key,
+`JEEVES_AGENT_RUNTIME` selects the Vercel AI SDK adapter (`ai-sdk`, default) or the
+OpenAI Agents SDK adapter (`agents-sdk`). Both implement the same application-owned
+port; neither may approve, sign or change authoritative business state.
 
-- **Model**: read from `process.env.OPENAI_MODEL` (`.env.example`: `OPENAI_MODEL=gpt-5.1`). No
-  agent hardcodes a model id.
-- **One invocation per draft.** Each `AgentPort` call is a single, complete `generateText` +
-  `Output.object` round trip — no multi-turn tool loop, no hidden retries that silently change the
-  output shape. If a call fails validation, the adapter surfaces a `PortFailure` (`ports.ts`); it
-  does not paper over the failure with a second, different prompt.
-- **Temperature low.** These are drafting/extraction tasks grounded in supplied text, not creative
-  generation — low temperature (deterministic-leaning) keeps citations and structured fields
-  stable across repeated runs on the same input, which matters for demo repeatability and for
-  test fixtures that mock these calls (plan.md §8: "LLM calls mocked").
-- **Context is passed in, never fetched.** An agent's `instructions.md` never instructs the model
-  to look anything up. All policy text, control catalog rows, prior decisions, or query results
-  the model needs are assembled by app code and included in the call's input content. This keeps
-  every claim traceable to a specific input blob for testing and for the citation rules below.
+- Vercel uses `OPENAI_MODEL`, one structured-output call and `maxRetries: 0`.
+- Agents SDK uses `OPENAI_LUNA_MODEL` for intake/auditor and `OPENAI_TERRA_MODEL`
+  for drafting, with `OPENAI_REASONING_EFFORT` controlling reasoning effort.
+- With Agents SDK, `JEEVES_DEEP_REVIEW=1` adds read-only policy-corpus tools to
+  drafting, bounded by a maximum of 15 turns. Tracing is disabled unless
+  `JEEVES_AGENT_TRACING=1`.
 
-## The never-approve rule (AGENTS.md rule 1)
+The shared invocation helper settles cancellation or a deadline even when a
+provider ignores its abort signal. A late provider result cannot replace that
+terminal outcome. This stops waiting locally; actual provider termination still
+depends on its support for cancellation. SDK-specific errors are normalized by
+adapters. Malformed model output is a non-retryable provider failure, including
+in deep mode; validation failures mean rejected input before a provider call.
 
-Every agent in this directory drafts, recommends, routes, or explains. **None of them decide.**
-Concretely:
+Prompts and policy files must be included in the deployed runtime. They are read
+relative to the deployment's working directory. A successful minimal health probe
+does not by itself verify review quality or every packaged asset.
 
-- `reviewer` never outputs "approved" or "rejected" — only `ready-for-signature` or
-  `return-with-gaps` (see `reviewer/schema.md`). A human reviewer signs; a named, accountable
-  human approver approves or conditionally approves. The fast-lane path is a deterministic,
-  pre-approved policy match computed in code (`fast-lane-policy.md` FL-2), not an agent decision,
-  and it still names an accountable human approver (Angela Torres) on every record.
-- `triage` never computes or overrides a tier — the tier and required-domains routing are
-  deterministic code (`lib/triage`). The agent only narrates the rule that already fired.
-- `intake` never invents an answer on the requester's behalf — it asks, flags gaps, and leaves
-  blanks blank rather than guessing.
-- `auditor` never recalls facts from training data or general knowledge — it answers only from
-  structured query rows supplied in the call, and refuses otherwise.
-- `ops-monitor` never decides that a breach occurred or that a deployment should pause — breach
-  detection and the pause transition are deterministic code (`lib/controls/evaluate`). The agent
-  only writes the human-readable summary of a detection that already happened.
+## Review result preservation
 
-If any adapter implementation is ever tempted to let a model's output directly flip a
-`LifecycleState`, write a `ReviewDecision`, or move money/access/approval — that is a bug, not a
-feature request. Authoritative state transitions live in application code + Postgres only
-(AGENTS.md rule 4).
+The reviewer returns the rich shape documented in `reviewer/schema.md`.
+`mapReviewerDraftToPortOutput` preserves policy anchors in `citations`, separately
+from missing-evidence descriptions. Its human-editable `draftMarkdown` includes
+control IDs with evidence requests and suggested conditions, plus any confidence
+notes. Those details survive the existing Markdown persistence path without a
+new database column. The recommendation remains advisory; only application-owned
+human actions sign reviews and decide initiatives.
+
+Shared reviewer instructions and the selected domain overlay form the system
+prompt. Context supplied by the application belongs in the input payload. Deep
+mode can additionally read full policy files, but model-directed retrieval alone
+does not prove citation validity or access to current evidence. Neither runtime
+may invent intake answers, evidence, policy anchors or approval authority.

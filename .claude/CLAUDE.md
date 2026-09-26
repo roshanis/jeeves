@@ -181,8 +181,11 @@ full v1 breadth, 1–2 week budget, fast-lane autonomy reframe confirmed.
 
 ### Hard Rules (from Codex review)
 - Agents draft/recommend/route — they NEVER approve. Fast-lane = deterministic policy + named accountable approver.
-- Public visitors may submit an intake and NOTHING else (human decision, 2026-09-13, overriding the earlier read-only rule). The passcode-free session carries the `public` role, and `runMutationGuard` denies it by DEFAULT — a route is closed to anonymous callers unless it passes `allowPublic: true`. Exactly three do: create initiative, edit intake draft, submit intake. Never widen that set without re-reading app/api/__tests__/public-submission.test.ts, and never mint public sessions as `requester` (that role already unlocks the LLM-spending chat and draft-run routes).
-- Every other mutation endpoint still requires the demo passcode + isolated workspace + atomic budget check.
+- Access model (human decisions 2026-09-19 "let visitors play" and 2026-09-26 "playground + real inbound queue"): there is NO passcode. Two doors, never mixed:
+  1. **Playground** — any visitor gets any of the 13 personas passwordlessly, in their own isolated workspace; visitors cannot mutate shared seeds or global defaults (see AGENTS.md).
+  2. **Real request** — `/api/public-session` mints a `public`-role session in a `public-` workspace. `runMutationGuard` denies `public` by DEFAULT; exactly three routes pass `allowPublic: true` (create initiative, edit intake draft, submit intake). Never mint public sessions as `requester` (it unlocks LLM-spending chat and draft-run). A `public` session never donates its workspace to a persona switch, and `issueDemoSession` refuses `public-` workspaces.
+- The real-request queue (`/api/public-intake`, `/operator`) is gated by the server-side `OPERATOR_TOKEN`, NEVER by persona role — every persona is free to every visitor, so a role-gated queue would show strangers each other's requests. Guarded by app/api/__tests__/public-submission.test.ts.
+- Every mutation endpoint requires a valid session with a non-null isolated workspace + atomic budget check where applicable.
 - `AuditEvent` is append-only at the DB level. State transitions live in app code + Postgres, never in agent adapters.
 - All synthetic telemetry labeled "Synthetic data — demo"; no fake integrations or dead deep links.
 

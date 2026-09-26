@@ -1,72 +1,85 @@
-// Non-destructive migration runner.
-//
-// Why this module exists: until it did, the ONLY place `migrate()` was
-// called from outside the test harness was `scripts/seed.ts` — and that
-// script wipes every table before reseeding, including a
-// `DISABLE TRIGGER ALL` on `audit_events` so it can delete the append-only
-// audit log. Applying a schema change to a live deployment therefore meant
-// destroying the compliance record the product exists to keep. There was no
-// migrate-only path at all.
-//
-// `applyMigrations()` is that path: it runs the same drizzle migrations
-// under drizzle/ and touches nothing else. `scripts/seed.ts` now calls it
-// too, so the two can never drift in which migrator they select.
-//
-// Driver selection mirrors `getDb()` in ./client.ts exactly — both key off
-// DATABASE_URL, so the migrator always matches the handle it is given.
-// Drizzle's migrations journal table makes either path idempotent.
+// Apply the versioned migration journal without reseeding or deleting data.
+import { Pool } from "pg";
+import { drizzle as drizzleNodePg } from "drizzle-orm/node-postgres";
+import { drizzle as drizzleNeon } from "drizzle-orm/neon-serverless";
+import { PGlite } from "@electric-sql/pglite";
+import { Pool as NeonPool, neonConfig } from "@neondatabase/serverless";
+import ws from "ws";
 import type { Db } from "./client";
-import { selectDriver } from "./driver-select";
+import { getDbDriverForHandle } from "./client";
+import * as schema from "./schema";
+import { selectDriver, type DbDriver } from "./driver-select";
+import { migrationDatabaseUrl, postgresPoolConfig } from "./connection-config";
+import { runtimeDatabaseUrl } from "./runtime-config";
 
-/** Folder holding the drizzle-generated + hand-written migrations. */
 export const MIGRATIONS_FOLDER = "./drizzle";
 
-/**
- * Applies every pending migration to `db`. Idempotent, and non-destructive:
- * it never deletes rows and never leaves the `audit_events` append-only
- * triggers disabled.
- */
-export async function applyMigrations(db: Db): Promise<void> {
-  if (process.env.DATABASE_URL) {
+/** Infer from the supplied handle where possible, never merely from ambient test env. */
+function driverForHandle(db: Db): DbDriver {
+  const recorded = getDbDriverForHandle(db);
+  if (recorded) return recorded;
+  const client = (db as { $client?: unknown }).$client;
+  if (client instanceof PGlite) return "pglite";
+  return selectDriver(runtimeDatabaseUrl(), process.env.JEEVES_DB_DRIVER);
+}
+
+/** Apply migrations using the driver that created the supplied Drizzle handle. */
+export async function applyMigrations(
+  db: Db,
+  driver: DbDriver = driverForHandle(db),
+  migrationConnectionUrl?: string,
+): Promise<void> {
+  // Calls against an existing runtime handle cannot switch to a separate URL.
+  // Validate the actual handle URL, which prevents seed.ts from migrating
+  // through Supabase transaction pooling even when a direct URL is configured.
+  if (driver !== "pglite") {
+    const effectiveUrl = migrationConnectionUrl ?? runtimeDatabaseUrl();
+    if (effectiveUrl) migrationDatabaseUrl(effectiveUrl);
+  }
+  if (driver === "neon") {
     const { migrate } = await import("drizzle-orm/neon-serverless/migrator");
-    type NeonDb = Parameters<typeof migrate>[0];
-    await migrate(db as NeonDb, { migrationsFolder: MIGRATIONS_FOLDER });
+    await migrate(db as Parameters<typeof migrate>[0], { migrationsFolder: MIGRATIONS_FOLDER });
+  } else if (driver === "pg") {
+    const { migrate } = await import("drizzle-orm/node-postgres/migrator");
+    await migrate(db as Parameters<typeof migrate>[0], { migrationsFolder: MIGRATIONS_FOLDER });
+  } else {
+    const { migrate } = await import("drizzle-orm/pglite/migrator");
+    await migrate(db as Parameters<typeof migrate>[0], { migrationsFolder: MIGRATIONS_FOLDER });
+  }
+}
+
+/** Use a dedicated migration connection when configured; never borrow the runtime transaction pool. */
+export async function runMigrations(): Promise<void> {
+  const url = migrationDatabaseUrl(runtimeDatabaseUrl(), process.env.DATABASE_MIGRATION_URL);
+  const driver = selectDriver(url, process.env.JEEVES_DB_DRIVER);
+  if (driver === "pglite") {
+    const { getDb, closeDb } = await import("./client");
+    try { await applyMigrations(getDb(), "pglite"); }
+    finally { await closeDb(); }
     return;
   }
 
-  const { migrate } = await import("drizzle-orm/pglite/migrator");
-  type PgliteDb = Parameters<typeof migrate>[0];
-  await migrate(db as PgliteDb, { migrationsFolder: MIGRATIONS_FOLDER });
+  let pool: Pool | NeonPool;
+  if (driver === "neon") {
+    neonConfig.webSocketConstructor = ws;
+    pool = new NeonPool({ connectionString: url! });
+    try {
+      await applyMigrations(drizzleNeon({ client: pool as NeonPool, schema }), "neon", url);
+    } finally {
+      await pool.end();
+    }
+  } else {
+    pool = new Pool({ ...postgresPoolConfig(url!, process.env.DATABASE_SSL_CA), max: 1 });
+    pool.on("error", () => console.error("PostgreSQL migration connection error."));
+    try {
+      await applyMigrations(drizzleNodePg({ client: pool as Pool, schema }), "pg", url);
+    } finally {
+      await pool.end();
+    }
+  }
 }
 
-/**
- * A human-readable description of what a migration run will target, safe to
- * print to a terminal or a CI log.
- *
- * A Postgres connection string carries a password (and a username that may
- * itself be sensitive), so this deliberately reconstructs the label from the
- * parsed host and database name only — it never echoes the input. An
- * unparseable value is reported opaquely rather than printed, because a
- * string we failed to parse may still contain a credential.
- */
+/** A safe label that never prints connection details or credentials. */
 export function describeMigrationTarget(databaseUrl: string | undefined): string {
-  if (!databaseUrl) return "local PGlite store (./.pglite)";
-
-  try {
-    const { hostname, pathname } = new URL(databaseUrl);
-    if (!hostname) return "Postgres (DATABASE_URL set, host unparseable)";
-    const database = pathname.replace(/^\//, "");
-    const label = database ? `${hostname}/${database}` : hostname;
-    // Name the driver that will actually be used rather than assuming Neon —
-    // this printed "Neon Postgres — 127.0.0.1/jeeves" against a plain
-    // Postgres container, which is exactly the confusion ./driver-select.ts
-    // exists to prevent.
-    const vendor =
-      selectDriver(databaseUrl, process.env.JEEVES_DB_DRIVER) === "neon"
-        ? "Neon Postgres"
-        : "Postgres";
-    return `${vendor} — ${label}`;
-  } catch {
-    return "Postgres (DATABASE_URL set, host unparseable)";
-  }
+  return databaseUrl ? "Postgres (configured migration connection)" : "local PGlite store (./.pglite)";
 }

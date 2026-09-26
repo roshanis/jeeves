@@ -4,6 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { useCookieNoticeAcknowledged } from "./cookie-notice";
 
 /**
  * Sticky call to action, phones only.
@@ -28,6 +29,10 @@ export function StickyMobileCta({
   hint?: string;
 }) {
   const [shown, setShown] = React.useState(false);
+  // Both this bar and the cookie notice are fixed at bottom-0, and the notice
+  // sits above. Showing both put the CTA underneath, unreachable, until the
+  // notice was dismissed — so the CTA waits for it instead.
+  const noticeCleared = useCookieNoticeAcknowledged();
 
   React.useEffect(() => {
     function onScroll() {
@@ -39,7 +44,7 @@ export function StickyMobileCta({
     return () => window.removeEventListener("scroll", onScroll);
   }, []);
 
-  if (!shown) return null;
+  if (!shown || !noticeCleared) return null;
 
   return (
     <div

@@ -9,6 +9,7 @@
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
+    "test:postgres": "vitest run --config vitest.postgres.config.ts",
     "test:e2e": "playwright test",
     "typecheck": "tsc --noEmit",
     "db:migrate": "tsx scripts/migrate.ts",
@@ -27,7 +28,7 @@
     "clsx": "^2.1.1",
     "drizzle-orm": "^0.45.2",
     "lucide-react": "^1.24.0",
-    "next": "16.2.12",
+    "next": "16.3.5",
     "next-themes": "^0.4.6",
     "pg": "^8.23.0",
     "react": "19.2.4",
@@ -53,9 +54,10 @@
     "@vitest/coverage-v8": "^4.1.10",
     "drizzle-kit": "^0.31.10",
     "eslint": "^9",
-    "eslint-config-next": "16.2.12",
+    "eslint-config-next": "16.3.5",
     "jsdom": "^29.1.1",
     "tailwindcss": "^4",
+    "tsx": "^4.23.0",
     "typescript": "^5",
     "vitest": "^4.1.10"
   }

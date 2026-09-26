@@ -75,12 +75,25 @@ function acknowledge(): void {
   for (const listener of listeners) listener();
 }
 
+/** Test-only: drop the cached acknowledgement so each test reads storage
+ *  afresh. Without it, the module-level cache made tests order-dependent. */
+export function resetCookieNoticeForTests(): void {
+  cached = undefined;
+  for (const listener of listeners) listener();
+}
+
+/**
+ * Whether the notice has been dismissed. Exported so other fixed-bottom UI
+ * can stay out of its way: the sticky mobile CTA and this notice both sit at
+ * bottom-0, and with the notice on top the CTA was unreachable until the
+ * notice was dismissed.
+ */
+export function useCookieNoticeAcknowledged(): boolean {
+  return React.useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+}
+
 export function CookieNotice() {
-  const acknowledged = React.useSyncExternalStore(
-    subscribe,
-    getSnapshot,
-    getServerSnapshot,
-  );
+  const acknowledged = useCookieNoticeAcknowledged();
 
   function dismiss() {
     acknowledge();

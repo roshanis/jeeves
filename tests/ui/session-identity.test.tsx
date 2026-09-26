@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { RoleProvider, useRole } from "@/components/jeeves/role-context";
 import { RoleSwitcher } from "@/components/jeeves/role-switcher";
 import {
@@ -16,10 +16,10 @@ function IdentityProbe() {
   return <p>{`${personaKey}|${session?.personaKey ?? "public"}`}</p>;
 }
 
-function Harness() {
+function Harness({ liveModeAvailable = true }: { liveModeAvailable?: boolean }) {
   return (
     <RoleProvider>
-      <LiveSessionProvider>
+      <LiveSessionProvider liveModeAvailable={liveModeAvailable}>
         <IdentityProbe />
         <RoleSwitcher />
       </LiveSessionProvider>
@@ -40,7 +40,7 @@ describe("live session identity", () => {
     vi.unstubAllGlobals();
   });
 
-  it("restores the exact authenticated persona and locks public preview switching", async () => {
+  it("restores the exact persona and lets visitors switch roles", async () => {
     sessionStorage.setItem(
       "jeeves_live_session",
       JSON.stringify({
@@ -55,11 +55,15 @@ describe("live session identity", () => {
     render(<Harness />);
 
     await waitFor(() => expect(screen.getByText("marcus-webb|marcus-webb")).toBeTruthy());
-    expect(screen.getByRole("combobox", { name: "Authenticated persona" })).toHaveProperty(
+    expect(screen.getByRole("combobox", { name: "Demo persona" })).toHaveProperty(
       "disabled",
-      true,
+      false,
     );
-    expect(screen.getByText(/Preview switching is unavailable during a live session/)).toBeTruthy();
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ token: "new-token", workspaceId: "ws", expiresAt: Date.now() + 60_000 })));
+    fireEvent.change(screen.getByRole("combobox", { name: "Demo persona" }), { target: { value: "angela-torres" } });
+    await waitFor(() => expect(screen.getByText("angela-torres|angela-torres")).toBeTruthy());
+    expect(JSON.parse(fetchMock.mock.calls[0]![1].body)).toEqual({ personaKey: "angela-torres" });
+    expect(new Headers(fetchMock.mock.calls[0]![1].headers).get("authorization")).toBe("Bearer tok");
   });
 
   it("expires an authenticated session at expiresAt", async () => {
@@ -78,5 +82,12 @@ describe("live session identity", () => {
     render(<Harness />);
     await vi.advanceTimersByTimeAsync(1_001);
     expect(screen.getByText("marcus-webb|public")).toBeTruthy();
+  });
+
+  it("lets static previews browse personas without attempting passwordless entry", () => {
+    render(<Harness liveModeAvailable={false} />);
+    fireEvent.change(screen.getByRole("combobox", { name: "Demo persona" }), { target: { value: "marcus-webb" } });
+    expect(screen.getByText("marcus-webb|public")).toBeTruthy();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

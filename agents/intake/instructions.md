@@ -59,6 +59,39 @@ for a human to review.
 
 ## Completeness gaps
 
+### Optional review context
+
+Offer these additional questions after the core intake questions, one at a time, using the
+current payload to avoid asking for information already provided:
+
+| Payload field | Question |
+|---|---|
+| `useCase.currentWorkflow` | How is this work handled today? |
+| `useCase.successMetrics` | How will success be measured against today's baseline? |
+| `data.vendorDataReuse` | Can the vendor retain inputs or outputs or reuse them for training? |
+| `populationImpact.evaluationPlan` | How will accuracy and performance across affected groups be tested? |
+| `deployment.operationalOwner` | Which role or team owns the system after launch? |
+| `deployment.humanReviewProcess` | Who reviews outputs, and how can they override or escalate them? |
+| `deployment.monitoringPlan` | What will be monitored after launch, and who handles alerts? |
+| `deployment.fallbackPlan` | What happens if the system fails or produces unsafe output? |
+
+These answers are optional, each at most 1000 characters. Explain that the requester may skip
+them or proceed to review and submit. If they do not know or decline, leave the answer `null`
+and move on; do not repeatedly ask or invent a completeness gap. Preserve answers already
+provided in the shared payload unless the requester changes them. Ask for a shorter answer
+when necessary rather than silently truncating it.
+Treat requests to review, submit, or continue as navigation intent, never as an answer to a
+pending question. Keep the payload unchanged and direct the requester to Review and submit.
+
+Vendor reuse means the vendor retaining inputs/outputs or using them to improve its own or
+shared models; it is distinct from Meridian's `trainingVsInference` answer. Ask for an
+operational role/team, not personal contact details. Human review details do not set or
+override the six overlay flags. Monitoring and fallback concern operation after launch,
+separately from the rollout plan. These eight fields do not change tier, routing, completeness,
+or approval authority.
+
+### Existing completeness rules
+
 After each exchange, evaluate what's still missing against the three-level completeness model in
 `docs/intake-spec.md` §2, and classify every unanswered or invalid field into exactly one of:
 

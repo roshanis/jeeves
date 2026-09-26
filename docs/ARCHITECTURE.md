@@ -26,7 +26,7 @@ controls → post-deployment monitoring, with a breach able to pause a
 deployment and open a reassessment cycle — all wrapped in a structured,
 evidence-linked audit trail. The central design commitment, enforced at the
 type level and in code review, is **agents draft, humans decide**: no
-`AgentPort`/`WorkflowPort` result ever carries approval authority, and every
+`AgentPort` result ever carries approval authority, and every
 state transition that matters is performed by application code against
 Postgres, never inside an adapter.
 
@@ -192,7 +192,7 @@ tension with hard rule 4 (authoritative state lives in app code + Postgres,
 never inside an adapter). `AgentPort` fit was judged good; `WorkflowPort` fit
 was judged insufficient. eve is backlogged as a possible post-GA `AgentPort`
 adapter only; the `agents/` directory-per-agent layout (`agents/reviewer/`,
-`agents/triage/`, `agents/auditor/`, `agents/intake/`, `agents/ops-monitor/`)
+`agents/auditor/`, `agents/intake/`, `agents/ops-monitor/`)
 is kept as this project's own convention, independent of that decision.
 
 ### 3.2 `AgentPort` — single-shot capability methods
@@ -200,8 +200,6 @@ is kept as this project's own convention, independent of that decision.
 ```ts
 export interface AgentPort {
   draftReview(input: DraftReviewInput, options?: InvokeOptions): Promise<PortResult<DraftReviewOutput>>;
-  triageAssist(input: TriageAssistInput, options?: InvokeOptions): Promise<PortResult<TriageAssistOutput>>;
-  checkCompleteness(input: CompletenessCheckInput, options?: InvokeOptions): Promise<PortResult<CompletenessCheckOutput>>;
   auditorAnswer(input: AuditorAnswerInput, options?: InvokeOptions): Promise<PortResult<AuditorAnswerOutput>>;
   intakeInterview(input: IntakeInterviewInput, options?: InvokeOptions): Promise<PortResult<IntakeInterviewOutput>>;
 }
@@ -210,10 +208,8 @@ export interface AgentPort {
 `DraftReviewOutput` carries a `recommendation` (`recommend-sign-off` |
 `recommend-conditional` | `recommend-return`), never a `decision` — the port
 cannot approve (hard rule 1); a `ReviewDecision` row is only ever created by
-app code when a named human signs. `TriageAssistOutput` is explicitly
-advisory: "the authoritative tier comes from the deterministic overlay-rules
-in `lib/`... this output exists to explain and cross-check, never to
-decide." `auditorAnswer` is grounded only on caller-supplied
+app code; only a named human can sign it. Triage and completeness are
+deterministic application rules. `auditorAnswer` is grounded only on caller-supplied
 `groundingRows` — the adapter never reaches into `lib/data` itself.
 
 Every port method returns a `PortResult<T>` discriminated union
@@ -221,54 +217,40 @@ Every port method returns a `PortResult<T>` discriminated union
 `PortFailure` is one of `validation | provider | timeout | cancelled |
 budget-exhausted` — no raw provider error crosses the port boundary.
 
-### 3.3 `WorkflowPort` — fan-out, progress, pause/resume, cancel
+### 3.3 Application-owned draft execution
 
-```ts
-export interface WorkflowPort {
-  startFanOut<TItem, TTaskInput, TItemResult, TResumePayload = unknown>(
-    input: FanOutInput<TItem, TTaskInput>,
-    options?: InvokeOptions,
-  ): Promise<PortResult<WorkflowRunHandle<TItem, TItemResult, TResumePayload>>>;
-}
-```
+`lib/workflow/review-run.ts` runs bounded domain work with finite deadlines,
+request cancellation and bounded retries. It resolves intake through the exact
+cycle assessment, persists drafts and their audit receipts transactionally, and
+rejects results superseded by another run or a human action. Re-invocation can
+resume pending work. Human signatures require the displayed review revision
+and submitted evidence packet identity, with immutable signature receipts.
 
-`WorkflowRunHandle` exposes an async-iterable `events()` stream, a terminal
-`result()`, `resume(payload)` for a `paused-for-human` gate, and
-`cancel(reason?)`. The interface doc is explicit that consuming these events
-never mutates authoritative state by itself — app code listens, then
-performs its own Postgres transitions (hard rule 4). In practice, the actual
-fan-out implementation (`lib/workflow/review-run.ts`, §5.3) is
-"WorkflowPort-shaped" but hand-written directly against Postgres rather than
-constructed via a generic `WorkflowPort` runtime — this is the accepted,
-documented shape for the demo (plan §9: "mocked fan-out is acceptable").
+The speculative `WorkflowPort`/event-stream/pause/resume/cancel interface was
+removed in the 2026-09-19 maintenance pass because it had no implementation or
+production consumer. This is still request-bound execution, not durable
+background scheduling. Lifecycle authority remains application code + Postgres.
 
 ### 3.4 Adapters
 
-Selected by [`lib/agents/index.ts`](../lib/agents/index.ts)`#getAgentPort()`
-— the **only** place app code should call to get an `AgentPort`:
+Application callers obtain an `AgentPort` from
+[`lib/agents/index.ts`](../lib/agents/index.ts). The pure
+[`runtime.ts`](../lib/agents/runtime.ts) resolver owns model normalization,
+selected SDK, configured/mock status and deep-mode invocation estimates.
 
-```ts
-export function getAgentPort(): AgentPort {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (apiKey && apiKey.trim().length > 0) {
-    return createOpenAIAgentPort();
-  }
-  return createMockAgentPort();
-}
-```
+- `openai-adapter.ts`: Vercel AI SDK structured requests, with application
+  retries rather than AI SDK retries.
+- `openai-agents-adapter.ts`: optional Agents SDK, separate reviewer/chat models
+  and opt-in policy tools. Both adapters remain supported.
+- `mock-adapter.ts`: deterministic keyless behavior for local demos and tests.
 
-- **`lib/agents/openai-adapter.ts`** — real adapter, Vercel AI SDK v7
-  (`ai` + `@ai-sdk/openai`), `generateText` with `Output.object` for
-  structured drafts, model from `OPENAI_MODEL` (fallback documented as
-  `gpt-5.1`), `maxRetries: 0` (retry policy lives in the caller, not the
-  SDK — see §5.3), and an explicit deadline race mapped to the `timeout`
-  `PortFailure`.
-- **`lib/agents/mock-adapter.ts`** — deterministic, keyless default. Same
-  input always produces the same output (a small artificial per-domain
-  delay is the only non-trivial variance, and it respects `AbortSignal`).
-  This is what every test and the default (no `OPENAI_API_KEY`) demo run
-  uses — nothing is sent to a real provider unless the key is explicitly
-  set and non-empty.
+Both live adapters use the same terminal timeout/cancellation wrapper in
+`invoke.ts`. Policy citations remain distinct from missing evidence; control
+references and confidence notes remain in persisted reviewer Markdown and
+structured review fields, alongside generation provenance. Intake
+uses a shared field definition with separate legacy-storage and strict model
+output schemas. Health probes report their limited scope; successful provider
+connectivity does not establish successful structured reviews or tool execution.
 
 Authoritative state transitions never live in either adapter — they live in
 `lib/services/*` and `lib/lifecycle/transitions.ts` against Postgres.
@@ -310,8 +292,8 @@ in-memory visibility check (`isVisibleToViewer`) depending on the method.
 
 ### 4.2 `MockDataProvider` (`lib/data/mock-provider.ts`)
 
-A hand-authored, fully deterministic fixture set matching
-`docs/seed-spec.md` — no randomness, no wall-clock reads, no network I/O. At
+A deterministic fixture projection over shared `lib/demo/reference-data.ts`
+and `lib/demo/personas.ts`, matching `docs/seed-spec.md` — no randomness, no wall-clock reads, no network I/O. At
 module load it re-derives each fixture's tier via the real `lib/triage/rules.ts`
 and throws on drift, so the mock provider cannot silently diverge from the
 authoritative triage rules. Supports the same `viewerWorkspaceId` semantics

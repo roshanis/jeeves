@@ -23,6 +23,7 @@ import {
   submitIntake,
 } from "@/lib/client/api";
 import { CHAMPION_PREFILL_PAYLOAD } from "@/lib/intake/champion-prefill";
+import { READ_ONLY_PREVIEW_MESSAGE } from "@/lib/data/provider-mode";
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -51,24 +52,31 @@ describe("postSession", () => {
     fetchMock.mockResolvedValueOnce(
       jsonResponse(200, { token: "tok-1", workspaceId: "ws-1", expiresAt: 123 }),
     );
-    const session = await postSession("pass", "priya-raman");
+    const session = await postSession("priya-raman");
     expect(session).toEqual({ token: "tok-1", workspaceId: "ws-1", expiresAt: 123 });
 
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe("/api/session");
     expect(init.method).toBe("POST");
     expect(JSON.parse(init.body as string)).toEqual({
-      passcode: "pass",
       personaKey: "priya-raman",
     });
   });
 
-  it("throws ApiError(401) on a wrong passcode", async () => {
+  it("throws ApiError(401) on an invalid persona", async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse(401, { error: "unauthorized" }));
-    await expect(postSession("wrong", "priya-raman")).rejects.toMatchObject({
+    await expect(postSession("unknown-persona")).rejects.toMatchObject({
       status: 401,
       message: "unauthorized",
     });
+  });
+
+  it("exchanges the current session when switching personas without sending a passcode", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { token: "reviewer-token", workspaceId: "same-workspace", expiresAt: 123 }));
+    await postSession("marcus-webb", "requester-token");
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(new Headers(init.headers).get("Authorization")).toBe("Bearer requester-token");
+    expect(JSON.parse(init.body as string)).toEqual({ personaKey: "marcus-webb" });
   });
 });
 
@@ -98,12 +106,12 @@ describe("authenticated helpers send the Bearer token", () => {
     ],
     [
       "signReview",
-      () => signReview("tok", "cycle-1", "privacy-hipaa"),
+      () => signReview("tok", "cycle-1", "privacy-hipaa", { expectedRevision: 0, expectedEvidencePacketId: null }),
       "/api/reviews/cycle-1/privacy-hipaa/sign",
     ],
     [
       "returnReview",
-      () => returnReview("tok", "cycle-1", "legal", "needs work"),
+      () => returnReview("tok", "cycle-1", "legal", "needs work", 0),
       "/api/reviews/cycle-1/legal/return",
     ],
     [
@@ -215,6 +223,27 @@ describe("authenticated helpers send the Bearer token", () => {
 });
 
 describe("error mapping", () => {
+  it("distinguishes unavailable passwordless entry from a read-only static preview", () => {
+    expect(apiErrorToMessage(new ApiError(503, "private configuration detail", undefined, "DEMO_NOT_CONFIGURED"))).toBe("The demo is temporarily unavailable. Please try again later.");
+    expect(apiErrorToMessage(new ApiError(403, READ_ONLY_PREVIEW_MESSAGE))).toBe(READ_ONLY_PREVIEW_MESSAGE);
+  });
+  it("gives an actionable agent setup message only for the classified 503", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(503, { error: "private server detail", code: "AGENT_INITIALIZATION_FAILED" }));
+    const err = await startDraftRun("tok", "init-1", ["legal"]).catch((e) => e);
+    expect(apiErrorToMessage(err)).toBe("Agents could not start. Test the connection on the Agents page, then retry.");
+    fetchMock.mockResolvedValueOnce(jsonResponse(503, { error: "private unrelated failure" }));
+    const other = await startDraftRun("tok", "init-1", ["legal"]).catch((e) => e);
+    expect(apiErrorToMessage(other)).toBe("Something went wrong — please try again.");
+  });
+  it("maps demo storage failures to retryable copy without exposing server details", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(503, {
+      error: "private database detail", code: "DEMO_STORAGE_UNAVAILABLE", requestId: "req-safe",
+    }));
+    const err = await postSession("priya-raman").catch((e) => e);
+    expect(err).toMatchObject({ status: 503, code: "DEMO_STORAGE_UNAVAILABLE" });
+    expect(apiErrorToMessage(err)).toBe("Demo storage is temporarily unavailable. Please try again shortly.");
+    expect(apiErrorToMessage(err)).not.toContain("private database detail");
+  });
   it("maps 401 to a typed ApiError and re-auth message", async () => {
     fetchMock.mockResolvedValueOnce(
       jsonResponse(401, { error: "invalid or missing session" }),
@@ -223,7 +252,7 @@ describe("error mapping", () => {
     expect(isApiError(err)).toBe(true);
     expect(err.status).toBe(401);
     expect(apiErrorToMessage(err)).toBe(
-      "Session expired or invalid — enter the demo passcode again.",
+      "Session expired or invalid — start the demo again.",
     );
   });
 
@@ -254,7 +283,7 @@ describe("error mapping", () => {
         gaps: [{ field: "reason", maxChars: 2000 }],
       }),
     );
-    const err = await returnReview("tok", "c1", "legal", "x".repeat(3000)).catch((e) => e);
+    const err = await returnReview("tok", "c1", "legal", "x".repeat(3000), 0).catch((e) => e);
     expect(err.status).toBe(400);
     expect(err.gaps).toHaveLength(1);
     expect(apiErrorToMessage(err)).toBe("input validation failed");
@@ -274,7 +303,7 @@ describe("error mapping", () => {
     expect(isApiError(err)).toBe(true);
     expect(err.status).toBe(401);
     expect(apiErrorToMessage(err)).toBe(
-      "Session expired or invalid — enter the demo passcode again.",
+      "Session expired or invalid — start the demo again.",
     );
   });
 

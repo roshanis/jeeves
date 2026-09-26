@@ -66,7 +66,7 @@ describe("IntakeForm — completeness panel before first interaction", () => {
   it("switches to the error framing when the champion example is loaded", () => {
     renderForm();
 
-    fireEvent.click(screen.getByRole("button", { name: "Load champion example" }));
+    fireEvent.click(screen.getByRole("button", { name: "Use a sample initiative" }));
 
     expect(meter().dataset.pristine).toBe("false");
   });

@@ -1,3 +1,4 @@
+import { TryDemoButton } from "./try-demo-button";
 import Link from "next/link";
 import {
   ShieldCheck,
@@ -13,8 +14,7 @@ import { cn } from "@/lib/utils";
 
 /**
  * Public marketing landing page at "/" — pure presentational server
- * component (no hooks, no data fetching, synchronous) so it renders without
- * any of the console's providers (RoleProvider/LiveSessionProvider/etc).
+ * component with a small client demo-entry button supplied by root providers.
  * The real operations console (sidebar + top bar + Inbox dashboard) now
  * lives under app/(console)/, starting at /inbox — see
  * app/(console)/layout.tsx and app/(console)/inbox/page.tsx.
@@ -28,7 +28,7 @@ import { cn } from "@/lib/utils";
  * into. No invented clients, testimonials, metrics, or prices — every link
  * on this page points at a real route (/inbox, /portfolio, /frameworks,
  * /pilot, or CONTACT_URL) — no fake integrations, no dead links, no forms,
- * no mutations.
+ * passwordless demo session entry.
  *
  * Instrument-deck pass (2026-08-03): re-tuned onto the console's design
  * language (app/globals.css — read that file first for the full rationale)
@@ -107,15 +107,7 @@ export function LandingPage() {
                   aria-hidden
                 />
               </Link>
-              <Link
-                href="/inbox"
-                className={cn(
-                  buttonVariants({ variant: "outline", size: "lg" }),
-                  "border-sidebar-border bg-transparent text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
-                )}
-              >
-                Explore the live demo
-              </Link>
+              <TryDemoButton variant="outline" className="border-sidebar-border bg-transparent text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground" />
             </div>
           </div>
 
@@ -305,13 +297,11 @@ export function LandingPage() {
             See it live
           </h2>
           <p className="mt-3 text-sm text-sidebar-foreground-muted">
-            Public visitors are read-only. Live actions require the demo
-            passcode.
+            Create an initiative, switch roles, and take it through review.
+            Your demo work stays in your browser’s workspace. No sign-up required.
           </p>
           <div className="mt-6">
-            <Link href="/inbox" className={buttonVariants({ size: "lg" })}>
-              Explore the live demo
-            </Link>
+            <TryDemoButton />
           </div>
         </div>
       </section>

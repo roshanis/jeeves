@@ -61,6 +61,10 @@ export function ThresholdEditAction({
     }
   }
 
+  if (initiativeOptions.length === 0) {
+    return <p className="text-xs text-muted-foreground">Create and deploy an initiative to try a threshold override. Shared defaults are read-only.</p>;
+  }
+
   return (
     <>
       <DisableWithTooltip

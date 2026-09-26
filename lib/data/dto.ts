@@ -2,6 +2,8 @@
 // and the mock provider (lib/data/mock-provider.ts). UI imports ONLY from this file and
 // provider.ts. Changing shapes here requires updating both providers in the same commit.
 import type { Domain, LifecycleState, OverlayFlags, Tier } from "@/lib/domain/types";
+import type { StoredIntakeFields } from "@/lib/intake/stored-overlay";
+import type { ReviewDecisionReadiness } from "@/lib/approval/review-readiness";
 
 export interface InitiativeSummary {
   slug: string;
@@ -19,6 +21,10 @@ export interface InitiativeSummary {
   accountableApprover: string | null;
   domainsRequired: number;
   domainsSigned: number;
+  /** Recorded abstentions are separate from signatures and do not block a decision. */
+  domainsAbstained?: number;
+  /** Exact current cycle projection; absent only in legacy/static fixtures. */
+  decisionReadiness?: ReviewDecisionReadiness;
   overdue: boolean;
   storyline: string; // short badge text, e.g. "fast-lane", "breach", "rejected"
   /**
@@ -30,14 +36,25 @@ export interface InitiativeSummary {
 }
 
 export interface ReviewRow {
+  /** Exact cycle owning this draft; omitted only by legacy/static fixtures. */
+  cycleId?: string;
+  /** Closed review cycles are immutable, including abstention resumption. */
+  cycleOpen?: boolean;
+  /** Exact displayed revision; absent legacy fixtures remain read-only. */
+  revision?: number;
   domain: Domain;
-  status: "pending" | "drafted" | "signed" | "returned";
+  status: "pending" | "drafted" | "signed" | "returned" | "abstained";
+  abstention?: { reason: string; reviewer: string; at: string };
   reviewer: string | null;
   /** When this review entered the queue (review_decision createdAt) — drives the workbench "Age" / queue-aging view. */
   createdAt: string; // ISO
   signedAt: string | null; // ISO
   draftMd: string | null;
-  citations: string[]; // MP-§ anchors
+  /** Agent-supplied or legacy references; never verified source evidence. */
+  citations: string[];
+  citationProvenance?: "agent-supplied" | "legacy-unverified";
+  missingEvidence?: string[];
+  evidenceRequests?: { controlId: string; description: string }[];
 }
 
 export interface DecisionRow {
@@ -83,6 +100,8 @@ export interface TelemetrySeries {
 }
 
 export interface DeploymentRow {
+  /** Stable server identity; absent only on legacy/static fixtures. */
+  id?: string;
   version: string;
   status: "deployed" | "paused" | "awaiting_promotion_signoff" | "retired";
   at: string;
@@ -101,7 +120,7 @@ export interface InitiativeDetail {
   intake: {
     version: number;
     submitted: boolean;
-    fields: Record<string, string | boolean | null>;
+    fields: StoredIntakeFields;
     missing: string[]; // completeness gaps, e.g. ["data.retentionIntent"]
   } | null;
   reviews: ReviewRow[];
@@ -115,7 +134,7 @@ export interface InitiativeDetail {
 export interface OutcomeMetrics {
   medianReviewCycleDays: number;
   firstPassCompletenessPct: number;
-  reviewerHoursSaved: number;
+  reviewerHoursSavedPerReview: number;
   evidenceFresh: number;
   evidenceTotal: number;
   overdueControls: number;

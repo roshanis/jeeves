@@ -1,4 +1,4 @@
-import { describe, expect, it, afterEach } from "vitest";
+import { describe, expect, it, afterEach, vi } from "vitest";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import {
@@ -68,6 +68,7 @@ describe("agentRuntimeStatus", () => {
   afterEach(() => {
     if (originalKey === undefined) delete process.env.OPENAI_API_KEY;
     else process.env.OPENAI_API_KEY = originalKey;
+    vi.unstubAllEnvs();
   });
 
   it("reports the deterministic mock adapter when no OPENAI_API_KEY is set", () => {
@@ -82,5 +83,25 @@ describe("agentRuntimeStatus", () => {
     const status = agentRuntimeStatus();
     expect(status.connected).toBe(true);
     expect(status.adapter).toBe("openai");
+  });
+
+  it("treats whitespace keys as unconfigured even when deep review is requested", () => {
+    vi.stubEnv("OPENAI_API_KEY", "   ");
+    vi.stubEnv("JEEVES_AGENT_RUNTIME", "agents-sdk");
+    vi.stubEnv("JEEVES_DEEP_REVIEW", "1");
+    expect(agentRuntimeStatus()).toMatchObject({ connected: false, adapter: "mock", deepReviewEnabled: false });
+  });
+
+  it("describes actual runtime and capability models without claiming a connection was tested", () => {
+    vi.stubEnv("OPENAI_API_KEY", "test-placeholder");
+    vi.stubEnv("JEEVES_AGENT_RUNTIME", "agents-sdk");
+    vi.stubEnv("JEEVES_DEEP_REVIEW", "1");
+    vi.stubEnv("OPENAI_TERRA_MODEL", "review-model");
+    vi.stubEnv("OPENAI_LUNA_MODEL", "chat-model");
+    const status = agentRuntimeStatus();
+    expect(status).toMatchObject({ runtime: "agents-sdk", model: "review-model", reviewerModel: "review-model", chatModel: "chat-model", deepReviewEnabled: true });
+    expect(status.detail).toMatch(/Agents SDK/);
+    expect(status.detail).toMatch(/not.*tested/i);
+    expect(status.detail).not.toContain("test-placeholder");
   });
 });

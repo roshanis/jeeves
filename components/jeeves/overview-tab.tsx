@@ -72,6 +72,11 @@ const DOMAIN_STATUS_META: Record<
     icon: CheckCircle2,
     className: "bg-status-good-bg text-status-good-fg",
   },
+  abstained: {
+    label: "Abstained",
+    icon: Circle,
+    className: "bg-status-neutral-bg text-status-neutral-fg",
+  },
   returned: {
     label: "Returned",
     icon: AlertTriangle,
@@ -137,6 +142,7 @@ export function OverviewTab({ detail }: { detail: InitiativeDetail }) {
             <span className="kicker">Required domains</span>
             <span className="stat-value text-xs text-foreground">
               {summary.domainsSigned}/{summary.domainsRequired} signed
+              {(summary.domainsAbstained ?? 0) > 0 ? ` · ${summary.domainsAbstained} abstained` : ""}
             </span>
           </div>
           {/* Status matrix: 2-column grid of cells, hairline-separated

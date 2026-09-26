@@ -4,7 +4,7 @@
  * ./rate-limit.ts keeps its buckets in a module-scoped `Map`, which is
  * per-process — and therefore per serverless instance. A caller gets a fresh
  * allowance simply by landing on a different instance, and every cold start
- * resets the state. The passcode brute-force gate on POST /api/session,
+ * resets the state. The anonymous workspace-creation gate on POST /api/session,
  * configured as 5 attempts refilling one per 30s, was in practice 5 attempts
  * PER WARM INSTANCE (docs/production-readiness.md §1.2). Sessions and the
  * daily token budget already moved to Postgres for exactly this reason.

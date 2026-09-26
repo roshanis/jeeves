@@ -1,19 +1,8 @@
-/**
- * POST /api/session — passcode -> demo session token (task brief deliverable 3).
- *
- * Body:  { passcode: string, personaKey: string }
- * 200:   { token: string, workspaceId: string, expiresAt: number }
- * 401:   { error: string }  (wrong passcode, misconfigured passcode, or
- *                            unknown personaKey — never distinguished in the
- *                            response, to avoid leaking which part failed)
- * 400:   { error: string }  (malformed body)
- *
- * This route intentionally does NOT go through `runMutationGuard` (there is
- * no session yet to check) — it is the one mutating endpoint that is
- * reachable pre-session, gated by the passcode itself instead.
- */
+/** Public demo entry and persona switching. Every action still needs a
+ * server-issued, workspace-bound session. No visitor password is required. */
 import { z } from "zod";
-import { checkSessionAttempt, clientKeyFor, issueDemoSession } from "@/lib/services/route-guard";
+import { checkReadOnlyMode, checkSessionAttempt, clientKeyFor, issueDemoSession, extractSessionToken, resolveSession } from "@/lib/services/route-guard";
+import { isPersonaKey, resolveActor } from "@/lib/services/actors";
 import {
   resolveWorkspaceCookieSecret,
   signWorkspaceId,
@@ -47,7 +36,8 @@ function readWorkspaceCookie(req: Request): string | null {
     .split(";")
     .map((p) => p.trim())
     .find((p) => p.startsWith(`${WORKSPACE_COOKIE}=`));
-  return match ? decodeURIComponent(match.slice(WORKSPACE_COOKIE.length + 1)) : null;
+  try { return match ? decodeURIComponent(match.slice(WORKSPACE_COOKIE.length + 1)) : null; }
+  catch { return null; }
 }
 
 function workspaceCookieHeader(workspaceId: string, secret: string): string {
@@ -64,22 +54,38 @@ function workspaceCookieHeader(workspaceId: string, secret: string): string {
 }
 
 const bodySchema = z.object({
-  passcode: z.string().min(1).max(200),
   personaKey: z.string().min(1).max(100),
 });
 
+const SAFE_DRIVER_CODES = new Set([
+  "EROFS", "ECONNREFUSED", "ECONNRESET", "ETIMEDOUT", "ENOTFOUND",
+  "08000", "08003", "08006", "53300", "57P01",
+  "42P01", "42703", "28P01", "28000", "42501", "3D000",
+  "CERT_HAS_EXPIRED", "DEPTH_ZERO_SELF_SIGNED_CERT",
+  "UNABLE_TO_VERIFY_LEAF_SIGNATURE", "ERR_TLS_CERT_ALTNAME_INVALID",
+  "SELF_SIGNED_CERT_IN_CHAIN", "CERT_REJECTED",
+]);
+
+function storageUnavailable(error: unknown): Response {
+  const requestId = crypto.randomUUID();
+  const outer = error && typeof error === "object" ? error as { code?: unknown; cause?: unknown } : {};
+  const inner = outer.cause && typeof outer.cause === "object" ? outer.cause as { code?: unknown } : {};
+  const rawCode = typeof outer.code === "string" ? outer.code : inner.code;
+  const causeCode = typeof rawCode === "string" && SAFE_DRIVER_CODES.has(rawCode) ? rawCode : "UNKNOWN";
+  console.error("Demo session storage unavailable", { requestId, causeCode });
+  return Response.json(
+    { error: "Demo session storage is temporarily unavailable. Please try again later.", code: "DEMO_STORAGE_UNAVAILABLE", requestId },
+    { status: 503 },
+  );
+}
+
 export async function POST(req: Request): Promise<Response> {
-  // Security review finding #1: brute-force gate — this route sits
-  // pre-session, outside runMutationGuard. Limiter lives in route-guard so
-  // resetGuardStateForTests() clears it between tests.
-  const attempt = await checkSessionAttempt(clientKeyFor(req));
-  if (!attempt.allowed) {
-    return Response.json(
-      { error: "too many attempts — try again later" },
-      { status: 429, headers: { "Retry-After": String(attempt.retryAfterSeconds) } },
-    );
+  const readOnlyFailure = checkReadOnlyMode();
+  if (readOnlyFailure) {
+    return Response.json({ error: readOnlyFailure.message }, { status: readOnlyFailure.status });
   }
 
+  // Parse and validate the public input before any database-backed guards.
   let json: unknown;
   try {
     json = await req.json();
@@ -92,28 +98,65 @@ export async function POST(req: Request): Promise<Response> {
     return Response.json({ error: "invalid request body" }, { status: 400 });
   }
 
-  const secret = resolveWorkspaceCookieSecret();
-  // verifyWorkspaceCookie(...,  null) always returns null (never reuse
-  // without a secret) — no separate branch needed here.
-  const existingWorkspaceId = verifyWorkspaceCookie(readWorkspaceCookie(req), secret);
+  // Demo personas only. `public:` keys resolve in resolveActor because real-
+  // request sessions store them, but they are minted solely by
+  // /api/public-session — accepting one here would let a caller choose their
+  // own actor id and bypass that route's rate limit.
+  if (!isPersonaKey(parsed.data.personaKey) || !resolveActor(parsed.data.personaKey)) {
+    return Response.json({ error: "unauthorized" }, { status: 401 });
+  }
 
-  const expected = process.env.DEMO_PASSCODE ?? "";
-  const result = await issueDemoSession(
-    parsed.data.passcode,
-    expected,
-    parsed.data.personaKey,
-    existingWorkspaceId,
-  );
+  const secret = resolveWorkspaceCookieSecret();
+  if (!secret) {
+    return Response.json({ error: "Demo workspace is not configured. Please try again later.", code: "DEMO_NOT_CONFIGURED" }, { status: 503 });
+  }
+
+  let token: string | null;
+  try {
+    token = extractSessionToken(req);
+  } catch {
+    return Response.json({ error: "session expired or invalid" }, { status: 401 });
+  }
+
+  // These guards use persistent session and rate-limit state.
+  let parent;
+  let attempt;
+  try {
+    parent = token ? await resolveSession(token) : null;
+    attempt = await checkSessionAttempt(clientKeyFor(req), Boolean(parent?.actor && parent.workspaceId));
+  } catch (error) {
+    return storageUnavailable(error);
+  }
+  if (!attempt.allowed) {
+    return Response.json(
+      { error: "too many attempts — try again later" },
+      { status: 429, headers: { "Retry-After": String(attempt.retryAfterSeconds) } },
+    );
+  }
+
+  if (token && (!parent?.actor || !parent.workspaceId)) {
+    return Response.json({ error: "session expired or invalid" }, { status: 401 });
+  }
+
+  // Authenticated workspace wins over a browser continuity hint — except a
+  // real-request (`public`) session, which is never a workspace donor. Its
+  // workspace holds requests sent to the site's operators; a persona switched
+  // into from it must land in a playground workspace, or the visitor could
+  // approve their own real request and every sample they made afterwards
+  // would appear in the operator's queue.
+  const donor = parent?.actor?.role === "public" ? null : parent?.workspaceId;
+  const existingWorkspaceId = donor ?? verifyWorkspaceCookie(readWorkspaceCookie(req), secret);
+
+  let result;
+  try {
+    result = await issueDemoSession(parsed.data.personaKey, existingWorkspaceId);
+  } catch (error) {
+    return storageUnavailable(error);
+  }
   if (!result) {
     return Response.json({ error: "unauthorized" }, { status: 401 });
   }
 
-  // Set (or refresh) the per-browser workspace cookie so subsequent logins in
-  // this browser reuse the same workspace. No secret available -> skip
-  // setting the cookie entirely rather than emitting an unsignable/unsigned
-  // value (never reuse without a secret).
-  const headers: HeadersInit | undefined = secret
-    ? { "Set-Cookie": workspaceCookieHeader(result.workspaceId, secret) }
-    : undefined;
+  const headers = { "Set-Cookie": workspaceCookieHeader(result.workspaceId, secret) };
   return Response.json(result, { status: 200, headers });
 }

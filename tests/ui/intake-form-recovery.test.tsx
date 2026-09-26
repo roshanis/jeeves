@@ -34,7 +34,7 @@ describe("IntakeForm retry recovery", () => {
     mocks.update.mockImplementation(async (_token, _id, payload) => ({ ...created, intakeVersionId: "iv-2", version: 2, payload }));
     mocks.submit.mockResolvedValue({ submitted: true, completenessPct: 95 });
     render(<IntakeForm />);
-    fireEvent.click(screen.getByRole("button", { name: "Load champion example" }));
+    fireEvent.click(screen.getByRole("button", { name: "Use a sample initiative" }));
     fireEvent.click(screen.getByRole("button", { name: "Submit intake" }));
     await waitFor(() => expect(mocks.create).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(screen.getByRole("button", { name: "Submit intake" })).not.toHaveProperty("disabled", true));
@@ -56,7 +56,7 @@ describe("IntakeForm retry recovery", () => {
     mocks.create.mockResolvedValue(created);
     mocks.submit.mockRejectedValueOnce(new TypeError("response lost")).mockResolvedValueOnce({ submitted: true, completenessPct: 95 });
     render(<IntakeForm />);
-    fireEvent.click(screen.getByRole("button", { name: "Load champion example" }));
+    fireEvent.click(screen.getByRole("button", { name: "Use a sample initiative" }));
     fireEvent.click(screen.getByRole("button", { name: "Submit intake" }));
     await waitFor(() => expect(mocks.submit).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(screen.getByRole("button", { name: "Submit intake" })).not.toHaveProperty("disabled", true));

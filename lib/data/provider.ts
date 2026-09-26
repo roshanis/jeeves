@@ -1,7 +1,7 @@
 // Data-provider contract. Two implementations:
 //   lib/data/mock-provider.ts — deterministic fixtures from docs/seed-spec.md (UI dev + tests)
-//   lib/data/db-provider.ts   — Drizzle queries over the real schema (wired after P1 merge)
-// getProvider() prefers the DB when DATABASE_URL (or the PGlite dev store) is available.
+//   lib/data/db-provider.ts   — Drizzle queries over the real schema
+// getProvider() uses provider-mode.ts to select DB reads or offline fixtures.
 import type {
   AuditQueryRow,
   CannedAuditQueryId,

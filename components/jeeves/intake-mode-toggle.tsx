@@ -8,9 +8,10 @@
  */
 import * as React from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { EMPTY_PAYLOAD, IntakeForm } from "./intake-form";
+import { IntakeForm } from "./intake-form";
 import { IntakeChat } from "./intake-chat";
 import type { IntakePayload } from "@/lib/intake/types";
+import { EMPTY_INTAKE_PAYLOAD } from "@/lib/intake/defaults";
 
 export function IntakeModeToggle({ initialPayload, initiativeId, initialVersion, initialSlug }: {
   initialPayload?: IntakePayload;
@@ -19,7 +20,20 @@ export function IntakeModeToggle({ initialPayload, initiativeId, initialVersion,
   initialSlug?: string;
 }) {
   const [mode, setMode] = React.useState("structured");
-  const [payload, setPayload] = React.useState(initialPayload ?? EMPTY_PAYLOAD);
+  const [draft, setDraft] = React.useState({ payload: initialPayload ?? EMPTY_INTAKE_PAYLOAD, revision: 0 });
+  // Updated synchronously by every editor action, even before React rerenders.
+  const revision = React.useRef(0);
+
+  function updatePayload(next: IntakePayload) {
+    revision.current += 1;
+    setDraft({ payload: next, revision: revision.current });
+  }
+
+  function applyChatPayload(next: IntakePayload, expectedRevision: number): boolean {
+    if (revision.current !== expectedRevision) return false;
+    updatePayload(next);
+    return true;
+  }
   return (
     <Tabs value={mode} onValueChange={setMode} data-slot="intake-mode-toggle">
       <TabsList>
@@ -27,10 +41,10 @@ export function IntakeModeToggle({ initialPayload, initiativeId, initialVersion,
         <TabsTrigger value="chat">Chat with intake assistant</TabsTrigger>
       </TabsList>
       <TabsContent value="structured" keepMounted>
-        <IntakeForm initialPayload={payload} onPayloadChange={setPayload} initiativeId={initiativeId} initialVersion={initialVersion} initialSlug={initialSlug} />
+        <IntakeForm initialPayload={draft.payload} onPayloadChange={updatePayload} initiativeId={initiativeId} initialVersion={initialVersion} initialSlug={initialSlug} />
       </TabsContent>
       <TabsContent value="chat" keepMounted>
-        <IntakeChat payload={payload} onPayloadChange={setPayload} onReview={() => setMode("structured")} />
+        <IntakeChat payload={draft.payload} payloadRevision={draft.revision} onPayloadChange={applyChatPayload} onReview={() => setMode("structured")} />
       </TabsContent>
     </Tabs>
   );

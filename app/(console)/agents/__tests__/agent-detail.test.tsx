@@ -30,18 +30,6 @@ describe("AgentDetailPage", () => {
     expect(container.textContent).toContain("Citation rules");
   });
 
-  it("renders the completeness agent without throwing, via the inline-prompt fallback", async () => {
-    const { container } = await renderDetail("completeness");
-
-    expect(container.textContent).toContain("Completeness Check Agent");
-    expect(container.textContent).toContain(
-      "Flags missing or inconsistent required intake evidence as advisory gaps. Authoritative completeness is deterministic code.",
-    );
-    expect(container.textContent).toContain(
-      "System prompt is defined inline in code (lib/intake/completeness.ts).",
-    );
-  });
-
   it("every governance agent id is URL-safe for the dynamic /agents/[id] route", () => {
     for (const agent of GOVERNANCE_AGENTS) {
       expect(agent.id).toMatch(/^[a-z0-9-]+$/);

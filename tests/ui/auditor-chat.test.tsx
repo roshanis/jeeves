@@ -60,7 +60,7 @@ describe("AuditorChat — live session", () => {
   // passcode dialog) — mirror demo-mode-chip.test.tsx's fetch-mocked login
   // flow, but drive `login()` directly via a tiny capture component mounted
   // alongside AuditorChat under one shared LiveSessionProvider instance.
-  let capturedLogin: ((passcode: string, personaKey: string) => Promise<unknown>) | null = null;
+  let capturedLogin: ((personaKey: string) => Promise<unknown>) | null = null;
 
   function LoginCapture() {
     const { login } = useLiveSession();
@@ -83,7 +83,7 @@ describe("AuditorChat — live session", () => {
         expiresAt: Date.now() + 60_000,
       }),
     );
-    await capturedLogin!("correct-pass", "priya-raman");
+    await capturedLogin!("priya-raman");
 
     return utils;
   }

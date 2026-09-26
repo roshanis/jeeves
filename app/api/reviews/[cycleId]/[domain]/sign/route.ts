@@ -5,7 +5,7 @@
  * personas owns exactly one domain); `signReview` itself enforces both and
  * throws `IllegalTransitionError` otherwise (mapped to 403 here).
  *
- * Body:  { editedDraftMd?: string }
+ * Body:  { expectedRevision: number, expectedEvidencePacketId: string | null, editedDraftMd?: string }
  * 200:   { cycleId, domain, status: "signed" }
  * 401/429/400: as other mutating routes.
  * 403:   { error: string }  (non-reviewer actor, or reviewer not assigned to this domain)
@@ -24,6 +24,8 @@ import { runMutationGuard } from "@/lib/services/route-guard";
 import type { Domain } from "@/lib/domain/types";
 
 const bodySchema = z.object({
+  expectedRevision: z.number().int().nonnegative().safe(),
+  expectedEvidencePacketId: z.string().min(1).max(200).nullable(),
   editedDraftMd: z.string().max(20_000).optional(),
 });
 
@@ -65,7 +67,7 @@ export async function POST(
       domain as Domain,
       guard.actor,
       guard.workspaceId,
-      parsed.data.editedDraftMd,
+      parsed.data,
     );
     return Response.json(result, { status: 200 });
   } catch (err) {

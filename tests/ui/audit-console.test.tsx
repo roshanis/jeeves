@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { fireEvent, screen } from "@testing-library/react";
 import { AuditConsole } from "@/components/jeeves/audit-console";
-import { getProvider } from "@/lib/data";
+import { MockDataProvider } from "@/lib/data/mock-provider";
 import type { AuditQueryRow, CannedAuditQueryId } from "@/lib/data/dto";
 import { renderWithProviders } from "./helpers";
 
 async function loadResults(): Promise<Record<CannedAuditQueryId, AuditQueryRow[]>> {
-  const provider = getProvider();
+  const provider = new MockDataProvider();
   const ids: CannedAuditQueryId[] = [
     "member-facing-phi",
     "approved-by-torres",

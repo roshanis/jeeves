@@ -1,6 +1,7 @@
+import { runtimeDatabaseUrl } from "../db/runtime-config";
 /**
  * Shared request-guard pipeline for `app/api/**` mutating route handlers
- * (task brief deliverable 3): session (passcode-issued) -> rate-limit ->
+ * (task brief deliverable 3): writable mode -> session (server-issued) -> rate-limit ->
  * input-size validation -> optional budget reserve. This module composes
  * the persistence and validation primitives while keeping route handlers
  * thin.
@@ -11,27 +12,18 @@
  * otherwise call the service layer.
  */
 import { DbTokenBucketRateLimiter } from "../security/db-rate-limit";
-import { verifyPasscode } from "../security/passcode";
 import { issueSession } from "../security/session";
 import { DbBudgetStore, reserve, type BudgetStore } from "../security/budget";
 import { validateInputSize, type FieldLimit, type InputGap } from "../security/input-limits";
-import { PUBLIC_PERSONA_PREFIX, resolveActor } from "./actors";
+import { PUBLIC_PERSONA_PREFIX, isPersonaKey, resolveActor } from "./actors";
 import type { Actor } from "../domain/types";
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { getDb } from "../db/client";
 import { sessions } from "../db/schema";
+import { READ_ONLY_PREVIEW_MESSAGE, resolveDataProviderMode } from "../data/provider-mode";
 
-/* -------------------------------------------------------------------------
- * Persistent session, budget and rate-limit state.
- *
- * All three now live in Postgres. Rate limiting was the last piece still
- * held in a module-scoped Map, which meant per-serverless-instance buckets:
- * a caller got a fresh allowance by landing on a different instance, and a
- * cold start reset it (docs/production-readiness.md §1.2). That mattered
- * most for the passcode gate below, which was worth 5 attempts PER WARM
- * INSTANCE rather than 5 overall.
- * ---------------------------------------------------------------------- */
-
+// Sessions, budgets and rate limits live in Postgres across server instances.
 const SESSION_TTL_MS = 60 * 60 * 1000; // 1 hour demo session
 /** Long enough to fill in one intake form, short enough not to be a handle. */
 const PUBLIC_SESSION_TTL_MS = 30 * 60 * 1000;
@@ -50,10 +42,7 @@ const rateLimiter = new DbTokenBucketRateLimiter(
 const budgetStore: BudgetStore = new DbBudgetStore(getDb);
 const DAILY_TOKEN_CAP = 500_000;
 
-// Security review finding #1: /api/session sits pre-session outside
-// runMutationGuard, so the shared passcode was brute-forceable at wire
-// speed. Dedicated slow bucket: 5 attempts per client, one refill per 30s —
-// and now genuinely 5 per client rather than 5 per instance.
+// Anonymous workspace creation stays bounded separately from business actions.
 const sessionAttemptLimiter = new DbTokenBucketRateLimiter(
   { capacity: 5, refillPerSecond: 1 / 30 },
   getDb,
@@ -88,8 +77,17 @@ const publicSessionLimiter = new DbTokenBucketRateLimiter(
  */
 export async function issuePublicSession(
   clientKey: string,
-): Promise<IssueSessionResult | { rateLimited: true; retryAfterSeconds: number }> {
-  const attempt = await publicSessionLimiter.checkAndConsume(clientKey);
+): Promise<
+  | IssueSessionResult
+  | { rateLimited: true; retryAfterSeconds: number }
+  | { readOnly: GuardFailure }
+> {
+  const readOnly = checkReadOnlyMode();
+  if (readOnly) return { readOnly };
+
+  // Namespaced like every other limiter here: the buckets share one table, and
+  // an un-prefixed key would share a balance with another policy.
+  const attempt = await publicSessionLimiter.checkAndConsume(`public-session:${clientKey}`);
   if (!attempt.allowed) {
     return { rateLimited: true, retryAfterSeconds: attempt.retryAfterSeconds };
   }
@@ -99,7 +97,10 @@ export async function issuePublicSession(
   // without changing what it MEANS for mutation: workspaceMismatch() still
   // demands an exact match, so one visitor cannot touch another's draft.
   const workspaceId = `${PUBLIC_WORKSPACE_PREFIX}${session.workspaceId}`;
-  const personaKey = `${PUBLIC_PERSONA_PREFIX}${session.token.slice(0, 32)}`;
+  // Independent of the token on purpose: this becomes actor.id and is written
+  // to audit_events.actor. It used to be token.slice(0, 32) — half the live
+  // session token, stored in a column built to be read by humans.
+  const personaKey = `${PUBLIC_PERSONA_PREFIX}${randomUUID()}`;
 
   await getDb().insert(sessions).values({
     token: session.token,
@@ -110,24 +111,71 @@ export async function issuePublicSession(
   return { token: session.token, workspaceId, expiresAt: session.expiresAt };
 }
 
-/** Pre-session brute-force gate for POST /api/session. */
+
+// Switching an existing session is separately bounded so exploring the eight
+// reviewer roles does not exhaust the anonymous workspace-creation allowance.
+const personaSwitchLimiter = new DbTokenBucketRateLimiter(
+  { capacity: 20, refillPerSecond: 0.2 }, getDb, () => Date.now(),
+);
+
+/** Separate limits for anonymous entry and authenticated persona switching. */
 export async function checkSessionAttempt(
   clientKey: string,
+  switching = false,
 ): Promise<{ allowed: boolean; retryAfterSeconds: number }> {
-  return sessionAttemptLimiter.checkAndConsume(clientKey);
+  return switching
+    ? personaSwitchLimiter.checkAndConsume(`persona-switch:${clientKey}`)
+    : sessionAttemptLimiter.checkAndConsume(`session:${clientKey}`);
 }
 
-/** Test-only: reset all module-scoped guard state between test files/cases. */
-export function resetGuardStateForTests(): void {
-  // Nothing left to reset. Sessions, the daily budget AND the rate-limit
-  // buckets all live in Postgres now, and API tests provide a fresh PGlite
-  // database per case — so there is no module-scoped state to clear. Kept as
-  // a no-op because every API test file calls it; removing it would be churn
-  // for no benefit, and it stays the right hook if process-local state ever
-  // returns.
+/* -------------------------------------------------------------------------
+ * Operator credential — GET /api/public-intake
+ *
+ * The inbound request queue holds what strangers typed (names, emails), so it
+ * cannot be gated by persona role: the passwordless playground hands any
+ * visitor any persona, Program Office and Admin included. It is gated by
+ * OPERATOR_TOKEN instead, a server-side secret held by whoever runs the site.
+ * ---------------------------------------------------------------------- */
+
+/** Below this, a token is treated as unconfigured: a guessable operator
+ *  secret would make everything else here moot. */
+export const OPERATOR_TOKEN_MIN_LENGTH = 32;
+
+/** The configured operator token, or null when the queue is switched off. */
+export function configuredOperatorToken(): string | null {
+  const token = process.env.OPERATOR_TOKEN?.trim() ?? "";
+  return token.length >= OPERATOR_TOKEN_MIN_LENGTH ? token : null;
 }
 
-export type GuardFailureKind = "unauthorized" | "rate_limited" | "invalid_input" | "budget_exhausted";
+/**
+ * Constant-time check of `Authorization: Bearer <token>` against the
+ * configured operator token. Both sides are hashed first so the comparison
+ * runs over equal-length buffers regardless of what the caller sent — a raw
+ * timingSafeEqual would throw (and leak) on a length mismatch.
+ */
+export function isOperatorAuthorized(authorization: string | null, expected: string): boolean {
+  const match = authorization?.match(/^Bearer (.+)$/);
+  if (!match) return false;
+  const given = createHash("sha256").update(match[1]!).digest();
+  const want = createHash("sha256").update(expected).digest();
+  return timingSafeEqual(given, want);
+}
+
+/** Failed-attempt ceiling for the operator queue — cheap insurance on top of
+ *  a >= 32-character secret, and it keeps probing from loading the DB. */
+const operatorAttemptLimiter = new DbTokenBucketRateLimiter(
+  { capacity: 10, refillPerSecond: 1 / 30 },
+  getDb,
+  () => Date.now(),
+);
+
+export async function checkOperatorAttempt(
+  clientKey: string,
+): Promise<{ allowed: boolean; retryAfterSeconds: number }> {
+  return operatorAttemptLimiter.checkAndConsume(`operator:${clientKey}`);
+}
+
+export type GuardFailureKind = "unauthorized" | "rate_limited" | "invalid_input" | "budget_exhausted" | "read_only";
 
 export interface GuardFailure {
   kind: GuardFailureKind;
@@ -135,6 +183,13 @@ export interface GuardFailure {
   message: string;
   gaps?: InputGap[];
   retryAfterSeconds?: number;
+}
+
+/** Static preview reads cannot reflect writes, so reject before any DB access. */
+export function checkReadOnlyMode(): GuardFailure | null {
+  return resolveDataProviderMode(process.env.DATA_PROVIDER, !!runtimeDatabaseUrl()) === "mock"
+    ? { kind: "read_only", status: 403, message: READ_ONLY_PREVIEW_MESSAGE }
+    : null;
 }
 
 /* -------------------------------------------------------------------------
@@ -148,10 +203,9 @@ export interface IssueSessionResult {
 }
 
 /**
- * Verify the demo passcode and, if correct, issue + register a new session
- * bound to `personaKey`. Returns null on passcode mismatch/misconfiguration
- * (caller maps to 401, no side effects — plan §3 "unauthenticated requests
- * -> 401 with no side effects").
+ * Issue a public demo session bound to a known fictional persona.
+ * Returns null in preview mode or for unknown personas. Workspace ids passed here must already
+ * be verified by the route through a valid session or signed browser cookie.
  *
  * `existingWorkspaceId` (M2.5 inc.2b — per-browser workspace reuse): when a
  * non-empty value is passed (the caller's incoming `jeeves_workspace`
@@ -162,14 +216,16 @@ export interface IssueSessionResult {
  * unchanged behavior (fresh workspaceId derived from the new token).
  */
 export async function issueDemoSession(
-  providedPasscode: string,
-  expectedPasscode: string,
   personaKey: string,
   existingWorkspaceId?: string | null,
 ): Promise<IssueSessionResult | null> {
-  const check = verifyPasscode(providedPasscode, expectedPasscode);
-  if (!check.ok) return null;
-  if (!resolveActor(personaKey)) return null;
+  if (checkReadOnlyMode()) return null;
+  // Demo personas only — never a `public:` key (see app/api/session/route.ts).
+  if (!isPersonaKey(personaKey) || !resolveActor(personaKey)) return null;
+  // Invariant, held here rather than trusted to every caller: no persona
+  // session ever lives in a real-request workspace. Those hold requests sent
+  // to the site's operators, and the operator queue lists everything in them.
+  if (existingWorkspaceId?.startsWith(PUBLIC_WORKSPACE_PREFIX)) existingWorkspaceId = null;
 
   const session = issueSession({ ttlMs: SESSION_TTL_MS }, () => Date.now());
   const workspaceId = existingWorkspaceId ? existingWorkspaceId : session.workspaceId;
@@ -303,8 +359,8 @@ function todayUtc(): string {
 }
 
 /**
- * Runs session -> rate-limit -> input-validation -> (optional) budget in
- * order, short-circuiting on the first failure — matching the task brief's
+ * Rejects static preview mode, then runs session -> rate-limit ->
+ * input-validation -> (optional) budget in order, short-circuiting on the first failure — matching the task brief's
  * required precedence ("401 with no side effects" happens before rate
  * limiting/budget can be consumed by an unauthenticated caller).
  */
@@ -313,9 +369,12 @@ export async function runMutationGuard(
   body: Record<string, string> | undefined,
   options: MutationGuardOptions = {},
 ): Promise<MutationGuardResult> {
+  const readOnlyFailure = checkReadOnlyMode();
+  if (readOnlyFailure) return { ok: false, failure: readOnlyFailure };
+
   const token = extractSessionToken(req);
   const { actor, workspaceId } = await resolveSession(token);
-  if (!actor) {
+  if (!actor || !workspaceId) {
     return { ok: false, failure: { kind: "unauthorized", status: 401, message: "invalid or missing session" } };
   }
 
@@ -334,7 +393,8 @@ export async function runMutationGuard(
   }
 
   const clientKey = clientKeyFor(req);
-  const rl = await rateLimiter.checkAndConsume(clientKey);
+  // Independent policies must not share a persisted token balance.
+  const rl = await rateLimiter.checkAndConsume(`mutation:${clientKey}`);
   if (!rl.allowed) {
     return {
       ok: false,
@@ -374,9 +434,4 @@ export async function runMutationGuard(
 /** Exposed for tests that want to exhaust/reset the shared budget deterministically. */
 export function getBudgetStoreForTests(): BudgetStore {
   return budgetStore;
-}
-
-/** Exposed for tests that want to exhaust the shared rate limiter deterministically. */
-export function getRateLimiterForTests(): DbTokenBucketRateLimiter {
-  return rateLimiter;
 }

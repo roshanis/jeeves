@@ -1,34 +1,25 @@
 "use client";
 
 /**
- * Live governance actions for an initiative detail page (task deliverable:
- * live-mode UI over the real /api routes).
+ * Live commands use the server-scoped case identity. Shared samples remain
+ * read-only; API authorization remains authoritative. Reviewer commands live
+ * in the evidence workbench; this bar owns the QC gate, triage and final
+ * decisions:
  *
- * Renders NOTHING unless (a) a live demo session is active AND (b) this
- * initiative was created during this browser session (the live registry
- * knows its DB initiativeId — the read-model DTOs deliberately expose only
- * the slug, and the 12 seeded initiatives have no client-reachable id, so
- * their pages keep the untouched read-only rendering).
- *
- * Actions by lifecycle state:
  *  - submitted  -> "Open QC" (Program Office / Admin). The gate before the
  *                  fan-out: triage asks every required domain at once, so
  *                  this is the last point at which an incomplete intake
  *                  costs nobody else time.
- *  - in_qc      -> "Run triage" (any authenticated persona; the server
- *                  records the system actor) or "Return to requester"
- *                  (Program Office / Admin, reason required). Triage's
- *                  result is rendered inline: tier, branch (fast-lane vs
- *                  review), required domains.
- *  - in_review  -> "Record decision" (approver role) — approve /
- *                  conditionally approve (≥1 condition) / reject.
- *
- * Draft-run + sign/return live in the Reviews tab (reviews-tab.tsx).
+ *  - in_qc      -> "Run triage" (the server records the system actor) or
+ *                  "Return to requester" (Program Office / Admin, reason
+ *                  required).
+ *  - decision   -> shown when the server's decision readiness allows it.
  */
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import type { LifecycleState } from "@/lib/domain/types";
+import type { ReviewDecisionReadiness } from "@/lib/approval/review-readiness";
 import {
   apiErrorToMessage,
   decide,
@@ -39,8 +30,6 @@ import {
   startQc,
   returnFromQc,
 } from "@/lib/client/api";
-import { rememberCycle } from "@/lib/client/live-registry";
-import { useLiveInfo } from "@/lib/client/use-live-info";
 import { useLiveSessionOptional } from "@/lib/client/session-context";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -58,11 +47,15 @@ import { ReasonDialog } from "./reason-dialog";
 import { TierBadge } from "./tier-badge";
 import { DOMAIN_LABEL } from "./domain-labels";
 
-export function LiveActionsBar({ slug, state }: { slug: string; state: LifecycleState }) {
+export function LiveActionsBar({ initiativeId, isSeeded, state, decisionReadiness }: {
+  initiativeId?: string;
+  isSeeded?: boolean;
+  state: LifecycleState;
+  decisionReadiness?: ReviewDecisionReadiness;
+}) {
   const router = useRouter();
   const live = useLiveSessionOptional();
   const session = live?.session ?? null;
-  const liveInfo = useLiveInfo(slug);
 
   const [triaging, setTriaging] = React.useState(false);
   const [triageResult, setTriageResult] = React.useState<TriageResult | null>(null);
@@ -72,17 +65,15 @@ export function LiveActionsBar({ slug, state }: { slug: string; state: Lifecycle
   const [returnPending, setReturnPending] = React.useState(false);
   const [returnError, setReturnError] = React.useState<string | null>(null);
 
-  if (!session || !liveInfo?.initiativeId) {
+  if (!session || !initiativeId || isSeeded !== false) {
     return null;
   }
-  const initiativeId = liveInfo.initiativeId;
 
   async function handleTriage() {
-    if (!session) return;
+    if (!session || !initiativeId) return;
     setTriaging(true);
     try {
       const result = await runTriage(session.token, initiativeId);
-      rememberCycle(slug, result.cycleId);
       setTriageResult(result);
       toast.success(
         `Triage complete — tier ${result.tier}, ${result.requiredDomains.length} required domain(s), ${
@@ -99,7 +90,7 @@ export function LiveActionsBar({ slug, state }: { slug: string; state: Lifecycle
   }
 
   async function handleStartQc() {
-    if (!session) return;
+    if (!session || !initiativeId) return;
     setQcPending(true);
     try {
       const result = await startQc(session.token, initiativeId);
@@ -121,7 +112,7 @@ export function LiveActionsBar({ slug, state }: { slug: string; state: Lifecycle
   // review-return actions use), whose confirm button stays disabled until
   // something has been typed, so an empty reason never reaches the 400.
   async function handleReturnFromQc(reason: string) {
-    if (!session) return;
+    if (!session || !initiativeId) return;
     setReturnError(null);
     setReturnPending(true);
     try {
@@ -143,7 +134,7 @@ export function LiveActionsBar({ slug, state }: { slug: string; state: Lifecycle
   // `in_qc` can pass (triage) or go back to the requester.
   const showStartQc = state === "submitted";
   const showTriage = state === "in_qc" && !triageResult;
-  const showDecide = state === "in_review";
+  const showDecide = Boolean(decisionReadiness && (decisionReadiness.canApprove || decisionReadiness.canConditionallyApprove || decisionReadiness.canReject));
 
   if (!showStartQc && !showTriage && !triageResult && !showDecide) {
     return null;
@@ -239,8 +230,7 @@ export function LiveActionsBar({ slug, state }: { slug: string; state: Lifecycle
               data-slot="record-decision"
             />
             <span className="text-xs text-muted-foreground">
-              Approver-only: approve, conditionally approve (with conditions),
-              or reject.
+              {decisionReadiness?.reason} Approver-only decision.
             </span>
           </div>
         ) : null}
@@ -271,9 +261,11 @@ export function LiveActionsBar({ slug, state }: { slug: string; state: Lifecycle
               the review cycle and is written to the audit trail.
             </DialogDescription>
           </DialogHeader>
-          {decideOpen ? (
+          {decideOpen && decisionReadiness ? (
             <DecideForm
               initiativeId={initiativeId}
+              reassessment={state === "re_review"}
+              readiness={decisionReadiness}
               onCancel={() => setDecideOpen(false)}
               onDecided={() => {
                 setDecideOpen(false);
@@ -302,17 +294,23 @@ const fieldClass =
 
 function DecideForm({
   initiativeId,
+  reassessment,
+  readiness,
   onCancel,
   onDecided,
 }: {
   initiativeId: string;
+  reassessment: boolean;
+  readiness: ReviewDecisionReadiness;
   onCancel: () => void;
   onDecided: () => void;
 }) {
   const live = useLiveSessionOptional();
   const session = live?.session ?? null;
 
-  const [decision, setDecision] = React.useState<DecideInput["decision"]>("approved");
+  const [decision, setDecision] = React.useState<DecideInput["decision"]>(
+    readiness.canApprove ? "approved" : readiness.canConditionallyApprove ? "conditionally_approved" : "rejected",
+  );
   const [conditions, setConditions] = React.useState<ConditionDraft[]>([]);
   const [citationsText, setCitationsText] = React.useState("");
   const [error, setError] = React.useState<string | null>(null);
@@ -320,6 +318,7 @@ function DecideForm({
 
   async function handleConfirm() {
     if (!session) return;
+    if (!(decision === "approved" ? readiness.canApprove : decision === "conditionally_approved" ? readiness.canConditionallyApprove : readiness.canReject)) return;
     const cleanConditions = conditions
       .map((c) => ({ text: c.text.trim(), controlId: c.controlId.trim() }))
       .filter((c) => c.text.length > 0 || c.controlId.length > 0);
@@ -364,13 +363,15 @@ function DecideForm({
           data-slot="decide-select"
           className={fieldClass}
         >
-          <option value="approved">Approved</option>
-          <option value="conditionally_approved">Conditionally approved</option>
-          <option value="rejected">Rejected</option>
+          <option value="approved" disabled={!readiness.canApprove}>Approved</option>
+          {!reassessment ? <>
+            <option value="conditionally_approved" disabled={!readiness.canConditionallyApprove}>Conditionally approved</option>
+            <option value="rejected" disabled={!readiness.canReject}>Rejected</option>
+          </> : null}
         </select>
       </label>
 
-      <div className="flex flex-col gap-2 text-sm">
+      {!reassessment ? <div className="flex flex-col gap-2 text-sm">
         <span className="font-medium">
           Conditions{decision === "conditionally_approved" ? " (at least one required)" : ""}
         </span>
@@ -420,7 +421,7 @@ function DecideForm({
         >
           Add condition
         </Button>
-      </div>
+      </div> : null}
 
       <label className="flex flex-col gap-1 text-sm">
         <span className="font-medium">Policy citations (optional, comma-separated)</span>

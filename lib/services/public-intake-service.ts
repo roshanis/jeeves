@@ -7,13 +7,10 @@
  * submission from a stranger would otherwise land in a room nobody on the
  * governance side can open.
  *
- * Why a dedicated service rather than widening the workspace read filter:
- * the console renders server-side from the workspace COOKIE alone, which
- * carries no role. Widening the filter there would have shown every public
- * submission to every visitor, including other strangers — the console is
- * public too. The viewer's role is only knowable from the session token, so
- * the queue lives behind a route that reads it. Strangers stay isolated
- * from each other; passcode-holders see the queue.
+ * Who may read it is decided by the route (app/api/public-intake), which
+ * requires the OPERATOR_TOKEN — not a persona role, since the passwordless
+ * playground gives every persona to anyone. This service only answers "what
+ * arrived"; it performs no authorization of its own.
  */
 import { desc, eq, like } from "drizzle-orm";
 import type { Db } from "../db/client";
@@ -25,6 +22,10 @@ export interface PublicSubmissionRow {
   slug: string;
   title: string;
   requester: string;
+  /** Where to reply. Submission is blocked without a well-formed address
+   *  (completeness rule BLK-03), so a submitted request always has one. */
+  requesterEmail: string | null;
+  businessProblem: string | null;
   state: string;
   submittedAt: string | null;
   createdAt: string;
@@ -52,11 +53,15 @@ export async function listPublicSubmissions(db: Db): Promise<PublicSubmissionRow
         .where(eq(intakeVersions.initiativeId, row.id))
         .orderBy(desc(intakeVersions.version))
         .limit(1);
+      const basics = (intake?.fields as { basics?: { requesterEmail?: unknown; businessProblem?: unknown } } | undefined)
+        ?.basics;
       return {
         initiativeId: row.id,
         slug: row.slug,
         title: row.title,
         requester: row.requester,
+        requesterEmail: typeof basics?.requesterEmail === "string" ? basics.requesterEmail : null,
+        businessProblem: typeof basics?.businessProblem === "string" ? basics.businessProblem : null,
         state: row.state,
         submittedAt: intake?.submitted ? row.updatedAt.toISOString() : null,
         createdAt: row.createdAt.toISOString(),

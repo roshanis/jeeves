@@ -25,10 +25,6 @@ vi.mock("next/navigation", () => ({
   usePathname: () => "/initiatives/prior-auth-clinical-summarizer",
 }));
 
-vi.mock("@/lib/client/use-live-info", () => ({
-  useLiveInfo: () => ({ initiativeId: "init-1", cycleId: null }),
-}));
-
 const SESSION = {
   token: "tok",
   workspaceId: "ws-1",
@@ -57,7 +53,7 @@ const { LiveActionsBar } = await import("@/components/jeeves/live-actions-bar");
 
 function renderInQc() {
   return renderWithProviders(
-    <LiveActionsBar slug="prior-auth-clinical-summarizer" state="in_qc" />,
+    <LiveActionsBar initiativeId="init-1" isSeeded={false} state="in_qc" />,
   );
 }
 

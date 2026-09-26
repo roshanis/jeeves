@@ -17,7 +17,9 @@
 // drizzle/0001_initiative_registry_view.sql — a read-only projection over
 // initiatives + latest risk assessment + latest deployment, not a table.
 import { sql } from "drizzle-orm";
+import type { StoredIntakeFields } from "../intake/stored-overlay";
 import {
+  customType,
   bigint,
   boolean,
   doublePrecision,
@@ -65,7 +67,7 @@ export const intakeVersions = pgTable(
     // Overlay flags captured at this intake version (seed-spec §2.1). Nullable
     // fields are permitted (e.g. champion #1's data.retentionIntent is
     // intentionally missing pre-submission).
-    fields: jsonb("fields").$type<Record<string, string | boolean | null>>().notNull(),
+    fields: jsonb("fields").$type<StoredIntakeFields>().notNull(),
     missing: jsonb("missing").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
   },
@@ -118,12 +120,22 @@ export const reviewDecisions = pgTable(
       .notNull()
       .references(() => reviewCycles.id),
     domain: text("domain").notNull(),
-    status: text("status").notNull(), // 'pending' | 'drafted' | 'signed' | 'returned'
+    status: text("status").notNull(), // 'pending' | 'drafted' | 'signed' | 'returned' | 'abstained'
     reviewer: text("reviewer"),
     draftMd: text("draft_md"),
     citations: jsonb("citations").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
     signedAt: timestamp("signed_at", { withTimezone: true }),
     returnReason: text("return_reason"),
+    // A signature identifies the exact review revision, never whichever draft is current later.
+    revision: integer("revision").notNull().default(0),
+    activeAttemptId: text("active_attempt_id"),
+    activeAttemptExpiresAt: timestamp("active_attempt_expires_at", { withTimezone: true }),
+    signatureEventId: text("signature_event_id"),
+    missingEvidence: jsonb("missing_evidence").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+    evidenceRequests: jsonb("evidence_requests").$type<{ controlId: string; description: string }[]>()
+      .notNull().default(sql`'[]'::jsonb`),
+    sourceMetadata: jsonb("source_metadata").$type<Record<string, unknown>>(),
+    citationProvenance: text("citation_provenance").notNull().default("legacy-unverified"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
   },
   (t) => [
@@ -321,7 +333,7 @@ export const runBudget = pgTable(
 );
 
 /* -------------------------------------------------------------------------
- * Demo sessions — DB-backed (M2.5 inc.1) so a passcode-issued session and
+ * Demo sessions — DB-backed (M2.5 inc.1) so a server-issued session and
  * its bound persona survive a process restart / span multiple serverless
  * instances, instead of living in a module-scoped Map. One row per issued
  * session token; expiry enforced in app code (`expiresAt` is an epoch-ms
@@ -401,7 +413,8 @@ export const controlExceptions = pgTable(
  * Delivery is not implemented: there is no configured transport, and faking
  * one would mean claiming to have emailed Legal when nothing left the
  * process. `deliveredAt`/`deliveryChannel` stay null until something real
- * ships them. See drizzle/0011_review_notifications.sql.
+ * ships them. See drizzle/0013_review_notifications.sql (renumbered from 0011 on merging
+ * main, whose own 0011/0012 had taken those slots).
  * ---------------------------------------------------------------------- */
 
 export const reviewNotifications = pgTable(
@@ -435,7 +448,7 @@ export const reviewNotifications = pgTable(
  *
  * The limiter used to keep buckets in a module-scoped Map, so on a
  * serverless fan-out every instance had its own allowance and a cold start
- * reset it. That made the passcode brute-force gate on POST /api/session
+ * reset it. That made the anonymous workspace-creation gate on POST /api/session
  * worth 5 attempts PER WARM INSTANCE rather than 5 overall
  * (docs/production-readiness.md §1.2). Sessions and the daily token budget
  * moved to Postgres for the same reason; this was the last piece of
@@ -458,3 +471,49 @@ export const rateLimitBuckets = pgTable("rate_limit_buckets", {
  * migration authors / future join tables without re-importing drizzle-orm).
  * ---------------------------------------------------------------------- */
 export { primaryKey };
+
+const evidenceBytes = customType<{ data: Buffer; driverData: Buffer }>({
+  dataType: () => 'bytea',
+  toDriver: value => value,
+  fromDriver: value => Buffer.from(value),
+});
+
+/* Evidence: private bytes, immutable versions and submitted review snapshots. */
+export const evidenceDocuments = pgTable('evidence_documents', {
+  id: text('id').primaryKey(),
+  initiativeId: text('initiative_id').notNull().references(() => initiatives.id),
+  requestId: text('request_id').notNull(),
+  fileName: text('file_name').notNull(),
+  mediaType: text('media_type').notNull(),
+  byteSize: integer('byte_size').notNull(),
+  sha256: text('sha256').notNull(),
+  content: evidenceBytes('content').notNull(),
+  scanStatus: text('scan_status').notNull().default('not_scanned'),
+  version: integer('version').notNull(),
+  supersedesId: text('supersedes_id'),
+  uploadedBy: text('uploaded_by').notNull(),
+  createdAt: timestamp('created_at', {withTimezone:true}).notNull(),
+}, t => [uniqueIndex('evidence_documents_request_uq').on(t.initiativeId,t.requestId)]);
+
+export const evidencePackets = pgTable('evidence_packets', {
+  id: text('id').primaryKey(),
+  initiativeId: text('initiative_id').notNull().references(() => initiatives.id),
+  cycleId: text('cycle_id').notNull().references(() => reviewCycles.id),
+  version: integer('version').notNull(),
+  revision: integer('revision').notNull(),
+  status: text('status').notNull(),
+  entries: jsonb('entries').$type<import('../evidence/types').EvidenceEntry[]>().notNull(),
+  submittedBy: text('submitted_by'),
+  submittedAt: timestamp('submitted_at',{withTimezone:true}),
+  createdAt: timestamp('created_at',{withTimezone:true}).notNull(),
+}, t => [uniqueIndex('evidence_packets_version_uq').on(t.cycleId,t.version), uniqueIndex('evidence_packets_draft_uq').on(t.cycleId).where(sql`${t.status} = 'draft'`)]);
+
+export const evidenceAssessments = pgTable('evidence_assessments', {
+  id:text('id').primaryKey(),
+  packetId:text('packet_id').notNull().references(()=>evidencePackets.id),
+  controlId:text('control_id').notNull().references(()=>controlDefinitions.id),
+  decision:text('decision').notNull(),
+  reason:text('reason').notNull(),
+  reviewer:text('reviewer').notNull(),
+  reviewedAt:timestamp('reviewed_at',{withTimezone:true}).notNull(),
+},t=>[uniqueIndex('evidence_assessments_control_uq').on(t.packetId,t.controlId)]);

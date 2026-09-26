@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { ShieldCheck } from "lucide-react";
-import { buttonVariants } from "@/components/ui/button";
+import { TryDemoButton } from "@/components/jeeves/try-demo-button";
 import { DEMO_BANNER_TEXT } from "@/lib/demo-banner";
 import { FRAMEWORK_DISCLAIMER } from "@/lib/marketing/framework-mappings";
 import { CookieNotice } from "@/components/jeeves/cookie-notice";
@@ -60,9 +60,7 @@ export default function MarketingLayout({
               >
                 Pilot
               </Link>
-              <Link href="/inbox" className={buttonVariants({ size: "sm" })}>
-                Live demo
-              </Link>
+              <TryDemoButton size="sm" />
             </nav>
           </div>
         </header>
@@ -73,10 +71,13 @@ export default function MarketingLayout({
       {/* Sticky only on phones, and only past the hero — see the component.
           Extra bottom padding on the footer so the bar never covers the
           last line of it. */}
+      {/* To the intake page, not straight into a session: it offers both
+          ways in — try the demo, or send a real request — and someone who
+          came to do the second should not be dropped into the first. */}
       <StickyMobileCta
-        href="/inbox"
-        label="Open the live demo"
-        hint="Read-only — no sign-up"
+        href="/initiatives/new"
+        label="Try the demo or send a request"
+        hint="No sign-up needed"
       />
 
       <footer className="border-t px-5 py-4 pb-24 text-center text-xs text-muted-foreground sm:pb-4">

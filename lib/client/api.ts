@@ -18,6 +18,7 @@
 import type { Domain, LifecycleState, Tier } from "@/lib/domain/types";
 import type { IntakePayload } from "@/lib/intake/types";
 import type { CompletenessGap } from "@/lib/intake/completeness";
+import { READ_ONLY_PREVIEW_MESSAGE } from "@/lib/data/provider-mode";
 
 /* -------------------------------------------------------------------------
  * Error type
@@ -26,12 +27,14 @@ import type { CompletenessGap } from "@/lib/intake/completeness";
 export class ApiError extends Error {
   readonly status: number;
   readonly gaps?: unknown[];
+  readonly code?: string;
 
-  constructor(status: number, message: string, gaps?: unknown[]) {
+  constructor(status: number, message: string, gaps?: unknown[], code?: string) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.gaps = gaps;
+    this.code = code;
   }
 }
 
@@ -41,17 +44,31 @@ export function isApiError(value: unknown): value is ApiError {
 
 /**
  * Stable, user-facing copy per status class (task contract):
- *   401 -> re-enter passcode; 429 -> rate limit/budget; 403 -> role;
+ *   401 -> restart demo session; 429 -> rate limit/budget; 403 -> role;
  *   400 -> surface the server's own validation message; else generic.
  */
 export function apiErrorToMessage(err: ApiError): string {
+  if (err.status === 403 && err.message === READ_ONLY_PREVIEW_MESSAGE) {
+    return READ_ONLY_PREVIEW_MESSAGE;
+  }
+  if (err.status === 503 && err.code === "DEMO_NOT_CONFIGURED") {
+    return "The demo is temporarily unavailable. Please try again later.";
+  }
+  if (err.status === 503 && err.code === "DEMO_STORAGE_UNAVAILABLE") {
+    return "Demo storage is temporarily unavailable. Please try again shortly.";
+  }
+  if (err.status === 503 && err.code === "AGENT_INITIALIZATION_FAILED") {
+    return "Agents could not start. Test the connection on the Agents page, then retry.";
+  }
   switch (err.status) {
     case 401:
-      return "Session expired or invalid — enter the demo passcode again.";
+      return "Session expired or invalid — start the demo again.";
     case 429:
       return "Rate limit or demo budget reached — try again shortly.";
     case 403:
       return "Not permitted for your current role.";
+    case 409:
+      return "This record changed. Refresh and review the latest information before trying again.";
     case 400:
       return err.message || "Invalid request.";
     default:
@@ -110,7 +127,7 @@ export interface DraftRunDomainOutcome {
   domain: Domain;
   status: "drafted" | "failed" | "skipped";
   error?: unknown;
-  reason?: "already signed";
+  reason?: "already signed" | "already running" | "superseded" | "reviewer abstained";
 }
 
 export interface StartDraftRunResult {
@@ -119,7 +136,7 @@ export interface StartDraftRunResult {
   outcomes: DraftRunDomainOutcome[];
 }
 
-export type DraftRunDomainStatus = "pending" | "drafted" | "signed" | "returned" | "failed";
+export type DraftRunDomainStatus = "pending" | "drafted" | "signed" | "returned" | "abstained" | "failed";
 
 export interface DraftRunProgressRow {
   domain: Domain;
@@ -142,7 +159,7 @@ export interface RunReviewAgentResult {
   /** Human-readable failure reason — present only when status === "failed". */
   error?: string;
   /** Present when a concurrent human signature wins the persistence race. */
-  reason?: "already signed";
+  reason?: "already signed" | "already running" | "superseded" | "reviewer abstained";
 }
 
 export interface SignReviewResult {
@@ -324,6 +341,7 @@ export interface ConnectorHealth {
   reachable: boolean;
   adapter: "openai" | "mock";
   model: string;
+  assetsReady: boolean | null;
   latencyMs?: number;
   detail: string;
 }
@@ -332,11 +350,11 @@ export interface ConnectorHealth {
  * Core request helper
  * ---------------------------------------------------------------------- */
 
-async function parseErrorBody(res: Response): Promise<{ message: string; gaps?: unknown[] }> {
+async function parseErrorBody(res: Response): Promise<{ message: string; gaps?: unknown[]; code?: string }> {
   try {
-    const body = (await res.json()) as { error?: unknown; gaps?: unknown[] };
+    const body = (await res.json()) as { error?: unknown; gaps?: unknown[]; code?: unknown };
     const message = typeof body?.error === "string" ? body.error : `request failed (${res.status})`;
-    return { message, gaps: Array.isArray(body?.gaps) ? body.gaps : undefined };
+    return { message, gaps: Array.isArray(body?.gaps) ? body.gaps : undefined, code: typeof body?.code === "string" ? body.code : undefined };
   } catch {
     return { message: `request failed (${res.status})` };
   }
@@ -361,8 +379,8 @@ async function request<T>(
   });
 
   if (!res.ok) {
-    const { message, gaps } = await parseErrorBody(res);
-    throw new ApiError(res.status, message, gaps);
+    const { message, gaps, code } = await parseErrorBody(res);
+    throw new ApiError(res.status, message, gaps, code);
   }
   return (await res.json()) as T;
 }
@@ -371,11 +389,12 @@ async function request<T>(
  * Route helpers (one per app/api/** route)
  * ---------------------------------------------------------------------- */
 
-/** POST /api/session — passcode + personaKey -> session token. */
-export function postSession(passcode: string, personaKey: string): Promise<SessionResult> {
+/** Start a demo or switch personas within the current workspace. */
+export function postSession(personaKey: string, token?: string): Promise<SessionResult> {
   return request<SessionResult>("/api/session", {
     method: "POST",
-    body: { passcode, personaKey },
+    token,
+    body: { personaKey },
   });
 }
 
@@ -395,14 +414,21 @@ export interface PublicSubmissionRow {
   slug: string;
   title: string;
   requester: string;
+  requesterEmail: string | null;
+  businessProblem: string | null;
   state: string;
   submittedAt: string | null;
   createdAt: string;
 }
 
-/** GET /api/public-intake — Program Office / Admin view of public submissions. */
-export function listPublicSubmissions(token: string): Promise<PublicSubmissionRow[]> {
-  return request<PublicSubmissionRow[]>("/api/public-intake", { method: "GET", token });
+/**
+ * GET /api/public-intake — the operator's queue of real inbound requests.
+ * `operatorToken` is the site's OPERATOR_TOKEN, not a demo session token:
+ * persona sessions are refused, since the playground hands every persona to
+ * anyone.
+ */
+export function listPublicSubmissions(operatorToken: string): Promise<PublicSubmissionRow[]> {
+  return request<PublicSubmissionRow[]>("/api/public-intake", { method: "GET", token: operatorToken });
 }
 
 /** New per-editor creation key; callers retain it for every retry of that draft creation. */
@@ -528,11 +554,18 @@ export function runReviewAgent(
   token: string,
   cycleId: string,
   domain: Domain,
+  expectedRevision?: number,
 ): Promise<RunReviewAgentResult> {
   return request<RunReviewAgentResult>(
     `/api/reviews/${encodeURIComponent(cycleId)}/${encodeURIComponent(domain)}/run`,
-    { method: "POST", token },
+    { method: "POST", token, body: expectedRevision === undefined ? undefined : { expectedRevision } },
   );
+}
+
+export interface SignReviewInput {
+  expectedRevision: number;
+  expectedEvidencePacketId: string | null;
+  editedDraftMd?: string;
 }
 
 /** POST /api/reviews/[cycleId]/[domain]/sign — reviewer-only. */
@@ -540,14 +573,14 @@ export function signReview(
   token: string,
   cycleId: string,
   domain: Domain,
-  editedDraftMd?: string,
+  input: SignReviewInput,
 ): Promise<SignReviewResult> {
   return request<SignReviewResult>(
     `/api/reviews/${encodeURIComponent(cycleId)}/${encodeURIComponent(domain)}/sign`,
     {
       method: "POST",
       token,
-      body: editedDraftMd !== undefined ? { editedDraftMd } : {},
+      body: input,
     },
   );
 }
@@ -558,10 +591,25 @@ export function returnReview(
   cycleId: string,
   domain: Domain,
   reason: string,
+  expectedRevision: number,
 ): Promise<ReturnReviewResult> {
   return request<ReturnReviewResult>(
     `/api/reviews/${encodeURIComponent(cycleId)}/${encodeURIComponent(domain)}/return`,
-    { method: "POST", token, body: { reason } },
+    { method: "POST", token, body: { reason, expectedRevision } },
+  );
+}
+
+export function abstainReview(token: string, cycleId: string, domain: Domain, reason: string, expectedRevision: number) {
+  return request<{ cycleId: string; domain: Domain; status: "abstained" }>(
+    `/api/reviews/${encodeURIComponent(cycleId)}/${encodeURIComponent(domain)}/abstain`,
+    { method: "POST", token, body: { reason, expectedRevision } },
+  );
+}
+
+export function resumeReview(token: string, cycleId: string, domain: Domain, expectedRevision: number) {
+  return request<{ cycleId: string; domain: Domain; status: "pending" | "drafted" | "returned" }>(
+    `/api/reviews/${encodeURIComponent(cycleId)}/${encodeURIComponent(domain)}/resume`,
+    { method: "POST", token, body: { expectedRevision } },
   );
 }
 

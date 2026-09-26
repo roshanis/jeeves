@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { screen } from "@testing-library/react";
 import { DeploymentsTab } from "@/components/jeeves/deployments-tab";
-import { getProvider } from "@/lib/data";
+import { MockDataProvider } from "@/lib/data/mock-provider";
 import { renderWithProviders } from "./helpers";
 
 describe("DeploymentsTab — member-chat-copilot", () => {
   it("renders at least one version row", async () => {
-    const detail = await getProvider().getInitiativeDetail("member-chat-copilot");
+    const detail = await new MockDataProvider().getInitiativeDetail("member-chat-copilot");
     expect(detail).not.toBeNull();
 
     renderWithProviders(<DeploymentsTab deployments={detail!.deployments} />);

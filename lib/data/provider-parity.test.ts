@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it } from "vitest";
 import { MockDataProvider, MOCK_INITIATIVE_SLUGS } from "./mock-provider";
 import type { InitiativeDetail } from "./dto";

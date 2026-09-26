@@ -15,25 +15,27 @@ const reviewer = {
 
 describe("review action eligibility", () => {
   it("allows only the authenticated reviewer's own actionable domain", () => {
-    expect(getReviewActionEligibility(reviewer, "cycle", "privacy-hipaa", "drafted").canEdit).toBe(true);
-    expect(getReviewActionEligibility(reviewer, "cycle", "legal", "drafted").canEdit).toBe(false);
+    expect(getReviewActionEligibility(reviewer, "cycle", "privacy-hipaa", "drafted", 0).canEdit).toBe(true);
+    expect(getReviewActionEligibility(reviewer, "cycle", "legal", "drafted", 0).canEdit).toBe(false);
   });
 
   it("does not allow pending or signed rows to be edited or acted on", () => {
     for (const status of ["pending", "signed"] as const) {
-      const eligibility = getReviewActionEligibility(reviewer, "cycle", "privacy-hipaa", status);
+      const eligibility = getReviewActionEligibility(reviewer, "cycle", "privacy-hipaa", status, 0);
       expect(eligibility.canEdit).toBe(false);
       expect(eligibility.canSignOrReturn).toBe(false);
     }
   });
 
   it("does not grant a different reviewer domain through preview state", () => {
-    const eligibility = getReviewActionEligibility(reviewer, "cycle", "clinical-safety", "returned");
+    const eligibility = getReviewActionEligibility(reviewer, "cycle", "clinical-safety", "returned", 0);
     expect(eligibility).toEqual({
       isOwnDomain: false,
       canEdit: false,
       canSignOrReturn: false,
       canRunAgent: false,
+      canAbstain: false,
+      canResume: false,
     });
   });
 
@@ -47,3 +49,16 @@ describe("review action eligibility", () => {
     ).toEqual(["legal"]);
   });
 });
+
+ it("allows abstain only on the assigned live pending/drafted/returned review and requires resume afterward", () => {
+   for (const status of ["pending", "drafted", "returned"] as const) {
+     expect(getReviewActionEligibility(reviewer, "cycle", "privacy-hipaa", status, 0).canAbstain).toBe(true);
+   }
+   expect(getReviewActionEligibility(reviewer, "cycle", "privacy-hipaa", "abstained", 1)).toMatchObject({canAbstain: false, canResume: true, canEdit: false, canSignOrReturn: false, canRunAgent: false});
+   for (const actor of [null, {...reviewer, role: "approver" as const}, {...reviewer, personaKey: "elena-vasquez"}]) {
+     expect(getReviewActionEligibility(actor, "cycle", "privacy-hipaa", "abstained", 1).canResume).toBe(false);
+     expect(getReviewActionEligibility(actor, "cycle", "privacy-hipaa", "drafted", 1).canAbstain).toBe(false);
+   }
+   expect(getReviewActionEligibility(reviewer, "cycle", "privacy-hipaa", "signed", 1).canAbstain).toBe(false);
+   expect(getReviewActionEligibility(reviewer, null, "privacy-hipaa", "abstained", 1).canResume).toBe(false);
+ });

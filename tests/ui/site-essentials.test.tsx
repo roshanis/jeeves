@@ -11,7 +11,9 @@ import NotFound from "@/app/not-found";
 import ThankYouPage from "@/app/(marketing)/thank-you/page";
 import PrivacyPage from "@/app/(marketing)/privacy/page";
 import TermsPage from "@/app/(marketing)/terms/page";
-import { CookieNotice } from "@/components/jeeves/cookie-notice";
+import { CookieNotice, resetCookieNoticeForTests } from "@/components/jeeves/cookie-notice";
+import { StickyMobileCta } from "@/components/jeeves/sticky-mobile-cta";
+import { act } from "@testing-library/react";
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), refresh: vi.fn(), replace: vi.fn() }),
@@ -34,18 +36,37 @@ describe("root 404", () => {
 });
 
 describe("thank-you page", () => {
-  it("confirms receipt and says what happens next", () => {
+  it("confirms it was sent, to whom, and what happens next", () => {
     renderWithProviders(<ThankYouPage />);
 
-    expect(screen.getByText(/has been received/i)).toBeDefined();
+    expect(screen.getByText(/has been sent/i)).toBeDefined();
     expect(screen.getByText(/what happens next/i)).toBeDefined();
-    // The honest part: a human checks it, nothing is automatic.
-    expect(screen.getByText(/quality check/i)).toBeDefined();
+    // The honest part: a person reads it and replies by email.
+    expect(screen.getByText(/a person reads it/i)).toBeDefined();
+    expect(screen.getByText(/reply by email/i)).toBeDefined();
+  });
+
+  it("does not promise a governance review a real request never gets", () => {
+    // It used to describe a Program Office QC, triage and domain review. In
+    // the passwordless playground anyone can be the Program Office, so real
+    // requests go to the site's operators instead — and nothing else.
+    renderWithProviders(<ThankYouPage />);
+    expect(screen.queryByText(/program office/i)).toBeNull();
+    expect(screen.queryByText(/triage/i)).toBeNull();
+  });
+
+  it("uses design tokens that exist", () => {
+    // `status-ok-*` never existed; Tailwind drops unknown utilities silently,
+    // so the success badge rendered as a bare circle.
+    renderWithProviders(<ThankYouPage />);
+    const html = document.body.innerHTML;
+    expect(html).not.toMatch(/status-ok/);
+    expect(html).toMatch(/bg-status-good-bg/);
   });
 
   it("does not promise a timeline it cannot keep", () => {
     renderWithProviders(<ThankYouPage />);
-    expect(screen.getByText(/no timeline is promised/i)).toBeDefined();
+    expect(screen.getByText(/no timeline for a reply is promised/i)).toBeDefined();
   });
 
   it("repeats that this is a demo — a confirmation is often the only page seen", () => {
@@ -109,6 +130,7 @@ describe("cookie notice", () => {
     } catch {
       // ignore
     }
+    resetCookieNoticeForTests();
   });
 
   it("describes the one cookie this site actually sets", () => {
@@ -127,5 +149,34 @@ describe("cookie notice", () => {
     unmount();
     renderWithProviders(<CookieNotice />);
     expect(document.querySelector('[data-slot="cookie-notice"]')).toBeNull();
+  });
+});
+
+describe("sticky mobile CTA", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    resetCookieNoticeForTests();
+  });
+
+  function scrollPastHero() {
+    act(() => {
+      Object.defineProperty(window, "scrollY", { value: window.innerHeight * 2, configurable: true });
+      window.dispatchEvent(new Event("scroll"));
+    });
+  }
+
+  it("stays out of the way while the cookie notice is up — both sit at bottom-0", () => {
+    renderWithProviders(<StickyMobileCta href="/initiatives/new" label="Try the demo or send a request" />);
+    scrollPastHero();
+    expect(document.querySelector('[data-slot="sticky-mobile-cta"]')).toBeNull();
+  });
+
+  it("appears once the notice is dismissed and the hero is scrolled past", () => {
+    window.localStorage.setItem("jeeves_cookie_notice_ack", "1");
+    resetCookieNoticeForTests();
+    renderWithProviders(<StickyMobileCta href="/initiatives/new" label="Try the demo or send a request" />);
+    scrollPastHero();
+    const cta = document.querySelector('[data-slot="sticky-mobile-cta"] a');
+    expect(cta?.getAttribute("href")).toBe("/initiatives/new");
   });
 });

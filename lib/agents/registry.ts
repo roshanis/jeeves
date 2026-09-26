@@ -18,16 +18,17 @@
  * the assignment authz (M2.5 inc.3).
  */
 import type { GovernanceDomain } from "./ports";
+import { resolveAgentRuntimeConfig, type AgentRuntimeConfig } from "./runtime";
 import { ACTOR_DIRECTORY, reviewerDomainFor, type PersonaKey } from "../services/actors";
 
-export type AgentKind = "reviewer" | "triage" | "intake" | "completeness" | "auditor" | "monitor";
+export type AgentKind = "reviewer" | "intake" | "auditor" | "monitor";
 
 export interface GovernanceAgent {
   /** Stable id, e.g. "reviewer-privacy-hipaa" or "triage". */
   readonly id: string;
   readonly name: string;
   readonly kind: AgentKind;
-  /** The AgentPort capability this agent implements. */
+  /** AgentPort capability, or the deterministic monitor operation. */
   readonly capability: string;
   /** The governance domain this agent reviews, or null for cross-cutting agents. */
   readonly domain: GovernanceDomain | null;
@@ -165,20 +166,6 @@ export const REVIEW_AGENTS: GovernanceAgent[] = DOMAIN_ORDER.map((domain) => {
 /** Lifecycle + oversight agents (cross-cutting, not per-domain). */
 export const LIFECYCLE_AGENTS: GovernanceAgent[] = [
   {
-    id: "triage",
-    name: "Triage Narration Agent",
-    kind: "triage",
-    capability: "triageAssist",
-    domain: null,
-    accountablePersona: null,
-    accountablePersonaName: null,
-    policyId: null,
-    controlPrefix: null,
-    instructionsPath: "agents/triage/instructions.md",
-    summary:
-      "Narrates the tier + required-domains routing the deterministic rule engine already computed. Never sets or overrides a tier.",
-  },
-  {
     id: "intake",
     name: "Intake Interview Agent",
     kind: "intake",
@@ -192,20 +179,7 @@ export const LIFECYCLE_AGENTS: GovernanceAgent[] = [
     summary:
       "Conversational intake — asks the overlay questions, flags gaps, and hands off. Never invents an answer for the requester.",
   },
-  {
-    id: "completeness",
-    name: "Completeness Check Agent",
-    kind: "completeness",
-    capability: "checkCompleteness",
-    domain: null,
-    accountablePersona: null,
-    accountablePersonaName: null,
-    policyId: null,
-    controlPrefix: null,
-    instructionsPath: "lib/intake/completeness.ts (authoritative) + inline prompt",
-    summary:
-      "Flags missing or inconsistent required intake evidence as advisory gaps. Authoritative completeness is deterministic code.",
-  },
+
 ];
 
 export const OVERSIGHT_AGENTS: GovernanceAgent[] = [
@@ -225,7 +199,7 @@ export const OVERSIGHT_AGENTS: GovernanceAgent[] = [
   },
   {
     id: "ops-monitor",
-    name: "Deployment Monitor Agent",
+    name: "Deployment Monitor",
     kind: "monitor",
     capability: "monitor",
     domain: null,
@@ -235,7 +209,7 @@ export const OVERSIGHT_AGENTS: GovernanceAgent[] = [
     controlPrefix: "Q",
     instructionsPath: "agents/ops-monitor/instructions.md",
     summary:
-      "Watches deployment eval-quality telemetry and surfaces breaches. The pause + reassessment is a deterministic, idempotent code action, not the agent's call.",
+      "Deterministically checks deployment eval-quality telemetry, records breaches and pauses for reassessment. Incident narration is a fixed template; no LLM runs.",
   },
 ];
 
@@ -247,7 +221,8 @@ export const GOVERNANCE_AGENTS: GovernanceAgent[] = [
 ];
 
 /** Runtime status of the agent adapter (which one `getAgentPort()` will use). */
-export interface AgentRuntimeStatus {
+export interface AgentRuntimeStatus extends AgentRuntimeConfig {
+  /** Compatibility field: configured only, never evidence of provider reachability. */
   connected: boolean;
   adapter: "openai" | "mock";
   model: string;
@@ -255,16 +230,18 @@ export interface AgentRuntimeStatus {
 }
 
 export function agentRuntimeStatus(): AgentRuntimeStatus {
-  const hasKey = !!process.env.OPENAI_API_KEY;
-  const model = process.env.OPENAI_MODEL ?? "gpt-5.1";
-  return hasKey
+  const runtime = resolveAgentRuntimeConfig();
+  const model = runtime.reviewerModel;
+  return runtime.configured
     ? {
+        ...runtime,
         connected: true,
         adapter: "openai",
         model,
-        detail: `OpenAI adapter (${model}) — live structured drafts via generateText + Output.object.`,
+        detail: `${runtime.runtime === "agents-sdk" ? "OpenAI Agents SDK" : "Vercel AI SDK"} configured: review ${model}; chat ${runtime.chatModel}; deep review ${runtime.deepReviewEnabled ? "enabled" : "disabled"}. Provider connection and model capabilities have not been tested.`,
       }
     : {
+        ...runtime,
         connected: false,
         adapter: "mock",
         model,

@@ -277,27 +277,21 @@ test.describe("iPhone landscape dialogs", () => {
   // scroll to it.
   test.use({ viewport: { width: 852, height: 393 }, isMobile: true, hasTouch: true, deviceScaleFactor: 3 });
 
-  test("a dialog fits the viewport and its submit stays reachable", async ({ page }) => {
+  test("demo entry and persona switching fit a landscape phone without a dialog", async ({ page }) => {
+    await page.context().setExtraHTTPHeaders({ "x-forwarded-for": "mobile-playground-test" });
     await page.goto("/inbox");
     await page.waitForLoadState("networkidle");
-    await page.locator('[data-slot="demo-mode-chip"]').first().click();
-
-    const dialog = page.locator('[data-slot="dialog-content"]');
-    await expect(dialog).toBeVisible();
-
-    const fits = await dialog.evaluate((el) => {
-      const r = el.getBoundingClientRect();
-      return { top: r.top, bottom: r.bottom, viewport: window.innerHeight };
-    });
-    expect(fits.top, "dialog runs off the top").toBeGreaterThanOrEqual(-1);
-    expect(fits.bottom, "dialog runs off the bottom").toBeLessThanOrEqual(fits.viewport + 1);
-
-    // The passcode field must not trigger Safari's focus zoom either.
-    const fontSize = await page
-      .locator('[data-slot="passcode-input"]')
-      .evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
-    expect(fontSize).toBeGreaterThanOrEqual(16);
-
-    await expect(page.locator('[data-slot="live-login-submit"]')).toBeInViewport();
+    const start = page.getByRole("button", { name: "Start demo", exact: true });
+    await expect(start).toBeInViewport();
+    await start.click();
+    await expect(page.getByRole("button", { name: "Exit demo" })).toBeVisible();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    const picker = page.getByRole("combobox", { name: "Demo persona" });
+    await expect(picker).toBeInViewport();
+    expect(await picker.evaluate((el) => parseFloat(getComputedStyle(el).fontSize))).toBeGreaterThanOrEqual(16);
+    await picker.selectOption("marcus-webb");
+    await expect(picker).toHaveValue("marcus-webb");
+    await expect(picker).toBeEnabled();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
   });
 });

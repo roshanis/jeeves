@@ -51,7 +51,7 @@ import type * as schema from "../db/schema";
 import { auditEvents, controlExceptions, deploymentVersions, effectiveControls, initiatives } from "../db/schema";
 import type { Actor } from "../domain/types";
 import { ConflictError, NotFoundError, ValidationError, IllegalTransitionError } from "./initiative-service";
-import { workspaceMismatch } from "./workspace-guard";
+import { workspaceMismatch, mutationWorkspaceMismatch } from "./workspace-guard";
 
 type Tx = PgDatabase<PgQueryResultHKT, typeof schema>;
 
@@ -141,7 +141,7 @@ async function assertExceptionWorkspaceAccess(
   id: string,
 ): Promise<void> {
   const resourceWorkspaceId = await initiativeWorkspaceId(tx, initiativeId);
-  if (workspaceMismatch(resourceWorkspaceId, sessionWorkspaceId)) {
+  if (mutationWorkspaceMismatch(resourceWorkspaceId, sessionWorkspaceId)) {
     throw new NotFoundError(entity, id);
   }
 }

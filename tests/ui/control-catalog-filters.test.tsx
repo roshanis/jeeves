@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { fireEvent } from "@testing-library/react";
 import { ControlCatalog } from "@/components/jeeves/control-catalog";
-import { getProvider } from "@/lib/data";
+import { MockDataProvider } from "@/lib/data/mock-provider";
 import { renderWithProviders } from "./helpers";
 
 // Chip labels repeat elsewhere in the tree (e.g. a "Legal" group title, a
@@ -19,7 +19,7 @@ function clickChip(container: HTMLElement, slot: string, label: string) {
 
 describe("ControlCatalog filters", () => {
   it("narrows to a single domain when a domain filter chip is clicked", async () => {
-    const controls = await getProvider().controlCatalog();
+    const controls = await new MockDataProvider().controlCatalog();
     const { container } = renderWithProviders(<ControlCatalog controls={controls} />);
 
     // Sanity: all 9 groups present before filtering.
@@ -41,7 +41,7 @@ describe("ControlCatalog filters", () => {
   });
 
   it("resets to all domains when 'All domains' is clicked again", async () => {
-    const controls = await getProvider().controlCatalog();
+    const controls = await new MockDataProvider().controlCatalog();
     const { container } = renderWithProviders(<ControlCatalog controls={controls} />);
 
     clickChip(container, "control-domain-filter", "Legal");
@@ -56,7 +56,7 @@ describe("ControlCatalog filters", () => {
   });
 
   it("narrows by status filter chip", async () => {
-    const controls = await getProvider().controlCatalog();
+    const controls = await new MockDataProvider().controlCatalog();
     const { container } = renderWithProviders(<ControlCatalog controls={controls} />);
 
     const metCount = controls.filter((c) => c.status === "met").length;
@@ -67,7 +67,7 @@ describe("ControlCatalog filters", () => {
   });
 
   it("combines domain and status filters", async () => {
-    const controls = await getProvider().controlCatalog();
+    const controls = await new MockDataProvider().controlCatalog();
     const { container } = renderWithProviders(<ControlCatalog controls={controls} />);
 
     clickChip(container, "control-domain-filter", "Legal");
@@ -83,7 +83,7 @@ describe("ControlCatalog filters", () => {
   // WCAG 2.4.7 fix (2026-08-02): the selected chip's bg-primary fill
   // previously swallowed the browser's default focus outline entirely.
   it("every domain and status chip carries a visible focus-visible ring", async () => {
-    const controls = await getProvider().controlCatalog();
+    const controls = await new MockDataProvider().controlCatalog();
     const { container } = renderWithProviders(<ControlCatalog controls={controls} />);
 
     const chips = [

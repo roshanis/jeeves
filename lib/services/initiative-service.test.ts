@@ -13,13 +13,15 @@ import {
   reviewDecisions,
   riskAssessments,
 } from "../db/schema";
-import { eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
+import { createHash } from "node:crypto";
 import { CONTROL_SEEDS } from "../../scripts/seed";
 import { ConflictError, IllegalTransitionError, NotFoundError, ValidationError } from "./initiative-service";
 import * as svc from "./initiative-service";
 import { SYSTEM_ACTOR } from "./actors";
 import { createMockAgentPort } from "../agents/mock-adapter";
-import type { Domain } from "../domain/types";
+import type { Actor, Domain } from "../domain/types";
+import { DbDataProvider } from "../data/db-provider";
 
 /** Seed just the control catalog (seed-spec §3) — not the full 12-initiative dataset,
  * which would collide with the initiatives this test suite creates directly. */
@@ -73,6 +75,19 @@ function lowTierPayload(): IntakePayload {
   };
 }
 
+/** Existing lifecycle fixtures simulate a client loading the current review before acting. */
+async function signLoadedReview(
+  db: TestDb, cycleId: string, domain: Domain, actor: Actor,
+  workspaceId: string | null, editedDraftMd?: string,
+) {
+  const [row] = await db.select().from(reviewDecisions).where(and(
+    eq(reviewDecisions.cycleId, cycleId), eq(reviewDecisions.domain, domain),
+  ));
+  return svc.signReview(db, cycleId, domain, actor, workspaceId, {
+    expectedRevision: row?.revision ?? 0, expectedEvidencePacketId: null, editedDraftMd,
+  });
+}
+
 describe("lib/services/initiative-service", () => {
   let db: TestDb;
 
@@ -83,6 +98,145 @@ describe("lib/services/initiative-service", () => {
 
   afterEach(async () => {
     await closeTestDb(db);
+  });
+
+  describe("review integrity regression", () => {
+    async function reviewFixture(workspaceId?: string) {
+      const draft = await svc.createDraft(db, {
+        payload: CHAMPION_PREFILL_PAYLOAD, requesterActor: REQUESTER,
+        requesterName: "Priya Raman", workspaceId,
+      });
+      await svc.submitIntake(db, draft.initiativeId, REQUESTER, workspaceId ?? null);
+      // QC gate: `submitted --triage-->` no longer exists — the fan-out is
+      // reachable only through `in_qc`, which the Program Office opens.
+      await svc.startQc(db, draft.initiativeId, PROGRAM, workspaceId ?? null);
+      const triaged = await svc.triage(db, draft.initiativeId, undefined, workspaceId ?? null);
+      await db.update(reviewDecisions).set({ status: "drafted", draftMd: "Original draft" })
+        .where(eq(reviewDecisions.cycleId, triaged.cycleId));
+      return { initiativeId: draft.initiativeId, cycleId: triaged.cycleId };
+    }
+    const viewed = { expectedRevision: 0, expectedEvidencePacketId: null };
+    async function clinical(cycleId: string) {
+      return (await db.select().from(reviewDecisions).where(and(
+        eq(reviewDecisions.cycleId, cycleId), eq(reviewDecisions.domain, "clinical-safety"),
+      )))[0]!;
+    }
+    it("rejects a stale signature even when status remains drafted", async () => {
+      const { cycleId } = await reviewFixture();
+      const row = await clinical(cycleId);
+      await db.update(reviewDecisions).set({ draftMd: "Unseen newer draft", revision: 1 })
+        .where(eq(reviewDecisions.id, row.id));
+      await expect(svc.signReview(db, cycleId, "clinical-safety", REVIEWER, null, viewed))
+        .rejects.toThrow(ConflictError);
+      expect((await clinical(cycleId)).status).toBe("drafted");
+      expect(await db.select().from(auditEvents).where(eq(auditEvents.action, "review_signed"))).toHaveLength(0);
+    });
+    it("rejects a stale return and preserves the newer draft", async () => {
+      const { cycleId } = await reviewFixture();
+      const row = await clinical(cycleId);
+      await db.update(reviewDecisions).set({ revision: 1 }).where(eq(reviewDecisions.id, row.id));
+      await expect(svc.returnReview(db, cycleId, "clinical-safety", REVIEWER, null, "Stale request", 0))
+        .rejects.toThrow(ConflictError);
+      expect((await clinical(cycleId)).status).toBe("drafted");
+    });
+    it("requires an explicit evidence identity, including the legacy no-packet identity", async () => {
+      const { cycleId } = await reviewFixture();
+      await expect(svc.signReview(db, cycleId, "clinical-safety", REVIEWER, null,
+        { expectedRevision: 0, expectedEvidencePacketId: "unseen-packet" }))
+        .rejects.toThrow(ConflictError);
+    });
+    it("freezes exact signed text and provenance in an immutable receipt across an open-cycle return", async () => {
+      const { cycleId } = await reviewFixture();
+      const initial = await clinical(cycleId);
+      await db.update(reviewDecisions).set({ activeAttemptId: "older-agent-attempt", activeAttemptExpiresAt: new Date(Date.now() + 60_000) })
+        .where(eq(reviewDecisions.id, initial.id));
+      await svc.signReview(db, cycleId, "clinical-safety", REVIEWER, null,
+        { ...viewed, editedDraftMd: "Human-edited exact text" });
+      const signed = await clinical(cycleId);
+      expect(signed.revision).toBe(1);
+      expect(signed).toMatchObject({ activeAttemptId: null, activeAttemptExpiresAt: null });
+      expect(signed.signatureEventId).toBeTruthy();
+      const [receipt] = await db.select().from(auditEvents).where(eq(auditEvents.id, signed.signatureEventId!));
+      expect(receipt.metadata).toMatchObject({
+        cycleId, domain: "clinical-safety", signedMd: "Human-edited exact text", revision: 1,
+        signedMdSha256: createHash("sha256").update("Human-edited exact text").digest("hex"),
+        signatureEventId: signed.signatureEventId, evidenceSnapshot: null,
+      });
+      await svc.returnReview(db, cycleId, "clinical-safety", REVIEWER, null, "Reconsider", 1);
+      const returned = await clinical(cycleId);
+      expect(returned).toMatchObject({ status: "returned", revision: 2, signatureEventId: signed.signatureEventId,
+        activeAttemptId: null, activeAttemptExpiresAt: null });
+      expect((await db.select().from(auditEvents).where(eq(auditEvents.id, signed.signatureEventId!)))[0]).toEqual(receipt);
+    });
+    it("forbids sign and return after a decision closes the cycle", async () => {
+      const { initiativeId, cycleId } = await reviewFixture();
+      await svc.decide(db, initiativeId, APPROVER, null, {
+        decision: "conditionally_approved", conditions: [{ text: "Retain human review", controlId: "C-01" }],
+      });
+      await expect(svc.returnReview(db, cycleId, "clinical-safety", REVIEWER, null, "Rewrite history", 0))
+        .rejects.toThrow(ConflictError);
+      await expect(svc.signReview(db, cycleId, "clinical-safety", REVIEWER, null, viewed))
+        .rejects.toThrow(ConflictError);
+    });
+    it("a decision and return cannot both commit against the same open cycle", async () => {
+      const { initiativeId, cycleId } = await reviewFixture();
+      const [decision, returned] = await Promise.allSettled([
+        svc.decide(db, initiativeId, APPROVER, null, {
+          decision: "conditionally_approved", conditions: [{ text: "Retain human review", controlId: "C-01" }],
+        }),
+        svc.returnReview(db, cycleId, "clinical-safety", REVIEWER, null, "Needs revision", 0),
+      ]);
+      expect([decision, returned].filter(result => result.status === "fulfilled")).toHaveLength(1);
+      const row = await clinical(cycleId);
+      const decisions = await db.select().from(initiativeDecisions).where(eq(initiativeDecisions.cycleId, cycleId));
+      expect(decisions).toHaveLength(row.status === "returned" ? 0 : 1);
+    });
+    it("forbids mutations to an older open cycle, with a deterministic same-time tie-break", async () => {
+      const { cycleId } = await reviewFixture();
+      const [cycle] = await db.select().from(reviewCycles).where(eq(reviewCycles.id, cycleId));
+      await db.insert(reviewCycles).values({ ...cycle!, id: `zz-${cycleId}` });
+      await expect(svc.signReview(db, cycleId, "clinical-safety", REVIEWER, null, viewed))
+        .rejects.toThrow(ConflictError);
+      await expect(svc.returnReview(db, cycleId, "clinical-safety", REVIEWER, null, "Older cycle", 0))
+        .rejects.toThrow(ConflictError);
+    });
+    it("hides closed-cycle state from another workspace", async () => {
+      const { cycleId } = await reviewFixture("ws-integrity");
+      await db.update(reviewCycles).set({ closedAt: new Date() }).where(eq(reviewCycles.id, cycleId));
+      await expect(svc.signReview(db, cycleId, "clinical-safety", REVIEWER, "ws-other", viewed))
+        .rejects.toThrow(NotFoundError);
+      await expect(svc.returnReview(db, cycleId, "clinical-safety", REVIEWER, "ws-other", "No access", 0))
+        .rejects.toThrow(NotFoundError);
+    });
+    it("records signed receipts and conditional draft snapshots at decision time", async () => {
+      const { initiativeId, cycleId } = await reviewFixture();
+      await svc.signReview(db, cycleId, "clinical-safety", REVIEWER, null, viewed);
+      const signed = await clinical(cycleId);
+      await db.update(reviewDecisions).set({ status: "signed", reviewer: "legacy-reviewer", signedAt: new Date() })
+        .where(and(eq(reviewDecisions.cycleId, cycleId), eq(reviewDecisions.domain, "legal")));
+      const result = await svc.decide(db, initiativeId, APPROVER, null, {
+        decision: "conditionally_approved", conditions: [{ text: "Retain human review", controlId: "C-01" }],
+      });
+      const events = await db.select().from(auditEvents).where(eq(auditEvents.initiativeId, initiativeId));
+      const receipt = events.find(e => e.action === "conditionally_approve")!;
+      expect(receipt.metadata).toMatchObject({ cycleId, decisionId: result.decisionId,
+        reviewSnapshots: expect.arrayContaining([
+          expect.objectContaining({ domain: "clinical-safety", signatureEventId: signed.signatureEventId, provenance: "signature-receipt" }),
+          expect.objectContaining({ domain: "legal", provenance: "legacy-decision-time-snapshot", draftMd: "Original draft", signatureEventId: null }),
+          expect.objectContaining({ domain: "privacy-hipaa", provenance: "decision-time-draft", revision: 0, draftMd: "Original draft" }),
+        ]),
+      });
+    });
+    it("rolls back the signature if its receipt cannot be persisted", async () => {
+      const { cycleId } = await reviewFixture();
+      await db.execute(sql`CREATE FUNCTION fail_signature_receipt() RETURNS trigger AS $$ BEGIN
+        IF NEW.action = 'review_signed' THEN RAISE EXCEPTION 'receipt unavailable'; END IF;
+        RETURN NEW; END; $$ LANGUAGE plpgsql`);
+      await db.execute(sql`CREATE TRIGGER fail_signature_receipt BEFORE INSERT ON audit_events
+        FOR EACH ROW EXECUTE FUNCTION fail_signature_receipt()`);
+      await expect(svc.signReview(db, cycleId, "clinical-safety", REVIEWER, null, viewed)).rejects.toThrow();
+      expect(await clinical(cycleId)).toMatchObject({ status: "drafted", revision: 0, signatureEventId: null });
+    });
   });
 
   describe("champion happy path (plan.md §2 steps 1-4)", () => {
@@ -136,7 +290,7 @@ describe("lib/services/initiative-service", () => {
       }
       const clinicalRd = pendingRds.find((r) => r.domain === "clinical-safety")!;
 
-      const signResult = await svc.signReview(
+      const signResult = await signLoadedReview(
         db,
         triageResult.cycleId,
         "clinical-safety",
@@ -318,7 +472,7 @@ describe("lib/services/initiative-service", () => {
         .where(eq(reviewDecisions.domain, "clinical-safety"));
       const rd = cycles.find((r) => r.status === "pending")!;
 
-      await expect(svc.signReview(db, rd.cycleId, "clinical-safety", ADMIN, null)).rejects.toThrow(
+      await expect(signLoadedReview(db, rd.cycleId, "clinical-safety", ADMIN, null)).rejects.toThrow(
         IllegalTransitionError,
       );
       const unchanged = (
@@ -335,7 +489,7 @@ describe("lib/services/initiative-service", () => {
         .where(eq(reviewDecisions.domain, "legal"));
       const rd = rows.find((r) => r.cycleId) ?? rows[0]!;
       void draft;
-      await expect(svc.signReview(db, rd.cycleId, "legal", APPROVER, null)).rejects.toThrow(
+      await expect(signLoadedReview(db, rd.cycleId, "legal", APPROVER, null)).rejects.toThrow(
         IllegalTransitionError,
       );
     });
@@ -363,7 +517,7 @@ describe("lib/services/initiative-service", () => {
         .where(eq(reviewDecisions.domain, "privacy-hipaa"));
       const rd = rows[0]!;
 
-      await expect(svc.signReview(db, rd.cycleId, "privacy-hipaa", REVIEWER, null)).rejects.toThrow(
+      await expect(signLoadedReview(db, rd.cycleId, "privacy-hipaa", REVIEWER, null)).rejects.toThrow(
         IllegalTransitionError,
       );
       const unchanged = (
@@ -381,7 +535,7 @@ describe("lib/services/initiative-service", () => {
       const MARCUS = { id: "marcus-webb", role: "reviewer" as const };
 
       await expect(
-        svc.returnReview(db, rd.cycleId, "legal", MARCUS, null, "Needs more detail."),
+        svc.returnReview(db, rd.cycleId, "legal", MARCUS, null, "Needs more detail.", 0),
       ).rejects.toThrow(IllegalTransitionError);
       const unchanged = (
         await db.select().from(reviewDecisions).where(eq(reviewDecisions.id, rd.id))
@@ -404,7 +558,7 @@ describe("lib/services/initiative-service", () => {
           .update(reviewDecisions)
           .set({ draftMd: `Draft for ${domain}.`, status: "drafted" })
           .where(eq(reviewDecisions.id, rd.id));
-        const result = await svc.signReview(
+        const result = await signLoadedReview(
           db,
           rd.cycleId,
           domain,
@@ -491,7 +645,7 @@ describe("lib/services/initiative-service", () => {
       const cycleId = await cycleFor("clinical-safety");
       // Draft then sign as the assigned reviewer.
       await svc.runReviewAgent(db, cycleId, "clinical-safety", REVIEWER, null, createMockAgentPort());
-      await svc.signReview(db, cycleId, "clinical-safety", REVIEWER, null, "Signed clinical safety draft.");
+      await signLoadedReview(db, cycleId, "clinical-safety", REVIEWER, null, "Signed clinical safety draft.");
 
       await expect(
         svc.runReviewAgent(db, cycleId, "clinical-safety", REVIEWER, null, createMockAgentPort()),
@@ -587,7 +741,7 @@ describe("lib/services/initiative-service", () => {
       const { initiativeId, cycleId } = await setUpInReview();
       const domains = await draftAll(cycleId);
       for (const domain of domains) {
-        await svc.signReview(db, cycleId, domain, DOMAIN_REVIEWER[domain], null);
+        await signLoadedReview(db, cycleId, domain, DOMAIN_REVIEWER[domain], null);
       }
       const res = await svc.decide(db, initiativeId, APPROVER, null, { decision: "approved" });
       expect(res.type).toBe("approved");
@@ -759,7 +913,7 @@ describe("lib/services/initiative-service", () => {
           .where(eq(reviewDecisions.id, rd.id));
       }
       for (const rd of rds) {
-        await svc.signReview(
+        await signLoadedReview(
           db,
           triageResult.cycleId,
           rd.domain as Domain,
@@ -957,7 +1111,7 @@ describe("lib/services/initiative-service", () => {
           .where(eq(reviewDecisions.id, rd.id));
       }
       for (const rd of rds) {
-        await svc.signReview(
+        await signLoadedReview(
           db,
           triageResult.cycleId,
           rd.domain as Domain,
@@ -987,6 +1141,29 @@ describe("lib/services/initiative-service", () => {
 
       return { initiativeId, reassessCycleId, requiredDomains: latestRa.requiredDomains as Domain[] };
     }
+
+    it("rejects a cycle linked to another initiative's assessment instead of substituting the latest assessment", async () => {
+      const { initiativeId, reassessCycleId } = await setUpZeroRowReassessmentCycle();
+      const other = await svc.createDraft(db, { payload: CHAMPION_PREFILL_PAYLOAD, requesterActor: REQUESTER, requesterName: "Priya Raman" });
+      await svc.submitIntake(db, other.initiativeId, REQUESTER);
+      // QC gate: `submitted --triage-->` no longer exists — the fan-out is
+      // reachable only through `in_qc`, which the Program Office opens.
+      await svc.startQc(db, other.initiativeId, PROGRAM);
+      const otherTriage = await svc.triage(db, other.initiativeId);
+      await db.update(reviewCycles).set({ riskAssessmentId: otherTriage.riskAssessmentId }).where(eq(reviewCycles.id, reassessCycleId));
+      await expect(svc.decide(db, initiativeId, APPROVER, null, { decision: "approved" })).rejects.toThrow("no resolvable required-domain set");
+      const summary = (await new DbDataProvider(db).listInitiatives()).find((row) => row.initiativeId === initiativeId)!;
+      expect(summary.decisionReadiness).toMatchObject({ canApprove: false, canConditionallyApprove: false, hasRequiredDomains: false });
+    });
+
+    it("blocks closed cycles after role checks and projects them out of approval readiness", async () => {
+      const { initiativeId, reassessCycleId } = await setUpZeroRowReassessmentCycle();
+      await db.update(reviewCycles).set({ closedAt: new Date() }).where(eq(reviewCycles.id, reassessCycleId));
+      await expect(svc.decide(db, initiativeId, ADMIN, null, { decision: "approved" })).rejects.toBeInstanceOf(IllegalTransitionError);
+      await expect(svc.decide(db, initiativeId, APPROVER, null, { decision: "approved" })).rejects.toThrow("closed");
+      const summary = (await new DbDataProvider(db).listInitiatives()).find((row) => row.initiativeId === initiativeId)!;
+      expect(summary.decisionReadiness).toMatchObject({ canApprove: false, canConditionallyApprove: false, canReject: false });
+    });
 
     it("a reassessment cycle with ZERO review_decisions rows throws ValidationError listing every required domain as missing", async () => {
       const { initiativeId, requiredDomains } = await setUpZeroRowReassessmentCycle();
@@ -1234,7 +1411,7 @@ describe("lib/services/initiative-service", () => {
         ).rejects.toThrow(`initiative not found: ${draft.initiativeId}`);
       });
 
-      it("submitIntake allows the owning workspace and any workspace for a null-workspace initiative", async () => {
+      it("submitIntake allows the owning workspace and internal null-workspace calls", async () => {
         const owned = await svc.createDraft(db, {
           payload: CHAMPION_PREFILL_PAYLOAD,
           requesterActor: REQUESTER,
@@ -1252,11 +1429,11 @@ describe("lib/services/initiative-service", () => {
           workspaceId: null,
         });
         await expect(
-          svc.submitIntake(db, seededStyle.initiativeId, REQUESTER, "ws-any"),
+          svc.submitIntake(db, seededStyle.initiativeId, REQUESTER, null),
         ).resolves.toMatchObject({ submitted: true });
       });
 
-      it("triage checks workspace before lifecycle validation, and permits owner/null-workspace calls", async () => {
+      it("triage checks workspace before lifecycle validation, and permits owner/internal null-workspace calls", async () => {
         const foreignWrongState = await svc.createDraft(db, {
           payload: CHAMPION_PREFILL_PAYLOAD,
           requesterActor: REQUESTER,
@@ -1279,10 +1456,10 @@ describe("lib/services/initiative-service", () => {
           requesterName: "Priya Raman",
           workspaceId: null,
         });
-        await svc.submitIntake(db, seededStyle.initiativeId, REQUESTER, "ws-any");
-        await svc.startQc(db, seededStyle.initiativeId, PROGRAM, "ws-any");
+        await svc.submitIntake(db, seededStyle.initiativeId, REQUESTER, null);
+        await svc.startQc(db, seededStyle.initiativeId, PROGRAM, null);
         await expect(
-          svc.triage(db, seededStyle.initiativeId, SYSTEM_ACTOR, "ws-any"),
+          svc.triage(db, seededStyle.initiativeId, SYSTEM_ACTOR, null),
         ).resolves.toMatchObject({ branch: "review" });
       });
     });
@@ -1331,11 +1508,14 @@ describe("lib/services/initiative-service", () => {
         ).rejects.toThrow(NotFoundError);
       });
 
-      it("a seeded (null-workspace) initiative is decidable from ANY session workspace", async () => {
+      it("a non-null session cannot decide a null-workspace initiative, with no partial write", async () => {
         const { initiativeId } = await initiativeReadyToDecide(null);
-        const res = await svc.decide(db, initiativeId, APPROVER, "ws-anything-at-all", {
-          decision: "rejected",
-        });
+        await expect(svc.decide(db, initiativeId, APPROVER, "ws-anything-at-all", { decision: "rejected" }))
+          .rejects.toThrow(NotFoundError);
+        const unchanged = (await db.select().from(initiatives).where(eq(initiatives.id, initiativeId)))[0]!;
+        expect(unchanged.state).toBe("in_review");
+        expect(await db.select().from(initiativeDecisions).where(eq(initiativeDecisions.initiativeId, initiativeId))).toHaveLength(0);
+        const res = await svc.decide(db, initiativeId, APPROVER, null, { decision: "rejected" });
         expect(res.type).toBe("rejected");
       });
 
@@ -1404,9 +1584,12 @@ describe("lib/services/initiative-service", () => {
         );
       });
 
-      it("a seeded (null-workspace) initiative is submittable from ANY session workspace", async () => {
+      it("a non-null session cannot submit a null-workspace initiative, with no partial write", async () => {
         const draft = await draftInWorkspace(null);
-        const res = await svc.submitIntake(db, draft.initiativeId, REQUESTER, "ws-anything-at-all");
+        await expect(svc.submitIntake(db, draft.initiativeId, REQUESTER, "ws-anything-at-all")).rejects.toThrow(NotFoundError);
+        const unchanged = (await db.select().from(initiatives).where(eq(initiatives.id, draft.initiativeId)))[0]!;
+        expect(unchanged.state).toBe("intake_draft");
+        const res = await svc.submitIntake(db, draft.initiativeId, REQUESTER, null);
         expect(res.submitted).toBe(true);
       });
     });
@@ -1458,9 +1641,13 @@ describe("lib/services/initiative-service", () => {
         await expect(svc.triage(db, initiativeId, SYSTEM_ACTOR, null)).rejects.toThrow(NotFoundError);
       });
 
-      it("a seeded (null-workspace) initiative is triageable from ANY session workspace", async () => {
+      it("a non-null session cannot triage a null-workspace initiative, with no partial write", async () => {
         const initiativeId = await inQcInWorkspace(null);
-        const res = await svc.triage(db, initiativeId, SYSTEM_ACTOR, "ws-anything-at-all");
+        await expect(svc.triage(db, initiativeId, SYSTEM_ACTOR, "ws-anything-at-all")).rejects.toThrow(NotFoundError);
+        const unchanged = (await db.select().from(initiatives).where(eq(initiatives.id, initiativeId)))[0]!;
+        expect(unchanged.state).toBe("in_qc");
+        expect(await db.select().from(riskAssessments).where(eq(riskAssessments.initiativeId, initiativeId))).toHaveLength(0);
+        const res = await svc.triage(db, initiativeId, SYSTEM_ACTOR, null);
         expect(res.tier).toBe("critical");
       });
     });
@@ -1483,14 +1670,14 @@ describe("lib/services/initiative-service", () => {
         const { cycleId } = await initiativeReadyToDecide("ws-A");
         await draftedClinicalSafety(cycleId);
         await expect(
-          svc.signReview(db, cycleId, "clinical-safety", REVIEWER, "ws-B"),
+          signLoadedReview(db, cycleId, "clinical-safety", REVIEWER, "ws-B"),
         ).rejects.toThrow(NotFoundError);
       });
 
       it("a session bound to the OWNING workspace succeeds", async () => {
         const { cycleId } = await initiativeReadyToDecide("ws-A");
         await draftedClinicalSafety(cycleId);
-        const res = await svc.signReview(db, cycleId, "clinical-safety", REVIEWER, "ws-A");
+        const res = await signLoadedReview(db, cycleId, "clinical-safety", REVIEWER, "ws-A");
         expect(res.status).toBe("signed");
       });
 
@@ -1498,14 +1685,17 @@ describe("lib/services/initiative-service", () => {
         const { cycleId } = await initiativeReadyToDecide("ws-A");
         await draftedClinicalSafety(cycleId);
         await expect(
-          svc.signReview(db, cycleId, "clinical-safety", REVIEWER, null),
+          signLoadedReview(db, cycleId, "clinical-safety", REVIEWER, null),
         ).rejects.toThrow(NotFoundError);
       });
 
-      it("a seeded (null-workspace) review is signable from ANY session workspace", async () => {
+      it("a non-null session cannot sign a null-workspace review, with no partial write", async () => {
         const { cycleId } = await initiativeReadyToDecide(null);
         const rdId = await draftedClinicalSafety(cycleId);
-        const res = await svc.signReview(db, cycleId, "clinical-safety", REVIEWER, "ws-anything");
+        await expect(signLoadedReview(db, cycleId, "clinical-safety", REVIEWER, "ws-anything")).rejects.toThrow(NotFoundError);
+        const before = (await db.select().from(reviewDecisions).where(eq(reviewDecisions.id, rdId)))[0]!;
+        expect(before.status).toBe("drafted");
+        const res = await signLoadedReview(db, cycleId, "clinical-safety", REVIEWER, null);
         expect(res.status).toBe("signed");
         const row = (await db.select().from(reviewDecisions).where(eq(reviewDecisions.id, rdId)))[0]!;
         expect(row.status).toBe("signed");
@@ -1732,7 +1922,7 @@ describe("lib/services/initiative-service", () => {
 
       let caught: unknown;
       try {
-        await svc.signReview(db, triageResult.cycleId, "clinical-safety", REVIEWER, null);
+        await signLoadedReview(db, triageResult.cycleId, "clinical-safety", REVIEWER, null);
       } catch (err) {
         caught = err;
       }

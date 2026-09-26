@@ -92,8 +92,9 @@ have: two independent limiter instances over one database share a single
 allowance. It also covers a 12-request concurrent burst against a capacity of
 5, which yields exactly 5.
 
-The in-memory `TokenBucketRateLimiter` remains in the tree — it is still the
-right tool for a single-process context — but no longer guards any route.
+The unused in-memory `TokenBucketRateLimiter` and its exclusive tests were
+retired on 2026-09-19. Shared rate-limit types and the active database limiter
+remain; its focused tests cover burst, refill, isolation and shared allowance.
 
 **Correctly scoped already:** sessions and the daily token budget are *not*
 affected — both moved to Postgres. `DbBudgetStore.reserveAtomic()` is a single
@@ -104,56 +105,47 @@ stale and contradicted §3(b). Now corrected.)
 
 ---
 
-### 1.3 Public submission is open — ADDED 2026-09-13 by explicit decision
+### 1.3 Two ways in: the playground and real requests — REVISED 2026-09-26
 
-Anyone can now submit a request without the demo passcode. This was a
-deliberate product decision that overrides the earlier "public visitors are
-read-only" rule; it is recorded here because it is the largest single change
-to this app's exposure.
+There is no passcode. Main's passwordless playground (PR #15, human decision
+2026-09-19) gives any visitor any of the 13 personas, each visitor in their
+own isolated workspace. Alongside it there is a separate door for REAL
+requests (human decision 2026-09-26), and the two must never mix.
 
-**What an anonymous caller can do.** Mint a session at
-`POST /api/public-session`, then create an intake draft, edit it, and submit
-it. That is the entire list.
+**Real requests.** `POST /api/public-session` mints a `public`-role session in
+a `public-` workspace. `runMutationGuard` denies `public` unless a route opts
+in with `allowPublic: true`; exactly three do (create initiative, edit intake
+draft, submit intake). The role is deliberately NOT `requester`, which would
+unlock the LLM-spending intake chat and 8-domain draft run.
 
-**What holds the line.** The public session carries a `public` role that is
-NOT `requester`, and `runMutationGuard` rejects it unless a route explicitly
-passes `allowPublic: true`. Deny-by-default, so a route added next month is
-closed without its author knowing this feature exists. Three routes opt in.
+**Who reads them.** `/operator` (via `GET /api/public-intake`), gated by the
+server-side `OPERATOR_TOKEN` — compared in constant time, rate-limited on
+failure, and treated as unconfigured below 32 characters (queue off, 404).
+It is NOT gated by persona role: every persona, Program Office and Admin
+included, is available to every visitor, so a role-gated queue would show
+strangers each other's names, emails and requests. The queue is read-only;
+operators reply by email to the address each submitter gave.
 
-This matters more than it first looks. `requester` is not merely "may
-submit" — it already unlocks `POST /api/chat/intake` and the 8-domain
-`draft-run`, both budget-gated against the shared OpenAI cap. Minting public
-sessions as requesters would have let anonymous callers spend money. Two
-further routes (`triage`, `monitor/run`) have no role check at all because
-they substitute a `system` actor and let the lifecycle decide, and
-`agents/health` has none while being budget-gated; their "any authenticated
-persona" rationale was written when authenticated meant passcode-holding.
-The guard-level default is what closes all three.
+**Found and fixed while merging with the playground:**
+- A real-request session was a valid *parent* for a persona switch, and the
+  new persona inherited its workspace. A visitor who sent a real request and
+  then tried the demo could approve their own request, and every sample they
+  made afterwards landed in the operator queue. Fixed in the route and,
+  independently, in `issueDemoSession`, which now refuses `public-`
+  workspaces outright.
+- `/api/session` accepted `public:<id>` persona keys (which `resolveActor`
+  recognises for real-request sessions), letting a caller choose their own
+  actor id and skip the real-request rate limit. Now demo personas only.
+- The real-request actor id was half the live session token, persisted in
+  `audit_events.actor`. Now an independent random id.
+- Seeded shared drafts: a real-request session could reach the seeded
+  champion draft and was stopped only by a crash (an anonymous 500). Main's
+  strict shared-row rule now stops it at 404; a regression test pins that.
 
-**Cost exposure.** The public path invokes no LLM. Spend is unchanged.
-
-**What is NOT protected.**
-- No captcha. `POST /api/public-session` is rate-limited per client (10
-  tokens, one refill per 60s) and bodies are capped at 64KB, but a determined
-  actor with many IPs can still fill the `initiatives` table. If that
-  matters, Turnstile/hCaptcha in front of the session mint is the next step.
-- No email verification. The name and address on a public submission are
-  whatever was typed.
-- Strangers may enter real personal or health information despite the
-  warning on the form. Consider a retention policy for public-workspace rows.
-
-**Where submissions go.** Each public session gets its own isolated
-workspace, so visitors cannot reach each other's drafts — and, for the same
-reason, the server-rendered console cannot see them either (it scopes reads
-by the workspace cookie, which carries no role). The Program Office reads
-them through `GET /api/public-intake`, surfaced as the "Public submissions"
-panel on the Reviews page. Deliberately role-gated on the session token
-rather than widened at the workspace filter, which would have shown every
-stranger's submission to every other stranger.
-
-**Governance is unchanged.** A public submission stops at `submitted`. QC,
-triage, the review fan-out and every decision still require a named,
-passcode-holding human.
+**What is NOT protected.** No captcha: the real-request limit (10 sessions per
+client, one refill per 60s) and the 64KB body cap are the only ceiling. No
+retention policy on `public-` workspace rows, and strangers may type real
+personal data in despite the warning on the form.
 
 ### 1.4 Site essentials — ADDED 2026-09-13/14, two gaps accepted
 

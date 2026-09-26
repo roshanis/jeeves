@@ -170,12 +170,12 @@ describe("lib/services/promotion-service", () => {
       ).resolves.toMatchObject({ promotedDeploymentVersionId: v21Id });
     });
 
-    it("keeps null-workspace checkpoints shared", async () => {
+    it("keeps null-workspace checkpoints available to internal null-workspace calls", async () => {
       const initiativeId = await paCorrespondenceModelId(db);
       const v21Id = await v21DeploymentId(db, initiativeId);
 
       await expect(
-        promoteCheckpoint(db, v21Id, APPROVER, "ws-any", FULL_ATTESTATION, "shared checkpoint"),
+        promoteCheckpoint(db, v21Id, APPROVER, null, FULL_ATTESTATION, "shared checkpoint"),
       ).resolves.toMatchObject({ promotedDeploymentVersionId: v21Id });
     });
   });
@@ -289,9 +289,13 @@ describe("lib/services/promotion-service", () => {
       ).rejects.toThrow(NotFoundError);
     });
 
-    it("a seeded (null-workspace) initiative's checkpoint is promotable from ANY session workspace", async () => {
+    it("a non-null session cannot promote a null-workspace checkpoint, with no partial write", async () => {
       const { awaitingId } = await initiativeWithPromotableCheckpointInWorkspace(null);
-      const result = await promoteCheckpoint(db, awaitingId, APPROVER, "ws-anything", FULL_ATTESTATION, "reason");
+      await expect(promoteCheckpoint(db, awaitingId, APPROVER, "ws-anything", FULL_ATTESTATION, "reason"))
+        .rejects.toThrow(NotFoundError);
+      const before = (await db.select().from(deploymentVersions).where(eq(deploymentVersions.id, awaitingId)))[0]!;
+      expect(before.status).toBe("awaiting_promotion_signoff");
+      const result = await promoteCheckpoint(db, awaitingId, APPROVER, null, FULL_ATTESTATION, "reason");
       expect(result.status).toBe("deployed");
     });
 
@@ -817,9 +821,14 @@ describe("lib/services/promotion-service", () => {
       ).rejects.toThrow(NotFoundError);
     });
 
-    it("a seeded (null-workspace) initiative is rollback-able from ANY session workspace", async () => {
+    it("a non-null session cannot roll back a null-workspace initiative, with no partial write", async () => {
       const { initiativeId, priorId } = await initiativeWithDeploymentsInWorkspace(null);
-      const result = await rollbackDeployment(db, initiativeId, APPROVER, "ws-anything", priorId, "reason");
+      await expect(rollbackDeployment(db, initiativeId, APPROVER, "ws-anything", priorId, "reason"))
+        .rejects.toThrow(NotFoundError);
+      const before = await db.select().from(deploymentVersions).where(eq(deploymentVersions.initiativeId, initiativeId));
+      expect(before.find((d) => d.id === priorId)!.status).toBe("retired");
+      expect(before.find((d) => d.status === "deployed")!.version).toBe("v2.0");
+      const result = await rollbackDeployment(db, initiativeId, APPROVER, null, priorId, "reason");
       expect(result.status).toBe("deployed");
     });
 

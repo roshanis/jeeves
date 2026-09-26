@@ -49,9 +49,13 @@ import { useRole, type RoleKey } from "@/components/jeeves/role-context";
 
 // Same attention set as the original Inbox (app/page.tsx) — kept here so the
 // "program" (default) view's primary table filter is unchanged.
+// `in_qc` must be here: it is the state in which the Program Office has to
+// pass or return an intake. Omitting it dropped an initiative from this table
+// exactly while someone needed to act on it (tests/ui/qc-state-visibility).
 const ATTENTION_STATES = new Set([
   "intake_draft",
   "submitted",
+  "in_qc",
   "triaged",
   "in_review",
   "conditionally_approved",
@@ -903,12 +907,12 @@ function ReviewerView({
   // null, fall back to the original generic reviewer view.
   if (!reviewerDomain) {
     const queue = initiatives.filter(
-      (i) => i.state === "in_review" && i.domainsSigned < i.domainsRequired,
+      (i) => i.state === "in_review" && i.domainsSigned + (i.domainsAbstained ?? 0) < i.domainsRequired,
     );
     const inReviewCount = initiatives.filter((i) => i.state === "in_review").length;
     const returned = initiatives.filter((i) => i.overdue).length;
     const signedThrough = initiatives.filter(
-      (i) => i.state === "in_review" && i.domainsSigned === i.domainsRequired,
+      (i) => i.state === "in_review" && i.domainsSigned + (i.domainsAbstained ?? 0) === i.domainsRequired,
     ).length;
 
     return (
@@ -946,7 +950,7 @@ function ReviewerView({
             {
               icon: CheckCircle2,
               value: signedThrough,
-              label: "Signed-through",
+              label: "Reviews resolved",
               context: shareText(signedThrough, initiatives.length),
               fraction: shareFraction(signedThrough, initiatives.length),
             },
@@ -1066,9 +1070,7 @@ function AuditView({
   recentDecisions: DecisionEntry[];
 }) {
   const awaitingDecision = initiatives.filter(
-    (i) =>
-      (i.state === "in_review" && i.domainsSigned === i.domainsRequired) ||
-      i.state === "conditionally_approved",
+    (i) => i.decisionReadiness?.canApprove || i.decisionReadiness?.canConditionallyApprove,
   );
   const approvedCount = recentDecisions.filter(
     (d) => d.dec.type === "approved" || d.dec.type === "fast_lane_approved",

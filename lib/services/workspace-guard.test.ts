@@ -19,3 +19,17 @@ describe("lib/services/workspace-guard#workspaceMismatch", () => {
     expect(workspaceMismatch("ws-A", null)).toBe(true);
   });
 });
+
+// Public visitors may read examples, but can change only their own records.
+describe("public demo writes", () => {
+  it.each([
+    [null, "visitor-a", true],
+    ["visitor-b", "visitor-a", true],
+    ["visitor-a", "visitor-a", false],
+    ["visitor-a", null, true],
+    [null, null, false],
+  ] as const)("resource %s / session %s denies=%s", async (resource, session, denied) => {
+    const guards = await import("./workspace-guard");
+    expect(guards.mutationWorkspaceMismatch(resource, session)).toBe(denied);
+  });
+});

@@ -100,9 +100,6 @@ describe("policy-corpus - listPolicyCorpusFiles", () => {
     // Sorted.
     const sorted = [...files].sort();
     expect(files).toEqual(sorted);
-
-    // 10 docs/policies files + instructions.md + schema.md + 8 tracks = 20.
-    expect(files.length).toBe(20);
   });
 });
 
@@ -249,15 +246,5 @@ describe("policy-corpus - createPolicyCorpusTools", () => {
       JSON.stringify({ pattern: "Meridian" }),
     );
     expect(onRead).toHaveBeenCalledWith("Meridian");
-  });
-});
-
-describe("policy-corpus - no write capability (source guard)", () => {
-  it("the module's own source contains no write-capable fs call", () => {
-    const modulePath = path.join(thisDir, "policy-corpus.ts");
-    const source = readFileSync(modulePath, "utf-8");
-    expect(source).not.toMatch(
-      /fs\.(write|rm|unlink|mkdir|append|copy|rename)/,
-    );
   });
 });

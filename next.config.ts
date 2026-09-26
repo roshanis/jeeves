@@ -33,6 +33,15 @@ const nextConfig: NextConfig = {
   // repo root under `next dev`/`next start`).
   outputFileTracingIncludes: {
     "/agents/[id]": ["./agents/**/*.md"],
+    // Live adapters read prompts at initialization; deep review reads policy
+    // files through tools. Include these runtime assets in every agent API
+    // bundle, even when a dynamic path cannot be inferred by the tracer.
+    "/api/initiatives/*/draft-run": ["./agents/**/*.md", "./docs/policies/**/*.md"],
+    "/api/reviews/*/*/run": ["./agents/**/*.md", "./docs/policies/**/*.md"],
+    "/api/chat/*": ["./agents/**/*.md", "./docs/policies/**/*.md"],
+    "/api/agents/health": ["./agents/**/*.md", "./docs/policies/**/*.md"],
+    "/api/monitor/run": ["./agents/**/*.md", "./docs/policies/**/*.md"],
+    "/api/cron/monitor": ["./agents/**/*.md", "./docs/policies/**/*.md"],
   },
 
   // Baseline security response headers, applied to every route. Includes a
