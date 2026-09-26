@@ -23,7 +23,7 @@
  *    keeping the review, which is the failure mode that makes a governance
  *    queue quietly stall.
  */
-import { and, asc, eq, isNull } from "drizzle-orm";
+import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import type { Db } from "../db/client";
 import { reviewNotifications } from "../db/schema";
@@ -47,7 +47,7 @@ export interface ReviewNotificationRow {
 }
 
 /** Anything with the transactional methods used here — a Db or a tx handle. */
-type Writable = Pick<Db, "insert">;
+type Writable = Pick<Db, "insert" | "execute">;
 
 export interface EnqueueArgs {
   initiativeId: string;
@@ -71,6 +71,17 @@ export async function enqueueReviewRequests(
   args: EnqueueArgs,
 ): Promise<void> {
   if (args.domains.length === 0) return;
+
+  // Rolling deployments may run this code before additive migration 0013 is
+  // applied — deploys do not run migrations. This runs inside triage()'s
+  // transaction, so a failed insert would roll back the whole fan-out. Only an
+  // ABSENT table means "record nothing"; every other database error propagates
+  // (same rule as the 0011 evidence tables in evidence-service.ts).
+  const presence = await tx.execute(
+    sql`SELECT to_regclass('public.review_notifications')::text AS relation`,
+  );
+  const rows = (Array.isArray(presence) ? presence : presence.rows) as { relation: string | null }[];
+  if (rows[0]?.relation === null) return;
 
   const at = new Date(args.now);
   for (const domain of args.domains) {

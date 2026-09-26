@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { createTestDb, closeTestDb, type TestDb } from "@/lib/db/test-client";
 import { initiatives, reviewDecisions, reviewNotifications } from "@/lib/db/schema";
 import { CHAMPION_PREFILL_PAYLOAD } from "@/lib/intake/champion-prefill";
@@ -138,6 +138,41 @@ describe("review-request notifications", () => {
     const queue = await undeliveredNotifications(testDb);
     expect(queue.length).toBeGreaterThan(0);
     expect(queue.every((n) => n.deliveredAt === null)).toBe(true);
+  });
+
+  it("does not break triage when migration 0013 has not been applied yet", async () => {
+    // Deploys do not run migrations (build is plain `next build`), and
+    // triage records its review requests inside the SAME transaction. If
+    // the code ships before 0013 is applied, the insert would fail and roll
+    // back every triage. An absent table must mean "record nothing", not
+    // "fail the fan-out" — the same rolling-deploy rule the evidence tables
+    // follow for 0011.
+    await testDb.execute(sql`DROP TABLE review_notifications`);
+    const id = await championReadyToTriage();
+
+    const res = await svc.triage(testDb, id, SYSTEM, null);
+    expect(res.branch).toBe("review");
+    expect((await testDb.select().from(reviewDecisions)).length).toBeGreaterThan(0);
+  });
+
+  it("still propagates real database errors — only an ABSENT table is tolerated", async () => {
+    // A guard that swallowed every error would hide genuine failures.
+    const { enqueueReviewRequests } = await import("./notification-service");
+    const broken = {
+      execute: async () => {
+        throw new Error("connection reset");
+      },
+    };
+    await expect(
+      enqueueReviewRequests(broken as never, {
+        initiativeId: "i",
+        initiativeTitle: "t",
+        cycleId: "c",
+        domains: ["legal"],
+        tier: "critical",
+        now: Date.now(),
+      }),
+    ).rejects.toThrow(/connection reset/);
   });
 
   it("reports the transport as unconfigured rather than implying delivery", () => {
