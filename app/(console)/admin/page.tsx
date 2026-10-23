@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/table";
 import { LifecycleBadge } from "@/components/jeeves/lifecycle-badge";
 import { RunMonitorPanel } from "@/components/jeeves/run-monitor-panel";
+import { isDemoMode } from "@/lib/config/deployment-mode";
 import { ThresholdEditAction } from "@/components/jeeves/threshold-edit-action";
 import { DeploymentActionButton } from "@/components/jeeves/deployment-action-button";
 import type { ThresholdInitiativeOption } from "@/components/jeeves/threshold-edit-dialog";
@@ -146,20 +147,24 @@ export default async function AdminPage() {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Run monitor</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <p className="text-sm text-muted-foreground">
-              Synchronously evaluates Q-01 against current observation data
-              for deployed versions in your workspace. A sustained breach creates
-              an incident, pauses the deployment, and opens reassessment.
-              Re-running does not duplicate an existing incident.
-            </p>
-            <RunMonitorPanel withSelector />
-          </CardContent>
-        </Card>
+        {/* The monitor runs over the demo's synthetic observations, and its
+            route (POST /api/monitor/run) answers 404 in production. */}
+        {isDemoMode() ? (
+          <Card>
+            <CardHeader>
+              <CardTitle>Run monitor</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <p className="text-sm text-muted-foreground">
+                Synchronously evaluates Q-01 against current observation data
+                for deployed versions in your workspace. A sustained breach creates
+                an incident, pauses the deployment, and opens reassessment.
+                Re-running does not duplicate an existing incident.
+              </p>
+              <RunMonitorPanel withSelector />
+            </CardContent>
+          </Card>
+        ) : null}
       </div>
 
       <Card>

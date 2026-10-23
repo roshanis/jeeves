@@ -2,14 +2,16 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { LegalPage, LegalSection } from "@/components/jeeves/legal-page";
 import { CONTACT_URL, LEGAL_LAST_UPDATED } from "@/lib/marketing/site-config";
+import { guardDemoPage, demoPageMetadata } from "@/lib/config/demo-pages";
 
-export const metadata: Metadata = {
+export const generateMetadata = demoPageMetadata({
   title: "Terms",
   description:
     "The terms on which this demonstration of the Jeeves AI governance gateway is made available.",
-};
+});
 
 export default function TermsPage() {
+  guardDemoPage();
   return (
     <LegalPage title="Terms of use" lastUpdated={LEGAL_LAST_UPDATED}>
       <LegalSection heading="What you are using">

@@ -9,6 +9,7 @@ import { DOMAIN_LABEL } from "@/components/jeeves/domain-labels";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { requireViewer } from "@/lib/services/require-viewer";
+import { isDemoMode } from "@/lib/config/deployment-mode";
 
 // Per-agent detail page — the drill-down from the Governance agents catalog
 // (app/agents/page.tsx). Reads the agent's actual instructions file(s) off
@@ -183,10 +184,12 @@ export default async function AgentDetailPage({
         </Card>
       )}
 
-      <p className="text-xs text-muted-foreground">
-        Synthetic data — demo. Meridian Health is a fictional payer; not
-        affiliated with any real organization.
-      </p>
+      {isDemoMode() ? (
+        <p className="text-xs text-muted-foreground">
+          Synthetic data — demo. Meridian Health is a fictional payer; not
+          affiliated with any real organization.
+        </p>
+      ) : null}
     </div>
   );
 }

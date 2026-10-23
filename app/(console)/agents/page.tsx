@@ -14,6 +14,7 @@ import { AgentConnectionTest } from "@/components/jeeves/agent-connection-test";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { requireViewer } from "@/lib/services/require-viewer";
+import { isDemoMode } from "@/lib/config/deployment-mode";
 import type { Metadata } from "next";
 
 
@@ -170,8 +171,10 @@ export default async function AgentsPage() {
       />
 
       <p className="text-xs text-muted-foreground">
-        {GOVERNANCE_AGENTS.length} agents total · Synthetic data — demo. Meridian
-        Health is a fictional payer; not affiliated with any real organization.
+        {GOVERNANCE_AGENTS.length} agents total
+        {isDemoMode()
+          ? " · Synthetic data — demo. Meridian Health is a fictional payer; not affiliated with any real organization."
+          : null}
       </p>
     </div>
   );

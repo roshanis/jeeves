@@ -154,7 +154,7 @@ describe("root metadata", () => {
   it("is exactly today's in demo", () => {
     asDemo();
     const metadata = rootMetadata();
-    expect(metadata.metadataBase?.href).toBe(new URL(SITE_URL).href);
+    expect(String(metadata.metadataBase)).toBe(new URL(SITE_URL).href);
     expect(metadata.title).toEqual({
       template: "%s · Jeeves",
       default: "Jeeves — AI Governance Gateway (Meridian Health demo)",
@@ -178,7 +178,7 @@ describe("root metadata", () => {
   it("takes its origin from the runtime APP_BASE_URL in production", () => {
     asProduction("https://jeeves.acme.example");
     const metadata = rootMetadata();
-    expect(metadata.metadataBase?.href).toBe("https://jeeves.acme.example/");
+    expect(String(metadata.metadataBase)).toBe("https://jeeves.acme.example/");
     expect(metadata.openGraph).toMatchObject({ url: "https://jeeves.acme.example/" });
   });
 
@@ -212,6 +212,6 @@ describe("the root layout resolves its metadata per request", () => {
     asProduction("https://jeeves.acme.example");
     const production = await layout.generateMetadata();
     expect(production.description).not.toMatch(DEMO_WORDING);
-    expect(production.metadataBase?.href).toBe("https://jeeves.acme.example/");
+    expect(String(production.metadataBase)).toBe("https://jeeves.acme.example/");
   });
 });

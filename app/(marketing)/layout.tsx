@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { ShieldCheck } from "lucide-react";
 import { TryDemoButton } from "@/components/jeeves/try-demo-button";
-import { DEMO_BANNER_TEXT } from "@/lib/demo-banner";
+import { demoBannerFor } from "@/lib/demo-banner";
+import { deploymentMode } from "@/lib/config/deployment-mode";
 import { FRAMEWORK_DISCLAIMER } from "@/lib/marketing/framework-mappings";
 import { CookieNotice } from "@/components/jeeves/cookie-notice";
 import { StickyMobileCta } from "@/components/jeeves/sticky-mobile-cta";
@@ -21,14 +22,19 @@ export default function MarketingLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  // Production serves none of these pages (they 404 or redirect), so this is
+  // belt and braces; the banner helper keeps it from being forgotten.
+  const banner = demoBannerFor(deploymentMode());
   return (
     <div className="flex min-h-screen flex-col">
       <div className="marketing-chrome print:hidden">
         {/* Demo disclaimer strip — same visual language as the console's
             app-topbar strip, rendering the shared DEMO_BANNER_TEXT constant. */}
-        <div className="bg-amber-100 px-4 py-1 text-center text-[11px] font-medium text-amber-900 dark:bg-amber-950/70 dark:text-amber-200">
-          {DEMO_BANNER_TEXT}
-        </div>
+        {banner ? (
+          <div className="bg-amber-100 px-4 py-1 text-center text-[11px] font-medium text-amber-900 dark:bg-amber-950/70 dark:text-amber-200">
+            {banner}
+          </div>
+        ) : null}
 
         <header className="border-b bg-background">
           <div className="mx-auto flex max-w-[72rem] items-center justify-between px-6 py-4">

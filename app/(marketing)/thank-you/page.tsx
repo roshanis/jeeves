@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { CheckCircle2 } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { guardDemoPage, demoPageMetadata } from "@/lib/config/demo-pages";
 
 // Where a real request lands after "Send a real request".
 //
@@ -13,13 +14,13 @@ import { cn } from "@/lib/utils";
 // Program Office, so real requests go to the people running the site
 // instead (the OPERATOR_TOKEN queue) and are answered by email. This page
 // says that, and nothing it cannot keep.
-export const metadata: Metadata = {
+export const generateMetadata = demoPageMetadata({
   title: "Request sent",
   description:
     "Your request has been sent to the team running this site, who will reply by email.",
   // Reachable only by submitting, and of no value in search results.
   robots: { index: false, follow: true },
-};
+});
 
 const STEPS = [
   {
@@ -35,6 +36,7 @@ const STEPS = [
 ];
 
 export default function ThankYouPage() {
+  guardDemoPage();
   return (
     <main className="mx-auto flex w-full max-w-2xl flex-col gap-8 px-4 py-16">
       <div className="flex flex-col gap-3">
