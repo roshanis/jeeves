@@ -203,6 +203,16 @@ describe("the root layout resolves its metadata per request", () => {
     expect("metadata" in layout).toBe(false);
   });
 
+  // Everything below the root layout that branches on the mode (console
+  // chrome, marketing pages, the 404s, the providers) reads it at request time
+  // because this segment config makes the whole tree dynamic. A build runs
+  // without JEEVES_MODE in some paths, so losing it would bake production (or
+  // demo) into the prerendered HTML.
+  it("stays force-dynamic, so mode-dependent segments are rendered per request, never at build", async () => {
+    const layout = await import("@/app/layout");
+    expect(layout.dynamic).toBe("force-dynamic");
+  });
+
   it("follows the mode in effect when it is called", async () => {
     const layout = await import("@/app/layout");
 

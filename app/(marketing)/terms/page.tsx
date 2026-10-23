@@ -1,4 +1,3 @@
-import type { Metadata } from "next";
 import Link from "next/link";
 import { LegalPage, LegalSection } from "@/components/jeeves/legal-page";
 import { CONTACT_URL, LEGAL_LAST_UPDATED } from "@/lib/marketing/site-config";

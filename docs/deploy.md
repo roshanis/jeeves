@@ -35,8 +35,8 @@ only describes the steps. A human runs them.
 
 ```bash
 npm install
-npm run db:seed
-DATA_PROVIDER=db JEEVES_COOKIE_SECRET=<server-signing-key> npm run dev
+JEEVES_MODE=demo npm run db:seed
+JEEVES_MODE=demo DATA_PROVIDER=db JEEVES_COOKIE_SECRET=<server-signing-key> npm run dev
 ```
 
 Notes on each step:
@@ -44,6 +44,9 @@ Notes on each step:
 - `npm install` — installs from `package-lock.json` (npm is the toolchain in
   use here; there is no `pnpm-lock.yaml` in the repo despite `AGENTS.md`
   mentioning `pnpm` — use `npm run <script>` from `package.json`).
+- `JEEVES_MODE=demo` is required locally: the mode defaults to production,
+  which refuses the local PGlite store, the mock data provider and the mock
+  LLM (`lib/db/client.ts`, `lib/data/index.ts`, `lib/agents/index.ts`).
 - `npm run db:seed` runs `tsx scripts/seed.ts`. With no `DATABASE_URL` set,
   this seeds a **persistent local PGlite store** at `./.pglite` (gitignored)
   — no external service, no signup. The seed is deterministic (fixed PRNG

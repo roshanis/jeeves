@@ -41,6 +41,10 @@ vi.mock("next/navigation", () => ({
   usePathname: () => "/",
 }));
 
+import { renderToStaticMarkup } from "react-dom/server";
+import MarketingLayout from "@/app/(marketing)/layout";
+import { RoleProvider } from "@/components/jeeves/role-context";
+import { LiveSessionProvider } from "@/lib/client/session-context";
 import HomePage, * as homeModule from "@/app/(marketing)/page";
 import FrameworksPage, * as frameworksModule from "@/app/(marketing)/frameworks/page";
 import EuAiActPage, * as euModule from "@/app/(marketing)/frameworks/eu-ai-act/page";
@@ -63,6 +67,33 @@ const NOT_FOUND_PAGES: [string, () => unknown, PageModule][] = [
   ["/terms", () => TermsPage(), termsModule],
   ["/thank-you", () => ThankYouPage(), thankYouModule],
 ];
+
+describe("the marketing layout", () => {
+  // The server renders the layout BEFORE a page's notFound() or redirect
+  // reaches the client, so its chrome would be in the HTML of every probe of a
+  // marketing path. Seen live on `next start`: the disclaimer strip, "Try the
+  // demo or send a request" and the footer around a "Page not found".
+  it("renders no demo chrome in production, only its children", () => {
+    vi.stubEnv("JEEVES_MODE", undefined);
+    const html = renderToStaticMarkup(<MarketingLayout><p>child</p></MarketingLayout>);
+    expect(html).toBe("<p>child</p>");
+  });
+
+  it("keeps the disclaimer strip, the footer and the nav in demo", () => {
+    vi.stubEnv("JEEVES_MODE", "demo");
+    const html = renderToStaticMarkup(
+      <RoleProvider>
+        <LiveSessionProvider>
+          <MarketingLayout><p>child</p></MarketingLayout>
+        </LiveSessionProvider>
+      </RoleProvider>,
+    );
+    expect(html).toContain("Fictional demo — synthetic data");
+    expect(html).toContain("Fictional demo. Synthetic data only.");
+    expect(html).toContain('href="/pilot"');
+    expect(html).toContain("<p>child</p>");
+  });
+});
 
 describe("marketing pages in production", () => {
   it.each(NOT_FOUND_PAGES)("%s answers 404 from the page", (_path, page) => {
