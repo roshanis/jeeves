@@ -10,6 +10,7 @@ import { ACTORS, BASE_DATE_MS, CONTROL_SEEDS, INITIATIVE_SEEDS, type InitiativeS
 import { reviewerNameForDomain } from "../lib/demo/personas";
 export { ACTORS, BASE_DATE_MS, CONTROL_SEEDS, INITIATIVE_SEEDS } from "../lib/demo/reference-data";
 
+import { assertDemoMode, DemoOnlyError } from "../lib/config/demo-doors";
 import { assertDemoDatabase, refuseProductionDatabase } from "../lib/demo/bootstrap";
 import { deriveTier } from "../lib/triage/rules";
 import { requiredDomains } from "../lib/triage/routing";
@@ -2206,6 +2207,12 @@ async function seedInTransaction(db: SeedDb): Promise<RowCounts> {
  * CLI entry point — `npm run db:seed`
  * ---------------------------------------------------------------------- */
 async function main() {
+  // The seed is a demo tool: it wipes every seeded table and stamps the database
+  // 'demo' for good. The mode defaults to production, which only refuses the
+  // PGlite fallback, so with DATABASE_URL set it would otherwise seed whatever
+  // database that names. Refuse before any database is opened.
+  assertDemoMode("scripts/seed.ts");
+
   const { getDb, closeDb } = await import("../lib/db/client");
   const db = getDb();
 
@@ -2247,8 +2254,11 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     process.exitCode = 1;
   } else {
     main().catch((err) => {
-
-      console.error(err);
+      console.error(
+        err instanceof DemoOnlyError
+          ? `${err.message}. Set JEEVES_MODE=demo to seed a demo database.`
+          : err,
+      );
       process.exit(1);
     });
   }

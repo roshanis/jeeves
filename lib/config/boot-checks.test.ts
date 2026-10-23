@@ -1,8 +1,8 @@
 // @vitest-environment node
-import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { sql } from "drizzle-orm";
 import { bootFailure, resetBootStateForTests } from "./boot-state";
-import { runBootChecks } from "./boot-checks";
+import { DEMO_CHECK_RETRY_DELAYS_MS, runBootChecks } from "./boot-checks";
 import { clearInstallationFixtures, closeTestDb, createTestDb, type TestDb } from "../db/test-client";
 import { initiatives, installation } from "../db/schema";
 import { readInstallationStamp } from "../db/installation";
@@ -18,28 +18,39 @@ const COMPLETE_PRODUCTION: Record<string, string> = {
 };
 
 function deps(env: Record<string, string | undefined>) {
-  return { env, exit: vi.fn(), log: vi.fn(), getDb: vi.fn<() => Promise<TestDb>>() };
+  return {
+    env,
+    exit: vi.fn(),
+    log: vi.fn(),
+    getDb: vi.fn<() => Promise<TestDb>>(),
+    // Backoff waits are recorded, never slept: the suite must not take seconds per retry.
+    sleep: vi.fn<(ms: number) => Promise<void>>().mockResolvedValue(undefined),
+  };
 }
 
 // Booting PGlite and replaying the migrations costs more than the cases do, so
-// one migrated database serves the file and is emptied for every request.
-let shared: TestDb | null = null;
+// two databases serve the file: one migrated and emptied for every request, and
+// one that lags the code (migration 0015 never ran), which every case only reads.
+// Both are built in beforeAll, whose 30 s hook timeout covers a loaded machine;
+// built inside a case they would run under the 5 s test timeout.
+let shared: TestDb;
+let lagging: TestDb;
 
-/** A migrated in-memory database, empty except for the stamp asked for. */
+// Separate hooks, so each database gets its own 30 s.
+beforeAll(async () => {
+  shared = await createTestDb();
+});
+
+beforeAll(async () => {
+  lagging = await createTestDb();
+  await lagging.execute(sql`DROP TABLE installation`);
+});
+
+/** The migrated database, empty except for the stamp asked for. */
 async function database(stamp?: "demo" | "production"): Promise<TestDb> {
-  shared ??= await createTestDb();
   await clearInstallationFixtures(shared);
   if (stamp) await shared.insert(installation).values({ deployMode: stamp, installId: `inst-${stamp}` });
   return shared;
-}
-
-/** A database that lags the code: migration 0015 never ran. Closed by afterAll. */
-const laggingDbs: TestDb[] = [];
-async function databaseWithoutInstallationTable(): Promise<TestDb> {
-  const db = await createTestDb();
-  laggingDbs.push(db);
-  await db.execute(sql`DROP TABLE installation`);
-  return db;
 }
 
 afterEach(() => {
@@ -47,7 +58,7 @@ afterEach(() => {
 });
 
 afterAll(async () => {
-  await Promise.all([shared, ...laggingDbs].map((db) => (db ? closeTestDb(db) : undefined)));
+  await Promise.all([shared, lagging].map((db) => closeTestDb(db)));
 });
 
 describe("runBootChecks", () => {
@@ -186,9 +197,20 @@ describe("runBootChecks", () => {
         expect(logged).not.toContain("s3cr3t-db-pw");
       });
 
+      it("does not retry in production: an unreachable database fails closed at once", async () => {
+        const d = deps(COMPLETE_PRODUCTION);
+        d.getDb.mockRejectedValue(new Error("connect ECONNREFUSED"));
+        await runBootChecks(d);
+
+        expect(d.getDb).toHaveBeenCalledTimes(1);
+        expect(d.sleep).not.toHaveBeenCalled();
+        expect(d.exit).toHaveBeenCalledTimes(1);
+        expect(d.exit).toHaveBeenCalledWith(1);
+      });
+
       it("fails closed on a database that has not run migration 0015", async () => {
         const d = deps(COMPLETE_PRODUCTION);
-        d.getDb.mockResolvedValue(await databaseWithoutInstallationTable());
+        d.getDb.mockResolvedValue(lagging);
         await runBootChecks(d);
         expect(d.exit).toHaveBeenCalledWith(1);
         expect(bootFailure()).toMatch(/installation table/i);
@@ -207,7 +229,7 @@ describe("runBootChecks", () => {
       expect(bootFailure()).toBeNull();
     });
 
-    it("does not open a database when the data provider is the mock fixture", async () => {
+    it("does not open a database when none is in play: the mock fixture and no database URL", async () => {
       for (const env of [
         { JEEVES_MODE: "demo", DATA_PROVIDER: "mock" },
         { JEEVES_MODE: "demo" }, // no provider and no database URL resolves to mock
@@ -217,6 +239,45 @@ describe("runBootChecks", () => {
         expect(d.getDb).not.toHaveBeenCalled();
         expect(d.exit).not.toHaveBeenCalled();
       }
+    });
+
+    // Routes such as /api/exceptions, /api/monitor/incidents and /api/health call
+    // getDb() whatever DATA_PROVIDER says, so a configured database is in play
+    // even when the page read-model is the mock fixture.
+    describe("mock data with a database URL configured", () => {
+      const MOCK_WITH_URL = [
+        { JEEVES_MODE: "demo", DATA_PROVIDER: "mock", DATABASE_URL: "postgres://u:p@db.internal:5432/jeeves" },
+        { JEEVES_MODE: "demo", DATA_PROVIDER: "mock", POSTGRES_URL: "postgres://u:p@db.internal:5432/jeeves" },
+      ];
+
+      it.each(MOCK_WITH_URL)("still verifies the installation stamp (%o)", async (env) => {
+        const d = deps(env);
+        const db = await database();
+        d.getDb.mockResolvedValue(db);
+        await runBootChecks(d);
+
+        expect(d.getDb).toHaveBeenCalledTimes(1);
+        expect(d.exit).not.toHaveBeenCalled();
+        expect((await readInstallationStamp(db))?.deployMode).toBe("demo");
+      });
+
+      it.each(MOCK_WITH_URL)("refuses a production-stamped database (%o)", async (env) => {
+        const d = deps(env);
+        const db = await database("production");
+        d.getDb.mockResolvedValue(db);
+        await runBootChecks(d);
+
+        expect(d.exit).toHaveBeenCalledWith(1);
+        expect(bootFailure()).toMatch(/stamped "production"/);
+        expect((await readInstallationStamp(db))?.deployMode).toBe("production");
+      });
+    });
+
+    it("verifies the stamp when the db provider is selected without a database URL", async () => {
+      const d = deps({ JEEVES_MODE: "demo", DATA_PROVIDER: "db" });
+      d.getDb.mockResolvedValue(await database("production"));
+      await runBootChecks(d);
+      expect(d.exit).toHaveBeenCalledWith(1);
     });
 
     it("stamps an unstamped database and boots quietly", async () => {
@@ -278,12 +339,89 @@ describe("runBootChecks", () => {
       expect((await readInstallationStamp(db))?.deployMode).toBe("production");
     });
 
-    it("fails closed when the database cannot be reached", async () => {
+    it("fails closed when the database stays unreachable, after the bounded retries", async () => {
       const d = deps(DEMO_DB);
       d.getDb.mockRejectedValue(new Error("connect ECONNREFUSED 127.0.0.1:5432"));
       await runBootChecks(d);
+
+      expect(d.getDb).toHaveBeenCalledTimes(DEMO_CHECK_RETRY_DELAYS_MS.length + 1);
+      expect(d.exit).toHaveBeenCalledTimes(1);
       expect(d.exit).toHaveBeenCalledWith(1);
       expect(bootFailure()).toMatch(/ECONNREFUSED/);
+    });
+
+    // On Vercel every cold start does a database round trip before serving, so a
+    // brief Neon error must not take the instance down.
+    describe("transient database errors", () => {
+      it("survives one failure followed by a success, and still stamps the database", async () => {
+        const d = deps(DEMO_DB);
+        const db = await database();
+        d.getDb.mockRejectedValueOnce(new Error("Connection terminated unexpectedly")).mockResolvedValue(db);
+        await runBootChecks(d);
+
+        expect(d.getDb).toHaveBeenCalledTimes(2);
+        expect(d.exit).not.toHaveBeenCalled();
+        expect(bootFailure()).toBeNull();
+        expect((await readInstallationStamp(db))?.deployMode).toBe("demo");
+        expect(d.sleep).toHaveBeenCalledTimes(1);
+        expect(d.sleep).toHaveBeenCalledWith(DEMO_CHECK_RETRY_DELAYS_MS[0]);
+        expect(d.log.mock.calls.flat().join(" ")).toMatch(/retrying/i);
+      });
+
+      it("survives a failure inside the check itself, not only while opening the database", async () => {
+        const d = deps(DEMO_DB);
+        const db = await database();
+        // The handle opens fine; the first query fails (a Neon compute waking up).
+        const flaky = {
+          ...db,
+          execute: vi.fn().mockRejectedValueOnce(new Error("timeout exceeded when trying to connect")),
+        };
+        d.getDb.mockResolvedValueOnce(flaky as unknown as TestDb).mockResolvedValue(db);
+        await runBootChecks(d);
+
+        expect(d.getDb).toHaveBeenCalledTimes(2);
+        expect(d.exit).not.toHaveBeenCalled();
+        expect((await readInstallationStamp(db))?.deployMode).toBe("demo");
+      });
+
+      it("waits between attempts, within a few seconds in total", async () => {
+        const d = deps(DEMO_DB);
+        d.getDb.mockRejectedValue(new Error("connect ECONNREFUSED"));
+        await runBootChecks(d);
+
+        expect(d.sleep.mock.calls.map(([ms]) => ms)).toEqual([...DEMO_CHECK_RETRY_DELAYS_MS]);
+        const total = DEMO_CHECK_RETRY_DELAYS_MS.reduce((sum, ms) => sum + ms, 0);
+        expect(total).toBeGreaterThan(0);
+        expect(total).toBeLessThanOrEqual(5_000);
+      });
+
+      it("never logs the connection string while retrying", async () => {
+        const url = "postgres://u:hunter2@db.internal:5432/jeeves";
+        const d = deps({ ...DEMO_DB, DATABASE_URL: url });
+        d.getDb.mockRejectedValue(new Error(`connect ECONNREFUSED while opening ${url}`));
+        await runBootChecks(d);
+        expect([...d.log.mock.calls.flat(), bootFailure()].join(" ")).not.toContain("hunter2");
+      });
+
+      it("does not retry a stamp mismatch: that answer will not change", async () => {
+        const d = deps(DEMO_DB);
+        d.getDb.mockResolvedValue(await database("production"));
+        await runBootChecks(d);
+
+        expect(d.getDb).toHaveBeenCalledTimes(1);
+        expect(d.sleep).not.toHaveBeenCalled();
+        expect(d.exit).toHaveBeenCalledWith(1);
+      });
+
+      it("does not retry a database that has not been migrated", async () => {
+        const d = deps(DEMO_DB);
+        d.getDb.mockResolvedValue(lagging);
+        await runBootChecks(d);
+
+        expect(d.getDb).toHaveBeenCalledTimes(1);
+        expect(d.sleep).not.toHaveBeenCalled();
+        expect(d.exit).not.toHaveBeenCalled();
+      });
     });
 
     // A demo database that has not been migrated to 0015 yet cannot be a
@@ -293,7 +431,7 @@ describe("runBootChecks", () => {
     // a deploy outran its migration.
     it("warns and keeps booting when migration 0015 has not been applied", async () => {
       const d = deps(DEMO_DB);
-      d.getDb.mockResolvedValue(await databaseWithoutInstallationTable());
+      d.getDb.mockResolvedValue(lagging);
       await runBootChecks(d);
 
       expect(d.exit).not.toHaveBeenCalled();

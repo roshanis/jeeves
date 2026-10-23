@@ -39,6 +39,11 @@ async function failure(promise: Promise<unknown>): Promise<InstallationCheckErro
   return err as InstallationCheckError;
 }
 
+// A case that boots its own database (the one that lags the code) pays for a
+// PGlite boot and every migration inside the test, which the 5 s default does
+// not cover on a loaded machine; hooks already get 30 s from vitest.config.ts.
+const LAGGING_DB_TIMEOUT_MS = 30_000;
+
 describe("verifyInstallation", () => {
   let db: TestDb;
 
@@ -103,7 +108,7 @@ describe("verifyInstallation", () => {
         expect(err.code).toBe("not_migrated");
         expect(err.message).toMatch(/db:migrate/);
       });
-    });
+    }, LAGGING_DB_TIMEOUT_MS);
   });
 
   describe("production mode", () => {
@@ -146,7 +151,7 @@ describe("verifyInstallation", () => {
         expect(err.code).toBe("not_migrated");
         expect(err.message).toMatch(/P4/);
       });
-    });
+    }, LAGGING_DB_TIMEOUT_MS);
 
     describe("refuses demo data in a production-stamped database", () => {
       beforeEach(async () => {

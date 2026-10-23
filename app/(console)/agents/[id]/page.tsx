@@ -46,6 +46,10 @@ export async function generateMetadata({
 }: {
   params: Promise<{ id: string }>;
 }): Promise<Metadata> {
+  // Same gate as the page, and first for the same reason: metadata is resolved
+  // apart from the page body, so without this a signed-out visitor's <head>
+  // names the agent (or says "Agent not found") and tells them which ids exist.
+  await requireViewer();
   const { id } = await params;
   const agent = GOVERNANCE_AGENTS.find((a) => a.id === id);
   if (!agent) {

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { RoleProvider, useRole } from "@/components/jeeves/role-context";
+import { DeploymentModeProvider } from "@/lib/client/deployment-mode-context";
 import { RoleSwitcher } from "@/components/jeeves/role-switcher";
 import {
   LiveSessionProvider,
@@ -16,14 +17,17 @@ function IdentityProbe() {
   return <p>{`${personaKey}|${session?.personaKey ?? "public"}`}</p>;
 }
 
+// The persona switcher is demo chrome, so the harness mounts the provider the way the root layout does.
 function Harness({ liveModeAvailable = true }: { liveModeAvailable?: boolean }) {
   return (
-    <RoleProvider>
-      <LiveSessionProvider liveModeAvailable={liveModeAvailable}>
-        <IdentityProbe />
-        <RoleSwitcher />
-      </LiveSessionProvider>
-    </RoleProvider>
+    <DeploymentModeProvider mode="demo">
+      <RoleProvider>
+        <LiveSessionProvider liveModeAvailable={liveModeAvailable}>
+          <IdentityProbe />
+          <RoleSwitcher />
+        </LiveSessionProvider>
+      </RoleProvider>
+    </DeploymentModeProvider>
   );
 }
 

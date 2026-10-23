@@ -28,20 +28,24 @@
  * `requireViewerForRequest(req)` and return the response it hands back. Both
  * resolve through one function, so they cannot disagree about who is signed in.
  *
- * `proxy.ts` is not used and is not needed: the check sits next to the data,
- * where it cannot be skipped by a route the proxy matcher forgot.
+ * proxy.ts is not the access control and does not need to be: the check sits
+ * next to the data, where it cannot be skipped by a route the proxy matcher
+ * forgot. The proxy only gives a signed-out production page request the right
+ * HTTP status (307, not a streamed 200 meta-refresh) and merely checks that a
+ * credential is present (lib/config/production-routes.ts).
  */
 import { cache } from "react";
 import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { bootFailure } from "../config/boot-state";
 import { isProductionMode } from "../config/deployment-mode";
+import { SIGN_IN_PATH } from "../config/production-routes";
 import type { Actor } from "../domain/types";
 import { resolveWorkspaceCookieSecret, verifyWorkspaceCookie } from "../security/workspace-cookie";
 import { extractSessionToken, resolveSession } from "./route-guard";
 
 /** Where an unauthenticated page request is sent. */
-export const SIGN_IN_PATH = "/sign-in";
+export { SIGN_IN_PATH };
 
 /** Demo read-scoping hint set by POST /api/session. Read in demo only. */
 export const WORKSPACE_COOKIE_NAME = "jeeves_workspace";

@@ -1,5 +1,6 @@
 import type React from "react";
 import { RoleProvider } from "@/components/jeeves/role-context";
+import { DeploymentModeProvider } from "@/lib/client/deployment-mode-context";
 import { LiveSessionProvider } from "@/lib/client/session-context";
 // LandingPage (components/jeeves/landing-page.tsx) — the static, public
 // marketing hero at "/". It is a pure server component (no hooks, no data
@@ -80,8 +81,9 @@ describe("LandingPage", () => {
   });
 });
 
+// The landing page is the demo's storefront, so it renders under the demo mode the root layout provides.
 function render(ui: React.ReactElement) {
-  return rtlRender(<RoleProvider><LiveSessionProvider>{ui}</LiveSessionProvider></RoleProvider>);
+  return rtlRender(<DeploymentModeProvider mode="demo"><RoleProvider><LiveSessionProvider>{ui}</LiveSessionProvider></RoleProvider></DeploymentModeProvider>);
 }
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }) }));

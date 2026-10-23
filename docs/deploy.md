@@ -146,7 +146,7 @@ npm run start        # next start (after build)
 5. **Seed only an explicitly approved disposable demo database.**
 
    ```bash
-   DATABASE_URL="<your Neon pooled connection string>" npm run db:seed
+   JEEVES_MODE=demo DATABASE_URL="<your Neon pooled connection string>" npm run db:seed
    ```
 
    Read this before running it: `npm run db:seed` **wipes every seeded
@@ -156,12 +156,16 @@ npm run start        # next start (after build)
    is correct for a demo dataset and catastrophic for a real one — the audit
    log is the compliance record the product exists to keep.
 
-   `scripts/seed.ts` refuses to run when `NODE_ENV=production` unless you
-   set `ALLOW_SEED=1`. Treat that prompt as the question it is, not a
-   formality. Seeding also assumes the schema already exists (including the
-   append-only trigger in `drizzle/0002_audit_events_append_only.sql`), which
-   is why step 4 comes first. Do not seed against a database that is
-   currently serving a live demo audience mid-session.
+   `scripts/seed.ts` and `scripts/reset-demo.ts` are demo-only: they refuse
+   to run unless `JEEVES_MODE=demo` (the mode defaults to production), even
+   when `DATABASE_URL` is set, so a seed can never stamp an unprepared
+   database `demo`. `scripts/seed.ts` also refuses to run when
+   `NODE_ENV=production` unless you set `ALLOW_SEED=1`. Treat that prompt as
+   the question it is, not a formality. Seeding also assumes the schema
+   already exists (including the append-only trigger in
+   `drizzle/0002_audit_events_append_only.sql`), which is why step 4 comes
+   first. Do not seed against a database that is currently serving a live demo
+   audience mid-session.
 
 6. **Playwright is NOT run on Vercel.** `npm run test:e2e` boots its own
    production build/server on a fixed local port (3117) and is a local/CI-only
@@ -324,7 +328,7 @@ Run through this the morning of a demo, in order:
 
 1. **Seed fresh.**
    ```bash
-   DATABASE_URL="<Neon pooled connection string>" npm run db:seed
+   JEEVES_MODE=demo DATABASE_URL="<Neon pooled connection string>" npm run db:seed
    ```
    Confirms a clean, deterministic 12-initiative dataset.
 

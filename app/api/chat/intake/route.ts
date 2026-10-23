@@ -25,7 +25,7 @@
 import { z } from "zod";
 import { getAgentPort } from "@/lib/agents";
 import type { AgentPort, PortFailure } from "@/lib/agents/ports";
-import { agentInitializationResponse } from "@/lib/services/agent-error-response";
+import { agentInitializationResponse, llmNotConfigured } from "@/lib/services/agent-error-response";
 import { evaluateCompleteness } from "@/lib/intake/completeness";
 import type { IntakePayload } from "@/lib/intake/types";
 import { EMPTY_INTAKE_PAYLOAD } from "@/lib/intake/defaults";
@@ -150,13 +150,18 @@ export async function POST(req: Request): Promise<Response> {
   const estimatedTokens =
     600 + Math.ceil((flattenedConversation.length + serializedPartialPayload.length) / 4);
 
+  // A production install with no LLM has nothing to spend tokens on, so the
+  // guard (which still authenticates first: an anonymous caller gets its 401)
+  // is asked to reserve none; the 503 follows once the caller is accepted.
+  const noLlm = llmNotConfigured();
+
   const guard = await runMutationGuard(req, bodyText, {
     inputLimits: [
       { field: "conversation", maxChars: MAX_MESSAGES * MAX_MESSAGE_CHARS },
       { field: "partialPayload", maxChars: MAX_PARTIAL_PAYLOAD_CHARS },
     ],
     inputTotalCap: MAX_MESSAGES * MAX_MESSAGE_CHARS + MAX_PARTIAL_PAYLOAD_CHARS,
-    requiresBudget: true,
+    requiresBudget: !noLlm,
     estimatedTokens,
   });
   if (!guard.ok) {

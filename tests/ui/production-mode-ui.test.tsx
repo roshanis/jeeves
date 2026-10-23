@@ -73,6 +73,30 @@ function ModeProbe() {
 }
 
 describe("DeploymentModeProvider", () => {
+  // A component rendered outside the provider must not show demo chrome (the
+  // persona switcher, "Start demo", the fictional-payer banner): the safe
+  // answer to "which mode?" when nobody said is production.
+  it("fails closed: a component outside the provider sees production", () => {
+    render(<ModeProbe />);
+    expect(screen.getByTestId("mode").textContent).toBe("production");
+  });
+
+  it.each([
+    ["RoleSwitcher", <RoleSwitcher key="a" />],
+    ["DemoModeChip", <DemoModeChip key="b" />],
+    ["TryDemoButton", <TryDemoButton key="c" />],
+  ])("%s renders nothing outside the provider", (_name, element) => {
+    const { container } = render(
+      <RoleProvider>
+        <LiveSessionProvider>
+          <TooltipProvider>{element}</TooltipProvider>
+        </LiveSessionProvider>
+      </RoleProvider>,
+    );
+    expect(container.textContent).toBe("");
+    expect(container.querySelector("button, select, input")).toBeNull();
+  });
+
   it("hands the server-chosen mode to client components", () => {
     inMode("production", <ModeProbe />);
     expect(screen.getByTestId("mode").textContent).toBe("production");

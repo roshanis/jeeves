@@ -158,7 +158,10 @@ JEEVES_MODE=demo npm run dev       # http://localhost:3000
 The deployment mode defaults to **production**, which never falls back to the
 local PGlite store, the mock data provider or the mock LLM, so a local run says
 `JEEVES_MODE=demo` out loud (`next dev` also reads it from `.env.local`; the
-`tsx` scripts do not read `.env` files).
+`tsx` scripts do not read `.env` files). The seed and reset scripts
+(`npm run db:seed`, `npm run reset:demo`) need it for every database, not only
+for PGlite: they refuse to run outside demo mode even with `DATABASE_URL` set,
+so they can never stamp a database that was not meant to be a demo.
 
 `http://localhost:3000` (`/`) is the public marketing landing page; click
 through (or go straight to `/inbox`) for the governance operations

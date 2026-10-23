@@ -87,7 +87,9 @@ function isPlainHttpsUrl(value: string): boolean {
  * settings (PGHOST/PGDATABASE/PGUSER) are not read by lib/db yet, so they do
  * not satisfy this check: accepting them would let a production boot silently
  * fall onto an ephemeral on-disk PGlite database. They become valid together
- * with the client support for them.
+ * with the client support for them. (The production plan allowed PG* here; this
+ * is a deliberate deviation from it that a human still has to acknowledge, to be
+ * revisited with the client support in phase P5.3.)
  */
 export function assertProductionConfig(env: Env = process.env): void {
   const problems: string[] = [];

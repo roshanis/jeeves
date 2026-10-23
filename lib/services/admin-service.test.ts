@@ -28,9 +28,11 @@ import { ACTOR_DIRECTORY } from "./actors";
 import type { Domain } from "../domain/types";
 
 // Admin/domain tests never initialize a live SDK, regardless of host credentials.
-vi.mock("../agents", async () => {
+// The rest of the module stays real: the review workflow also calls
+// assertLlmConfigured() from it, and a port-only mock would remove that export.
+vi.mock("../agents", async (importOriginal) => {
   const { createMockAgentPort } = await import("../agents/mock-adapter");
-  return { getAgentPort: () => createMockAgentPort() };
+  return { ...(await importOriginal<typeof import("../agents")>()), getAgentPort: () => createMockAgentPort() };
 });
 
 const DAY_MS = 24 * 60 * 60 * 1000;

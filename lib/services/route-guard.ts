@@ -16,6 +16,7 @@ import { isProductionMode } from "../config/deployment-mode";
 import { DbTokenBucketRateLimiter } from "../security/db-rate-limit";
 import { issueSession } from "../security/session";
 import { DbBudgetStore, reserve, type BudgetStore } from "../security/budget";
+import { SESSION_COOKIE_NAME } from "../security/session-cookie-name";
 import { validateInputSize, type FieldLimit, type InputGap } from "../security/input-limits";
 import { PUBLIC_PERSONA_PREFIX, isPersonaKey, resolveActor } from "./actors";
 import type { Actor } from "../domain/types";
@@ -304,8 +305,6 @@ export async function resolveSessionActor(token: string | null): Promise<Actor |
 /* -------------------------------------------------------------------------
  * Token extraction (cookie or bearer)
  * ---------------------------------------------------------------------- */
-
-const SESSION_COOKIE_NAME = "jeeves_session";
 
 export function extractSessionToken(req: Request): string | null {
   const auth = req.headers.get("authorization");

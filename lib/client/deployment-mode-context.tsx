@@ -14,15 +14,19 @@
  * presentation switch, not a security control: the demo's doors are closed by
  * the server (404s, refused issuers), whatever the UI shows.
  *
- * The default is "demo" and only matters outside the root layout, which always
- * mounts the provider: it keeps isolated component renders (tests) showing the
- * demo they were written against. tests/ui/production-mode-ui.test.tsx pins
- * that the layout mounts the provider with the server's mode.
+ * The default is "production" and only matters outside the root layout, which
+ * always mounts the provider: a component rendered without it fails closed and
+ * shows no demo chrome, rather than showing the demo's persona switcher and
+ * fictional-payer banner on a real install. Isolated component renders (tests)
+ * that want the demo wrap themselves in the provider: renderWithProviders in
+ * tests/ui/helpers.tsx does, as app/layout.tsx does. tests/ui/production-mode-ui.test.tsx
+ * pins both the default and that the layout mounts the provider with the
+ * server's mode.
  */
 import * as React from "react";
 import type { DeploymentMode } from "@/lib/config/deployment-mode";
 
-const DeploymentModeContext = React.createContext<DeploymentMode>("demo");
+const DeploymentModeContext = React.createContext<DeploymentMode>("production");
 
 export function DeploymentModeProvider({
   mode,

@@ -168,6 +168,9 @@ describe("migration 0015 — installation stamp", () => {
     });
   });
 
+  // Boots its own database (the one that lags the code): a PGlite boot plus every
+  // migration inside the test, which the 5 s default does not cover on a loaded
+  // machine; hooks already get 30 s from vitest.config.ts.
   it("reports a missing table without throwing", async () => {
     const lagging = await createTestDb();
     try {
@@ -177,5 +180,5 @@ describe("migration 0015 — installation stamp", () => {
     } finally {
       await closeTestDb(lagging);
     }
-  });
+  }, 30_000);
 });

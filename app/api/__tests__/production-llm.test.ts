@@ -15,6 +15,8 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { createTestDb, closeTestDb, type TestDb } from "@/lib/db/test-client";
+import { reserve } from "@/lib/security/budget";
+import { getBudgetStoreForTests } from "@/lib/services/route-guard";
 import { auditEvents, initiatives, intakeVersions, reviewCycles, reviewDecisions, riskAssessments, runBudget } from "@/lib/db/schema";
 import * as chatAuditor from "../chat/auditor/route";
 import * as chatIntake from "../chat/intake/route";
@@ -130,6 +132,84 @@ describe("a refused draft run leaves no trace", () => {
     expect(review).toMatchObject({ status: "pending", revision: 0, activeAttemptId: null });
     expect(await testDb.select().from(runBudget)).toEqual([]);
     expect(await testDb.select().from(auditEvents)).toEqual([]);
+  });
+});
+
+// The chat routes ask the mutation guard for a token reservation, which is the
+// only thing that spends the daily LLM budget. With no LLM there is nothing to
+// spend it on, so they must not ask. The guard is replaced in this file, so it
+// is stood in by its budget step: the same reserve() against the same store,
+// whenever the route passes `requiresBudget`.
+describe("chat routes reserve no tokens when the install has no LLM", () => {
+  const CHAT_ROUTES = ROUTES.filter((route) => route.name.startsWith("POST /api/chat/"));
+
+  function guardThatReservesLikeTheRealOne(actorId: string, role: string): void {
+    guard.runMutationGuard.mockImplementation(async (_req: Request, _body: unknown, options: { requiresBudget?: boolean; estimatedTokens?: number } = {}) => {
+      if (options.requiresBudget) await reserve(getBudgetStoreForTests(), "2026-09-19", options.estimatedTokens ?? 0, 500_000);
+      return { ok: true, actor: { id: actorId, role }, workspaceId: WORKSPACE };
+    });
+  }
+
+  afterEach(async () => {
+    await testDb.delete(runBudget);
+  });
+
+  it.each(CHAT_ROUTES)("$name answers 503 and leaves run_budget untouched", async ({ actor, call }) => {
+    asProduction(undefined);
+    guardThatReservesLikeTheRealOne(...actor);
+
+    const response = await call();
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({ error: "llm_not_configured" });
+    expect(await testDb.select().from(runBudget)).toEqual([]);
+    expect(guard.runMutationGuard.mock.calls[0][2]).toMatchObject({ requiresBudget: false });
+  });
+
+  it.each(CHAT_ROUTES)("$name still authenticates first: an anonymous caller gets the guard's 401", async ({ call }) => {
+    asProduction(undefined);
+    guard.runMutationGuard.mockResolvedValue({ ok: false, failure: { status: 401, message: "invalid or missing session" } });
+
+    const response = await call();
+
+    expect(response.status).toBe(401);
+    expect(JSON.stringify(await response.json())).not.toMatch(/llm_not_configured/);
+  });
+
+  it("chat/intake still checks the persona before it reports the LLM state", async () => {
+    asProduction(undefined);
+    guardThatReservesLikeTheRealOne("angela-torres", "approver");
+
+    const response = await chatIntake.POST(post("/api/chat/intake", { conversation: [{ role: "user", content: "hello" }], partialPayload: EMPTY_PAYLOAD }));
+
+    expect(response.status).toBe(403);
+    expect(await testDb.select().from(runBudget)).toEqual([]);
+  });
+
+  it.each([
+    ["chat/intake", () => chatIntake.POST(post("/api/chat/intake", { conversation: "not a list" })), "priya-raman", "requester"],
+    ["chat/auditor", () => chatAuditor.POST(post("/api/chat/auditor", {})), "angela-torres", "approver"],
+  ] as const)("%s still validates the body before it reports the LLM state", async (_name, call, actorId, role) => {
+    asProduction(undefined);
+    guardThatReservesLikeTheRealOne(actorId, role);
+
+    const response = await call();
+
+    expect(response.status).toBe(400);
+    expect(await testDb.select().from(runBudget)).toEqual([]);
+  });
+
+  // Positive control: the stand-in does see a reservation, and demo still makes one.
+  it.each(CHAT_ROUTES)("$name reserves tokens in demo, where the keyless mock answers", async ({ actor, call }) => {
+    vi.stubEnv("JEEVES_MODE", "demo");
+    vi.stubEnv("OPENAI_API_KEY", undefined);
+    guardThatReservesLikeTheRealOne(...actor);
+
+    const response = await call();
+
+    expect(response.status).toBe(200);
+    expect(guard.runMutationGuard.mock.calls[0][2]).toMatchObject({ requiresBudget: true });
+    expect(await testDb.select().from(runBudget)).toHaveLength(1);
   });
 });
 

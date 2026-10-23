@@ -23,9 +23,10 @@
 import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
 import { isProductionMode } from "./deployment-mode";
+import { CONSOLE_HOME } from "./production-routes";
 
 /** Where a production visitor to a demo-only landing page is sent. */
-export const CONSOLE_HOME = "/inbox";
+export { CONSOLE_HOME };
 
 /** What a demo-only page does in production: 404, or redirect somewhere. */
 export type ProductionFallback = "not-found" | { redirectTo: string };

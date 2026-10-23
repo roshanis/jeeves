@@ -264,6 +264,11 @@ describe("lib/demo/bootstrap — against an already-populated demo database", ()
   });
 });
 
+// A case that boots its own database (the one that lags the code) pays for a
+// PGlite boot and every migration inside the test, which the 5 s default does
+// not cover on a loaded machine; hooks already get 30 s from vitest.config.ts.
+const LAGGING_DB_TIMEOUT_MS = 30_000;
+
 describe("lib/demo/bootstrap — guards for the seed and reset scripts", () => {
   let db: TestDb;
 
@@ -311,7 +316,7 @@ describe("lib/demo/bootstrap — guards for the seed and reset scripts", () => {
       await withoutInstallationTable(async (lagging) => {
         await expect(assertDemoDatabase(lagging)).rejects.toThrow(/db:migrate/);
       });
-    });
+    }, LAGGING_DB_TIMEOUT_MS);
   });
 
   describe("refuseProductionDatabase (read-only, runs before the CLI migrates)", () => {
@@ -319,7 +324,7 @@ describe("lib/demo/bootstrap — guards for the seed and reset scripts", () => {
       await withoutInstallationTable(async (lagging) => {
         await expect(refuseProductionDatabase(lagging)).resolves.toBeUndefined();
       });
-    });
+    }, LAGGING_DB_TIMEOUT_MS);
 
     it("passes on an unstamped database without stamping it", async () => {
       await expect(refuseProductionDatabase(db)).resolves.toBeUndefined();

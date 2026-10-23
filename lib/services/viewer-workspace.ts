@@ -42,6 +42,11 @@ import { workspaceMismatch } from "./workspace-guard";
  * Route handlers should use `requireViewerForRequest` and return its 401
  * instead; this is the backstop that keeps a handler which forgot to from
  * serving anonymous reads.
+ *
+ * TODO: no route handler calls this yet (every GET uses `requireViewerForRequest`
+ * directly); only its tests do. Keep it as the backstop for handlers added in
+ * the P2/P3 identity phases, or delete it with its tests if none needs it
+ * (production-mode review finding m7, agents-build-log.md 2026-10-23T04:49Z).
  */
 export async function resolveViewerWorkspaceId(req: Request): Promise<string | null> {
   const gate = await requireViewerForRequest(req);

@@ -1622,3 +1622,31 @@ Hard rules: no violations found.
 1. Fix B1 and rerun the full `npm test`. Fix M1 and add its test. Then rerun Playwright and check-agent-bundle.
 2. Fix m1 and m5 in the same pass (small). Split M2 into its own PR. m2, m3 and m4 can follow in P1 polish or P3.
 3. A human clears B2 before merge.
+
+## [AGENT: Claude] [2026-10-23T05:25Z]
+### Action: implementer: review-fix slice for P0 + P1 (answers the 2026-10-23T04:49Z review: B1, M1, M2, m1 to m7)
+### Files changed:
+- B1: lib/services/admin-service.test.ts
+- M1 + m2 + m6: lib/config/boot-checks.ts (+ test), tests/deploy/instrumentation.test.ts, lib/config/installation-check.test.ts, lib/db/installation.test.ts, lib/demo/bootstrap.test.ts
+- M2: lib/services/notification-service.ts (+ test), app/(console)/reviews/page.tsx, app/(console)/reviews/__tests__/reviews-page-isolation.test.tsx (new)
+- m1: scripts/seed.ts, scripts/reset-demo.ts, scripts/seed-installation.test.ts, README.md, docs/deploy.md
+- m3: proxy.ts (new), lib/config/production-routes.ts (+ test, new), lib/security/session-cookie-name.ts (new), tests/deploy/proxy.test.ts (new); small edits in lib/services/route-guard.ts, require-viewer.ts, lib/config/demo-pages.ts
+- m4: app/(console)/{portfolio,controls,admin,agents/[id],initiatives/[slug]}/page.tsx, tests/seo/console-metadata.test.ts (new)
+- m5: app/api/chat/{intake,auditor}/route.ts, lib/services/agent-error-response.ts, app/api/__tests__/production-llm.test.ts
+- m7: lib/client/deployment-mode-context.tsx, tests/ui/{helpers.tsx,landing-page,session-identity,visitor-entry,production-mode-ui}.test.tsx, lib/services/viewer-workspace.ts, lib/config/deployment-mode.ts (comments)
+### Diff summary:
+- B1 fixed: the "../agents" mock now spreads importOriginal, so assertLlmConfigured survives. The file passes on its own (47/47).
+- M1 fixed: the demo boot skips the stamp check only when there is no database URL and DATA_PROVIDER is not "db". Mock data plus a database URL now verifies the stamp and refuses a production stamp.
+- m2 fixed: in demo, a database error at boot is retried (3 attempts, waits of 1 s and 4 s, injectable sleep). A stamp mismatch and a not-yet-migrated database are never retried. Production does not retry.
+- M2 fixed (kept in this slice, not split out): /reviews renders undeliveredNotificationsForViewer(db, viewerWorkspaceId), which joins initiatives and applies the same workspace rule as every other read. The unscoped undeliveredNotifications stays, documented as operator-only.
+- m1 fixed: seed.ts main() and resetDemo() call assertDemoMode before any database is opened. CLI tests spawn both scripts with JEEVES_MODE unset and a database URL set. The Podman `seed` service is unaffected: the migrator image inherits ENV JEEVES_MODE=demo from the builder stage.
+- m3 fixed for requests that carry no credential: proxy.ts (Node runtime) answers 307 /sign-in for console pages, 307 /inbox for "/", and 404 for the marketing pages in production, and passes everything on in demo. It checks that a credential is present, not that it is valid (requireViewer stays the access control). A request with a stale or invalid session cookie still gets the streamed 200 meta-refresh.
+- m4 fixed: Portfolio, Control catalog and Administration metadata are mode-aware; /agents/[id] metadata runs the viewer gate first; the initiative page drops "Synthetic demo data." in production.
+- m5 fixed: both chat routes ask llmNotConfigured() before the guard and pass requiresBudget: !noLlm, so the guard still authenticates first (anonymous gets 401) but reserves nothing; the 503 follows after the persona and body checks.
+- m6 fixed: boot-checks and instrumentation tests build their PGlite databases in beforeAll; the other cases that boot a database inside a test got a 30 s timeout.
+- m7: DeploymentModeContext now defaults to "production" (tests wrap in an explicit provider through renderWithProviders). resolveViewerWorkspaceId kept with a TODO. The PG* deviation is noted in assertProductionConfig's comment. These implementer entries were missing for P0/P1; that work is in the WIP checkpoint commits 83ae913..da13dad.
+### Recommendations / Next steps:
+1. Still a human gate (B2): set JEEVES_MODE=demo in Vercel Production, Preview and Development; apply migrations 0014 and 0015 to Neon; explicitly approve the ci.yml diff (container job, JEEVES_MODE env). Not touched here.
+2. Human sign-off on the PG* deviation; revisit in P5.3.
+3. When squashing for the PR, keep the test-first commits separate (history is the only evidence of order).
+4. Optional: a production smoke test that asserts the live statuses (307/404) once a production smoke job exists; proxy.ts is unit-tested and was probed live (see the report).

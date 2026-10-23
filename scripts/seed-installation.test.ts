@@ -11,6 +11,7 @@ import { migrate } from "drizzle-orm/pglite/migrator";
 import { createTestDb, closeTestDb, type TestDb } from "../lib/db/test-client";
 import * as schema from "../lib/db/schema";
 import { initiatives, installation, sessions } from "../lib/db/schema";
+import { DemoOnlyError } from "../lib/config/demo-doors";
 import { readInstallationStamp } from "../lib/db/installation";
 import { seedDatabase } from "./seed";
 import { resetDemo } from "./reset-demo";
@@ -167,6 +168,18 @@ describe("scripts/reset-demo.ts — installation stamp", () => {
     expect(await readInstallationStamp(db)).toEqual(first);
   });
 
+  it("refuses outside demo mode before it stamps, reseeds or clears anything", async () => {
+    vi.stubEnv("JEEVES_MODE", "production");
+    await addSession();
+
+    await expect(resetDemo(db)).rejects.toBeInstanceOf(DemoOnlyError);
+
+    expect(await readInstallationStamp(db)).toBeNull();
+    expect((await db.select({ n: count() }).from(sessions))[0].n).toBe(1);
+    expect((await db.select({ n: count() }).from(initiatives))[0].n).toBe(0);
+    vi.unstubAllEnvs();
+  });
+
   it("refuses a production-stamped database before it reseeds or clears anything", async () => {
     vi.stubEnv("ALLOW_SEED", "1");
     await db.insert(installation).values({ deployMode: "production", installId: "inst-prod" });
@@ -247,6 +260,92 @@ describe("npm run db:seed / reset:demo — CLI against a production-stamped stor
         stamp: { deployMode: "production", installId: "inst-prod" },
         initiatives: 0,
       });
+    },
+    150_000,
+  );
+});
+
+/**
+ * The seed and reset CLIs are demo-only tools. The mode defaults to production,
+ * and production mode only refuses the PGlite fallback, so with a database URL
+ * set and JEEVES_MODE unset they used to seed a fresh database with demo rows
+ * and an immutable 'demo' stamp that could never serve production afterwards.
+ * They now refuse first, before opening any database.
+ */
+describe("npm run db:seed / reset:demo — CLI outside demo mode", () => {
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = mkdtempSync(join(tmpdir(), "jeeves-seed-cli-prod-"));
+    const client = new PGlite(dir);
+    await migrate(drizzle({ client, schema }), { migrationsFolder: "./drizzle" });
+    await client.close();
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  function runScript(script: string, env: Record<string, string>) {
+    return spawnSync(join(process.cwd(), "node_modules/.bin/tsx"), [script], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      timeout: 120_000,
+      env: {
+        PATH: process.env.PATH,
+        HOME: process.env.HOME,
+        TMPDIR: process.env.TMPDIR,
+        DATA_PROVIDER: "",
+        DATABASE_MIGRATION_URL: "",
+        POSTGRES_URL: "",
+        VERCEL: "",
+        // Not "production": that would trip the ALLOW_SEED guard, which runs
+        // before the mode check these cases are about.
+        NODE_ENV: "development",
+        ...env,
+      },
+    });
+  }
+
+  async function storeState() {
+    const client = new PGlite(dir);
+    const db = drizzle({ client, schema });
+    try {
+      return {
+        stamp: await readInstallationStamp(db),
+        initiatives: (await db.select({ n: count() }).from(initiatives))[0].n,
+      };
+    } finally {
+      await client.close();
+    }
+  }
+
+  // Port 1 refuses connections at once: a script that ignored the mode would
+  // fail with a connection error, not with the demo-only refusal asserted here.
+  const UNREACHABLE_DATABASE = "postgres://jeeves:pw@127.0.0.1:1/jeeves";
+
+  it.each(["scripts/seed.ts", "scripts/reset-demo.ts"])(
+    "%s exits 1 with JEEVES_MODE unset and a database URL set, before it connects",
+    (script) => {
+      const result = runScript(script, { DATABASE_URL: UNREACHABLE_DATABASE });
+      const output = `${result.stdout}${result.stderr}`;
+
+      expect(result.status).toBe(1);
+      expect(output).toMatch(/demo-only/);
+      expect(output).toMatch(/JEEVES_MODE=demo/);
+      expect(output).not.toMatch(/ECONNREFUSED|ENOTFOUND|EAI_AGAIN/);
+    },
+    150_000,
+  );
+
+  it.each(["scripts/seed.ts", "scripts/reset-demo.ts"])(
+    "%s exits 1 for a mode that is not exactly 'demo' and leaves an unstamped store with no stamp and no rows",
+    async (script) => {
+      const result = runScript(script, { JEEVES_MODE: "Demo", JEEVES_PGLITE_DIR: dir, DATABASE_URL: "" });
+
+      expect(result.status).toBe(1);
+      expect(`${result.stdout}${result.stderr}`).toMatch(/demo-only/);
+      expect(await storeState()).toEqual({ stamp: null, initiatives: 0 });
     },
     150_000,
   );

@@ -1,7 +1,7 @@
 // @vitest-environment node
-import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { bootFailure, resetBootStateForTests } from "@/lib/config/boot-state";
-import { closeTestDb, createTestDb, type TestDb } from "@/lib/db/test-client";
+import { clearInstallationFixtures, closeTestDb, createTestDb, type TestDb } from "@/lib/db/test-client";
 import { installation } from "@/lib/db/schema";
 import { register } from "@/instrumentation";
 
@@ -31,12 +31,24 @@ function stubProductionBootEnv(): void {
 let exit: Mock<(code: number) => void>;
 let log: Mock<(...args: unknown[]) => void>;
 let getDb: Mock<() => Promise<TestDb>>;
-let db: TestDb | null;
 
-/** A migrated in-memory database the boot hook is handed instead of a real one. */
-async function stampedDatabase(deployMode: "demo" | "production"): Promise<void> {
+// One migrated in-memory database serves the file and is emptied for every case.
+// Built in beforeAll, whose 30 s hook timeout covers a loaded machine; built
+// inside a case it would run under the 5 s test timeout.
+let db: TestDb;
+
+beforeAll(async () => {
   db = await createTestDb();
-  await db.insert(installation).values({ deployMode, installId: `inst-${deployMode}` });
+});
+
+afterAll(async () => {
+  await closeTestDb(db);
+});
+
+/** The database the boot hook is handed instead of a real one, empty except for the stamp asked for. */
+async function stampedDatabase(deployMode?: "demo" | "production"): Promise<void> {
+  await clearInstallationFixtures(db);
+  if (deployMode) await db.insert(installation).values({ deployMode, installId: `inst-${deployMode}` });
   getDb.mockResolvedValue(db);
 }
 
@@ -44,7 +56,6 @@ beforeEach(() => {
   exit = vi.fn<(code: number) => void>();
   log = vi.fn<(...args: unknown[]) => void>();
   getDb = vi.fn<() => Promise<TestDb>>();
-  db = null;
   vi.stubEnv("NEXT_RUNTIME", "nodejs");
   vi.stubEnv("NEXT_PHASE", "phase-production-server");
 });
@@ -52,7 +63,6 @@ beforeEach(() => {
 afterEach(async () => {
   vi.unstubAllEnvs();
   resetBootStateForTests();
-  if (db) await closeTestDb(db);
 });
 
 describe("instrumentation register()", () => {
@@ -88,8 +98,7 @@ describe("instrumentation register()", () => {
     vi.stubEnv("APP_BASE_URL", "https://jeeves.example.com");
     vi.stubEnv("JEEVES_TENANT_ID", "tenant-acme");
     vi.stubEnv("DATA_PROVIDER", "db");
-    db = await createTestDb();
-    getDb.mockResolvedValue(db);
+    await stampedDatabase();
     await register({ exit, log, getDb });
 
     expect(exit).toHaveBeenCalledWith(1);
@@ -131,11 +140,22 @@ describe("instrumentation register()", () => {
     expect(bootFailure()).toBeNull();
   });
 
+  it("still verifies the stamp in demo on mock data when a database URL is configured", async () => {
+    vi.stubEnv("JEEVES_MODE", "demo");
+    vi.stubEnv("DATA_PROVIDER", "mock");
+    vi.stubEnv("DATABASE_URL", "postgres://u:p@db.internal:5432/jeeves");
+    await stampedDatabase("production");
+    await register({ exit, log, getDb });
+
+    expect(getDb).toHaveBeenCalledTimes(1);
+    expect(exit).toHaveBeenCalledWith(1);
+    expect(bootFailure()).toMatch(/stamped "production"/);
+  });
+
   it("stamps the demo database at boot", async () => {
     vi.stubEnv("JEEVES_MODE", "demo");
     vi.stubEnv("DATA_PROVIDER", "db");
-    db = await createTestDb();
-    getDb.mockResolvedValue(db);
+    await stampedDatabase();
     await register({ exit, log, getDb });
 
     expect(exit).not.toHaveBeenCalled();
@@ -156,9 +176,11 @@ describe("instrumentation register()", () => {
   });
 
   it("can be called the way Next.js calls it, with no arguments", async () => {
-    // Mock data, so the real database handle is never opened by the test.
+    // Mock data and no database URL, so the real database handle is never opened by the test.
     vi.stubEnv("JEEVES_MODE", "demo");
     vi.stubEnv("DATA_PROVIDER", "mock");
+    vi.stubEnv("DATABASE_URL", "");
+    vi.stubEnv("POSTGRES_URL", "");
     await expect(register()).resolves.toBeUndefined();
   });
 });

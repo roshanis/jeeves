@@ -4,14 +4,20 @@ import { getDb } from "@/lib/db/client";
 import { listExceptions, type ExceptionRow } from "@/lib/services/exception-service";
 import { ControlCatalog } from "@/components/jeeves/control-catalog";
 import { ExceptionsPanel } from "@/components/jeeves/exceptions-panel";
+import { isProductionMode } from "@/lib/config/deployment-mode";
 import type { Metadata } from "next";
 
 
-export const metadata: Metadata = {
-  title: "Control catalog",
-  description:
-    "Every governance control Meridian Health enforces, across all eight domains — policy source, status and evidence, read-only.",
-};
+// Mode-aware, so resolved per request: Meridian Health is the demo's fictional
+// payer; a production install is someone else's.
+export function generateMetadata(): Metadata {
+  return {
+    title: "Control catalog",
+    description: isProductionMode()
+      ? "Every governance control enforced, across all eight domains — policy source, status and evidence, read-only."
+      : "Every governance control Meridian Health enforces, across all eight domains — policy source, status and evidence, read-only.",
+  };
+}
 
 // Control catalog (plan §6): the full ControlDefinition catalog across all 8
 // governance domains plus the one live-enforced runtime control (Q-01),

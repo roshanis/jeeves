@@ -8,6 +8,7 @@ import { InitiativeTabs } from "@/components/jeeves/initiative-tabs";
 // MinusCircle: the neutral "nothing is being counted here" blockers chip.
 import { AlertOctagon, AlertTriangle, CheckCircle2, MinusCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { isProductionMode } from "@/lib/config/deployment-mode";
 import { TierBadge, TIER_LABEL } from "@/components/jeeves/tier-badge";
 import { LifecycleBadge, LIFECYCLE_LABEL } from "@/components/jeeves/lifecycle-badge";
 import { AccountableApproverChip } from "@/components/jeeves/accountable-approver-chip";
@@ -75,7 +76,7 @@ export async function generateMetadata({
   const { title, tier, state } = detail.summary;
   return {
     title,
-    description: `${title} — ${TIER_LABEL[tier] ?? tier} tier, ${LIFECYCLE_LABEL[state] ?? state}. Risk tiering, domain reviews, decisions, controls and audit trail for this AI initiative. Synthetic demo data.`,
+    description: `${title} — ${TIER_LABEL[tier] ?? tier} tier, ${LIFECYCLE_LABEL[state] ?? state}. Risk tiering, domain reviews, decisions, controls and audit trail for this AI initiative.${isProductionMode() ? "" : " Synthetic demo data."}`,
   };
 }
 
