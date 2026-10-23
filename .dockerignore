@@ -1,0 +1,31 @@
+# Build context exclusions for `docker build` (BuildKit). BuildKit reads
+# .dockerignore and does NOT read .containerignore, so without this file the
+# whole working tree, including node_modules (~1GB), .env and .git, is sent as
+# build context. Podman/Buildah read .containerignore first and fall back to
+# this file.
+#
+# KEEP IN SYNC with .containerignore: same patterns, same order. The comments
+# may differ; tests/deploy/container-build-context.test.ts fails on drift.
+
+.git
+.github
+node_modules
+.next
+.pglite
+coverage
+playwright-report
+test-results
+tsconfig.tsbuildinfo
+
+# Never ship secrets into a build context — they would land in the image
+# layer even if the Containerfile never COPYs them explicitly.
+.env
+.env.*
+!.env.example
+
+# Local tooling noise
+*.log
+.DS_Store
+.vscode
+.idea
+.claude

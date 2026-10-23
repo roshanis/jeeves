@@ -29,6 +29,7 @@ import {
   observations,
   reviewCycles,
   reviewDecisions,
+  reviewNotifications,
   riskAssessments,
   runBudget,
 } from "../lib/db/schema";
@@ -296,19 +297,27 @@ async function seedInTransaction(db: SeedDb): Promise<RowCounts> {
   // append-only via trigger for UPDATE/DELETE from application code, but a
   // wipe-and-reinsert seed needs to clear prior rows too — DELETE is
   // rejected by the same trigger that protects audit_events in normal app
-  // operation, so seeding truncates via a superuser-style raw statement
-  // that temporarily disables the trigger for this one maintenance
-  // operation, then re-enables it. This keeps the append-only guarantee
-  // intact for the application role while still allowing deterministic
-  // reseeds in dev/test.
-  await db.execute(`ALTER TABLE audit_events DISABLE TRIGGER ALL;`);
+  // operation, so seeding disables the table's USER triggers for this one
+  // maintenance operation, then re-enables them. This keeps the append-only
+  // guarantee intact for the application role while still allowing
+  // deterministic reseeds in dev/test.
+  //
+  // USER, not ALL: ALL also disables the internal foreign-key triggers, which
+  // Postgres reserves for superusers, and an RDS master user is not one. USER
+  // covers the append-only triggers (0002 row-level, 0014 TRUNCATE guard) and
+  // needs only table ownership. The ALTERs are transactional, so a failed wipe
+  // rolls the triggers back to enabled.
+  await db.execute(`ALTER TABLE audit_events DISABLE TRIGGER USER;`);
   await db.delete(auditEvents);
-  await db.execute(`ALTER TABLE audit_events ENABLE TRIGGER ALL;`);
+  await db.execute(`ALTER TABLE audit_events ENABLE TRIGGER USER;`);
   await db.delete(incidents);
   await db.delete(observations);
   await db.delete(controlExceptions);
   await db.delete(effectiveControls);
   await db.delete(initiativeDecisions);
+  // Live triage queues these (0013); they reference both review_cycles and
+  // initiatives, so they go before either.
+  await db.delete(reviewNotifications);
   await db.delete(reviewDecisions);
   await db.delete(reviewCycles);
   await db.delete(riskAssessments);

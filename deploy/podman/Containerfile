@@ -78,10 +78,10 @@ USER node
 # assets, and (via outputFileTracingIncludes) the agents/*.md corpus that
 # /agents/[id] reads from disk at runtime.
 COPY --from=builder --chown=node:node /app/.next/standalone ./
-# Static assets and public/ are not part of the traced output; Next documents
-# copying them alongside it.
+# Static assets are not part of the traced output; Next documents copying them
+# alongside it. There is no public/ directory (removed in a667ec3), so there is
+# nothing else to copy: a COPY of a missing path fails the whole build.
 COPY --from=builder --chown=node:node /app/.next/static ./.next/static
-COPY --from=builder --chown=node:node /app/public ./public
 
 EXPOSE 3000
 

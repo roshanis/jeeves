@@ -5,13 +5,16 @@
 # were only ever run by hand. This workflow makes the gate in CLAUDE.md §5
 # ("run full test suite, fix regressions") actually enforceable on a PR.
 #
-# Two jobs so a lint/type/unit failure reports without waiting on the e2e
+# Three jobs so a lint/type/unit failure reports without waiting on the e2e
 # build:
-#   verify — typecheck, lint, unit tests WITH coverage (vitest.config.ts's
-#            thresholds fail the run on regression).
-#   e2e    — the Playwright golden path. playwright.config.ts owns its own
-#            webServer (db:seed && build && start on port 3117), so this job
-#            only installs the browser and runs the suite.
+#   verify    — typecheck, lint, unit tests WITH coverage (vitest.config.ts's
+#               thresholds fail the run on regression).
+#   e2e       — the Playwright golden path. playwright.config.ts owns its own
+#               webServer (db:seed && build && start on port 3117), so this job
+#               only installs the browser and runs the suite.
+#   container — the deploy/podman/Containerfile image builds. Build only: nothing
+#               is pushed. Nothing else exercises the Containerfile, so a COPY of
+#               a deleted path (public/, a667ec3) broke the image unnoticed.
 #
 # Playwright supplies an independent test-only signing key; visitor entry is passwordless.
 name: CI
@@ -94,3 +97,16 @@ jobs:
       # relocates only deployable files and forbids network/source-tree reads.
       - name: Verify packaged agent runtime
         run: node scripts/check-agent-bundle.cjs
+
+  container:
+    name: Container image builds
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      # The same command docs/deploy-podman.md gives, with docker in place of
+      # podman. Build context is the repo root; .dockerignore keeps it small.
+      # No push, no registry login: this only proves the image can be built.
+      - name: Build image
+        run: docker build -f deploy/podman/Containerfile -t jeeves:ci .

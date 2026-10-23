@@ -304,11 +304,60 @@ export function extractSessionToken(req: Request): string | null {
   return null;
 }
 
-/** Best-effort client identifier for rate limiting — hashed upstream in production via a proxy header; falls back to a constant bucket key when absent (single-tenant demo). */
+const UNKNOWN_CLIENT = "unknown-client";
+const warnedHopValues = new Set<string>();
+
+/**
+ * JEEVES_TRUSTED_PROXY_HOPS: how many reverse proxies in front of the app each
+ * append to X-Forwarded-For. Unset/blank/0 -> 0 (Vercel, which overwrites the
+ * header). Returns null for a set-but-malformed value so the caller can fail
+ * closed instead of guessing; warns once per distinct bad value.
+ */
+function trustedProxyHops(): number | null {
+  const raw = process.env.JEEVES_TRUSTED_PROXY_HOPS?.trim();
+  if (!raw) return 0;
+  if (/^\d+$/.test(raw)) {
+    const hops = Number(raw);
+    if (Number.isSafeInteger(hops)) return hops;
+  }
+  if (!warnedHopValues.has(raw)) {
+    warnedHopValues.add(raw);
+    console.warn(
+      `JEEVES_TRUSTED_PROXY_HOPS=${JSON.stringify(raw.slice(0, 40))} is not a non-negative integer; ` +
+        "ignoring X-Forwarded-For and rate-limiting all clients as one until it is fixed.",
+    );
+  }
+  return null;
+}
+
+/**
+ * Best-effort client identifier for rate limiting; falls back to a constant
+ * bucket key when no usable address is available.
+ *
+ * Which X-Forwarded-For entry is the client depends on the proxy in front:
+ *  - JEEVES_TRUSTED_PROXY_HOPS unset or 0 (Vercel): the platform overwrites the
+ *    header, so the LEFTMOST entry is the client. This is the original behaviour.
+ *  - N >= 1 (AWS ALB is 1; CloudFront then ALB is 2): each trusted proxy
+ *    APPENDS the address it saw, so the client is the Nth entry from the RIGHT.
+ *    Everything left of that is caller-supplied and ignored, so rotating a
+ *    spoofed leading entry cannot mint a fresh rate-limit bucket.
+ *
+ * A chain shorter than N did not pass through every trusted proxy, and a
+ * malformed setting cannot be trusted either; both fall back to the shared
+ * constant key rather than to an attacker-controlled entry.
+ */
 export function clientKeyFor(req: Request): string {
   const forwarded = req.headers.get("x-forwarded-for");
-  if (forwarded) return forwarded.split(",")[0]!.trim();
-  return "unknown-client";
+  const hops = trustedProxyHops();
+  if (hops === null) return UNKNOWN_CLIENT;
+  if (hops === 0) {
+    if (forwarded) return forwarded.split(",")[0]!.trim();
+    return UNKNOWN_CLIENT;
+  }
+  if (!forwarded) return UNKNOWN_CLIENT;
+  const entries = forwarded.split(",");
+  // A negative index (chain shorter than `hops`) is undefined.
+  return entries[entries.length - hops]?.trim() || UNKNOWN_CLIENT;
 }
 
 /* -------------------------------------------------------------------------

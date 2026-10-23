@@ -7,6 +7,10 @@ const nextConfig: NextConfig = {
   // deploy/podman/Containerfile; harmless on Vercel, which ignores it.
   output: "standalone",
 
+  // Next adds `X-Powered-By: Next.js` to every response by default. It names
+  // the framework to any scanner for no benefit, so drop it.
+  poweredByHeader: false,
+
   // PGlite ships WASM/data assets that break when bundled by
   // Turbopack/webpack (its internal file loading receives a bundler URL
   // where Node expects a filesystem path: "The 'path' argument must be of

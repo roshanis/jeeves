@@ -129,7 +129,7 @@ npm run start        # next start (after build)
 
    Read this before running it: `npm run db:seed` **wipes every seeded
    table and repopulates it**, and to do that it issues
-   `ALTER TABLE audit_events DISABLE TRIGGER ALL` so it can delete the
+   `ALTER TABLE audit_events DISABLE TRIGGER USER` so it can delete the
    append-only audit log (`scripts/seed.ts`, "Wipe in FK-safe order"). That
    is correct for a demo dataset and catastrophic for a real one — the audit
    log is the compliance record the product exists to keep.
