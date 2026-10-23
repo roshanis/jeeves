@@ -10,6 +10,7 @@ import { drizzle as drizzleNeon, type NeonDatabase } from "drizzle-orm/neon-serv
 import { drizzle as drizzleNodePg, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { drizzle as drizzlePglite, type PgliteDatabase } from "drizzle-orm/pglite";
 import { PGlite } from "@electric-sql/pglite";
+import { ProductionConfigError, isProductionMode } from "../config/deployment-mode";
 import { postgresPoolConfig } from "./connection-config";
 import { assertRuntimeDatabaseConfigured, runtimeDatabaseUrl } from "./runtime-config";
 import ws from "ws";
@@ -51,6 +52,25 @@ export function getDbDriverForHandle(db: Db): DbDriver | undefined {
 }
 
 /**
+ * node-postgres emits 'error' on the POOL when an idle client's connection
+ * dies underneath it (an RDS failover or restart, a NAT idle timeout, a
+ * proxy reset). EventEmitter rethrows an 'error' with no listener, so without
+ * this handler one dropped idle connection is an uncaught exception that
+ * takes the whole server down. The pool has already discarded the dead
+ * client; the next query opens a fresh one, so logging is the whole job.
+ *
+ * Logs the message only: never the connection string, which carries the
+ * password.
+ */
+function createPgPool(databaseUrl: string): PgPool {
+  const pool = new PgPool(postgresPoolConfig(databaseUrl, process.env.DATABASE_SSL_CA));
+  pool.on("error", (err: Error) => {
+    console.error(`PostgreSQL pool error on an idle connection (it will be replaced): ${err.message}`);
+  });
+  return pool;
+}
+
+/**
  * Returns the process-wide DB handle, creating it on first use. Safe to
  * call repeatedly (e.g. from multiple route handlers) — the underlying
  * connection/instance is memoized on globalThis (see above).
@@ -80,13 +100,21 @@ export function getDb(): Db {
     // node-postgres: a real connection pool over the wire protocol. This is
     // the right driver for any long-lived process (a container), and the only
     // one that works against a non-Neon server.
-    dbSlot.pgPool ??= new PgPool(postgresPoolConfig(databaseUrl!, process.env.DATABASE_SSL_CA));
+    dbSlot.pgPool ??= createPgPool(databaseUrl!);
     dbSlot.db = drizzleNodePg({ client: dbSlot.pgPool, schema });
     handleDrivers.set(dbSlot.db, "pg");
     return dbSlot.db;
   }
 
-  // No DATABASE_URL: local persistent PGlite store, not a network call.
+  // No DATABASE_URL: local persistent PGlite store, not a network call. That
+  // is a demo and development convenience; a production process that reaches
+  // this line is misconfigured, and silently serving an empty on-disk database
+  // instead of the customer's would be far worse than not starting.
+  if (isProductionMode()) {
+    throw new ProductionConfigError([
+      "DATABASE_URL (or POSTGRES_URL) is required: production never falls back to the local PGlite store (local development sets JEEVES_MODE=demo)",
+    ]);
+  }
   const client = new PGlite(localPgliteDirectory());
   dbSlot.db = drizzlePglite({ client, schema });
   handleDrivers.set(dbSlot.db, "pglite");

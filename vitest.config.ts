@@ -16,7 +16,9 @@ export default defineConfig({
     environment: "jsdom",
     // Mutation suites inject disposable PGlite databases and must explicitly
     // opt into DB-backed reads. Preview tests override this via vi.stubEnv.
-    env: { DATA_PROVIDER: "db" },
+    // JEEVES_MODE defaults to production when unset (lib/config/deployment-mode.ts),
+    // so the suite, which exercises the demo, must say "demo" explicitly.
+    env: { DATA_PROVIDER: "db", JEEVES_MODE: "demo" },
     // Node >= 25 ships a non-functional `localStorage` global that blocks
     // jsdom's implementation — see tests/setup/web-storage.ts.
     setupFiles: ["tests/setup/web-storage.ts"],

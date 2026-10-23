@@ -3,6 +3,7 @@ import { AppSidebar } from "@/components/jeeves/app-sidebar";
 import { AppTopBar } from "@/components/jeeves/app-topbar";
 import { AppMobileNav } from "@/components/jeeves/app-mobile-nav";
 import { ConsoleTopBar } from "@/components/jeeves/console-top-bar";
+import { isDemoMode } from "@/lib/config/deployment-mode";
 
 // Console chrome (sidebar + top bar + mobile nav strip + footer) lives here,
 // scoped to the (console) route group, so it wraps every ops route
@@ -45,10 +46,14 @@ export default function ConsoleLayout({
         >
           {children}
         </main>
-        <footer className="pad-safe-x pad-safe-b border-t px-4 py-4 text-center text-[11px] text-muted-foreground sm:px-6">
-          Fictional demo. Synthetic data only. Not affiliated with any real
-          organization.
-        </footer>
+        {/* The disclaimer is the demo's. Read per request: the root layout is
+            force-dynamic, so this is never baked in at build. */}
+        {isDemoMode() ? (
+          <footer className="pad-safe-x pad-safe-b border-t px-4 py-4 text-center text-[11px] text-muted-foreground sm:px-6">
+            Fictional demo. Synthetic data only. Not affiliated with any real
+            organization.
+          </footer>
+        ) : null}
       </div>
     </div>
   );

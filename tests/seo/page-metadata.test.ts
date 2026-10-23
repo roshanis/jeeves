@@ -36,8 +36,12 @@ describe("page metadata", () => {
 
   it.each(PAGES.map((p) => [rel(p), p]))("%s exports metadata", (_name, path) => {
     const src = readFileSync(path, "utf8");
+    // generateMetadata may be async or sync, or a const built by a helper
+    // (demo-only pages wrap their static metadata so production can 404).
     const hasMetadata =
-      /export const metadata\b/.test(src) || /export async function generateMetadata\b/.test(src);
+      /export const metadata\b/.test(src) ||
+      /export (async )?function generateMetadata\b/.test(src) ||
+      /export const generateMetadata\b/.test(src);
     expect(hasMetadata).toBe(true);
   });
 
@@ -50,13 +54,24 @@ describe("page metadata", () => {
 });
 
 describe("site-wide head", () => {
-  it("gives the root layout a title template so per-page titles stay branded", () => {
+  // The root metadata is mode-aware, so the layout takes it from
+  // lib/config/site-metadata.ts (behaviour covered by mode-metadata.test.ts)
+  // instead of declaring it inline.
+  const ROOT_METADATA_SOURCE = join(process.cwd(), "lib", "config", "site-metadata.ts");
+
+  it("builds the root layout's metadata from the mode-aware helper", () => {
     const src = readFileSync(join(APP_DIR, "layout.tsx"), "utf8");
+    expect(/export function generateMetadata\b/.test(src)).toBe(true);
+    expect(/rootMetadata\(/.test(src)).toBe(true);
+  });
+
+  it("gives the root layout a title template so per-page titles stay branded", () => {
+    const src = readFileSync(ROOT_METADATA_SOURCE, "utf8");
     expect(/template:/.test(src)).toBe(true);
   });
 
   it("declares a metadataBase so Open Graph URLs resolve absolutely", () => {
-    const src = readFileSync(join(APP_DIR, "layout.tsx"), "utf8");
+    const src = readFileSync(ROOT_METADATA_SOURCE, "utf8");
     expect(/metadataBase/.test(src)).toBe(true);
   });
 

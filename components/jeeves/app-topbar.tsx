@@ -7,7 +7,8 @@ import { RoleSwitcher } from "./role-switcher";
 import { DemoModeChip } from "./demo-mode-chip";
 import { ThemeToggle } from "./theme-toggle";
 import { NAV_ITEMS, isNavItemActive } from "./nav-items";
-import { DEMO_BANNER_TEXT } from "@/lib/demo-banner";
+import { DEMO_BANNER_TEXT, demoBannerFor } from "@/lib/demo-banner";
+import { useDeploymentMode } from "@/lib/client/deployment-mode-context";
 import { CommandPalette, type PaletteInitiative } from "./command-palette";
 
 // Re-exported so existing importers of DEMO_BANNER_TEXT from this module
@@ -61,12 +62,18 @@ export function deriveBreadcrumb(pathname: string): string {
 export function AppTopBar({ initiatives }: { initiatives: PaletteInitiative[] }) {
   const pathname = usePathname();
   const breadcrumb = deriveBreadcrumb(pathname ?? "");
+  // Production has no fictional payer to disclaim and no passwordless personas
+  // to pick: the banner, the demo chip and the persona picker are the demo's.
+  const mode = useDeploymentMode();
+  const banner = demoBannerFor(mode);
 
   return (
     <div className="pad-safe-x sticky top-0 z-30 border-b bg-card/95 backdrop-blur">
-      <div className="bg-status-warning-bg px-4 py-1 text-center text-[11px] font-medium text-status-warning-fg">
-        {DEMO_BANNER_TEXT}
-      </div>
+      {banner ? (
+        <div className="bg-status-warning-bg px-4 py-1 text-center text-[11px] font-medium text-status-warning-fg">
+          {banner}
+        </div>
+      ) : null}
       <header className="flex h-14 items-center justify-between gap-2 px-4 sm:gap-4">
         {/* overflow-x-clip: backstop for the pathological width where even a
             fully-ellipsized breadcrumb cannot absorb the squeeze — clip the
@@ -138,12 +145,16 @@ export function AppTopBar({ initiatives }: { initiatives: PaletteInitiative[] })
           <div className="pr-1.5 sm:pr-2.5">
             <ThemeToggle />
           </div>
-          <div className="min-w-0 px-1.5 sm:px-2.5">
-            <DemoModeChip />
-          </div>
-          <div className="min-w-0 pl-1.5 sm:pl-2.5">
-            <RoleSwitcher />
-          </div>
+          {mode === "demo" ? (
+            <>
+              <div className="min-w-0 px-1.5 sm:px-2.5">
+                <DemoModeChip />
+              </div>
+              <div className="min-w-0 pl-1.5 sm:pl-2.5">
+                <RoleSwitcher />
+              </div>
+            </>
+          ) : null}
         </div>
       </header>
     </div>

@@ -3,12 +3,13 @@ import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { FRAMEWORK_DISCLAIMER } from "@/lib/marketing/framework-mappings";
 import { CONTACT_URL, PILOT_PRICE } from "@/lib/marketing/site-config";
+import { guardDemoPage, demoPageMetadata } from "@/lib/config/demo-pages";
 
-export const metadata = {
+export const generateMetadata = demoPageMetadata({
   title: "Procurement-readiness pilot — Jeeves",
   description:
     "A 4-6 week pilot that gets AI teams selling into health plans and health systems procurement-ready: mapped controls, a governance console, and an evidence pack.",
-};
+});
 
 const DELIVERABLES = [
   {
@@ -60,6 +61,7 @@ const STEPS = [
 // Print-clean (no dark bands) so it doubles as a handoff one-pager under
 // the marketing layout's print CSS.
 export default function PilotPage() {
+  guardDemoPage();
   return (
     <div className="bg-background">
       <section className="py-16 md:py-20">

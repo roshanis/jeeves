@@ -18,6 +18,7 @@
  * the assignment authz (M2.5 inc.3).
  */
 import type { GovernanceDomain } from "./ports";
+import { isProductionMode } from "../config/deployment-mode";
 import { resolveAgentRuntimeConfig, type AgentRuntimeConfig } from "./runtime";
 import { ACTOR_DIRECTORY, reviewerDomainFor, type PersonaKey } from "../services/actors";
 
@@ -221,10 +222,11 @@ export const GOVERNANCE_AGENTS: GovernanceAgent[] = [
 ];
 
 /** Runtime status of the agent adapter (which one `getAgentPort()` will use). */
-export interface AgentRuntimeStatus extends AgentRuntimeConfig {
+export interface AgentRuntimeStatus extends Omit<AgentRuntimeConfig, "adapter"> {
   /** Compatibility field: configured only, never evidence of provider reachability. */
   connected: boolean;
-  adapter: "openai" | "mock";
+  /** "none": a production install with no key, where `getAgentPort()` throws instead of mocking. */
+  adapter: "openai" | "mock" | "none";
   model: string;
   detail: string;
 }
@@ -232,20 +234,33 @@ export interface AgentRuntimeStatus extends AgentRuntimeConfig {
 export function agentRuntimeStatus(): AgentRuntimeStatus {
   const runtime = resolveAgentRuntimeConfig();
   const model = runtime.reviewerModel;
-  return runtime.configured
-    ? {
-        ...runtime,
-        connected: true,
-        adapter: "openai",
-        model,
-        detail: `${runtime.runtime === "agents-sdk" ? "OpenAI Agents SDK" : "Vercel AI SDK"} configured: review ${model}; chat ${runtime.chatModel}; deep review ${runtime.deepReviewEnabled ? "enabled" : "disabled"}. Provider connection and model capabilities have not been tested.`,
-      }
-    : {
-        ...runtime,
-        connected: false,
-        adapter: "mock",
-        model,
-        detail:
-          "Deterministic mock adapter (no OPENAI_API_KEY) — drafts are canned but citations and control ids are real, so the demo runs with zero external calls.",
-      };
+  if (runtime.configured) {
+    return {
+      ...runtime,
+      connected: true,
+      adapter: "openai",
+      model,
+      detail: `${runtime.runtime === "agents-sdk" ? "OpenAI Agents SDK" : "Vercel AI SDK"} configured: review ${model}; chat ${runtime.chatModel}; deep review ${runtime.deepReviewEnabled ? "enabled" : "disabled"}. Provider connection and model capabilities have not been tested.`,
+    };
+  }
+  // Production never runs the mock (lib/agents/index.ts): say there is no LLM
+  // rather than describing an adapter that will not be used.
+  if (isProductionMode()) {
+    return {
+      ...runtime,
+      connected: false,
+      adapter: "none",
+      model,
+      detail:
+        "No LLM is configured for this installation (OPENAI_API_KEY is not set). Drafting, the intake interview and Ask-the-Auditor are unavailable until it is.",
+    };
+  }
+  return {
+    ...runtime,
+    connected: false,
+    adapter: "mock",
+    model,
+    detail:
+      "Deterministic mock adapter (no OPENAI_API_KEY) — drafts are canned but citations and control ids are real, so the demo runs with zero external calls.",
+  };
 }

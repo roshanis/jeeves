@@ -1,4 +1,6 @@
 import { ImageResponse } from "next/og";
+import { deploymentMode } from "@/lib/config/deployment-mode";
+import { ogCopy } from "@/lib/config/site-metadata";
 
 // The link preview card. Generated at request time rather than committed as
 // a binary so the wording and the brand colours have exactly one definition;
@@ -8,12 +10,17 @@ import { ImageResponse } from "next/og";
 // disclaimer. The disclaimer belongs here as much as on the page — a shared
 // link is often the first and only thing someone sees, and "Meridian Health"
 // must never read as a real payer.
-export const alt =
-  "Jeeves — AI Governance Gateway. Intake, risk tiering, domain review, approval and monitoring for AI initiatives. Fictional demo with synthetic data.";
+//
+// The wording is mode-aware (lib/config/site-metadata.ts): the demo keeps its
+// fictional-payer disclaimer, a production install shows none. Rendered per
+// request, not at build, so the mode is the runtime one.
+export const dynamic = "force-dynamic";
+export const alt = ogCopy(deploymentMode()).alt;
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
 export default function OpengraphImage() {
+  const { footer } = ogCopy(deploymentMode());
   return new ImageResponse(
     (
       <div
@@ -68,9 +75,7 @@ export default function OpengraphImage() {
           </span>
         </div>
 
-        <span style={{ color: "#7fa3a6", fontSize: 24 }}>
-          Fictional demo · synthetic data · no real patient information
-        </span>
+        <span style={{ color: "#7fa3a6", fontSize: 24 }}>{footer}</span>
       </div>
     ),
     size,

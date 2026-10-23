@@ -5,11 +5,13 @@ import { Button } from "@/components/ui/button";
 import { useLiveSession } from "@/lib/client/session-context";
 import type { ComponentProps } from "react";
 import { READ_ONLY_PREVIEW_MESSAGE } from "@/lib/data/provider-mode";
+import { useDeploymentMode } from "@/lib/client/deployment-mode-context";
 
 /** One click from the public site to an editable requester intake. */
 export function TryDemoButton({ className, size = "lg", variant }: Pick<ComponentProps<typeof Button>, "className" | "size" | "variant">) {
   const { login, liveModeAvailable = true, pending, startError } = useLiveSession();
   const router = useRouter();
+  if (useDeploymentMode() === "production") return null;
   return (
     <div className="inline-flex flex-col items-start gap-2">
       <Button className={className} size={size} variant={variant} disabled={!liveModeAvailable || pending} onClick={async () => {

@@ -48,6 +48,13 @@ services:
       # driver would try to open a WebSocket to :443 here and fail.
       DATABASE_URL: postgres://${POSTGRES_USER:-jeeves}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-jeeves}
       DATA_PROVIDER: db
+      # This stack runs the demo. An unset JEEVES_MODE means production, which
+      # refuses to boot without APP_BASE_URL, JEEVES_TENANT_ID and a cookie
+      # secret, and closes the demo doors.
+      JEEVES_MODE: demo
+      # Signs browser workspace cookies. Blank falls back to a key derived from
+      # DEMO_PASSCODE (deprecated, demo only); set it with `openssl rand -hex 32`.
+      JEEVES_COOKIE_SECRET: ${JEEVES_COOKIE_SECRET:-}
       DEMO_PASSCODE: ${DEMO_PASSCODE:?set DEMO_PASSCODE in .env}
       # Unset by default: with no key the app uses the deterministic keyless
       # mock adapter and cannot generate spend. Set it only for a controlled

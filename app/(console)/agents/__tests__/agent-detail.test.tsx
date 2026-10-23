@@ -1,7 +1,15 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { GOVERNANCE_AGENTS, AGENT_GUARDRAIL } from "@/lib/agents/registry";
 import { renderWithProviders } from "@/tests/ui/helpers";
 import AgentDetailPage from "../[id]/page";
+
+// The page is behind the viewer gate (lib/services/require-viewer.ts), which
+// reads the request's cookies; a bare call has no request scope. Demo mode
+// (the suite default) lets an anonymous visitor through, so stand in for it.
+vi.mock("next/headers", () => ({
+  cookies: async () => ({ get: () => undefined }),
+  headers: async () => new Headers(),
+}));
 
 // AgentDetailPage is an async server component (Next 16 passes `params` as a
 // Promise). Calling it directly and rendering the resolved JSX exercises the

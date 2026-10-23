@@ -2,6 +2,7 @@ import Link from "next/link";
 import { ShieldCheck } from "lucide-react";
 import { TryDemoButton } from "@/components/jeeves/try-demo-button";
 import { DEMO_BANNER_TEXT } from "@/lib/demo-banner";
+import { isProductionMode } from "@/lib/config/deployment-mode";
 import { FRAMEWORK_DISCLAIMER } from "@/lib/marketing/framework-mappings";
 import { CookieNotice } from "@/components/jeeves/cookie-notice";
 import { StickyMobileCta } from "@/components/jeeves/sticky-mobile-cta";
@@ -21,6 +22,12 @@ export default function MarketingLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  // Production serves none of these pages (they 404 or redirect), but the
+  // server renders this layout BEFORE the not-found or redirect reaches the
+  // client: the disclaimer strip, "Try the demo", the demo cookie notice and
+  // the footer would still be in the HTML of every probe of /pilot. So in
+  // production the chrome does not exist at all.
+  if (isProductionMode()) return <>{children}</>;
   return (
     <div className="flex min-h-screen flex-col">
       <div className="marketing-chrome print:hidden">

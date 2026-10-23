@@ -151,9 +151,17 @@ npm install
 ### Zero-setup local run (no `DATABASE_URL` → PGlite)
 
 ```bash
-npm run db:seed   # seeds a persistent local PGlite store at ./.pglite
-npm run dev       # http://localhost:3000
+JEEVES_MODE=demo npm run db:seed   # seeds a persistent local PGlite store at ./.pglite
+JEEVES_MODE=demo npm run dev       # http://localhost:3000
 ```
+
+The deployment mode defaults to **production**, which never falls back to the
+local PGlite store, the mock data provider or the mock LLM, so a local run says
+`JEEVES_MODE=demo` out loud (`next dev` also reads it from `.env.local`; the
+`tsx` scripts do not read `.env` files). The seed and reset scripts
+(`npm run db:seed`, `npm run reset:demo`) need it for every database, not only
+for PGlite: they refuse to run outside demo mode even with `DATABASE_URL` set,
+so they can never stamp a database that was not meant to be a demo.
 
 `http://localhost:3000` (`/`) is the public marketing landing page; click
 through (or go straight to `/inbox`) for the governance operations
@@ -182,7 +190,10 @@ live-generated draft text — see `.env.example` for the full variable list.
 
 Note: `scripts/seed.ts` refuses to run when `NODE_ENV=production` unless
 `ALLOW_SEED=1` is explicitly set, to prevent an accidental reseed of a live
-hosted demo.
+hosted demo. Independently of that, the database carries an installation stamp
+(`installation.deploy_mode`, migration 0015): `scripts/seed.ts` and
+`scripts/reset-demo.ts` stamp a database `demo` and refuse one stamped
+`production`, even with `ALLOW_SEED=1`.
 
 **Optional env vars** (all default to a safe, honest fallback):
 

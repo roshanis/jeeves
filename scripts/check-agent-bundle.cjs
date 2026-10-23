@@ -110,7 +110,9 @@ if (process.argv[2] === "--worker") {
   const result = spawnSync(process.execPath, [__filename, "--worker"], {
     cwd: relocated,
     // Deliberately do not inherit keys, database URLs, tracing or NODE_OPTIONS.
-    env: { PATH: process.env.PATH, NODE_ENV: "production", JEEVES_AGENT_TRACING: "0" },
+    // JEEVES_MODE=demo is explicit because an unset mode means production, which
+    // refuses the keyless mock agent runtime this check initializes.
+    env: { PATH: process.env.PATH, NODE_ENV: "production", JEEVES_MODE: "demo", JEEVES_AGENT_TRACING: "0" },
     encoding: "utf8",
     timeout: 30_000,
   });

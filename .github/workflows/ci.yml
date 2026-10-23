@@ -5,15 +5,21 @@
 # were only ever run by hand. This workflow makes the gate in CLAUDE.md §5
 # ("run full test suite, fix regressions") actually enforceable on a PR.
 #
-# Two jobs so a lint/type/unit failure reports without waiting on the e2e
+# Three jobs so a lint/type/unit failure reports without waiting on the e2e
 # build:
-#   verify — typecheck, lint, unit tests WITH coverage (vitest.config.ts's
-#            thresholds fail the run on regression).
-#   e2e    — the Playwright golden path. playwright.config.ts owns its own
-#            webServer (db:seed && build && start on port 3117), so this job
-#            only installs the browser and runs the suite.
+#   verify    — typecheck, lint, unit tests WITH coverage (vitest.config.ts's
+#               thresholds fail the run on regression).
+#   e2e       — the Playwright golden path. playwright.config.ts owns its own
+#               webServer (db:seed && build && start on port 3117), so this job
+#               only installs the browser and runs the suite.
+#   container — the deploy/podman/Containerfile image builds. Build only: nothing
+#               is pushed. Nothing else exercises the Containerfile, so a COPY of
+#               a deleted path (public/, a667ec3) broke the image unnoticed.
 #
 # Playwright supplies an independent test-only signing key; visitor entry is passwordless.
+#
+# JEEVES_MODE=demo is set on the verify and e2e jobs: an unset mode is
+# production, which closes the demo doors these jobs exercise.
 name: CI
 
 on:
@@ -33,6 +39,10 @@ jobs:
     name: Typecheck, lint, unit tests
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      # An unset JEEVES_MODE means production (lib/config/deployment-mode.ts).
+      # These jobs build and test the demo, so they say so explicitly.
+      JEEVES_MODE: demo
     steps:
       - uses: actions/checkout@v4
 
@@ -64,6 +74,10 @@ jobs:
     name: Playwright golden path
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      # An unset JEEVES_MODE means production (lib/config/deployment-mode.ts).
+      # These jobs build and test the demo, so they say so explicitly.
+      JEEVES_MODE: demo
     steps:
       - uses: actions/checkout@v4
 
@@ -94,3 +108,16 @@ jobs:
       # relocates only deployable files and forbids network/source-tree reads.
       - name: Verify packaged agent runtime
         run: node scripts/check-agent-bundle.cjs
+
+  container:
+    name: Container image builds
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      # The same command docs/deploy-podman.md gives, with docker in place of
+      # podman. Build context is the repo root; .dockerignore keeps it small.
+      # No push, no registry login: this only proves the image can be built.
+      - name: Build image
+        run: docker build -f deploy/podman/Containerfile -t jeeves:ci .
