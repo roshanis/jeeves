@@ -11,6 +11,24 @@ all data is synthetic, and no LLM call ever touches real PHI. See the top of
 Deploy itself is **not executed by any agent** in this repo — this document
 only describes the steps. A human runs them.
 
+> **Before this change is deployed: set `JEEVES_MODE=demo` in Vercel.**
+> The deployment mode now **defaults to production**. Demo is an explicit
+> opt-in: only the exact value `JEEVES_MODE=demo` selects it, and anything else
+> (unset, empty, `Demo`, `prod`) is production — a closed shell with no
+> personas, no playground and no public intake, which also refuses to boot
+> without `APP_BASE_URL`, `JEEVES_TENANT_ID` and a 32+ character
+> `JEEVES_COOKIE_SECRET`. A Vercel project that does not set the variable
+> **flips the live demo into production mode on its next deploy.**
+>
+> In the Vercel project settings, add `JEEVES_MODE` = `demo` to **Production,
+> Preview and Development** (all three), and only then merge or deploy this
+> change. Preview deployments are the ones people forget. Local development,
+> the test suite, Playwright, CI and the Podman stack set it themselves
+> (`.env.example`, `vitest.config.ts`, `playwright.config.ts`,
+> `.github/workflows/ci.yml`, `deploy/podman/`); Vercel is the one place only a
+> human can set it. Never expose it as `NEXT_PUBLIC_JEEVES_MODE`: the mode is
+> server-only.
+
 ---
 
 ## 1. Local demo quickstart
@@ -85,6 +103,7 @@ npm run start        # next start (after build)
    | `DATABASE_URL` or `POSTGRES_URL` | Yes | Explicit nonblank `DATABASE_URL` wins; otherwise the Vercel integration `POSTGRES_URL` is used consistently for runtime, pages and incident reads. Neon hosts use the Neon driver; other PostgreSQL hosts use `pg`. Vercel refuses local PGlite fallback. |
    | `DATABASE_MIGRATION_URL` | For Supabase migrations | Direct or session-pooler connection on port 5432. Runtime transaction-pooler URLs on port 6543 cannot run migrations. |
    | `DATABASE_SSL_CA` | Optional | Project CA if required; recognized Supabase connections verify certificates and use a bounded pool. |
+   | `JEEVES_MODE` | **Yes: `demo`** | Must be exactly `demo` in Production, Preview and Development, or the deployment runs in production mode (see the note at the top of this page). Server-only; never `NEXT_PUBLIC_`. |
    | `DATA_PROVIDER` | Optional | Defaults to DB when either runtime URL exists. `db` makes this explicit; `mock` deliberately shows the read-only preview dataset. |
    | `JEEVES_COOKIE_SECRET` | Yes for new deployments | Random server-only signing key for browser workspace continuity. Visitor entry is passwordless. Existing DEMO_PASSCODE can serve only as a deprecated signing fallback. |
    | `OPENAI_API_KEY` | Optional | Only set this if you want **live** LLM-drafted reviews during the demo. Omit it and the app runs entirely on the keyless mock adapter — safe default for a public URL. |

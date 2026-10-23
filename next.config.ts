@@ -1,6 +1,16 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // Inline the demo build constant into the compiled server code.
+  // lib/config/deployment-mode.ts treats the app as the demo only when
+  // JEEVES_MODE=demo AND this constant is not "0". Without inlining, a runtime
+  // environment variable would be all that stands between a production image
+  // and demo mode (passwordless personas, public intake). A production image
+  // builds with JEEVES_DEMO_ENABLED=0 so the demo is compiled out of reach;
+  // every other build defaults to "1" and stays demo-capable. Server-only:
+  // JEEVES_MODE itself is never inlined or exposed through NEXT_PUBLIC_.
+  env: { JEEVES_DEMO_ENABLED: process.env.JEEVES_DEMO_ENABLED ?? "1" },
+
   // Standalone output: Next traces the exact runtime files (including the
   // node_modules it actually needs) into .next/standalone, so a container
   // image can ship that instead of the whole dependency tree. Required by

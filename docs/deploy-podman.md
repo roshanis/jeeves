@@ -32,6 +32,13 @@ podman compose run --rm seed         # load the synthetic demo data
 
 Then open `http://localhost:3000`.
 
+The stack runs the demo: `compose.yaml` and the Quadlet unit set
+`JEEVES_MODE=demo`. The deployment mode defaults to **production** when unset,
+which refuses to boot without `APP_BASE_URL`, `JEEVES_TENANT_ID` and a 32+
+character `JEEVES_COOKIE_SECRET`, so do not remove the variable. Set
+`JEEVES_COOKIE_SECRET` (`openssl rand -hex 32`) in `.env`; if it is blank a key
+derived from `DEMO_PASSCODE` is used (deprecated).
+
 `podman compose` needs a compose provider (Podman 4.7+ shells out to
 `docker-compose` or `podman-compose`). If you would rather not have one, use
 the Quadlet units in §3 — they are the Podman-native path.

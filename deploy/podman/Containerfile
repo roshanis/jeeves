@@ -39,6 +39,12 @@ COPY . .
 # At runtime the app reads DATA_PROVIDER/DATABASE_URL from the environment.
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV DATA_PROVIDER=mock
+# JEEVES_MODE defaults to production when unset, so the demo build says so. This
+# is the BUILDER stage only: the runner below does not inherit it (compose and
+# Quadlet set the mode at run time), and the migrator stage, which is built FROM
+# this one, inherits it for the demo seed jobs. A later change splits this file
+# into separate demo and production targets; until then this image is the demo.
+ENV JEEVES_MODE=demo
 RUN npm run build
 
 # ------------------------------------------------------------- migrator -----

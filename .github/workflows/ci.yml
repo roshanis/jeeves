@@ -17,6 +17,9 @@
 #               a deleted path (public/, a667ec3) broke the image unnoticed.
 #
 # Playwright supplies an independent test-only signing key; visitor entry is passwordless.
+#
+# JEEVES_MODE=demo is set on the verify and e2e jobs: an unset mode is
+# production, which closes the demo doors these jobs exercise.
 name: CI
 
 on:
@@ -36,6 +39,10 @@ jobs:
     name: Typecheck, lint, unit tests
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      # An unset JEEVES_MODE means production (lib/config/deployment-mode.ts).
+      # These jobs build and test the demo, so they say so explicitly.
+      JEEVES_MODE: demo
     steps:
       - uses: actions/checkout@v4
 
@@ -67,6 +74,10 @@ jobs:
     name: Playwright golden path
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      # An unset JEEVES_MODE means production (lib/config/deployment-mode.ts).
+      # These jobs build and test the demo, so they say so explicitly.
+      JEEVES_MODE: demo
     steps:
       - uses: actions/checkout@v4
 

@@ -19,8 +19,8 @@ import { E2E_COOKIE_SECRET } from "./tests/e2e/constants";
 //   disposable OS-temp PGlite directory
 //   (scripts/seed.ts wipes + reinserts), so every run starts from the same
 //   12 seeded initiatives.
-// - `DATA_PROVIDER=mock npm run build` keeps prerendering isolated from the
-//   mutable database. `npm run start` then receives DATA_PROVIDER=db through
+// - `DATA_PROVIDER=mock JEEVES_MODE=demo npm run build` keeps prerendering
+//   isolated from the mutable database. `npm run start` then receives DATA_PROVIDER=db through
 //   webServer.env, so dynamic case-file pages and API handlers share the
 //   seeded PGlite store used by the live workflow.
 //
@@ -62,7 +62,7 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: "npm run db:seed && DATA_PROVIDER=mock npm run build -- --webpack && npm run start",
+    command: "npm run db:seed && DATA_PROVIDER=mock JEEVES_MODE=demo npm run build -- --webpack && npm run start",
     url: `http://localhost:${PORT}`,
     reuseExistingServer: false,
     timeout: 240_000,
@@ -75,6 +75,8 @@ export default defineConfig({
       OPENAI_API_KEY: "",
       DEMO_PASSCODE: "",
       JEEVES_COOKIE_SECRET: E2E_COOKIE_SECRET,
+      // Unset means production; this suite is the demo golden path.
+      JEEVES_MODE: "demo",
       JEEVES_PGLITE_DIR: disposablePgliteDir,
       DATA_PROVIDER: "db",
     },
