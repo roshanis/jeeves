@@ -1530,3 +1530,95 @@ never gets), sticky CTA hint ("Read-only" — visitors can act now).
   `public-` workspaces.
 - The operator queue is read-only by design; acting on a real request in-app
   would need cross-workspace operator powers — a separate decision.
+
+## [AGENT: Claude] [2026-10-23T04:49Z]
+### Action: code review (reviewer role): P0 + P1 (production-mode shell), `git diff 2e8769b...HEAD` (10 WIP checkpoints, 127 files). Verdict: REQUEST REVISIONS
+### Files changed: agents-build-log.md (this entry only; no source modified)
+### Diff summary:
+Reviewed against the production/AWS Marketplace plan (P0, P1, hard-rules table,
+critic findings) and the .claude/CLAUDE.md hard rules.
+
+VERIFIED (my own runs, not the implementer reports):
+- `npm run typecheck` and `npm run lint` are clean.
+- Full `vitest run`: 1 failed / 2253 passed (192 files). The failure is real, see B1.
+- Playwright golden path (repo config, longer webServer timeout, local Chromium 1194): 28/28 pass in demo mode.
+- `node scripts/check-agent-bundle.cjs` on the webpack standalone build passes.
+- Coverage on changed lib/ files (targeted run) is >80% lines: config 93.9, require-viewer 97.4,
+  route-guard 96.4, bootstrap 92.3, db/client 80.9, review-run 92.9, agents >=95, demo-pages and
+  site-metadata 100. lib/client/api.ts measured 68% in that subset, but it is a pre-existing file and its changed lines are covered.
+- Disposable PG16 cluster, non-superuser table owner:
+  - main 0000-0013 then HEAD applies 0014/0015.
+  - Seed and reseed work with DISABLE TRIGGER USER. DISABLE TRIGGER ALL is denied ("RI_ConstraintTrigger... is a system trigger"), which confirms the RDS claim.
+  - TRUNCATE is blocked on audit_events, on `initiatives CASCADE` and on `control_definitions CASCADE`.
+  - The installation stamp refuses DELETE and an update of deploy_mode.
+  - seed and reset refuse a production stamp even with ALLOW_SEED=1 and NODE_ENV=production.
+- Live `next start` in production mode on a production-stamped DB:
+  - All five doors return 404 for every method, and /operator returns 404.
+  - Every gated GET returns 401 no-store, and POST mutations return 401.
+  - robots.txt is Disallow and the sitemap is empty. There is no X-Powered-By header.
+  - The boot check exits 1 on a mode/stamp mismatch in both directions.
+  - The mode is decided at runtime: a build made with JEEVES_MODE=demo serves production when the variable is unset at run time.
+- AGENTS.md is byte-identical to main.
+
+FINDINGS (by severity):
+B1 BLOCKER: the suite is red.
+  - The mock at lib/services/admin-service.test.ts:31-34 replaces "../agents" with only getAgentPort.
+  - lib/workflow/review-run.ts:239/262 now call assertLlmConfigured() from that module, so the test fails with
+    "No assertLlmConfigured export is defined on the ../agents mock". It reproduces in isolation, so the CI verify job will fail.
+  - Fix: spread importOriginal in the mock, as app/api/__tests__/routes.test.ts:24 does, or move
+    assertLlmConfigured into its own non-port module. Then rerun the full `npm test`.
+B2 BLOCKER (merge gate, human only):
+  - A human must set JEEVES_MODE=demo in Vercel Production, Preview and Development.
+  - Migrations 0014 and 0015 must be applied to Neon.
+  - The ci.yml changes (the new `container` job and the JEEVES_MODE env) need explicit human approval
+    (CLAUDE.md §1, plan "(approval)").
+M1 MAJOR: the stamp check can be bypassed.
+  - lib/config/boot-checks.ts:95 skips verifyInstallation in demo whenever the provider resolves to "mock",
+    even when DATABASE_URL is set. GET routes call getDb() directly regardless of DATA_PROVIDER.
+  - Verified live: JEEVES_MODE=demo DATA_PROVIDER=mock against a production-stamped DB boots with no [boot] line,
+    and anonymous /api/exceptions, /api/monitor/incidents and /api/health query that DB (200).
+  - Fix: skip the check only when no DB URL is configured; otherwise always verify. Add a test.
+M2 MAJOR (pre-existing on main, outside the P0/P1 scope): a cross-workspace read.
+  - app/(console)/reviews/page.tsx:30-33 renders `undeliveredNotifications(getDb())` with no workspace scope
+    (lib/services/notification-service.ts:136).
+  - The subjects embed the initiative titles of every playground workspace, and any demo visitor sees them.
+  - The new read-gate inventory cannot catch this, because the page does call the gate.
+  - Fix: scope by isInitiativeVisible(viewerWorkspaceId) and add a read-isolation case. A separate PR is fine.
+m1 minor: the seed and reset CLIs ignore the deployment mode.
+  - scripts/seed.ts main() and scripts/reset-demo.ts run in production mode whenever DATABASE_URL is set.
+  - Verified: with JEEVES_MODE unset, a fresh DB gets 12 demo initiatives and a permanent 'demo' stamp.
+  - Fix: call assertDemoMode() first in both entry points, and add a CLI test.
+m2 minor: the demo can now crash at boot.
+  - boot-checks.ts:106 exits the process on any DB error at boot, demo included. On Vercel every cold start does a
+    DB round trip, so a transient Neon error takes the instance down.
+  - Fix: add a bounded retry in demo, and keep failing closed on mode_mismatch.
+m3 minor: production pages answer HTTP 200.
+  - /inbox and /portfolio return 200 with a streamed meta-refresh to /sign-in and the console chrome.
+  - "/" returns 200 and redirects to /inbox. /pilot, /privacy and /frameworks are soft 404s.
+  - Fix: add a production-only proxy.ts (307 or 404), or drop the loading.tsx files in production.
+m4 minor: demo branding still reaches production metadata.
+  - "Meridian Health" is in the static metadata of portfolio/page.tsx:12, controls/page.tsx:13 and admin/page.tsx:27
+    (verified in the live production <head>).
+  - agents/[id]/page.tsx:44 generateMetadata runs before the gate, which contradicts the comment at :65.
+m5 minor: the chat routes reserve budget before checking for an LLM.
+  - chat/intake:153-185 and chat/auditor:138-188 take the budget reservation, then hit LlmNotConfiguredError and return 503.
+  - Fix: call assertLlmConfigured() before the guard, as startDraftRun does.
+m6 minor: a load-sensitive test.
+  - In lib/config/boot-checks.test.ts:55 the first test builds the shared PGlite DB inside the 5 s test timeout.
+  - It failed at 5073 ms in a targeted run. Fix: build the DB in beforeAll.
+m7 minor: quality and process items.
+  - resolveViewerWorkspaceId has no callers outside tests.
+  - The DeploymentModeContext default is "demo", which fails open.
+  - Not accepting PG* settings is a plan deviation that needs a human acknowledgement.
+  - No implementer build-log entries were written.
+  - The WIP checkpoints mix tests and implementation, so test-first order cannot be verified from history.
+Hard rules: no violations found.
+  - Agents still only draft.
+  - Production refuses every public or persona session.
+  - Mutations stay behind runMutationGuard.
+  - Append-only is strengthened (TRUNCATE guards).
+  - Synthetic panels are removed in production rather than shown unlabelled.
+### Recommendations / Next steps:
+1. Fix B1 and rerun the full `npm test`. Fix M1 and add its test. Then rerun Playwright and check-agent-bundle.
+2. Fix m1 and m5 in the same pass (small). Split M2 into its own PR. m2, m3 and m4 can follow in P1 polish or P3.
+3. A human clears B2 before merge.
