@@ -4,10 +4,12 @@ import { Play } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useLiveSession } from "@/lib/client/session-context";
 import { READ_ONLY_PREVIEW_MESSAGE } from "@/lib/data/provider-mode";
+import { useDeploymentMode } from "@/lib/client/deployment-mode-context";
 
 /** A visitor can start playing immediately; persona choice lives in the header. */
 export function DemoModeChip() {
   const { session, liveModeAvailable = true, logout, pending, startError, startDemo } = useLiveSession();
+  if (useDeploymentMode() === "production") return null;
   return (
     <div className="flex flex-col items-start gap-1" data-slot="demo-mode-chip">
       {session ? (

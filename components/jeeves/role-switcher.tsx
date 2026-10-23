@@ -5,12 +5,15 @@ import { useRole } from "./role-context";
 import { LIVE_PERSONAS, PERSONA_ROLE_LABEL, REVIEWER_DOMAIN, type LivePersona } from "@/lib/client/personas";
 import { DOMAIN_LABEL } from "./domain-labels";
 import { useLiveSessionOptional } from "@/lib/client/session-context";
+import { useDeploymentMode } from "@/lib/client/deployment-mode-context";
 
 const PERSONA_GROUP_ORDER: LivePersona["role"][] = ["requester", "reviewer", "approver", "program", "admin"];
 
 export function RoleSwitcher() {
   const { personaKey, setPersonaKey, persona, reviewerDomain } = useRole();
   const live = useLiveSessionOptional();
+  // Passwordless personas are the demo's; a production install signs people in.
+  if (useDeploymentMode() === "production") return null;
   return (
     <div className="flex min-w-0 items-center gap-2" aria-busy={live?.pending ?? false}>
       <select
