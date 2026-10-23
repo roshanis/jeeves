@@ -10,6 +10,7 @@ import { ACTORS, BASE_DATE_MS, CONTROL_SEEDS, INITIATIVE_SEEDS, type InitiativeS
 import { reviewerNameForDomain } from "../lib/demo/personas";
 export { ACTORS, BASE_DATE_MS, CONTROL_SEEDS, INITIATIVE_SEEDS } from "../lib/demo/reference-data";
 
+import { assertDemoDatabase, refuseProductionDatabase } from "../lib/demo/bootstrap";
 import { deriveTier } from "../lib/triage/rules";
 import { requiredDomains } from "../lib/triage/routing";
 import type { Domain, OverlayFlags, Tier } from "../lib/domain/types";
@@ -284,6 +285,15 @@ export async function seedDatabase(db: Db): Promise<RowCounts> {
 }
 
 async function seedInTransaction(db: SeedDb): Promise<RowCounts> {
+  // The database's own stamp decides whether this wipe may run, not the
+  // environment: stamp 'demo' when there is no stamp, refuse when it says
+  // 'production' (even with ALLOW_SEED=1). First, so a production database is
+  // refused for the right reason before any other check or write; inside the
+  // seed's transaction, so a seed that then refuses or fails leaves no stamp.
+  // The wipe below deletes by table and never lists `installation`, so the
+  // stamp survives every reseed.
+  await assertDemoDatabase(db);
+
   const documents = await db.select({ id: evidenceDocuments.id }).from(evidenceDocuments).limit(1);
   const packets = await db.select({ id: evidencePackets.id }).from(evidencePackets).limit(1);
   if (documents.length || packets.length) {
@@ -2199,6 +2209,11 @@ async function main() {
   const { getDb, closeDb } = await import("../lib/db/client");
   const db = getDb();
 
+  // Refuse a production database before migrating it: this script has no
+  // business applying anything to one (install/upgrade owns that), and
+  // ALLOW_SEED does not override the stamp.
+  await refuseProductionDatabase(db);
+
   // Ensure the schema exists before seeding. Shared with `npm run db:migrate`
   // (lib/db/migrate.ts) so the two can never disagree about which migrator
   // matches which driver — both key off DATABASE_URL exactly as getDb() does,
@@ -2221,6 +2236,8 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   // must never fire against a real deployment by accident. Refuse to run
   // when NODE_ENV=production unless the operator explicitly opts in via
   // ALLOW_SEED=1 (e.g. a one-off, deliberate reseed of a hosted demo env).
+  // ALLOW_SEED is a confirmation, not a credential: a database stamped
+  // 'production' (installation.deploy_mode) is refused regardless of it.
   if (process.env.NODE_ENV === "production" && process.env.ALLOW_SEED !== "1") {
     console.error(
       "Refusing to run scripts/seed.ts: NODE_ENV=production and ALLOW_SEED is not set to \"1\". " +

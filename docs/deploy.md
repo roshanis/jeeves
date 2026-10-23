@@ -268,7 +268,9 @@ different problems.
    every seeded table and disables the `audit_events` append-only triggers to
    do it. The `ALLOW_SEED=1` guard under `NODE_ENV=production` is the only
    thing standing between a mistyped `DATABASE_URL` and the loss of the
-   compliance record.
+   compliance record, except against a database stamped `production`
+   (`installation.deploy_mode`, migration 0015): the seed and reset scripts
+   refuse that one whatever `ALLOW_SEED` says.
 
 ### Restore
 

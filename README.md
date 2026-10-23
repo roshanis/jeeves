@@ -182,7 +182,10 @@ live-generated draft text — see `.env.example` for the full variable list.
 
 Note: `scripts/seed.ts` refuses to run when `NODE_ENV=production` unless
 `ALLOW_SEED=1` is explicitly set, to prevent an accidental reseed of a live
-hosted demo.
+hosted demo. Independently of that, the database carries an installation stamp
+(`installation.deploy_mode`, migration 0015): `scripts/seed.ts` and
+`scripts/reset-demo.ts` stamp a database `demo` and refuse one stamped
+`production`, even with `ALLOW_SEED=1`.
 
 **Optional env vars** (all default to a safe, honest fallback):
 

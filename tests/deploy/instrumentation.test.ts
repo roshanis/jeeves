@@ -1,6 +1,8 @@
 // @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { bootFailure, resetBootStateForTests } from "@/lib/config/boot-state";
+import { closeTestDb, createTestDb, type TestDb } from "@/lib/db/test-client";
+import { installation } from "@/lib/db/schema";
 import { register } from "@/instrumentation";
 
 /**
@@ -28,50 +30,80 @@ function stubProductionBootEnv(): void {
 
 let exit: Mock<(code: number) => void>;
 let log: Mock<(...args: unknown[]) => void>;
+let getDb: Mock<() => Promise<TestDb>>;
+let db: TestDb | null;
+
+/** A migrated in-memory database the boot hook is handed instead of a real one. */
+async function stampedDatabase(deployMode: "demo" | "production"): Promise<void> {
+  db = await createTestDb();
+  await db.insert(installation).values({ deployMode, installId: `inst-${deployMode}` });
+  getDb.mockResolvedValue(db);
+}
 
 beforeEach(() => {
   exit = vi.fn<(code: number) => void>();
   log = vi.fn<(...args: unknown[]) => void>();
+  getDb = vi.fn<() => Promise<TestDb>>();
+  db = null;
   vi.stubEnv("NEXT_RUNTIME", "nodejs");
   vi.stubEnv("NEXT_PHASE", "phase-production-server");
 });
 
-afterEach(() => {
+afterEach(async () => {
   vi.unstubAllEnvs();
   resetBootStateForTests();
+  if (db) await closeTestDb(db);
 });
 
 describe("instrumentation register()", () => {
   it("marks the boot failed and exits when the production configuration is invalid", async () => {
     stubProductionBootEnv();
-    await register({ exit, log });
+    await register({ exit, log, getDb });
 
     expect(exit).toHaveBeenCalledTimes(1);
     expect(exit).toHaveBeenCalledWith(1);
     expect(bootFailure()).toMatch(/DATABASE_URL/);
     expect(log).toHaveBeenCalled();
+    expect(getDb).not.toHaveBeenCalled();
   });
 
-  it("lets a valid production configuration start", async () => {
+  it("lets a valid production configuration start on a production-stamped database", async () => {
     stubProductionBootEnv();
     vi.stubEnv("DATABASE_URL", "postgres://jeeves_app:pw@db.internal:5432/jeeves");
     vi.stubEnv("JEEVES_COOKIE_SECRET", "0123456789abcdef0123456789abcdef");
     vi.stubEnv("APP_BASE_URL", "https://jeeves.example.com");
     vi.stubEnv("JEEVES_TENANT_ID", "tenant-acme");
     vi.stubEnv("DATA_PROVIDER", "db");
-    await register({ exit, log });
+    await stampedDatabase("production");
+    await register({ exit, log, getDb });
 
     expect(exit).not.toHaveBeenCalled();
     expect(bootFailure()).toBeNull();
   });
 
+  it("marks the boot failed and exits when a valid production configuration meets an unstamped database", async () => {
+    stubProductionBootEnv();
+    vi.stubEnv("DATABASE_URL", "postgres://jeeves_app:pw@db.internal:5432/jeeves");
+    vi.stubEnv("JEEVES_COOKIE_SECRET", "0123456789abcdef0123456789abcdef");
+    vi.stubEnv("APP_BASE_URL", "https://jeeves.example.com");
+    vi.stubEnv("JEEVES_TENANT_ID", "tenant-acme");
+    vi.stubEnv("DATA_PROVIDER", "db");
+    db = await createTestDb();
+    getDb.mockResolvedValue(db);
+    await register({ exit, log, getDb });
+
+    expect(exit).toHaveBeenCalledWith(1);
+    expect(bootFailure()).toMatch(/installation stamp/i);
+  });
+
   it("does nothing during `next build`", async () => {
     stubProductionBootEnv();
     vi.stubEnv("NEXT_PHASE", "phase-production-build");
-    await register({ exit, log });
+    await register({ exit, log, getDb });
 
     expect(exit).not.toHaveBeenCalled();
     expect(log).not.toHaveBeenCalled();
+    expect(getDb).not.toHaveBeenCalled();
     expect(bootFailure()).toBeNull();
   });
 
@@ -79,26 +111,54 @@ describe("instrumentation register()", () => {
     stubProductionBootEnv();
     for (const runtime of ["edge", ""]) {
       vi.stubEnv("NEXT_RUNTIME", runtime);
-      await register({ exit, log });
+      await register({ exit, log, getDb });
     }
 
     expect(exit).not.toHaveBeenCalled();
     expect(log).not.toHaveBeenCalled();
+    expect(getDb).not.toHaveBeenCalled();
     expect(bootFailure()).toBeNull();
   });
 
-  it("is a no-op in demo mode", async () => {
+  it("is a no-op in demo mode on mock data: there is no database to stamp", async () => {
     stubProductionBootEnv();
     vi.stubEnv("JEEVES_MODE", "demo");
-    await register({ exit, log });
+    await register({ exit, log, getDb });
 
     expect(exit).not.toHaveBeenCalled();
     expect(log).not.toHaveBeenCalled();
+    expect(getDb).not.toHaveBeenCalled();
     expect(bootFailure()).toBeNull();
   });
 
-  it("can be called the way Next.js calls it, with no arguments", async () => {
+  it("stamps the demo database at boot", async () => {
     vi.stubEnv("JEEVES_MODE", "demo");
+    vi.stubEnv("DATA_PROVIDER", "db");
+    db = await createTestDb();
+    getDb.mockResolvedValue(db);
+    await register({ exit, log, getDb });
+
+    expect(exit).not.toHaveBeenCalled();
+    expect(log).not.toHaveBeenCalled();
+    const rows = await db.select().from(installation);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].deployMode).toBe("demo");
+  });
+
+  it("refuses to boot the demo on a production-stamped database", async () => {
+    vi.stubEnv("JEEVES_MODE", "demo");
+    vi.stubEnv("DATA_PROVIDER", "db");
+    await stampedDatabase("production");
+    await register({ exit, log, getDb });
+
+    expect(exit).toHaveBeenCalledWith(1);
+    expect(bootFailure()).toMatch(/stamped "production"/);
+  });
+
+  it("can be called the way Next.js calls it, with no arguments", async () => {
+    // Mock data, so the real database handle is never opened by the test.
+    vi.stubEnv("JEEVES_MODE", "demo");
+    vi.stubEnv("DATA_PROVIDER", "mock");
     await expect(register()).resolves.toBeUndefined();
   });
 });

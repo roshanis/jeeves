@@ -584,7 +584,12 @@ switches within one browser:
   `agents/*/instructions.md`), not this module's.
 - **Guarded seeding** (`scripts/seed.ts`) refuses to run when
   `NODE_ENV=production` unless `ALLOW_SEED=1` is explicitly set, preventing
-  an accidental reseed of a live hosted demo.
+  an accidental reseed of a live hosted demo. It also stamps the database
+  `demo` (`installation` singleton, migration 0015, written idempotently by
+  `lib/demo/bootstrap.ts`) and refuses a database stamped `production`
+  regardless of `ALLOW_SEED`. The same stamp is checked at every server boot
+  (`lib/config/installation-check.ts`): the process mode and the stamp must
+  agree, and a production boot also refuses a database holding demo data.
 - **Public read path has no unauthenticated mutation endpoint anywhere** —
   independently verified in a dedicated security review
   (`agents-build-log.md` 2026-07-11T09:30Z): guard order is 401→429→400→

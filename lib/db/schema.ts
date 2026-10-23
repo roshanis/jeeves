@@ -5,7 +5,7 @@
 // ControlDefinition, EffectiveControl (versioned, per deployment),
 // Observation (synthetic telemetry), Incident, AuditEvent (append-only at
 // the DB level — see drizzle/0002_audit_events_append_only.sql), RunBudget,
-// Session.
+// Session, Installation (singleton stamp).
 //
 // Uniqueness/linkage constraints (plan §5):
 //   - one ReviewDecision per (cycle, domain)
@@ -17,6 +17,7 @@
 // drizzle/0001_initiative_registry_view.sql — a read-only projection over
 // initiatives + latest risk assessment + latest deployment, not a table.
 import { sql } from "drizzle-orm";
+import type { DeploymentMode } from "../config/deployment-mode";
 import type { StoredIntakeFields } from "../intake/stored-overlay";
 import {
   customType,
@@ -464,6 +465,28 @@ export const rateLimitBuckets = pgTable("rate_limit_buckets", {
   lastRefillMs: bigint("last_refill_ms", { mode: "number" }).notNull(),
   /** Epoch ms of the last real request; used only for pruning. */
   lastTouchedMs: bigint("last_touched_ms", { mode: "number" }).notNull(),
+});
+
+/* -------------------------------------------------------------------------
+ * Installation stamp — a singleton row recording whether this database is a
+ * 'demo' or a 'production' install, and which install it is. The boot check
+ * (lib/config/installation-check.ts) refuses a process whose JEEVES_MODE
+ * disagrees with it, and scripts/seed.ts refuses a 'production' one.
+ *
+ * Singleton (`id boolean CHECK (id)`), the deploy_mode CHECK, and the
+ * immutability / no-DELETE / no-TRUNCATE triggers all live in
+ * drizzle/0015_installation.sql; this declaration only types the columns.
+ * deploy_mode and install_id cannot change once written; org_workspace_id and
+ * reference_seed_version are filled in later by the install script.
+ * ---------------------------------------------------------------------- */
+
+export const installation = pgTable("installation", {
+  id: boolean("id").primaryKey().default(true),
+  deployMode: text("deploy_mode").$type<DeploymentMode>().notNull(),
+  installId: text("install_id").notNull(),
+  orgWorkspaceId: text("org_workspace_id"),
+  referenceSeedVersion: text("reference_seed_version"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 /* -------------------------------------------------------------------------

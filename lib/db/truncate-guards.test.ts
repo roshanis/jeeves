@@ -107,6 +107,8 @@ describe("migration 0014 — append-only TRUNCATE guards", () => {
       "evidence_assessments",
       "evidence_documents",
       "evidence_packets",
+      // Migration 0015: the installation stamp is a permanent record too.
+      "installation",
     ]);
     for (const row of rows) {
       expect(row.tgtype & 1, `${row.table_name} must be a statement-level trigger`).toBe(0);

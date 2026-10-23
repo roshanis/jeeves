@@ -15,12 +15,15 @@
  *      connector, cron secret, build SHA, and a seed smoke-count.
  *
  * Refuses to run against NODE_ENV=production unless ALLOW_SEED=1 (same guard
- * as scripts/seed.ts — this is destructive/idempotent reseeding).
+ * as scripts/seed.ts — this is destructive/idempotent reseeding). Separately,
+ * and regardless of ALLOW_SEED, it stamps the database 'demo' and refuses to
+ * touch one stamped 'production' (lib/demo/bootstrap.ts).
  */
 import { resolveWorkspaceCookieSecret } from "../lib/security/workspace-cookie";
 import { execSync } from "node:child_process";
-import { getDb, closeDb } from "../lib/db/client";
+import { getDb, closeDb, type Db } from "../lib/db/client";
 import { initiatives, runBudget, sessions } from "../lib/db/schema";
+import { assertDemoDatabase } from "../lib/demo/bootstrap";
 import { seedDatabase } from "./seed";
 import { agentRuntimeStatus } from "../lib/agents/registry";
 import { telemetryConnectorStatus } from "../lib/telemetry/connector";
@@ -42,10 +45,13 @@ function buildSha(): string {
   }
 }
 
-async function resetDemo(): Promise<void> {
-  const db = getDb();
-
+export async function resetDemo(db: Db = getDb()): Promise<void> {
   console.log("Jeeves — demo reset ritual\n");
+
+  // Stamp the database 'demo', or refuse if it is stamped 'production'. This
+  // runs before anything is reseeded or cleared; seedDatabase checks again.
+  // ALLOW_SEED never overrides the stamp.
+  await assertDemoDatabase(db);
 
   // 1. Re-seed to canonical state.
   console.log("Re-seeding database…");
