@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { getDb } from '@/lib/db/client';
-import { runMutationGuard, resolveSession, extractSessionToken } from '@/lib/services/route-guard';
+import { runMutationGuard } from '@/lib/services/route-guard';
+import { requireViewerForRequest } from '@/lib/services/require-viewer';
 import { getEvidence, uploadEvidence, saveEvidenceDraft, submitEvidence, assessEvidence } from '@/lib/services/evidence-service';
 import { evidenceResponseError, privateHeaders, readEvidenceJson } from '@/lib/evidence/http';
 import { EvidenceError } from '@/lib/evidence/files';
@@ -16,7 +17,9 @@ const schema=z.discriminatedUnion('action',[
 type Context={params:Promise<{id:string}>};
 export async function GET(req:Request,context:Context):Promise<Response> {
  try {
-  const viewer=await resolveSession(extractSessionToken(req));
+  const gate=await requireViewerForRequest(req);
+  if(!gate.ok)return gate.response;
+  const viewer=gate.viewer;
   if(!viewer.actor)throw new EvidenceError(401,'Start the demo to view private evidence.');
   return Response.json(await getEvidence(getDb(),(await context.params).id,{actor:viewer.actor,workspaceId:viewer.workspaceId}),{headers:privateHeaders});
  }catch(error){return evidenceResponseError(error);}

@@ -13,6 +13,7 @@ import { DOMAIN_LABEL } from "@/components/jeeves/domain-labels";
 import { AgentConnectionTest } from "@/components/jeeves/agent-connection-test";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { requireViewer } from "@/lib/services/require-viewer";
 import type { Metadata } from "next";
 
 
@@ -95,7 +96,9 @@ function AgentGroup({
   );
 }
 
-export default function AgentsPage() {
+export default async function AgentsPage() {
+  // No tenant data on this page, but production has no anonymous console.
+  await requireViewer();
   const status = agentRuntimeStatus();
 
   return (
@@ -137,7 +140,7 @@ export default function AgentsPage() {
         )}
         <div>
           <p className="font-medium">
-            Runtime: {status.connected ? "OpenAI connected" : "Deterministic mock adapter"}{" "}
+            Runtime: {status.connected ? "OpenAI connected" : status.adapter === "none" ? "LLM not configured" : "Deterministic mock adapter"}{" "}
             <span className="font-mono text-xs text-muted-foreground">({status.model})</span>
           </p>
           <p className="mt-0.5 text-xs text-muted-foreground">{status.detail}</p>

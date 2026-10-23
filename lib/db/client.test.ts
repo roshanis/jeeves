@@ -1,6 +1,10 @@
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Pool as PgPool } from "pg";
-import { closeDb, getDb, localPgliteDirectory } from "./client";
+import { ProductionConfigError } from "../config/deployment-mode";
+import { closeDb, getDb, getDbDriverForHandle, localPgliteDirectory } from "./client";
 
 const originalDirectory = process.env.JEEVES_PGLITE_DIR;
 const keys = ["DATABASE_URL", "POSTGRES_URL", "VERCEL", "JEEVES_DB_DRIVER"] as const;
@@ -10,6 +14,7 @@ afterEach(async () => {
   // Drop any pool a test opened so the memoized handle never leaks across tests.
   await closeDb();
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
   for (const key of keys) {
     const value = original[key];
     if (value === undefined) delete process.env[key];
@@ -85,5 +90,57 @@ describe("getDb node-postgres pool", () => {
     const pool = openPgPool();
     pool.emit("error", new Error("boom"));
     expect((getDb() as unknown as { $client: PgPool }).$client).toBe(pool);
+  });
+});
+
+describe("getDb deployment mode", () => {
+  const scratch: string[] = [];
+  function scratchDir(): string {
+    const dir = mkdtempSync(path.join(tmpdir(), "jeeves-client-mode-"));
+    scratch.push(dir);
+    return dir;
+  }
+  afterEach(async () => {
+    // Close first: the PGlite handle still has the directory open.
+    await closeDb();
+    for (const dir of scratch.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  function withoutDatabaseUrl(): void {
+    delete process.env.DATABASE_URL;
+    delete process.env.POSTGRES_URL;
+    delete process.env.VERCEL;
+    delete process.env.JEEVES_DB_DRIVER;
+  }
+
+  it.each([
+    ["unset", undefined],
+    ["a mistyped mode", "Demo"],
+    ["production", "production"],
+  ])("production (%s) refuses the local PGlite store and creates no data directory", (_name, mode) => {
+    withoutDatabaseUrl();
+    vi.stubEnv("JEEVES_MODE", mode);
+    const dir = path.join(scratchDir(), "pglite");
+    process.env.JEEVES_PGLITE_DIR = dir;
+
+    expect(() => getDb()).toThrow(ProductionConfigError);
+    expect(() => getDb()).toThrow(/DATABASE_URL/);
+    expect(existsSync(dir)).toBe(false);
+  });
+
+  it("production with a database URL builds the node-postgres pool as before", () => {
+    withoutDatabaseUrl();
+    vi.stubEnv("JEEVES_MODE", undefined);
+    process.env.DATABASE_URL = "postgres://app:hunter2@db.internal:5432/jeeves";
+    const db = getDb();
+    expect(getDbDriverForHandle(db)).toBe("pg");
+  });
+
+  it("demo without a database URL still opens the local PGlite store", () => {
+    withoutDatabaseUrl();
+    vi.stubEnv("JEEVES_MODE", "demo");
+    process.env.JEEVES_PGLITE_DIR = path.join(scratchDir(), "pglite");
+    const db = getDb();
+    expect(getDbDriverForHandle(db)).toBe("pglite");
   });
 });

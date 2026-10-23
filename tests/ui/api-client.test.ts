@@ -235,6 +235,13 @@ describe("error mapping", () => {
     const other = await startDraftRun("tok", "init-1", ["legal"]).catch((e) => e);
     expect(apiErrorToMessage(other)).toBe("Something went wrong — please try again.");
   });
+  it("tells the user the AI features are not configured, from the 503 code and not from its wording", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(503, { error: "llm_not_configured", code: "LLM_NOT_CONFIGURED" }));
+    const err = await startDraftRun("tok", "init-1", ["legal"]).catch((e) => e);
+    expect(err).toMatchObject({ status: 503, code: "LLM_NOT_CONFIGURED" });
+    expect(apiErrorToMessage(err)).toBe("AI drafting is not configured for this installation. Ask your administrator to set it up.");
+    expect(apiErrorToMessage(err)).not.toContain("llm_not_configured");
+  });
   it("maps demo storage failures to retryable copy without exposing server details", async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse(503, {
       error: "private database detail", code: "DEMO_STORAGE_UNAVAILABLE", requestId: "req-safe",

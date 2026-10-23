@@ -22,8 +22,12 @@
  * 200: { ranAt, nowTs, ...RunMonitorResult }
  * 401: missing/invalid bearer.  503: CRON_SECRET not configured.
  * 400: nowTs not a valid ISO-8601 timestamp.
+ * 404: production mode, before CRON_SECRET is even read. A production install
+ *      runs its scheduled work as jobs, not through this synthetic-telemetry
+ *      replay, so there is no cron secret to configure and no 503 to leak.
  */
 import { timingSafeEqual } from "node:crypto";
+import { demoDoorClosed, demoDoorFallbacks } from "@/lib/config/demo-doors";
 import { getDb } from "@/lib/db/client";
 import {
   runMonitor,
@@ -51,7 +55,12 @@ function authorizeCron(req: Request): { ok: true } | { ok: false; status: 401 | 
   return match ? { ok: true } : { ok: false, status: 401 };
 }
 
+export const { POST, PUT, PATCH, DELETE, OPTIONS } = demoDoorFallbacks("GET");
+
 export async function GET(req: Request): Promise<Response> {
+  const closed = demoDoorClosed();
+  if (closed) return closed;
+
   const auth = authorizeCron(req);
   if (!auth.ok) {
     const message =

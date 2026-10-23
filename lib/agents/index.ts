@@ -4,11 +4,12 @@
  * on the `AgentPort` type from `./ports`, never import `./openai-adapter`,
  * `./openai-agents-adapter`, or `./mock-adapter` directly.
  */
+import { isProductionMode } from "../config/deployment-mode";
 import { createMockAgentPort } from "./mock-adapter";
 import { createOpenAIAgentPort } from "./openai-adapter";
 import { createOpenAiAgentsAdapter } from "./openai-agents-adapter";
 import type { AgentPort } from "./ports";
-import { AgentInitializationError } from "./initialization-error";
+import { AgentInitializationError, LlmNotConfiguredError } from "./initialization-error";
 import { assertPolicyCorpusAvailable } from "./policy-corpus";
 import { resolveAgentRuntimeConfig } from "./runtime";
 
@@ -36,6 +37,10 @@ export { resolveAgentRuntime, type AgentRuntime } from "./runtime";
  * The keyless branch is unchanged and load-bearing: no API key means the mock
  * adapter regardless of `JEEVES_AGENT_RUNTIME`, so a provider outage — or a
  * public visitor — can never reach a paid runtime.
+ *
+ * That is the DEMO's behaviour. A production install never runs the mock: its
+ * canned drafts are indistinguishable from real assessments. With no key,
+ * production throws LlmNotConfiguredError, which the LLM routes map to a 503.
  */
 export function getAgentPort(): AgentPort {
   const runtime = resolveAgentRuntimeConfig();
@@ -50,5 +55,16 @@ export function getAgentPort(): AgentPort {
       throw new AgentInitializationError(cause);
     }
   }
+  if (isProductionMode()) throw new LlmNotConfiguredError();
   return createMockAgentPort();
+}
+
+/**
+ * Throws LlmNotConfiguredError when `getAgentPort()` would, without building
+ * an adapter. For callers that want to refuse BEFORE they claim, reserve or
+ * audit anything (the draft workflows), so a click on a deployment with no LLM
+ * leaves no trace. Returns in demo, where the keyless mock is the default.
+ */
+export function assertLlmConfigured(): void {
+  if (!resolveAgentRuntimeConfig().configured && isProductionMode()) throw new LlmNotConfiguredError();
 }

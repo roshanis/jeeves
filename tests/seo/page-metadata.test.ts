@@ -36,8 +36,12 @@ describe("page metadata", () => {
 
   it.each(PAGES.map((p) => [rel(p), p]))("%s exports metadata", (_name, path) => {
     const src = readFileSync(path, "utf8");
+    // generateMetadata may be async or sync, or a const built by a helper
+    // (demo-only pages wrap their static metadata so production can 404).
     const hasMetadata =
-      /export const metadata\b/.test(src) || /export async function generateMetadata\b/.test(src);
+      /export const metadata\b/.test(src) ||
+      /export (async )?function generateMetadata\b/.test(src) ||
+      /export const generateMetadata\b/.test(src);
     expect(hasMetadata).toBe(true);
   });
 

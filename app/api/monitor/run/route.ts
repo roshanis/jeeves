@@ -17,8 +17,12 @@
  *        breach (mock adapter costs 0 tokens for real; the reservation
  *        still exercises the budget gate per the established draft-run
  *        route pattern).
+ * 404:   production mode. The monitor replays synthetic telemetry and takes
+ *        an arbitrary `nowTs` from the caller, so a production install has no
+ *        use for it; it answers before the body is parsed.
  */
 import { z } from "zod";
+import { demoDoorClosed, demoDoorFallbacks } from "@/lib/config/demo-doors";
 import { getDb } from "@/lib/db/client";
 import { runMonitor } from "@/lib/services/monitor-service";
 import { runMutationGuard } from "@/lib/services/route-guard";
@@ -49,7 +53,12 @@ const bodySchema = z.object({
   nowTs: z.string().datetime().optional(),
 });
 
+export const { GET, HEAD, PUT, PATCH, DELETE, OPTIONS } = demoDoorFallbacks("POST");
+
 export async function POST(req: Request): Promise<Response> {
+  const closed = demoDoorClosed();
+  if (closed) return closed;
+
   let json: unknown;
   try {
     json = await req.json();

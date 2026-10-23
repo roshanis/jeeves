@@ -10,6 +10,7 @@ import { drizzle as drizzleNeon, type NeonDatabase } from "drizzle-orm/neon-serv
 import { drizzle as drizzleNodePg, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { drizzle as drizzlePglite, type PgliteDatabase } from "drizzle-orm/pglite";
 import { PGlite } from "@electric-sql/pglite";
+import { ProductionConfigError, isProductionMode } from "../config/deployment-mode";
 import { postgresPoolConfig } from "./connection-config";
 import { assertRuntimeDatabaseConfigured, runtimeDatabaseUrl } from "./runtime-config";
 import ws from "ws";
@@ -105,7 +106,15 @@ export function getDb(): Db {
     return dbSlot.db;
   }
 
-  // No DATABASE_URL: local persistent PGlite store, not a network call.
+  // No DATABASE_URL: local persistent PGlite store, not a network call. That
+  // is a demo and development convenience; a production process that reaches
+  // this line is misconfigured, and silently serving an empty on-disk database
+  // instead of the customer's would be far worse than not starting.
+  if (isProductionMode()) {
+    throw new ProductionConfigError([
+      "DATABASE_URL (or POSTGRES_URL) is required: production never falls back to the local PGlite store (local development sets JEEVES_MODE=demo)",
+    ]);
+  }
   const client = new PGlite(localPgliteDirectory());
   dbSlot.db = drizzlePglite({ client, schema });
   handleDrivers.set(dbSlot.db, "pglite");

@@ -1,4 +1,6 @@
 import { runtimeDatabaseUrl } from "../db/runtime-config";
+import { assertDemoMode } from "../config/demo-doors";
+import { isProductionMode } from "../config/deployment-mode";
 /**
  * Shared request-guard pipeline for `app/api/**` mutating route handlers
  * (task brief deliverable 3): writable mode -> session (server-issued) -> rate-limit ->
@@ -74,6 +76,10 @@ const publicSessionLimiter = new DbTokenBucketRateLimiter(
  * (see MutationGuardOptions.allowPublic for which, and why). This session
  * therefore holds nothing except what the three intake routes opt it into.
  * The TTL is short — a visitor fills one form; they do not need an hour.
+ *
+ * Demo only. Production has no `public` session (the route answers 404); this
+ * throws DemoOnlyError for any other caller, before the rate limiter or the
+ * database is touched.
  */
 export async function issuePublicSession(
   clientKey: string,
@@ -82,6 +88,7 @@ export async function issuePublicSession(
   | { rateLimited: true; retryAfterSeconds: number }
   | { readOnly: GuardFailure }
 > {
+  assertDemoMode("public sessions");
   const readOnly = checkReadOnlyMode();
   if (readOnly) return { readOnly };
 
@@ -214,11 +221,16 @@ export interface IssueSessionResult {
  * creates -> reviewer signs -> approver decides, all separate logins in one
  * browser) keeps seeing the same workspace across logins. Omitted/empty ->
  * unchanged behavior (fresh workspaceId derived from the new token).
+ *
+ * Demo only. Production has no passwordless persona session (the route answers
+ * 404); this throws DemoOnlyError for any other caller, before the database is
+ * touched.
  */
 export async function issueDemoSession(
   personaKey: string,
   existingWorkspaceId?: string | null,
 ): Promise<IssueSessionResult | null> {
+  assertDemoMode("persona sessions");
   if (checkReadOnlyMode()) return null;
   // Demo personas only — never a `public:` key (see app/api/session/route.ts).
   if (!isPersonaKey(personaKey) || !resolveActor(personaKey)) return null;
@@ -248,9 +260,16 @@ export interface ResolvedSession {
  * `workspaceId` (M2.5 inc.2a — workspace isolation foundation). Role ALWAYS
  * comes from the server-side persona directory keyed by the token — never
  * from anything in the request body (task brief §4).
+ *
+ * Production resolves nothing: every row in `sessions` today is a persona or
+ * `public:` session, and neither exists in production, so a row that survives
+ * from a demo database (or is written by hand) must not authenticate anyone.
+ * The request is simply unauthenticated. Real sign-in sessions replace this
+ * branch when SSO lands; until then production has no valid session.
  */
 export async function resolveSession(token: string | null): Promise<ResolvedSession> {
   if (!token) return { actor: null, workspaceId: null };
+  if (isProductionMode()) return { actor: null, workspaceId: null };
 
   const [session] = await getDb()
     .select({

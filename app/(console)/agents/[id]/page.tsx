@@ -8,6 +8,7 @@ import { GOVERNANCE_AGENTS, AGENT_GUARDRAIL } from "@/lib/agents/registry";
 import { DOMAIN_LABEL } from "@/components/jeeves/domain-labels";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { requireViewer } from "@/lib/services/require-viewer";
 
 // Per-agent detail page — the drill-down from the Governance agents catalog
 // (app/agents/page.tsx). Reads the agent's actual instructions file(s) off
@@ -60,6 +61,8 @@ export default async function AgentDetailPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
+  // First, so an unauthenticated visitor cannot tell which agent ids exist.
+  await requireViewer();
   const { id } = await params;
   const agent = GOVERNANCE_AGENTS.find((a) => a.id === id);
   if (!agent) {

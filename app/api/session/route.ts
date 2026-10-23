@@ -1,6 +1,7 @@
 /** Public demo entry and persona switching. Every action still needs a
  * server-issued, workspace-bound session. No visitor password is required. */
 import { z } from "zod";
+import { demoDoorClosed, demoDoorFallbacks } from "@/lib/config/demo-doors";
 import { checkReadOnlyMode, checkSessionAttempt, clientKeyFor, issueDemoSession, extractSessionToken, resolveSession } from "@/lib/services/route-guard";
 import { isPersonaKey, resolveActor } from "@/lib/services/actors";
 import {
@@ -79,7 +80,14 @@ function storageUnavailable(error: unknown): Response {
   );
 }
 
+// Production has no persona sessions: 404 first, before the body is parsed or
+// any limiter or database is touched (lib/config/demo-doors.ts).
+export const { GET, HEAD, PUT, PATCH, DELETE, OPTIONS } = demoDoorFallbacks("POST");
+
 export async function POST(req: Request): Promise<Response> {
+  const closed = demoDoorClosed();
+  if (closed) return closed;
+
   const readOnlyFailure = checkReadOnlyMode();
   if (readOnlyFailure) {
     return Response.json({ error: readOnlyFailure.message }, { status: readOnlyFailure.status });

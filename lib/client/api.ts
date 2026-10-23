@@ -57,6 +57,9 @@ export function apiErrorToMessage(err: ApiError): string {
   if (err.status === 503 && err.code === "DEMO_STORAGE_UNAVAILABLE") {
     return "Demo storage is temporarily unavailable. Please try again shortly.";
   }
+  if (err.status === 503 && err.code === "LLM_NOT_CONFIGURED") {
+    return "AI drafting is not configured for this installation. Ask your administrator to set it up.";
+  }
   if (err.status === 503 && err.code === "AGENT_INITIALIZATION_FAILED") {
     return "Agents could not start. Test the connection on the Agents page, then retry.";
   }

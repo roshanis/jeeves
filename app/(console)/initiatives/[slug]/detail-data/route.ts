@@ -22,11 +22,16 @@
  * UI-internal data endpoint for one page.
  */
 import { getInitiativeDetailForViewer } from "@/app/_lib/data-provider";
+import { requireViewerForRequest } from "@/lib/services/require-viewer";
 
 export async function GET(
-  _req: Request,
+  req: Request,
   context: { params: Promise<{ slug: string }> },
 ): Promise<Response> {
+  // The helper below gates too, but as a page would (a redirect); a data
+  // endpoint answers 401 (lib/services/require-viewer.ts).
+  const gate = await requireViewerForRequest(req);
+  if (!gate.ok) return gate.response;
   const { slug } = await context.params;
   // Scope to the caller's workspace (the page forwards its jeeves_workspace
   // cookie on the fetch), so a live-created initiative is only visible in the
