@@ -1530,3 +1530,18 @@ never gets), sticky CTA hint ("Read-only" — visitors can act now).
   `public-` workspaces.
 - The operator queue is read-only by design; acting on a real request in-app
   would need cross-workspace operator powers — a separate decision.
+
+## [AGENT: Claude] [2026-11-12T03:40Z]
+### Action: implementer: P0.5 security patch on main (human go-ahead 2026-11-12 "do the patch")
+### Files changed: package.json, package-lock.json, .github/workflows/ci.yml, agents-build-log.md
+### Diff summary:
+- next and eslint-config-next 16.3.5 -> 16.4.6 (exact pins kept). Closes the critical advisories, including RCE in next/og ImageResponse, which app/opengraph-image.tsx and app/apple-icon.tsx use.
+- zod ^4.4.3 -> ^4.6.7 (memory-exhaustion advisory).
+- shadcn moved to devDependencies. It is a CLI; the only use is the build-time CSS import in app/globals.css, and it was pulling @modelcontextprotocol/sdk, hono and express into the runtime tree.
+- In-range lockfile updates for transitive advisories (proxy-addr via @openai/agents-core's MCP SDK, undici, qs, body-parser, source-map-js and others).
+- CI verify job: new `npm audit --omit=dev --audit-level=high` step.
+- `npm audit --omit=dev`: 20 advisories (2 critical, 8 high) -> 0.
+### Verified: typecheck, lint, `next build` clean; `next start` serves /opengraph-image and /apple-icon (200 image/png), / and /api/health 200.
+### Recommendations / Next steps:
+- Dev-only advisories remain (vite 8.1.4 high via vitest 4.1.10, esbuild via drizzle-kit, minimatch via eslint-config-next). `npm audit fix` crashes in npm's arborist ("edgesOut"), so bump vitest to 4.1.12+ in a follow-up.
+- Merge main into PR #23 after this lands.
