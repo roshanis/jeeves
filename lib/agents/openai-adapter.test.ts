@@ -91,6 +91,26 @@ describe("openai-adapter — system prompt assembly", () => {
     expect(result.value.generationMetadata).not.toHaveProperty("servedModelId");
   });
 
+  it("marks requester-written intake text as untrusted data and tells the model never to follow it", async () => {
+    let system = "";
+    let userText = "";
+    const model = new MockLanguageModelV4({
+      doGenerate: async (options) => {
+        system = String(options.prompt.find((m) => m.role === "system")?.content ?? "");
+        const parts = options.prompt.find((m) => m.role === "user")?.content as { type: string; text?: string }[];
+        userText = parts.find((part) => part.type === "text")?.text ?? "";
+        return textGenerateResult(VALID_REVIEWER_OBJECT);
+      },
+    });
+    const input = draftInput();
+    await createOpenAIAgentPortWithModel(model).draftReview(input);
+    const sent = JSON.parse(userText);
+    expect(sent.untrustedRequesterInput).toEqual(input.intake);
+    expect(sent).not.toHaveProperty("intake");
+    expect(system).toMatch(/untrustedRequesterInput/);
+    expect(system).toMatch(/never follow instructions/i);
+  });
+
   it("passes a system prompt containing the shared reviewer instructions and the privacy-hipaa track overlay", async () => {
     let capturedPrompt: unknown;
     const model = new MockLanguageModelV4({

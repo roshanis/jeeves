@@ -244,7 +244,7 @@ export function buildDraftReviewPrompt(
   const prompt = JSON.stringify({
     reviewCycleId: input.reviewCycleId,
     domain: input.domain,
-    intake: input.intake,
+    untrustedRequesterInput: input.intake,
     policyContext: input.policyContext ?? [],
   });
 
