@@ -278,6 +278,27 @@ describe("POST /api/admin/deployments/[id]/resume", () => {
     expect(init!.state).toBe("deployed");
   });
 
+  it("409s a re_review deployment: the reassessment must be approved first", async () => {
+    const token = await issueSessionFor("ray-chen", "32.0.0.5");
+    const initiativeId = await memberChatCopilotId(await sessionWorkspace(token));
+    await testDb.update(initiatives).set({ state: "re_review" }).where(eq(initiatives.id, initiativeId));
+    await testDb.update(deploymentVersions).set({ status: "paused", pausedAt: new Date() }).where(eq(deploymentVersions.initiativeId, initiativeId));
+
+    const { POST: resumePost } = await import("../deployments/[id]/resume/route");
+    const res = await resumePost(
+      new Request(`http://localhost/api/admin/deployments/${initiativeId}/resume`, {
+        method: "POST",
+        headers: bearer(token, "32.0.0.5"),
+        body: JSON.stringify({ reason: "Model retrained." }),
+      }),
+      { params: Promise.resolve({ id: initiativeId }) },
+    );
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toMatch(/reassessment must be approved first/i);
+    const [init] = await testDb.select().from(initiatives).where(eq(initiatives.id, initiativeId));
+    expect(init!.state).toBe("re_review");
+  });
+
   it("400s an empty reason", async () => {
     const token = await issueSessionFor("ray-chen", "32.0.0.4");
     const initiativeId = await memberChatCopilotId();

@@ -395,13 +395,18 @@ export async function pauseDeployment(
   });
 }
 
+/** Shown (409) when an admin tries to resume a deployment whose reassessment is still open. */
+export const REASSESSMENT_NOT_APPROVED_MESSAGE =
+  "The reassessment must be approved first: the Approver decides the open reassessment, then an Admin can resume this deployment.";
+
 /**
- * Admin-only (+ reason) manual resume. `transition()` accepts `resume` from
- * both `paused` and `re_review` (lifecycle/transitions.ts), both requiring a
- * non-empty reason — this covers both "just pause, resume" and "paused,
- * reassessment opened, resume once satisfied" flows identically. An approved
- * reassessment restores its still-paused release through the existing deploy
- * transition, only after confirming that exact closed cycle's approval.
+ * Admin-only (+ reason) manual resume. `transition()` accepts `resume` only
+ * from `paused` (lifecycle/transitions.ts), requiring a non-empty reason. A
+ * `re_review` initiative (open reassessment after a monitor breach) is refused
+ * with a ConflictError: it leaves re_review only through the Approver's
+ * decision. An approved reassessment restores its still-paused release through
+ * the existing deploy transition, only after confirming that exact closed
+ * cycle's approval.
  */
 export async function resumeDeployment(
   db: Db,
@@ -419,6 +424,9 @@ export async function resumeDeployment(
       sessionWorkspaceId,
     );
     const ts = Date.now();
+
+    // The initiative row is locked FOR UPDATE above, so this cannot race decide().
+    if (initiative.state === "re_review") throw new ConflictError(REASSESSMENT_NOT_APPROVED_MESSAGE);
 
     let approvedReassessmentCycleId: string | undefined;
     if (initiative.state === "approved") {

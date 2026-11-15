@@ -4,10 +4,9 @@
  * task brief deliverable 3). Admin-only + non-empty reason. `[id]` is the
  * INITIATIVE id, same convention as the pause route.
  *
- * `resumeDeployment` accepts both `paused` and `re_review` as valid "before"
- * states (lib/lifecycle/transitions.ts's `resume` rule) — so this same
- * route both un-pauses a manually-paused deployment and closes out a
- * post-breach reassessment once satisfied.
+ * This route un-pauses a manually paused deployment, or restores a breached
+ * one after its reassessment is approved. `resume` is legal only from
+ * `paused` (lifecycle/transitions.ts); a `re_review` initiative is refused.
  *
  * Body:  { reason: string }
  * 200:   { initiativeId, deploymentId, before, after }
@@ -17,7 +16,8 @@
  * 404:   { error: string }  (unknown initiative / no deployment / a
  *        workspace-tagged initiative belonging to a DIFFERENT workspace than
  *        this session's — same shape, no existence leak; P1 fix)
- * 409:   { error: string }  (compare-and-set conflict — the initiative's or
+ * 409:   { error: string }  (the reassessment is still open and must be
+ *        approved first, or a compare-and-set conflict — the initiative's or
  *        deployment's state changed concurrently since this request's read)
  */
 import { z } from "zod";

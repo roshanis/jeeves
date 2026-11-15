@@ -148,7 +148,7 @@ Defined in `lib/lifecycle/transitions.ts` (the single source of truth for
 legal transitions — plan.md README: "the single source of truth for legal
 state transitions"). Thirteen states: `intake_draft → submitted → in_qc → triaged →
 (in_review | fast_lane_approved) → (approved | conditionally_approved |
-rejected) → deployed ↔ paused → re_review → (deployed | retired)`, with
+rejected) → deployed ↔ paused → re_review → (approved → deployed | retired)`, with
 `retired` reachable from every operating state. The **QC gate**:
 `submitted --start_qc--> in_qc` (Program Office or Admin only, never
 `system`), then from `in_qc` either `triage` (system-only, deterministic) or
@@ -163,7 +163,11 @@ authority rules baked into the transition table:
 - `fast_lane_approve` requires both a `policyId` and a named
   `accountableApprover` in context — the deterministic fast lane still names
   an accountable human, never an agent.
-- `pause` and `resume` require a non-empty `reason` in context.
+- `pause` and `resume` require a non-empty `reason` in context. `resume` is
+  legal only from `paused`: a breached deployment (`re_review`) returns to
+  service only after the Approver approves the reassessment, then the Admin
+  resumes it through `deploy` against that closed cycle's approval;
+  `resumeDeployment` answers 409 while the reassessment is open.
 - Every transition call returns `{ before, after, auditEvent }` that the
   caller must persist in the same transaction — the lifecycle module itself
   never touches the database.
@@ -432,10 +436,13 @@ inside one `db.transaction()`:
 1. Idempotently creates an `incidents` row keyed on the deterministic
    `identityKey` — a second call for the same window inserts nothing new
    (checked in-transaction, backstopped by the DB unique index).
-2. Transitions the deployment + initiative to `paused` (`transition(...,
-   "pause", SYSTEM_ACTOR, reason)`).
+2. Transitions the deployment row and the initiative to `paused`, then the
+   initiative to `re_review`
+   (`transition(..., "pause" | "open_reassessment", SYSTEM_ACTOR, ...)`).
+   Returning to service from `re_review` needs the Approver's approval of
+   that reassessment; there is no admin shortcut.
 3. Opens a reassessment `review_cycles` row (`kind: "reassessment"`) linked
-   to the incident.
+   to the incident, with a pending review row per required domain.
 4. Generates a human-readable incident summary — breach *detection* is
    deterministic app code; the agent only narrates a detection that already
    happened (there is no `AgentPort` method for this yet, so the module

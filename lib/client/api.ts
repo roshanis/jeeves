@@ -743,7 +743,7 @@ export function pauseDeployment(
   );
 }
 
-/** POST /api/admin/deployments/[id]/resume — admin-only; valid from paused AND re_review. */
+/** POST /api/admin/deployments/[id]/resume — admin-only; valid from paused, or from approved after an approved reassessment; 409 while a reassessment is open. */
 export function resumeDeployment(
   token: string,
   initiativeId: string,

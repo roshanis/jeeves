@@ -276,6 +276,7 @@ export default async function AdminPage() {
                       title={row.title}
                       initiativeId={row.initiativeId}
                       status={row.deployment.status}
+                      lifecycleState={row.state}
                     /> : <span className="text-xs text-muted-foreground">Read-only example</span>}
                   </TableCell>
                 </TableRow>
