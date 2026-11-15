@@ -19,12 +19,13 @@ const TIER_TONE: Record<Tier, { bg: string; fg: string }> = {
   critical: { bg: "bg-tier-critical-bg", fg: "text-tier-critical-fg" },
 };
 
-export function TierBadge({ tier, className }: { tier: Tier; className?: string }) {
-  const tone = TIER_TONE[tier];
+export function TierBadge({ tier, className }: { tier: Tier | null; className?: string }) {
+  // Untriaged (tier not yet computed) must never read as "Low".
+  const tone = tier ? TIER_TONE[tier] : TIER_TONE.low;
   return (
     <span
       data-slot="tier-badge"
-      data-tier={tier}
+      data-tier={tier ?? "untriaged"}
       className={cn(
         "inline-flex h-5 w-fit shrink-0 items-center gap-1.5 rounded-md px-2 text-[11px] font-semibold whitespace-nowrap",
         tone.bg,
@@ -33,7 +34,7 @@ export function TierBadge({ tier, className }: { tier: Tier; className?: string 
       )}
     >
       <span className={cn("size-1.5 shrink-0 rounded-full", tone.fg, "bg-current")} aria-hidden />
-      {TIER_LABEL[tier]}
+      {tier ? TIER_LABEL[tier] : "Not triaged"}
     </span>
   );
 }

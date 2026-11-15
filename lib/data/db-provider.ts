@@ -366,7 +366,7 @@ export class DbDataProvider implements DataProvider {
       initiativeId: init.id,
       isSeeded: init.workspaceId === null,
       title: init.title,
-      tier: (init.tier ?? "low") as Tier,
+      tier: (init.tier ?? null) as Tier | null,
       state: init.state as LifecycleState,
       flags,
       requester: init.requester,

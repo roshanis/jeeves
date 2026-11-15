@@ -163,7 +163,7 @@ export function InitiativeTable({
       let d = 0;
       switch (sort) {
         case "title": d = a.title.localeCompare(b.title); break;
-        case "tier": d = TIER_RANK[a.tier] - TIER_RANK[b.tier]; break;
+        case "tier": d = (a.tier ? TIER_RANK[a.tier] : 4) - (b.tier ? TIER_RANK[b.tier] : 4); break;
         case "state": d = STATE_RANK[a.state] - STATE_RANK[b.state]; break;
         case "reviews": d = reviewsFraction(a) - reviewsFraction(b); break;
         case "sla": d = Number(b.overdue) - Number(a.overdue); break;

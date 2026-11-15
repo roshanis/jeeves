@@ -76,7 +76,7 @@ export async function generateMetadata({
   const { title, tier, state } = detail.summary;
   return {
     title,
-    description: `${title} — ${TIER_LABEL[tier] ?? tier} tier, ${LIFECYCLE_LABEL[state] ?? state}. Risk tiering, domain reviews, decisions, controls and audit trail for this AI initiative. Synthetic demo data.`,
+    description: `${title} — ${tier ? `${TIER_LABEL[tier] ?? tier} tier` : "Not triaged"}, ${LIFECYCLE_LABEL[state] ?? state}. Risk tiering, domain reviews, decisions, controls and audit trail for this AI initiative. Synthetic demo data.`,
   };
 }
 

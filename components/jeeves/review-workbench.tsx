@@ -61,7 +61,7 @@ import { ReviewEvidenceWorkspace } from "./review-evidence-workspace";
 export interface ReviewQueueRow {
   slug: string;
   title: string;
-  tier: Tier;
+  tier: Tier | null;
   isSeeded?: boolean;
   review: ReviewRow;
 }
