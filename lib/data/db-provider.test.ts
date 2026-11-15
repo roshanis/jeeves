@@ -886,6 +886,25 @@ describe("lib/data/db-provider read-model edge cases (peer review, low)", () => 
     expect(m.medianReviewCycleDays).toBe(1.9);
   });
 
+  it("ignores returned reviews of closed cycles in overdueControls and the overdue-controls query", async () => {
+    const provider = new DbDataProvider(db);
+    expect((await provider.outcomeMetrics()).overdueControls).toBe(0);
+    expect(await provider.auditQuery("overdue-controls")).toEqual([]);
+  });
+});
+
+describe("lib/data/db-provider approver display names (peer review, low)", () => {
+  let db: TestDb;
+  const t0 = new Date("2026-07-01T00:00:00.000Z");
+
+  beforeAll(async () => {
+    db = await createTestDb();
+  });
+
+  afterAll(async () => {
+    await closeTestDb(db);
+  });
+
   it("renders the approver's display name in decision rows and the member-facing-phi row", async () => {
     await db.insert(initiatives).values({
       id: "edge-phi",
@@ -940,11 +959,5 @@ describe("lib/data/db-provider read-model edge cases (peer review, low)", () => 
     expect(detail!.decisions[0]!.approver).toBe("Angela Torres");
     const row = (await provider.auditQuery("member-facing-phi")).find((r) => r.slug === "edge-phi");
     expect(row?.approver).toBe("Angela Torres");
-  });
-
-  it("ignores returned reviews of closed cycles in overdueControls and the overdue-controls query", async () => {
-    const provider = new DbDataProvider(db);
-    expect((await provider.outcomeMetrics()).overdueControls).toBe(0);
-    expect(await provider.auditQuery("overdue-controls")).toEqual([]);
   });
 });
