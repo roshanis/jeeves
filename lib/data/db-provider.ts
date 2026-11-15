@@ -387,7 +387,7 @@ export class DbDataProvider implements DataProvider {
       state: init.state as LifecycleState,
       flags,
       requester: init.requester,
-      accountableApprover: init.accountableApprover,
+      accountableApprover: init.accountableApprover ? displayNameFor(init.accountableApprover) : null,
       domainsRequired: ra ? ra.requiredDomains.length : 0,
       domainsSigned: cycleDecisions.filter((rd) => rd.status === "signed").length,
       domainsAbstained: cycleReviews.filter(row => row.abstention).length,

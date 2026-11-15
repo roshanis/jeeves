@@ -773,4 +773,23 @@ describe("lib/data/db-provider", () => {
       expect(await slugs(fresh)).toContain("snap-own-2");
     });
   });
+
+  describe("read-model details (peer review, low)", () => {
+    it("shows the accountable approver's display name when the column holds an actor id", async () => {
+      await db.insert(initiatives).values({
+        id: "approver-id-form",
+        slug: "approver-id-form",
+        title: "Approver id form",
+        requester: "Priya Raman",
+        state: "intake_draft",
+        tier: null,
+        accountableApprover: "angela-torres",
+        createdAt: new Date("2026-07-10T00:00:00.000Z"),
+        updatedAt: new Date("2026-07-10T00:00:00.000Z"),
+        workspaceId: "ws-approver-id",
+      });
+      const row = (await provider.listInitiatives()).find((r) => r.slug === "approver-id-form");
+      expect(row?.accountableApprover).toBe("Angela Torres");
+    });
+  });
 });
