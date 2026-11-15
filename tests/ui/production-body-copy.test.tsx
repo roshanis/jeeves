@@ -70,7 +70,7 @@ describe("page bodies by deployment mode", () => {
 
   it("controls names the fictional payer only in demo", async () => {
     inMode("demo");
-    expect(renderWithProviders(await ControlsPage(), { mode: "demo" }).container.textContent).toContain("Every governance control Meridian enforces");
+    expect(renderWithProviders(await ControlsPage(), { mode: "demo" }).container.textContent).toContain("Every governance control Meridian enforces, across every domain");
     cleanup();
     inMode("production");
     const text = renderWithProviders(await ControlsPage(), { mode: "production" }).container.textContent;
