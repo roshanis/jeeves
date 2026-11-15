@@ -461,13 +461,33 @@ function request(port: number, check: Pick<SmokeCheck, "method" | "path" | "head
   });
 }
 
-function runToCompletion(args: string[], env: Record<string, string>): Promise<{ code: number | null; output: string }> {
+/** Default bound for a node script the smoke run waits on (the migration). */
+const RUN_TIMEOUT_MS = 120_000;
+
+/**
+ * Runs a node script and waits until its output is closed. A run that outlives
+ * `timeoutMs` is stopped and reported as `timedOut`, so a hung migration fails
+ * the smoke run with a reason instead of holding the job until its own limit.
+ */
+export function runToCompletion(
+  args: string[],
+  env: Record<string, string>,
+  timeoutMs = RUN_TIMEOUT_MS,
+): Promise<{ code: number | null; output: string; timedOut: boolean }> {
   return new Promise((resolve) => {
     const child = spawn(process.execPath, args, { cwd: REPO_ROOT, env: env as NodeJS.ProcessEnv, stdio: ["ignore", "pipe", "pipe"] });
     let output = "";
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      void stopChild(child);
+    }, timeoutMs);
     child.stdout.on("data", (d: Buffer) => (output += d.toString()));
     child.stderr.on("data", (d: Buffer) => (output += d.toString()));
-    child.on("close", (code) => resolve({ code, output }));
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      resolve({ code, output, timedOut });
+    });
   });
 }
 
@@ -556,6 +576,7 @@ async function withSmokeDatabase<T>(databaseUrl: string, run: (db: SmokeSql) => 
 async function migrateAndStamp(databaseUrl: string): Promise<void> {
   const tsx = path.join(REPO_ROOT, "node_modules/tsx/dist/cli.mjs");
   const migrate = await runToCompletion([tsx, "scripts/migrate.ts"], { ...baseEnv(), DATABASE_URL: databaseUrl });
+  if (migrate.timedOut) throw new Error(`migration did not finish within ${RUN_TIMEOUT_MS / 1000} s:\n${redact(migrate.output, [databaseUrl])}`);
   if (migrate.code !== 0) throw new Error(`migration failed:\n${redact(migrate.output, [databaseUrl])}`);
 
   await withSmokeDatabase(databaseUrl, (db) => prepareSmokeDatabase(db, `smoke-${randomBytes(4).toString("hex")}`));

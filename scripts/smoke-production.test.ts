@@ -14,6 +14,7 @@ import {
   parsePort,
   portInUse,
   prepareSmokeDatabase,
+  runToCompletion,
   redact,
   removeCanaries,
   runtimeEnvFor,
@@ -433,5 +434,21 @@ describe("portInUse", () => {
     expect(await portInUse(port)).toBe(true);
     await new Promise<void>((resolve) => server.close(() => resolve()));
     expect(await portInUse(port)).toBe(false);
+  });
+});
+
+describe("runToCompletion", () => {
+  it("returns the exit code and the output of a run that finishes", async () => {
+    const run = await runToCompletion(["-e", "console.log('migrated'); process.exit(3)"], { PATH: process.env.PATH ?? "" }, 10_000);
+    expect(run).toEqual({ code: 3, output: "migrated\n", timedOut: false });
+  });
+
+  it("stops a run that outlives its limit and says so, so a hung migration cannot hold the job", async () => {
+    const started = Date.now();
+    const run = await runToCompletion(["-e", "console.log('started'); setInterval(() => {}, 1000)"], { PATH: process.env.PATH ?? "" }, 500);
+    expect(run.timedOut).toBe(true);
+    expect(run.code).not.toBe(0);
+    expect(run.output).toContain("started");
+    expect(Date.now() - started).toBeLessThan(10_000);
   });
 });
