@@ -1,3 +1,4 @@
+import { unstable_rethrow } from "next/navigation";
 import { getAppProvider, getCurrentWorkspaceId } from "@/app/_lib/data-provider";
 import { AppTopBar } from "./app-topbar";
 
@@ -16,9 +17,20 @@ import { AppTopBar } from "./app-topbar";
 //
 // The index is workspace-scoped like every other read, so a live session's
 // palette never surfaces the seeded workspace's initiatives or vice versa.
+//
+// A throw here would escape to Next's stock error page: app/(console)/error.tsx
+// wraps the segment's page, not its own layout. So this slot catches its own
+// data failures (DB outage, boot failure) and renders the bar without the
+// palette index; the page below shows its own error boundary if it also fails.
+// Next control-flow errors (redirect, notFound) are rethrown.
 export async function ConsoleTopBar() {
-  const viewerWorkspaceId = await getCurrentWorkspaceId();
-  const initiatives = await getAppProvider().listInitiativeIndex({ viewerWorkspaceId });
-
+  let initiatives: Array<{ slug: string; title: string }> = [];
+  try {
+    const viewerWorkspaceId = await getCurrentWorkspaceId();
+    initiatives = await getAppProvider().listInitiativeIndex({ viewerWorkspaceId });
+  } catch (error) {
+    unstable_rethrow(error);
+    console.error("Console top bar index unavailable:", error);
+  }
   return <AppTopBar initiatives={initiatives} />;
 }
