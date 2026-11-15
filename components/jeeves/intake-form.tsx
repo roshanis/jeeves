@@ -17,6 +17,19 @@
  *   standard disabled-with-tooltip gate (ui-spec §4 states / §8.4).
  * - Live mode: Submit runs create -> submit through the real API and
  *   routes to the new initiative's detail page.
+ * - "Save draft" keeps unfinished work. A requester persona saves through the
+ *   same create / edit-draft routes as Submit (no completeness gate, a title is
+ *   enough) and lands on the edit page. A real request (`public`) saves ONLY to
+ *   this tab's sessionStorage: nothing is sent until Submit, and the copy is
+ *   restored into a public session in the same tab, never into a persona.
+ * - Leave warning: beforeunload, plus a confirm on plain same-origin link
+ *   clicks, while there are unsaved changes (a real request also stays armed
+ *   while unsent content exists). It is off after a successful save (persona)
+ *   or submit. NOT covered: browser Back/Forward, command-palette navigation
+ *   (Cmd/Ctrl-K), and any session change on the edit page (expiry, Exit demo,
+ *   persona switch, a 401 on save).
+ * - The sample button is hidden for real requests; loading it over typed
+ *   content asks first.
  */
 import * as React from "react";
 import { useRouter } from "next/navigation";
@@ -29,7 +42,7 @@ import {
   type CompletenessGap,
 } from "@/lib/intake/completeness";
 import { SAMPLE_INITIATIVE_PAYLOAD } from "@/lib/intake/champion-prefill";
-import { INTAKE_LIMITS } from "@/lib/intake/schema";
+import { INTAKE_LIMITS, intakePayloadSchema } from "@/lib/intake/schema";
 import { previewTier } from "@/lib/client/tier-preview";
 import {
   createInitiative,
@@ -331,6 +344,55 @@ const GAP_LEVEL_CLASS: Record<CompletenessGap["level"], string> = {
 };
 
 /* -------------------------------------------------------------------------
+ * Unsaved-work helpers
+ * ---------------------------------------------------------------------- */
+
+/** sessionStorage key for a real request saved in this tab (never sent). */
+export const PUBLIC_DRAFT_KEY = "jeeves_public_intake_draft";
+const LEAVE_MESSAGE = "You have unsaved changes to this intake. Leave this page and lose them?";
+
+const samePayload = (a: IntakePayload, b: IntakePayload) => JSON.stringify(a) === JSON.stringify(b);
+
+function readPublicDraft(): IntakePayload | null {
+  try {
+    const raw = window.sessionStorage.getItem(PUBLIC_DRAFT_KEY);
+    if (!raw) return null;
+    const parsed = intakePayloadSchema.safeParse((JSON.parse(raw) as { payload?: unknown } | null)?.payload);
+    return parsed.success ? (parsed.data as IntakePayload) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writePublicDraft(payload: IntakePayload): boolean {
+  try {
+    window.sessionStorage.setItem(PUBLIC_DRAFT_KEY, JSON.stringify({ payload, savedAt: Date.now() }));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const subscribeNoop = () => () => {};
+
+/** Cheap presence check for the tab copy; validation is left to the restore path. */
+function hasTabDraftCopy(): boolean {
+  try {
+    return window.sessionStorage.getItem(PUBLIC_DRAFT_KEY) !== null;
+  } catch {
+    return false;
+  }
+}
+
+function clearPublicDraft() {
+  try {
+    window.sessionStorage.removeItem(PUBLIC_DRAFT_KEY);
+  } catch {
+    // Nothing to clear when storage is unavailable.
+  }
+}
+
+/* -------------------------------------------------------------------------
  * The form
  * ---------------------------------------------------------------------- */
 
@@ -349,11 +411,23 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
 
   const [internalPayload, setInternalPayload] = React.useState<IntakePayload>(initialPayload ?? EMPTY_PAYLOAD);
   const payload = initialPayload ?? internalPayload;
-  const [submitting, setSubmitting] = React.useState(false);
+  const [busy, setBusy] = React.useState<"save" | "submit" | null>(null);
+  // Synchronous in-flight guard: state alone lets two quick clicks both start.
+  const busyRef = React.useRef(false);
+  const mountedRef = React.useRef(true);
+  // Set once the request has been sent or the draft saved, so the leave
+  // warning stays quiet during the navigation that follows.
+  const leavingRef = React.useRef(false);
+  const [status, setStatus] = React.useState<string | null>(null);
+  // Read from sessionStorage without an effect; the server snapshot is false.
+  const hasTabDraft = React.useSyncExternalStore(subscribeNoop, hasTabDraftCopy, () => false);
   const [initiativeId, setInitiativeId] = React.useState(initialInitiativeId);
   const [version, setVersion] = React.useState(initialVersion);
   const [slug, setSlug] = React.useState(initialSlug);
   const [savedPayload, setSavedPayload] = React.useState<IntakePayload | null>(initialPayload ?? null);
+  // What the server holds for this form (a public session's savedPayload means
+  // only "tab copy written", so the skip-the-update check cannot use it).
+  const serverPayload = React.useRef<IntakePayload | null>(initialPayload ?? null);
   const requestId = React.useRef<string | null>(null);
   const creationPayload = React.useRef<IntakePayload | null>(null);
   const [error, setError] = React.useState<string | null>(null);
@@ -369,6 +443,7 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
       setVersion(undefined);
       setSlug(undefined);
       setSavedPayload(null);
+      serverPayload.current = null;
       requestId.current = null;
       creationPayload.current = null;
     }
@@ -401,8 +476,17 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
   const pristine = payload === EMPTY_PAYLOAD;
 
   function loadChampion() {
-    if (onPayloadChange) onPayloadChange(SAMPLE_INITIATIVE_PAYLOAD);
-    else setInternalPayload(SAMPLE_INITIATIVE_PAYLOAD);
+    if (
+      !samePayload(payload, EMPTY_PAYLOAD) &&
+      !samePayload(payload, SAMPLE_INITIATIVE_PAYLOAD) &&
+      !window.confirm("Replace everything in this form with the sample initiative?")
+    ) return;
+    loadPayload(SAMPLE_INITIATIVE_PAYLOAD);
+  }
+
+  function loadPayload(next: IntakePayload) {
+    if (onPayloadChange) onPayloadChange(next);
+    else setInternalPayload(next);
   }
 
   const preview = previewTier(payload.overlay);
@@ -425,6 +509,87 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
   const canAuthorIntake = session?.role === "requester" || session?.role === "public";
   const isRequester = canAuthorIntake;
 
+  // Unsaved = differs from what was last saved (an untouched form counts as
+  // saved). A real request also counts as unsent while it holds content that
+  // is neither blank nor the sample, even right after a tab-local save: closing
+  // the tab destroys sessionStorage, and the server has never seen it.
+  const isPublic = session?.role === "public";
+  const unsaved = !samePayload(payload, savedPayload ?? EMPTY_PAYLOAD);
+  const isSample = samePayload(payload, SAMPLE_INITIATIVE_PAYLOAD);
+  const linkArmed = unsaved && !isSample;
+  const titleHintShown = Boolean(session && isRequester && unsaved && !isPublic && payload.basics.title.trim() === "");
+  const titleHintId = `${React.useId()}-title-hint`;
+  // A real request stays armed while unsent content exists, and so does a saved
+  // tab copy once the session has expired (closing the tab discards it). With a
+  // persona session the tab copy is not this form's work, so it never arms.
+  const unloadArmed =
+    linkArmed || ((isPublic || (!session && hasTabDraft)) && !samePayload(payload, EMPTY_PAYLOAD) && !isSample);
+
+  React.useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  React.useEffect(() => {
+    if (!unloadArmed) return;
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (leavingRef.current) return;
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [unloadArmed]);
+
+  React.useEffect(() => {
+    if (!linkArmed) return;
+    const onClick = (event: MouseEvent) => {
+      if (leavingRef.current || event.defaultPrevented || event.button !== 0) return;
+      if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      const anchor = (event.target as Element | null)?.closest?.("a[href]") as HTMLAnchorElement | null;
+      if (!anchor || (anchor.target && anchor.target !== "_self") || anchor.hasAttribute("download")) return;
+      let url: URL;
+      try {
+        url = new URL(anchor.href, window.location.href);
+      } catch {
+        return;
+      }
+      if (url.origin !== window.location.origin) return;
+      if (url.pathname === window.location.pathname && url.search === window.location.search) return;
+      // Native confirm: no focus trap, and Escape or Enter work as in any dialog.
+      if (!window.confirm(LEAVE_MESSAGE)) event.preventDefault();
+    };
+    document.addEventListener("click", onClick, true);
+    return () => document.removeEventListener("click", onClick, true);
+  }, [linkArmed]);
+
+  // Entering the real-request door: bring back what this tab saved, and drop a
+  // sample loaded in the no-session preview (a sample must never become the
+  // text of a real request). Typed content is never replaced.
+  const publicDoor = isPublic && !initialInitiativeId;
+  function restoreTabDraft(stored: IntakePayload) {
+    loadPayload(stored);
+    setSavedPayload(stored);
+    setStatus("Restored the request you saved in this tab. Not sent yet.");
+  }
+  React.useEffect(() => {
+    if (!publicDoor) return;
+    if (samePayload(payload, EMPTY_PAYLOAD) || isSample) {
+      const stored = readPublicDraft();
+      if (stored) {
+        // Syncing from an external system (sessionStorage) once, when the session starts.
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        restoreTabDraft(stored);
+        return;
+      }
+    }
+    if (isSample) loadPayload(EMPTY_PAYLOAD);
+    // Runs when the real-request session starts; later edits must not re-run it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [publicDoor, session?.token]);
+
   function handleStartPublic() {
     setError(null);
     // Pending state and the error message are owned by the session context,
@@ -434,49 +599,79 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
     });
   }
 
+  async function persistToServer(token: string) {
+    requestId.current ??= createIntakeRequestId();
+    creationPayload.current ??= payload;
+    let created = initiativeId && version
+      ? serverPayload.current && samePayload(serverPayload.current, payload)
+        ? { initiativeId, slug: slug ?? initiativeId, intakeVersionId: "", version }
+        : await updateIntakeDraft(token, initiativeId, payload, version)
+      : await createInitiative(
+          token,
+          creationPayload.current ?? payload,
+          requestId.current,
+        ).catch((err: unknown) => {
+          // A definitive rejection (not a lost response, 5xx or 429) means
+          // nothing was created: the next attempt must send what the user
+          // has now, under a fresh idempotency key. 409 is in the list on
+          // purpose: for a create it means the key was already used with a
+          // different payload, so replaying the pinned key and payload would
+          // repeat the 409 forever. A fresh key can leave an earlier draft
+          // behind in the visitor's own workspace, which is the lesser problem.
+          if (isApiError(err) && [400, 403, 404, 409, 413, 422].includes(err.status)) {
+            requestId.current = null;
+            creationPayload.current = null;
+          }
+          throw err;
+        });
+    if (!initiativeId && JSON.stringify(creationPayload.current) !== JSON.stringify(payload)) {
+      created = await updateIntakeDraft(
+        token,
+        created.initiativeId,
+        payload,
+        created.version,
+      );
+    }
+    setInitiativeId(created.initiativeId);
+    setSlug(created.slug);
+    setVersion(created.version);
+    serverPayload.current = payload;
+    if (session?.role !== "public") setSavedPayload(payload);
+    return created;
+  }
+
+  function reportError(err: unknown) {
+    if (isApiError(err)) {
+      const message = err.status === 409
+        ? err.code === "INTAKE_NOT_EDITABLE"
+          ? "This intake was already submitted and can no longer be edited. Open its case file from your initiatives list."
+          : "This draft changed in another tab. Reloading discards what you typed here, so copy your text first."
+        : apiErrorToMessage(err);
+      setError(message);
+      toast.error(message);
+      if (err.status === 401) {
+        logout();
+      }
+    } else {
+      setError("Something went wrong — please try again.");
+      toast.error("Something went wrong — please try again.");
+    }
+  }
+
   async function handleSubmit() {
-    if (!session) return;
-    setSubmitting(true);
+    if (!session || busyRef.current) return;
+    busyRef.current = true;
+    setBusy("submit");
     setError(null);
     try {
-      requestId.current ??= createIntakeRequestId();
-      creationPayload.current ??= payload;
-      let created = initiativeId && version
-        ? savedPayload && JSON.stringify(savedPayload) === JSON.stringify(payload)
-          ? { initiativeId, slug: slug ?? initiativeId, intakeVersionId: "", version }
-          : await updateIntakeDraft(session.token, initiativeId, payload, version)
-        : await createInitiative(
-            session.token,
-            creationPayload.current ?? payload,
-            requestId.current,
-          ).catch((err: unknown) => {
-            // A definitive rejection (not a lost response, 5xx or 429) means
-            // nothing was created: the next attempt must send what the user
-            // has now, under a fresh idempotency key. 409 is in the list on
-            // purpose: for a create it means the key was already used with a
-            // different payload, so replaying the pinned key and payload would
-            // repeat the 409 forever. A fresh key can leave an earlier draft
-            // behind in the visitor's own workspace, which is the lesser problem.
-            if (isApiError(err) && [400, 403, 404, 409, 413, 422].includes(err.status)) {
-              requestId.current = null;
-              creationPayload.current = null;
-            }
-            throw err;
-          });
-      if (!initiativeId && JSON.stringify(creationPayload.current) !== JSON.stringify(payload)) {
-        created = await updateIntakeDraft(
-          session.token,
-          created.initiativeId,
-          payload,
-          created.version,
-        );
-      }
-      setInitiativeId(created.initiativeId);
-      setSlug(created.slug);
-      setVersion(created.version);
-      setSavedPayload(payload);
+      // A real request is kept in this tab before it is sent, so a failed or
+      // lost send does not lose what the visitor typed.
+      if (session.role === "public") writePublicDraft(payload);
+      const created = await persistToServer(session.token);
       const submitted = await submitIntake(session.token, created.initiativeId);
       if (submitted.submitted) {
+        leavingRef.current = true;
+        if (session.role === "public") clearPublicDraft();
         // A public submitter goes to the confirmation page, not the case
         // file: the case file is an operations console full of internal
         // governance state, and dropping a member of the public into it
@@ -500,23 +695,43 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
         );
       }
     } catch (err) {
-      if (isApiError(err)) {
-        const message = err.status === 409
-          ? err.code === "INTAKE_NOT_EDITABLE"
-            ? "This intake was already submitted and can no longer be edited. Open its case file from your initiatives list."
-            : "This draft changed in another tab. Reloading discards what you typed here, so copy your text first."
-          : apiErrorToMessage(err);
-        setError(message);
-        toast.error(message);
-        if (err.status === 401) {
-          logout();
-        }
-      } else {
-        setError("Something went wrong — please try again.");
-        toast.error("Something went wrong — please try again.");
-      }
+      reportError(err);
     } finally {
-      setSubmitting(false);
+      busyRef.current = false;
+      if (mountedRef.current) setBusy(null);
+    }
+  }
+
+  async function handleSaveDraft() {
+    if (!session || busyRef.current) return;
+    busyRef.current = true;
+    setBusy("save");
+    setError(null);
+    try {
+      if (session.role === "public") {
+        if (writePublicDraft(payload)) {
+          setSavedPayload(payload);
+          setStatus("Not sent yet. Saved in this tab only; submit to send it to the team.");
+        } else {
+          setError("Could not save in this browser. Keep this tab open and submit when ready.");
+        }
+        return;
+      }
+      const created = await persistToServer(session.token);
+      const time = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      setStatus(`Draft saved at ${time}.`);
+      toast.success("Draft saved.");
+      // Only a brand-new form moves: the edit page is already the draft's home.
+      // A slow save must not pull the visitor back after they have left.
+      if (!initialInitiativeId && mountedRef.current) {
+        leavingRef.current = true;
+        router.replace(`/initiatives/${created.slug}/edit`);
+      }
+    } catch (err) {
+      reportError(err);
+    } finally {
+      busyRef.current = false;
+      if (mountedRef.current) setBusy(null);
     }
   }
 
@@ -557,6 +772,7 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
                     <span className="font-medium text-foreground">Send a real request</span>{" "}
                     — it goes to the team running this site, who read every one
                     and reply by email to the address you give.
+                    {hasTabDraft ? " You have an unsent request saved in this tab; choose this to continue it." : ""}
                   </span>
                 ) : null}
               </div>
@@ -612,16 +828,16 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
           </Alert>
         ) : null}
 
-        {mode !== "production" && (
+        {mode === "production" || isPublic ? null : (
           <div>
-            <Button type="button" variant="outline" onClick={loadChampion} disabled={submitting} data-slot="load-champion">
+            <Button type="button" variant="outline" onClick={loadChampion} disabled={busy !== null} data-slot="load-champion">
               Use a sample initiative
             </Button>
           </div>
         )}
 
         <fieldset
-          disabled={!isRequester || submitting}
+          disabled={!isRequester || busy !== null}
           data-slot="intake-fieldset"
           className="flex min-w-0 flex-col gap-4 border-0 p-0"
         >
@@ -983,14 +1199,26 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
 
         <div className="flex items-center gap-3">
           {session && isRequester ? (
-            <Button
-              type="button"
-              disabled={!completeness.canSubmit || submitting}
-              onClick={() => void handleSubmit()}
-              data-slot="submit-intake"
-            >
-              {submitting ? "Submitting…" : "Submit intake"}
-            </Button>
+            <>
+              <Button
+                type="button"
+                variant="outline"
+                aria-describedby={titleHintShown ? titleHintId : undefined}
+                disabled={!unsaved || busy !== null || (!isPublic && payload.basics.title.trim() === "")}
+                onClick={() => void handleSaveDraft()}
+                data-slot="save-intake-draft"
+              >
+                {busy === "save" ? "Saving…" : "Save draft"}
+              </Button>
+              <Button
+                type="button"
+                disabled={!completeness.canSubmit || busy !== null}
+                onClick={() => void handleSubmit()}
+                data-slot="submit-intake"
+              >
+                {busy === "submit" ? "Submitting…" : "Submit intake"}
+              </Button>
+            </>
           ) : (
             <DisableWithTooltip label="Submit intake" requiresRole="requester" />
           )}
@@ -1000,6 +1228,13 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
             </span>
           ) : null}
         </div>
+        {titleHintShown ? (
+          <p id={titleHintId} className="text-xs text-muted-foreground">Add an initiative title to save a draft.</p>
+        ) : null}
+        {/* Mounted at all times so screen readers announce a change of text. */}
+        <p role="status" className="text-xs text-muted-foreground empty:sr-only" data-slot="intake-save-status">
+          {status && !unsaved ? status : ""}
+        </p>
         {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
       </div>
 

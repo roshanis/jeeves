@@ -256,6 +256,15 @@ test.describe("live demo loop: create → QC → triage → draft run → sign �
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     const revisedFallback = "The on-call team pauses generation and restores the manual queue.";
     await fallback.fill(revisedFallback);
+    phase = "save draft";
+    await page.locator('[data-slot="save-intake-draft"]').click();
+    await expect(page.locator('[data-slot="intake-save-status"]')).toContainText("Draft saved");
+    // Saved work must reload without the browser's leave prompt, and keep the edit.
+    const dialogs: string[] = [];
+    page.on("dialog", (dialog) => { dialogs.push(dialog.type()); void dialog.dismiss(); });
+    await page.reload();
+    expect(dialogs).toEqual([]);
+    await expect(fallback).toHaveValue(revisedFallback);
     phase = "submit draft";
     await page.locator('[data-slot="submit-intake"]').click();
     await expect(page).toHaveURL(new RegExp(`/initiatives/${slug}$`));

@@ -12,7 +12,7 @@ import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { renderWithProviders } from "./helpers";
 import { LiveSessionProvider, resetLiveSessionForTests } from "@/lib/client/session-context";
-import { IntakeForm } from "@/components/jeeves/intake-form";
+import { IntakeForm, PUBLIC_DRAFT_KEY } from "@/components/jeeves/intake-form";
 
 const mocks = vi.hoisted(() => ({ postPublicSession: vi.fn(), postSession: vi.fn() }));
 
@@ -37,6 +37,7 @@ function render() {
 describe("IntakeForm — two ways in", () => {
   beforeEach(() => {
     resetLiveSessionForTests();
+    window.sessionStorage.removeItem(PUBLIC_DRAFT_KEY);
     mocks.postPublicSession.mockReset();
     mocks.postPublicSession.mockResolvedValue({
       token: "public-tok",
@@ -48,6 +49,7 @@ describe("IntakeForm — two ways in", () => {
 
   afterEach(() => {
     resetLiveSessionForTests();
+    window.sessionStorage.removeItem(PUBLIC_DRAFT_KEY);
   });
 
   it("offers both doors, labelled for where they lead", () => {
@@ -106,5 +108,15 @@ describe("IntakeForm — two ways in", () => {
     fireEvent.click(send);
     fireEvent.click(send);
     await waitFor(() => expect(mocks.postPublicSession).toHaveBeenCalledTimes(1));
+  });
+
+  it("offers no sample initiative for a real request, and clears one loaded in the preview", async () => {
+    render();
+    fireEvent.click(screen.getByRole("button", { name: "Use a sample initiative" }));
+    expect((screen.getByLabelText("Initiative title") as HTMLInputElement).value).not.toBe("");
+    fireEvent.click(screen.getByRole("button", { name: /send a real request/i }));
+    await waitFor(() => expect(screen.getByText(/sending a real request/i)).toBeDefined());
+    expect(screen.queryByRole("button", { name: "Use a sample initiative" })).toBeNull();
+    expect((screen.getByLabelText("Initiative title") as HTMLInputElement).value).toBe("");
   });
 });

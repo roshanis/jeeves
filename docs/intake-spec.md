@@ -12,6 +12,8 @@ M2 conversational intake uses the same shape (plan §13 and agents/intake/instru
 Field `key` values are the canonical keys used in the `IntakeVersion.payload` JSON (§3). Types are
 TypeScript-ish; validation is enforced client-side on submit and server-side on write (server is the
 source of truth).
+Saving a draft (create and edit-draft) checks only the schema caps; the BLOCKING completeness rules
+gate submit only.
 
 ### (a) Basics
 
