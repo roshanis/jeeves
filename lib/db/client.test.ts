@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { sql } from "drizzle-orm";
 import { getDb, localPgliteDirectory } from "./client";
 
 const originalDirectory = process.env.JEEVES_PGLITE_DIR;
@@ -57,6 +58,32 @@ describe("getDb Neon pool hardening", () => {
       expect(JSON.stringify(log.mock.calls)).not.toContain("secret-pw");
     } finally {
       log.mockRestore();
+      await closeDb();
+    }
+  });
+});
+
+describe("getDb transaction error redaction", () => {
+  it("returns a handle whose transaction sanitises failed statements", async () => {
+    const { closeDb } = await import("./client");
+    delete process.env.VERCEL;
+    delete process.env.DATABASE_URL;
+    delete process.env.POSTGRES_URL;
+    process.env.JEEVES_PGLITE_DIR = `memory://client-test-${Date.now()}`;
+    try {
+      const db = getDb();
+      const err = (await db
+        .transaction(async (tx) => {
+          await tx.execute(sql`select * from no_such_table_xyz where a = ${"marker-77aa"}`);
+        })
+        .then(
+          () => null,
+          (e: unknown) => e,
+        )) as Error | null;
+      expect(err).toBeInstanceOf(Error);
+      expect(err!.message).not.toContain("marker-77aa");
+      expect(err!.message).not.toContain("params");
+    } finally {
       await closeDb();
     }
   });
