@@ -1289,6 +1289,9 @@ export async function decide(
   if (decision !== "conditionally_approved" && conditions.length > 0) {
     throw new ValidationError("conditions are only allowed on a conditionally_approved decision");
   }
+  if (conditions.some((c) => !c.text.trim() || !c.controlId.trim()) || citations.some((c) => !c.trim())) {
+    throw new ValidationError("conditions need text and a control id, and citations cannot be blank");
+  }
 
   return db.transaction(async (tx) => {
     const initiative = await loadInitiativeOrThrow(tx, initiativeId, true);
