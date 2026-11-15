@@ -36,5 +36,9 @@ export function contactEmailLabel(url: string): string {
 /** Last substantive review date for the privacy and terms pages. */
 export const LEGAL_LAST_UPDATED = "2026-09-13";
 
-/** Last substantive change to the marketing pages (sitemap lastmod); bump when their content changes. */
+/**
+ * Last substantive change to the marketing pages (sitemap lastmod); bump when
+ * their content changes. The legal pages use LEGAL_LAST_UPDATED, which the
+ * owner sets.
+ */
 export const MARKETING_LAST_MODIFIED = "2026-11-15";
