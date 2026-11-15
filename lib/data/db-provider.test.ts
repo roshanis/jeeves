@@ -886,6 +886,62 @@ describe("lib/data/db-provider read-model edge cases (peer review, low)", () => 
     expect(m.medianReviewCycleDays).toBe(1.9);
   });
 
+  it("renders the approver's display name in decision rows and the member-facing-phi row", async () => {
+    await db.insert(initiatives).values({
+      id: "edge-phi",
+      slug: "edge-phi",
+      title: "Edge PHI initiative",
+      requester: "Priya Raman",
+      state: "approved",
+      tier: "high",
+      accountableApprover: "angela-torres", // persona id, as written by decide()
+      createdAt: t0,
+      updatedAt: t0,
+      workspaceId: null,
+    });
+    await db.insert(intakeVersions).values({
+      id: "edge-phi-iv",
+      initiativeId: "edge-phi",
+      version: 1,
+      fields: {},
+      createdAt: t0,
+    });
+    await db.insert(riskAssessments).values({
+      id: "edge-phi-ra",
+      initiativeId: "edge-phi",
+      version: 1,
+      intakeVersionId: "edge-phi-iv",
+      tier: "high",
+      flags: { phi: true, memberFacing: true },
+      requiredDomains: ["security"],
+      createdAt: t0,
+    });
+    await db.insert(reviewCycles).values({
+      id: "edge-phi-c",
+      initiativeId: "edge-phi",
+      kind: "initial",
+      riskAssessmentId: "edge-phi-ra",
+      openedAt: t0,
+      closedAt: t0,
+    });
+    await db.insert(initiativeDecisions).values({
+      id: "edge-phi-d",
+      initiativeId: "edge-phi",
+      cycleId: "edge-phi-c",
+      type: "approved",
+      approver: "angela-torres",
+      policyId: null,
+      citations: [],
+      conditions: [],
+      decidedAt: t0,
+    });
+    const provider = new DbDataProvider(db);
+    const detail = await provider.getInitiativeDetail("edge-phi");
+    expect(detail!.decisions[0]!.approver).toBe("Angela Torres");
+    const row = (await provider.auditQuery("member-facing-phi")).find((r) => r.slug === "edge-phi");
+    expect(row?.approver).toBe("Angela Torres");
+  });
+
   it("ignores returned reviews of closed cycles in overdueControls and the overdue-controls query", async () => {
     const provider = new DbDataProvider(db);
     expect((await provider.outcomeMetrics()).overdueControls).toBe(0);

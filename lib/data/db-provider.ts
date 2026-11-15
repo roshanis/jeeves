@@ -487,7 +487,7 @@ export class DbDataProvider implements DataProvider {
       .sort((a, b) => a.decidedAt.getTime() - b.decidedAt.getTime())
       .map((d) => ({
         type: d.type as DecisionRow["type"],
-        approver: d.approver,
+        approver: displayNameFor(d.approver),
         at: toIso(d.decidedAt),
         conditions: d.conditions,
         citations: d.citations,
@@ -730,7 +730,7 @@ export class DbDataProvider implements DataProvider {
               title: init.title,
               tier: (init.tier ?? null) as Tier | null,
               state: init.state,
-              approver: init.accountableApprover,
+              approver: init.accountableApprover ? displayNameFor(init.accountableApprover) : null,
               detail: controlSummary,
               eventTs: null,
             };
