@@ -128,6 +128,10 @@ export function DisableWithTooltip({
  * aria-disabled (not disabled) keeps the button focusable and named. The reason is linked with
  * aria-describedby for screen readers; sighted hover/focus users get the tooltip, and a tap or
  * click opens the same tooltip (controlled) so touch users see it too, without layout shift.
+ * A tap, click or key press pins the reason: it stays until a press elsewhere, Escape, focus
+ * leaving the action or another tooltip opening; hover without a press behaves as before. The
+ * press also focuses the action, because Safari does not focus a clicked button and the reason
+ * would then stay when Tab moves on.
  */
 function DisabledAction({ label, className, variant, dataSlot, reason, reasonId }: {
   label: string;
@@ -138,10 +142,23 @@ function DisabledAction({ label, className, variant, dataSlot, reason, reasonId 
   reasonId: string;
 }) {
   const [open, setOpen] = React.useState(false);
+  const pinned = React.useRef(false);
   return (
     <span className={cn("inline-flex", className)}>
-      <Tooltip open={open} onOpenChange={setOpen}>
+      <Tooltip
+        open={open}
+        onOpenChange={(next, details) => {
+          // A reason that was asked for stays when the mouse leaves. Every other close dismisses it.
+          if (!next && pinned.current && details.reason === "trigger-hover") {
+            details.cancel();
+            return;
+          }
+          if (!next) pinned.current = false;
+          setOpen(next);
+        }}
+      >
         <TooltipTrigger
+          closeOnClick={false}
           render={
             <Button
               type="button"
@@ -150,7 +167,11 @@ function DisabledAction({ label, className, variant, dataSlot, reason, reasonId 
               variant={variant}
               className="w-full cursor-not-allowed opacity-50"
               data-slot={dataSlot ?? "button"}
-              onClick={() => setOpen(true)}
+              onClick={(event) => {
+                pinned.current = true;
+                event.currentTarget.focus({ preventScroll: true });
+                setOpen(true);
+              }}
             >
               {label}
             </Button>
