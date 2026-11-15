@@ -1086,7 +1086,9 @@ export async function signReview(
         signedMd: draftMd, signedMdSha256: createHash("sha256").update(draftMd).digest("hex"),
         evidenceSnapshot, citations: decision.citations, citationProvenance: decision.citationProvenance,
         missingEvidence: decision.missingEvidence, evidenceRequests: decision.evidenceRequests,
-        sourceMetadata: decision.sourceMetadata },
+        sourceMetadata: decision.sourceMetadata,
+        editedByReviewer: draftMd !== decision.draftMd,
+        agentDraftSha256: decision.draftMd === null ? null : createHash("sha256").update(decision.draftMd).digest("hex") },
     });
     return { cycleId, domain, status: "signed" };
   });

@@ -170,6 +170,18 @@ describe("lib/services/initiative-service", () => {
         activeAttemptId: null, activeAttemptExpiresAt: null });
       expect((await db.select().from(auditEvents).where(eq(auditEvents.id, signed.signatureEventId!)))[0]).toEqual(receipt);
     });
+    it("marks a reviewer-edited signature and keeps the hash of the agent draft (api-initiatives-F28)", async () => {
+      const { cycleId } = await reviewFixture();
+      const initial = await clinical(cycleId);
+      await svc.signReview(db, cycleId, "clinical-safety", REVIEWER, null,
+        { ...viewed, editedDraftMd: "Human-edited exact text" });
+      const signed = await clinical(cycleId);
+      const [receipt] = await db.select().from(auditEvents).where(eq(auditEvents.id, signed.signatureEventId!));
+      expect(receipt.metadata).toMatchObject({
+        editedByReviewer: true,
+        agentDraftSha256: createHash("sha256").update(initial.draftMd!).digest("hex"),
+      });
+    });
     it("forbids sign and return after a decision closes the cycle", async () => {
       const { initiativeId, cycleId } = await reviewFixture();
       await svc.decide(db, initiativeId, APPROVER, null, {
