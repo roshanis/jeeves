@@ -711,6 +711,7 @@ export async function triage(
   initiativeId: string,
   actor: Actor = SYSTEM_ACTOR,
   sessionWorkspaceId: string | null = null,
+  passedBy?: Actor,
 ): Promise<TriageFastLaneResult | TriageReviewResult> {
   return db.transaction(async (tx) => {
     const initiative = await loadInitiativeOrThrow(tx, initiativeId);
@@ -739,6 +740,22 @@ export async function triage(
       `Deterministic triage classified tier=${tier} with ${domains.length} required domain(s): ${domains.join(", ")}.`,
       { flags, tier, requiredDomains: domains },
     );
+    // The human who chose to pass QC (the route gates this to program/admin)
+    // is the accountable actor; the triage transition above stays `system`.
+    if (passedBy) {
+      await tx.insert(auditEvents).values({
+        id: `evt-${randomUUID()}`,
+        initiativeId,
+        ts: new Date(nowTs()),
+        actor: passedBy.id,
+        actorRole: passedBy.role,
+        action: "qc_passed",
+        detail: `QC passed by ${passedBy.id} (${passedBy.role}); routed to deterministic triage.`,
+        before: "in_qc",
+        after: "in_qc",
+        metadata: { passedBy: { id: passedBy.id, role: passedBy.role } },
+      });
+    }
 
     // 2. risk_assessments row (versioned)
     const existingRa = await tx

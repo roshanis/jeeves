@@ -10,7 +10,8 @@
  *                  fan-out: triage asks every required domain at once, so
  *                  this is the last point at which an incomplete intake
  *                  costs nobody else time.
- *  - in_qc      -> "Run triage" (the server records the system actor) or
+ *  - in_qc      -> "Run triage" (Program Office / Admin pass QC; the
+ *                  server records them and the system actor) or
  *                  "Return to requester" (Program Office / Admin, reason
  *                  required).
  *  - decision   -> shown when the server's decision readiness allows it.
@@ -168,6 +169,7 @@ export function LiveActionsBar({ initiativeId, isSeeded, state, decisionReadines
           <div className="flex items-center gap-3">
             <DisableWithTooltip
               label="Run triage"
+              requiresRole="program"
               onAction={() => void handleTriage()}
               pending={triaging}
               pendingLabel="Running triage…"

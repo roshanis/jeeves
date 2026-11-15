@@ -1,11 +1,12 @@
 /**
- * POST /api/initiatives/[id]/triage — deterministic triage (task brief
- * deliverable 3). Any authenticated demo persona may trigger it (it's a
- * deterministic system computation, not a human judgment call — matching
+ * POST /api/initiatives/[id]/triage — pass QC and run deterministic triage.
+ * Triage itself is a deterministic system computation (matching
  * `lib/lifecycle/transitions.ts`'s `triage` rule, which only permits actor
- * role `system`); the service always records the `system` actor on the
- * resulting audit event/transition regardless of which persona clicked
- * "Run triage", so no role check gates this route beyond "has a session".
+ * role `system`), so the transition keeps the `system` actor. Choosing to
+ * pass QC, though, is the human decision (the alternative being
+ * `qc-return`), so only Program Office and Admin may call this route (403
+ * otherwise), and the session's actor is recorded as a `qc_passed` audit
+ * event in the same transaction via `triage()`'s `passedBy` argument.
  * `SYSTEM_ACTOR` is passed explicitly (rather than relying on `triage()`'s
  * default) so the workspace guard below can be passed positionally after it.
  *
@@ -17,6 +18,7 @@
  * Body:  (none)
  * 200:   TriageFastLaneResult | TriageReviewResult (see initiative-service.ts)
  * 401/429/404: as other mutating routes.
+ * 403:   { error }  (the persona may not pass QC)
  * 409:   { error: string }  (concurrent triage()/submitIntake() raced this initiative — retry)
  */
 import { getDb } from "@/lib/db/client";
@@ -33,11 +35,15 @@ export async function POST(
     return Response.json({ error: guard.failure.message }, { status: guard.failure.status });
   }
 
+  if (guard.actor.role !== "program" && guard.actor.role !== "admin") {
+    return Response.json({ error: "only the Program Office or an Admin can pass QC" }, { status: 403 });
+  }
+
   const { id } = await context.params;
   const db = getDb();
 
   try {
-    const result = await triage(db, id, SYSTEM_ACTOR, guard.workspaceId);
+    const result = await triage(db, id, SYSTEM_ACTOR, guard.workspaceId, guard.actor);
     return Response.json(result, { status: 200 });
   } catch (err) {
     if (err instanceof NotFoundError) {

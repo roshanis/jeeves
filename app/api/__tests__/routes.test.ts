@@ -113,13 +113,14 @@ async function issueSessionInWorkspace(
  * lib/services/qc-gate.test.ts.
  *
  * `workspaceCookie` is the browser's: the QC session has to land in the same
- * workspace as the initiative, or it gets the stranger's 404.
+ * workspace as the initiative, or it gets the stranger's 404. Returns the
+ * Program Office token: passing QC (POST /triage) is the same persona's call.
  */
 async function passQcOverHttp(
   initiativeId: string,
   workspaceCookie: string,
   ip: string,
-): Promise<void> {
+): Promise<string> {
   const { token } = await issueSessionInWorkspace("nia-okafor", workspaceCookie);
   const { POST } = await import("../initiatives/[id]/qc/route");
   const res = await POST(
@@ -130,6 +131,7 @@ async function passQcOverHttp(
     { params: Promise.resolve({ id: initiativeId }) },
   );
   expect(res.status).toBe(200);
+  return token;
 }
 
 const CHAMPION_PAYLOAD = {
@@ -336,13 +338,13 @@ describe("full champion route chain: submit -> triage -> draft-run -> sign -> de
     const submitJson = await submitRes.json();
     expect(submitJson.submitted).toBe(true);
 
-    await passQcOverHttp(initiativeId, workspaceCookie, "10.0.0.1");
+    const programToken = await passQcOverHttp(initiativeId, workspaceCookie, "10.0.0.1");
 
     const { POST: triagePost } = await import("../initiatives/[id]/triage/route");
     const triageRes = await triagePost(
       new Request(`http://localhost/api/initiatives/${initiativeId}/triage`, {
         method: "POST",
-        headers: bearer(requesterToken, "10.0.0.1"),
+        headers: bearer(programToken, "10.0.0.1"),
       }),
       { params: Promise.resolve({ id: initiativeId }) },
     );
@@ -556,12 +558,12 @@ describe("deep-review budget multiplier on draft-run", () => {
       }),
       { params: Promise.resolve({ id: initiativeId }) },
     );
-    await passQcOverHttp(initiativeId, workspaceCookie, ip);
+    const programToken = await passQcOverHttp(initiativeId, workspaceCookie, ip);
     const { POST: triagePost } = await import("../initiatives/[id]/triage/route");
     await triagePost(
       new Request(`http://localhost/api/initiatives/${initiativeId}/triage`, {
         method: "POST",
-        headers: bearer(token, ip),
+        headers: bearer(programToken, ip),
       }),
       { params: Promise.resolve({ id: initiativeId }) },
     );
@@ -661,12 +663,12 @@ describe("budget-exhaustion 429 on draft-run", () => {
       }),
       { params: Promise.resolve({ id: initiativeId }) },
     );
-    await passQcOverHttp(initiativeId, workspaceCookie, "11.0.0.1");
+    const programToken = await passQcOverHttp(initiativeId, workspaceCookie, "11.0.0.1");
     const { POST: triagePost } = await import("../initiatives/[id]/triage/route");
     await triagePost(
       new Request(`http://localhost/api/initiatives/${initiativeId}/triage`, {
         method: "POST",
-        headers: bearer(requesterToken, "11.0.0.1"),
+        headers: bearer(programToken, "11.0.0.1"),
       }),
       { params: Promise.resolve({ id: initiativeId }) },
     );
@@ -706,12 +708,12 @@ describe("POST /api/reviews/[cycleId]/[domain]/run — on-demand agent run", () 
       }),
       { params: Promise.resolve({ id: initiativeId }) },
     );
-    await passQcOverHttp(initiativeId, workspaceCookie, ip);
+    const programToken = await passQcOverHttp(initiativeId, workspaceCookie, ip);
     const { POST: triagePost } = await import("../initiatives/[id]/triage/route");
     const triageRes = await triagePost(
       new Request(`http://localhost/api/initiatives/${initiativeId}/triage`, {
         method: "POST",
-        headers: bearer(requesterToken, ip),
+        headers: bearer(programToken, ip),
       }),
       { params: Promise.resolve({ id: initiativeId }) },
     );
@@ -940,12 +942,12 @@ describe("GET routes stay public read-only", () => {
       }),
       { params: Promise.resolve({ id: initiativeId }) },
     );
-    await passQcOverHttp(initiativeId, workspaceCookie, "12.0.0.1");
+    const programToken = await passQcOverHttp(initiativeId, workspaceCookie, "12.0.0.1");
     const { POST: triagePost } = await import("../initiatives/[id]/triage/route");
     const triageRes = await triagePost(
       new Request(`http://localhost/api/initiatives/${initiativeId}/triage`, {
         method: "POST",
-        headers: bearer(requesterToken, "12.0.0.1"),
+        headers: bearer(programToken, "12.0.0.1"),
       }),
       { params: Promise.resolve({ id: initiativeId }) },
     );
@@ -985,12 +987,12 @@ describe("workspace isolation on mutation routes (external-review finding #1)", 
       }),
       { params: Promise.resolve({ id: initiativeId }) },
     );
-    await passQcOverHttp(initiativeId, workspaceCookie, "50.0.0.1");
+    const programToken = await passQcOverHttp(initiativeId, workspaceCookie, "50.0.0.1");
     const { POST: triagePost } = await import("../initiatives/[id]/triage/route");
     await triagePost(
       new Request(`http://localhost/api/initiatives/${initiativeId}/triage`, {
         method: "POST",
-        headers: bearer(requesterToken, "50.0.0.1"),
+        headers: bearer(programToken, "50.0.0.1"),
       }),
       { params: Promise.resolve({ id: initiativeId }) },
     );
@@ -1091,10 +1093,12 @@ describe("workspace isolation on submit/triage routes (external-review finding P
       { params: Promise.resolve({ id: initiativeId }) },
     );
 
-    await passQcOverHttp(initiativeId, workspaceCookie, "53.0.0.4");
+    const programToken = await passQcOverHttp(initiativeId, workspaceCookie, "53.0.0.4");
 
     const { POST: triagePost } = await import("../initiatives/[id]/triage/route");
-    const { token: strangerToken } = await issueSessionInWorkspace("angela-torres");
+    // A Program Office session from a different browser: the role gate passes,
+    // the workspace check must still 404.
+    const { token: strangerToken } = await issueSessionInWorkspace("nia-okafor");
     const strangerRes = await triagePost(
       new Request(`http://localhost/api/initiatives/${initiativeId}/triage`, {
         method: "POST",
@@ -1107,7 +1111,7 @@ describe("workspace isolation on submit/triage routes (external-review finding P
     const ownerRes = await triagePost(
       new Request(`http://localhost/api/initiatives/${initiativeId}/triage`, {
         method: "POST",
-        headers: bearer(ownerToken, "53.0.0.3"),
+        headers: bearer(programToken, "53.0.0.3"),
       }),
       { params: Promise.resolve({ id: initiativeId }) },
     );
@@ -1211,14 +1215,14 @@ describe("409 conflict mapping on submit/triage routes (external-review finding 
 
     // Through the QC gate FIRST — the injector arms the next transaction, and
     // the QC hop would otherwise be the one it intercepts.
-    await passQcOverHttp(initiativeId, workspaceCookie, "55.0.0.3");
+    const programToken = await passQcOverHttp(initiativeId, workspaceCookie, "55.0.0.3");
 
     const restore = injectConcurrentInitiativeWrite(initiativeId, "triaged");
     const { POST: triagePost } = await import("../initiatives/[id]/triage/route");
     const res = await triagePost(
       new Request(`http://localhost/api/initiatives/${initiativeId}/triage`, {
         method: "POST",
-        headers: bearer(token, "55.0.0.2"),
+        headers: bearer(programToken, "55.0.0.2"),
       }),
       { params: Promise.resolve({ id: initiativeId }) },
     );
@@ -1254,12 +1258,12 @@ describe("POST /api/initiatives/[id]/draft-run — role + workspace authorizatio
       }),
       { params: Promise.resolve({ id: initiativeId }) },
     );
-    await passQcOverHttp(initiativeId, workspaceCookie, ip);
+    const programToken = await passQcOverHttp(initiativeId, workspaceCookie, ip);
     const { POST: triagePost } = await import("../initiatives/[id]/triage/route");
     await triagePost(
       new Request(`http://localhost/api/initiatives/${initiativeId}/triage`, {
         method: "POST",
-        headers: bearer(token, ip),
+        headers: bearer(programToken, ip),
       }),
       { params: Promise.resolve({ id: initiativeId }) },
     );
@@ -1440,5 +1444,63 @@ describe("POST /api/session — signed workspace cookie", () => {
     expect(res2.status).toBe(200);
     const json2 = (await res2.json()) as { workspaceId: string };
     expect(json2.workspaceId).not.toBe(json1.workspaceId);
+  });
+});
+
+/* ---------------------------------------------------------------------------
+ * Triage route: passing QC is a human judgment (Program Office / Admin), and
+ * illegal-state calls map to 4xx instead of an opaque 500.
+ * ------------------------------------------------------------------------ */
+describe("triage route: QC pass role gate and error mapping", () => {
+  async function submittedInitiative(ip: string, key: string) {
+    const { token, workspaceCookie } = await issueSessionInWorkspace("priya-raman");
+    const { POST: createInitiative } = await import("../initiatives/route");
+    const createRes = await createInitiative(
+      new Request("http://localhost/api/initiatives", {
+        method: "POST",
+        headers: bearer(token, ip),
+        body: JSON.stringify({ payload: CHAMPION_PAYLOAD, requestId: key }),
+      }),
+    );
+    const { initiativeId } = await createRes.json();
+    return { token, workspaceCookie, initiativeId: initiativeId as string };
+  }
+  async function submit(initiativeId: string, token: string, ip: string) {
+    const { POST } = await import("../initiatives/[id]/submit/route");
+    await POST(
+      new Request(`http://localhost/api/initiatives/${initiativeId}/submit`, { method: "POST", headers: bearer(token, ip) }),
+      { params: Promise.resolve({ id: initiativeId }) },
+    );
+  }
+  async function triageAs(initiativeId: string, token: string, ip: string): Promise<Response> {
+    const { POST } = await import("../initiatives/[id]/triage/route");
+    return POST(
+      new Request(`http://localhost/api/initiatives/${initiativeId}/triage`, { method: "POST", headers: bearer(token, ip) }),
+      { params: Promise.resolve({ id: initiativeId }) },
+    );
+  }
+  async function stateOf(id: string): Promise<string> {
+    return (await testDb.select().from(initiatives).where(eq(initiatives.id, id)))[0]!.state;
+  }
+
+  it("a requester cannot pass QC (403, state stays in_qc); the Program Office can, and is recorded", async () => {
+    const { token, workspaceCookie, initiativeId } = await submittedInitiative("71.0.0.1", "routes-triage-gate-0001");
+    await submit(initiativeId, token, "71.0.0.1");
+    await passQcOverHttp(initiativeId, workspaceCookie, "71.0.0.2");
+
+    const denied = await triageAs(initiativeId, token, "71.0.0.1");
+    expect(denied.status).toBe(403);
+    expect(await stateOf(initiativeId)).toBe("in_qc");
+
+    const { token: niaToken } = await issueSessionInWorkspace("nia-okafor", workspaceCookie);
+    const ok = await triageAs(initiativeId, niaToken, "71.0.0.3");
+    expect(ok.status).toBe(200);
+    const events = await testDb.select().from(auditEvents).where(eq(auditEvents.initiativeId, initiativeId));
+    const passed = events.find((e) => e.action === "qc_passed");
+    expect(passed).toBeDefined();
+    expect(passed!.actor).toBe("nia-okafor");
+    expect(passed!.actorRole).toBe("program");
+    const triageEvent = events.find((e) => e.action === "triage");
+    expect(triageEvent!.actorRole).toBe("system");
   });
 });

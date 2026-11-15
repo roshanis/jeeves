@@ -332,7 +332,7 @@ describe("GET /api/initiatives/[id]/draft-run — read isolation (progress polli
     const triageRes = await triagePost(
       new Request(`http://localhost/api/initiatives/${initiativeId}/triage`, {
         method: "POST",
-        headers: bearer(token, ip),
+        headers: bearer(program.token, ip),
       }),
       { params: Promise.resolve({ id: initiativeId }) },
     );

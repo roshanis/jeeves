@@ -57,6 +57,7 @@ describe("case review continuity", () => {
   it("offers triage for the server-owned in-QC case without registry state", () => {
     // Triage is reachable only from `in_qc` since the QC gate: a submitted
     // intake is checked by the Program Office before any domain is asked.
+    mocks.session.mockReturnValue({ session: { ...requester, role: "program" } });
     renderWithProviders(<LiveActionsBar initiativeId="server-id" isSeeded={false} state="in_qc" />);
     expect((screen.getByRole("button", { name: "Run triage" }) as HTMLButtonElement).disabled).toBe(false);
   });
