@@ -44,7 +44,14 @@ export const CONSOLE_PATH_PREFIXES = [
 
 export const MARKETING_PATH_PREFIXES = ["/frameworks", "/pilot", "/privacy", "/terms", "/thank-you"] as const;
 
-export type PathClass = "console" | "marketing" | "home" | "other";
+/**
+ * Demo-only pages outside both route groups. A production install has none, so
+ * they answer the same bare 404 as the marketing pages instead of rendering the
+ * console's not-found page.
+ */
+export const DEMO_ONLY_PAGE_PREFIXES = ["/operator"] as const;
+
+export type PathClass = "console" | "marketing" | "demo-only" | "home" | "other";
 
 /** `/initiatives/<slug>/detail-data` is a route handler: it answers 401 JSON itself. */
 const ROUTE_HANDLER_UNDER_CONSOLE = /^\/initiatives\/[^/]+\/detail-data\/?$/;
@@ -58,6 +65,7 @@ export function classifyPath(pathname: string): PathClass {
   if (ROUTE_HANDLER_UNDER_CONSOLE.test(pathname)) return "other";
   if (CONSOLE_PATH_PREFIXES.some((prefix) => under(pathname, prefix))) return "console";
   if (MARKETING_PATH_PREFIXES.some((prefix) => under(pathname, prefix))) return "marketing";
+  if (DEMO_ONLY_PAGE_PREFIXES.some((prefix) => under(pathname, prefix))) return "demo-only";
   return "other";
 }
 
@@ -71,7 +79,7 @@ export type RouteDecision =
  *
  * Production:
  *  - "/" redirects to the console (what the landing page does itself);
- *  - a marketing page is a 404 (a production install has none);
+ *  - a marketing or demo-only page is a 404 (a production install has none);
  *  - a console page with no credential redirects to sign-in; with one it goes
  *    through, and the page decides whether the credential is valid;
  *  - everything else (sign-in, the API, assets) is left to its own handling.
@@ -82,6 +90,7 @@ export function productionRouteDecision(pathname: string, hasCredential: boolean
     case "home":
       return { kind: "redirect", to: CONSOLE_HOME };
     case "marketing":
+    case "demo-only":
       return { kind: "not-found" };
     case "console":
       return hasCredential ? { kind: "next" } : { kind: "redirect", to: SIGN_IN_PATH };
