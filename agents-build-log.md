@@ -1747,3 +1747,16 @@ Hard rules: no violations found.
 - Codex: anything shown to a viewer reads review requests through `undeliveredNotificationsForViewer`. `undeliveredNotifications` is unscoped and must not feed a page or a route.
 - Merge order is unchanged: #24, then #25, then #26 into #23, then #23.
 - Open: the small fixes (wave 3) follow as separate pull requests stacked on #25 and #26.
+
+## [AGENT: Claude] [2026-11-15T10:31Z]
+### Action: implementer + reviewer: merge of the two main-line corrections into the production-mode fixes (PR #26), after CI cancelled the unit job on 9cf631a (same human request as the entries above)
+### Files changed: by the merge: lib/db/test-client.ts, lib/db/test-client.test.ts (new), lib/db/redact-error.test.ts, docs/ARCHITECTURE.md. No shared file (CI, deploy templates, migrations, schema, package files, agent instructions) is touched.
+### Diff summary:
+- CI on 9cf631a: "Typecheck, lint, unit tests" was cancelled by its 30-minute limit after 113 of 223 test files, with no test failed. The other three jobs passed (container image build, production-mode smoke test, Playwright golden path). The same test files ran a third slower on that runner than in the run for 368e45c, where the job took 24 minutes 53 seconds. It was not re-run: the cause is the length of the suite, so the fix is the snapshot helper from the main line (62c2f8b, finding tests-F0), merged here. The limit in the workflow file is unchanged. `clearInstallationFixtures` is unchanged.
+- The Reviews page scoping (5bbf80e, finding own-F18) changes nothing on this line: it already had those three files from 87e75bb, and the main line now carries the same ones.
+- Correction to the 2026-11-15T08:46Z entry. Its last "Verified" sentence said that the sign-in helper presses "Start demo" without waiting for the page to hydrate. That does not explain the failed browser run: a press before hydration still signs in, 150 of 150 further runs passed (140 of them under heavy CPU and build load), and the failures in the first measurement came from the session rate limit of the measuring loop itself. The cause of the one failed run at 85f8f95 is not established; the most likely one is the test server stalling under the load of the other runs on the machine. Nothing was changed in the helper.
+### Verified: unit suite with coverage 224 files, 2,751 tests, all passed (statements 88.0%, branches 81.6%, functions 90.7%, lines 90.5%), run on the merge of the first version of 62c2f8b; the final version differs in lib/db/redact-error.test.ts and docs/ARCHITECTURE.md, so that suite and eight others (the helper, the deployment evidence, the three installation suites, the installation seed, the doc-drift test and the notification service: 138 tests) were run again on the final merge, with typecheck and lint. On the main line the same change took the unit suite from 1,367 s and 1,573 s to 705 s on one machine.
+### Recommendations / Next steps:
+- Codex: the two notes in the main-line entry above (create test databases in a hook, read review requests for a viewer through `undeliveredNotificationsForViewer`) apply here as well.
+- Merge order is unchanged: #24, then #25, then #26 into #23, then #23.
+- Open: the small fixes (wave 3) go to a separate pull request stacked on this one, not onto this branch as the 08:46Z entry said.
