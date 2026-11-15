@@ -4,7 +4,7 @@ import { CHAMPION_PREFILL_PAYLOAD } from "../intake/champion-prefill";
 import { createMockAgentPort } from "../agents/mock-adapter";
 import { createOpenAiAgentsAdapterWithRunner } from "../agents/openai-agents-adapter";
 import type { AgentPort, DraftReviewInput, PortResult, DraftReviewOutput } from "../agents/ports";
-import { reviewDecisions } from "../db/schema";
+import { controlDefinitions, reviewDecisions } from "../db/schema";
 import { and, eq, ne } from "drizzle-orm";
 import * as svc from "../services/initiative-service";
 import { getRunProgress, runSingleDomainDraft, startDraftRun } from "./review-run";
@@ -432,12 +432,19 @@ describe("lib/workflow/review-run", () => {
     it("passes the supplied control ids to the port so an unsupplied one never reaches the stored draft (agents-F8)", async () => {
       const { cycleId } = await setUpChampionInReview(db);
       const where = and(eq(reviewDecisions.cycleId, cycleId), eq(reviewDecisions.domain, "clinical-safety"));
-      // The champion's clinical-safety context supplies no controls, so every control id the model names is unsupplied (mocked runner, no network).
+      // The test DB runs only the migrations, which seed no control catalog. C-01 below
+      // (care-coverage=Y, which the champion is) is therefore the one control supplied
+      // for clinical-safety, and ZZ-99 is unsupplied (mocked runner, no network).
+      await db.insert(controlDefinitions).values({
+        id: "C-01", domain: "clinical-safety", name: "C-01", applicability: "care-coverage=Y",
+        owner: "Clinical", requiredEvidence: "signed protocol", cadence: "once", enforcementMode: "gate",
+      });
       const port = createOpenAiAgentsAdapterWithRunner(async () => ({
         finalOutput: {
           assessmentMd: "- Gaps remain.",
           citations: ["MP-C v1 §1"],
           evidenceRequests: [
+            { controlId: "C-01", description: "supplied-control gap" },
             { controlId: "ZZ-99", description: "invented-control gap" },
           ],
           recommendation: "return-with-gaps",
@@ -450,6 +457,7 @@ describe("lib/workflow/review-run", () => {
 
       const [row] = await db.select().from(reviewDecisions).where(where);
       const stored = JSON.stringify([row!.draftMd, row!.missingEvidence, row!.evidenceRequests]);
+      expect(stored).toContain("supplied-control gap");
       expect(stored).not.toContain("ZZ-99");
       expect(stored).not.toContain("invented-control");
     });
