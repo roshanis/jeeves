@@ -429,10 +429,20 @@ export async function runMonitor(
             triggeredBy: { id: actor.id, role: actor.role },
           },
         );
-        await tx
+        // Compare-and-set on the scanned status (as admin-service's
+        // pauseDeployment does): a promotion or rollback that retired this
+        // version since the scan must not leave it 'paused' while the live
+        // version stays deployed. 0 rows rolls the whole transaction back.
+        const pausedDeployment = await tx
           .update(deploymentVersions)
           .set({ status: "paused", pausedAt: new Date(wallTs) })
-          .where(eq(deploymentVersions.id, deployment.id));
+          .where(and(eq(deploymentVersions.id, deployment.id), eq(deploymentVersions.status, "deployed")))
+          .returning();
+        if (pausedDeployment.length === 0) {
+          throw new ConflictError(
+            `deployment ${deployment.id} changed concurrently (expected status 'deployed')`,
+          );
+        }
 
         // 2. Open reassessment review cycle (paused -> re_review).
         const reassessResult = transition(

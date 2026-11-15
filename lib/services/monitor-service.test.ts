@@ -146,6 +146,31 @@ describe("lib/services/monitor-service", () => {
       expect(calls.filter((c) => /from "control_definitions"/.test(c.sql)).length).toBeLessThanOrEqual(1);
     });
 
+    it("does not pause a deployment that a concurrent promotion retired after the scan", async () => {
+      const { init, dep } = await memberChatCopilot(db);
+      const origTx = db.transaction.bind(db) as (cb: unknown, cfg?: unknown) => Promise<unknown>;
+      let n = 0;
+      const spy = vi.spyOn(db, "transaction").mockImplementation((async (cb: unknown, cfg?: unknown) => {
+        n += 1;
+        // 1st call is the candidate scan; the 2nd is the monitor's own per-candidate transaction.
+        if (n === 2) await db.update(deploymentVersions).set({ status: "retired" }).where(eq(deploymentVersions.id, dep.id));
+        return origTx(cb, cfg);
+      }) as never);
+      let result;
+      try {
+        result = await runMonitor(db, SYSTEM_ACTOR, PLUS_14D, UNSCOPED_WORKSPACE);
+      } finally {
+        spy.mockRestore();
+      }
+      expect(result.errors.some((e) => e.deploymentId === dep.id)).toBe(true);
+      expect(result.incidentsCreated).toBe(0);
+      expect(await db.select().from(incidents)).toHaveLength(0);
+      const [afterInit] = await db.select().from(initiatives).where(eq(initiatives.id, init.id));
+      const [afterDep] = await db.select().from(deploymentVersions).where(eq(deploymentVersions.id, dep.id));
+      expect(afterInit!.state).toBe("deployed");
+      expect(afterDep!.status).toBe("retired");
+    });
+
     it("does not breach #4 member-chat-copilot at nowTs=base+8d (before the sustained window)", async () => {
       const result = await runMonitor(db, SYSTEM_ACTOR, PLUS_8D, UNSCOPED_WORKSPACE);
       const chatCopilotBreach = result.breaches.find((b) => b.deploymentId);
