@@ -11,6 +11,8 @@ const PERSONA_GROUP_ORDER: LivePersona["role"][] = ["requester", "reviewer", "ap
 export function RoleSwitcher() {
   const { personaKey, setPersonaKey, persona, reviewerDomain } = useRole();
   const live = useLiveSessionOptional();
+  // A real-request visitor is not a persona; picking one would silently move them to a playground workspace.
+  if (live?.session?.role === "public") return <span className="text-sm font-medium" data-slot="public-visitor-label">Public visitor</span>;
   return (
     <div className="flex min-w-0 items-center gap-2" aria-busy={live?.pending ?? false}>
       <select

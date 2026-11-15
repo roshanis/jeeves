@@ -67,4 +67,15 @@ describe("DemoModeChip", () => {
     await waitFor(() => expect(screen.getByRole("alert")).toBeTruthy());
     expect(screen.getByRole("button", { name: "Start demo" })).toHaveProperty("disabled", false);
   });
+  it("does not present a public (real request) session as a demo player", () => {
+    sessionStorage.setItem("jeeves_live_session", JSON.stringify({ token: "tok-pub", workspaceId: "public-1", expiresAt: Date.now() + 60_000, personaKey: "public", personaLabel: "Public visitor", role: "public" }));
+    show();
+    expect(screen.queryByText("Live demo (session workspace)")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Exit demo" })).toBeNull();
+    expect(screen.getByText("Sending a real request")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Cancel request" })).toBeTruthy();
+    expect(screen.queryByRole("combobox", { name: "Demo persona" })).toBeNull();
+    expect(screen.queryByText("Program Office")).toBeNull();
+    expect(screen.getByText("Public visitor")).toBeTruthy();
+  });
 });

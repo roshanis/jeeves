@@ -6,6 +6,7 @@ import {
 } from "@/components/jeeves/role-gate";
 import { RoleProvider, useRole } from "@/components/jeeves/role-context";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { LiveSessionProvider, resetLiveSessionForTests } from "@/lib/client/session-context";
 
 afterEach(cleanup);
 
@@ -55,5 +56,17 @@ describe("RoleGate mechanisms", () => {
     fireEvent.click(screen.getByRole("button", { name: "switch-to-admin" }));
 
     expect(signButtons(container)).toHaveLength(0);
+  });
+
+  it("keeps live actions disabled for a public (real request) session", () => {
+    resetLiveSessionForTests();
+    sessionStorage.setItem("jeeves_live_session", JSON.stringify({ token: "tok-pub", workspaceId: "public-1", expiresAt: Date.now() + 60_000, personaKey: "public", personaLabel: "Public visitor", role: "public" }));
+    const { container } = render(
+      <RoleProvider><LiveSessionProvider><TooltipProvider><GatedActionButton label="Sign" onAction={() => {}} /></TooltipProvider></LiveSessionProvider></RoleProvider>,
+    );
+    const buttons = signButtons(container);
+    expect(buttons).toHaveLength(1);
+    expect(buttons[0].disabled).toBe(true);
+    resetLiveSessionForTests();
   });
 });

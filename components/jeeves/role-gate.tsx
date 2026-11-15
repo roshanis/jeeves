@@ -84,7 +84,8 @@ export function DisableWithTooltip({
   const live = useLiveSessionOptional();
   const session = live?.session ?? null;
 
-  const roleSatisfied = !requiresRole || session?.role === requiresRole;
+  // A public (real request) session satisfies no live action.
+  const roleSatisfied = session?.role !== "public" && (!requiresRole || session?.role === requiresRole);
   const enabled = Boolean(session && onAction && roleSatisfied);
 
   if (enabled) {
@@ -104,7 +105,9 @@ export function DisableWithTooltip({
   }
 
   const tooltip =
-    session && requiresRole && !roleSatisfied
+    session?.role === "public"
+      ? "Not available while sending a real request"
+      : session && requiresRole && !roleSatisfied
       ? `Requires the ${requiresRole} role — choose a persona in the header`
       : DEMO_SESSION_TOOLTIP;
 
