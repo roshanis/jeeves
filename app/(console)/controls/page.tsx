@@ -63,7 +63,7 @@ export default async function ControlsPage() {
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Control catalog</h1>
         <p className="text-sm text-muted-foreground">
-          Every governance control {isProductionMode() ? "" : "Meridian "}enforces, across every domain —
+          Every governance control {isProductionMode() ? "enforced" : "Meridian enforces"}, across every domain —
           policy source, status, and evidence, read-only.
         </p>
         <p className="mt-1 text-sm text-muted-foreground">

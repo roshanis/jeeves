@@ -75,7 +75,7 @@ describe("page bodies by deployment mode", () => {
     inMode("production");
     const text = renderWithProviders(await ControlsPage(), { mode: "production" }).container.textContent;
     expect(text).not.toContain("Meridian");
-    expect(text).toContain("Every governance control enforces");
+    expect(text).toContain("Every governance control enforced, across every domain");
   });
 
   it("admin does not hard-code the critical-tier default in production", async () => {
