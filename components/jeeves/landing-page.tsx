@@ -179,7 +179,7 @@ export function LandingPage() {
               index="04"
               icon={Activity}
               title="Monitoring & audit"
-              description="Live telemetry against thresholds and an append-only audit trail of every event."
+              description="Synthetic telemetry against thresholds and an append-only audit trail of every event."
               href="/audit"
               linkLabel="View audit"
             />
@@ -298,7 +298,7 @@ export function LandingPage() {
           </h2>
           <p className="mt-3 text-sm text-sidebar-foreground-muted">
             Create an initiative, switch roles, and take it through review.
-            Your demo work stays in your browser’s workspace. No sign-up required.
+            Your demo work is kept in your own isolated workspace. No sign-up required.
           </p>
           <div className="mt-6">
             <TryDemoButton />

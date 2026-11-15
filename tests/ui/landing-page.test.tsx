@@ -26,6 +26,14 @@ import { buttonVariants } from "@/components/ui/button";
 afterEach(cleanup);
 
 describe("LandingPage", () => {
+  it("does not claim live telemetry or browser-only storage", () => {
+    const { container } = render(<LandingPage />);
+    expect(container.textContent).not.toMatch(/live telemetry/i);
+    expect(container.textContent).not.toMatch(/stays in your browser/i);
+    expect(container.textContent).toContain("Synthetic telemetry against thresholds");
+    expect(container.textContent).toContain("kept in your own isolated workspace");
+  });
+
   it("renders the hero headline", () => {
     const { getByRole } = render(<LandingPage />);
     const heading = getByRole("heading", {
