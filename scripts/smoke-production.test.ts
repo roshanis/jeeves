@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   assertDisposableDatabaseUrl,
   bootRefusalCases,
@@ -9,17 +9,25 @@ import {
   databaseSecrets,
   evaluateCheck,
   parsePort,
+  prepareSmokeDatabase,
   redact,
+  removeCanaries,
   runtimeEnvFor,
+  seedCanary,
+  withCanary,
   type Observed,
   type SmokeCheck,
 } from "./smoke-production";
+import { verifyInstallation } from "../lib/config/installation-check";
 import {
   CONSOLE_HOME,
   CONSOLE_PATH_PREFIXES,
   MARKETING_PATH_PREFIXES,
   SIGN_IN_PATH,
 } from "../lib/config/production-routes";
+import { DbDataProvider } from "../lib/data/db-provider";
+import { initiatives, installation } from "../lib/db/schema";
+import { clearInstallationFixtures, closeTestDb, createTestDb, type TestDb } from "../lib/db/test-client";
 import { SESSION_COOKIE_NAME } from "../lib/security/session-cookie-name";
 
 afterEach(() => vi.unstubAllEnvs());
@@ -150,9 +158,126 @@ describe("buildSmokeChecks", () => {
     expect(evaluateCheck(garbage!, { status: 200, headers: {}, body: "<html>" }).length).toBeGreaterThan(0);
     expect(evaluateCheck(garbage!, { status: 200, headers: {}, body: "x NEXT_REDIRECT;replace;/sign-in;307 x" })).toEqual([]);
     // The seeded canary must never appear.
-    const canaryChecks = buildSmokeChecks("smoke-canary-abc");
-    const withCanary = canaryChecks.find((c) => /garbage cookie leaks no data/.test(c.name))!;
-    expect(evaluateCheck(withCanary, { status: 200, headers: {}, body: "NEXT_REDIRECT;replace;/sign-in smoke-canary-abc" }).join(" ")).toMatch(/smoke-canary-abc/);
+    const garbageWithCanary = buildSmokeChecks("smoke-canary-abc").find((c) => /garbage cookie leaks no data/.test(c.name))!;
+    expect(evaluateCheck(garbageWithCanary, { status: 200, headers: {}, body: "NEXT_REDIRECT;replace;/sign-in smoke-canary-abc" }).join(" ")).toMatch(/smoke-canary-abc/);
+  });
+});
+
+// Booting PGlite and replaying the migrations costs more than the cases below do, so one database
+// serves both blocks. It is built in beforeAll, whose 30 s hook timeout covers a loaded machine.
+let db: TestDb;
+beforeAll(async () => {
+  db = await createTestDb();
+});
+afterAll(async () => {
+  await closeTestDb(db);
+});
+
+describe("the canary row", () => {
+  /** The migrated database as the smoke test leaves it before the server starts: stamped, no rows. */
+  async function stampedProduction(): Promise<TestDb> {
+    await clearInstallationFixtures(db);
+    await db.insert(installation).values({ deployMode: "production", installId: "inst-smoke" });
+    return db;
+  }
+
+  const indexWithoutViewer = (database: TestDb) => new DbDataProvider(database).listInitiativeIndex({ viewerWorkspaceId: null });
+
+  it("is what a read with no viewer returns, so a leak past the gate would show it", async () => {
+    const database = await stampedProduction();
+    await seedCanary(database.$client, "smoke-canary-abc");
+
+    expect(await indexWithoutViewer(database)).toEqual([{ slug: "smoke-canary-abc", title: "smoke-canary-abc" }]);
+  });
+
+  it("is refused by the production boot check, and removing it lets the next server start", async () => {
+    const database = await stampedProduction();
+    await expect(verifyInstallation(database, "production")).resolves.toBeUndefined();
+
+    // Why the row is written only once the server is up.
+    await seedCanary(database.$client, "smoke-canary-abc");
+    await expect(verifyInstallation(database, "production")).rejects.toThrow(/demo data/);
+
+    // Why it is removed afterwards: CI runs the smoke test twice against one database.
+    await removeCanaries(database.$client);
+    await expect(verifyInstallation(database, "production")).resolves.toBeUndefined();
+  });
+
+  it("removes every canary an interrupted run left behind, and no other row", async () => {
+    const database = await stampedProduction();
+    await seedCanary(database.$client, "smoke-canary-one");
+    await seedCanary(database.$client, "smoke-canary-two");
+    const now = new Date();
+    await database.insert(initiatives).values([
+      { id: "kept-1", slug: "kept-1", title: "smoke-canary-one", requester: "smoke", state: "intake_draft", workspaceId: "tenant-acme", createdAt: now, updatedAt: now },
+      { id: "x-smoke-canary-1", slug: "kept-2", title: "Kept", requester: "smoke", state: "intake_draft", workspaceId: "tenant-acme", createdAt: now, updatedAt: now },
+    ]);
+
+    await removeCanaries(database.$client);
+
+    const left = await database.select({ id: initiatives.id }).from(initiatives);
+    expect(left.map((row) => row.id).sort()).toEqual(["kept-1", "x-smoke-canary-1"]);
+  });
+
+  it("is in the database while the checks run and gone afterwards", async () => {
+    const database = await stampedProduction();
+    let during: Array<{ slug: string; title: string }> = [];
+
+    await withCanary(database.$client, "smoke-canary-abc", async () => {
+      during = await indexWithoutViewer(database);
+    });
+
+    expect(during).toEqual([{ slug: "smoke-canary-abc", title: "smoke-canary-abc" }]);
+    expect(await indexWithoutViewer(database)).toEqual([]);
+    await expect(verifyInstallation(database, "production")).resolves.toBeUndefined();
+  });
+
+  it("is removed when the checks throw, and the error is passed on", async () => {
+    const database = await stampedProduction();
+
+    await expect(
+      withCanary(database.$client, "smoke-canary-abc", async () => {
+        throw new Error("a check blew up");
+      }),
+    ).rejects.toThrow("a check blew up");
+
+    expect(await indexWithoutViewer(database)).toEqual([]);
+  });
+});
+
+describe("prepareSmokeDatabase", () => {
+  it("stamps a migrated, empty database production, so a production server starts on it", async () => {
+    await clearInstallationFixtures(db);
+
+    await prepareSmokeDatabase(db.$client, "smoke-1");
+
+    expect(await db.select({ deployMode: installation.deployMode, installId: installation.installId }).from(installation)).toEqual([
+      { deployMode: "production", installId: "smoke-1" },
+    ]);
+    await expect(verifyInstallation(db, "production")).resolves.toBeUndefined();
+  });
+
+  it("keeps the stamp of an earlier run and clears the canary that an interrupted run left behind", async () => {
+    await clearInstallationFixtures(db);
+    await prepareSmokeDatabase(db.$client, "smoke-1");
+    await seedCanary(db.$client, "smoke-canary-left");
+    await expect(verifyInstallation(db, "production")).rejects.toThrow(/demo data/);
+
+    await prepareSmokeDatabase(db.$client, "smoke-2");
+
+    expect(await db.select({ installId: installation.installId }).from(installation)).toEqual([{ installId: "smoke-1" }]);
+    await expect(verifyInstallation(db, "production")).resolves.toBeUndefined();
+  });
+
+  it("refuses a database stamped demo and leaves its rows as they were", async () => {
+    await clearInstallationFixtures(db);
+    await db.insert(installation).values({ deployMode: "demo", installId: "inst-demo" });
+    await seedCanary(db.$client, "smoke-canary-not-ours");
+
+    await expect(prepareSmokeDatabase(db.$client, "smoke-1")).rejects.toThrow(/stamped demo/);
+
+    expect(await db.select({ id: initiatives.id }).from(initiatives)).toEqual([{ id: "smoke-canary-not-ours" }]);
+    expect(await db.select({ deployMode: installation.deployMode }).from(installation)).toEqual([{ deployMode: "demo" }]);
   });
 });
 

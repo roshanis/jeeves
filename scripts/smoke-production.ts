@@ -10,7 +10,11 @@
  *
  * SAFETY: this stamps its database `production`, and that stamp is immutable.
  * It therefore needs SMOKE_DATABASE_URL (no fallback to DATABASE_URL) naming a
- * database called jeeves_smoke_<something>, and refuses anything else.
+ * database called jeeves_smoke_<something>, and refuses anything else. Once
+ * the server is healthy it writes one canary row (see seedCanary) and removes
+ * it when the checks end. A run that was interrupted leaves its row behind,
+ * and the next run clears it before it starts the server. Two runs against
+ * one database must therefore not overlap.
  *
  *   SMOKE_DATABASE_URL=postgres://user:pass@127.0.0.1:5432/jeeves_smoke_local \
  *     npm run smoke:production
@@ -193,7 +197,7 @@ export function buildSmokeChecks(canary?: string): SmokeCheck[] {
     // The proxy only checks that a credential is PRESENT, so this request reaches
     // the page, which today answers with a streamed redirect inside a 200. Pin that
     // (it couples to Next's redirect digest format): a 5xx or a rendered console
-    // must fail. The canary row seeded by migrateAndStamp must never show.
+    // must fail. The canary row (see seedCanary) must never show.
     expect: { status: 200, bodyIncludes: ["NEXT_REDIRECT;replace;/sign-in"], bodyExcludes: ["Meridian", "Synthetic data", ...(canary ? [canary] : [])] },
   });
 
@@ -460,31 +464,88 @@ function baseEnv(): Record<string, string> {
   return env;
 }
 
-async function migrateAndStamp(databaseUrl: string, canary: string): Promise<void> {
+// ---------------------------------------------------------------------------
+// Smoke database: the canary row and the stamp
+// ---------------------------------------------------------------------------
+
+/** What the database steps need from a client. node-postgres and PGlite both have it. */
+export interface SmokeSql {
+  query(text: string, params?: unknown[]): Promise<{ rows: unknown[] }>;
+}
+
+const CANARY_PREFIX = "smoke-canary-";
+
+/**
+ * One initiative with no workspace and a random title. That is what a read with
+ * no viewer returns, so a response that leaks past the gate shows it. Without
+ * it the smoke database is empty, and a check that looks for demo wording in an
+ * empty database cannot fail.
+ *
+ * The production boot check refuses exactly such a row as demo data
+ * (lib/config/installation-check.ts). It is therefore written only once the
+ * server is up, and removed again before the run ends (see withCanary).
+ */
+export async function seedCanary(db: SmokeSql, canary: string): Promise<void> {
+  await db.query(
+    "INSERT INTO initiatives (id, slug, title, requester, state, created_at, updated_at) VALUES ($1, $1, $1, 'smoke', 'intake_draft', now(), now())",
+    [canary],
+  );
+}
+
+/** Removes every canary: this run's, and that of a run which was interrupted before it could. */
+export async function removeCanaries(db: SmokeSql): Promise<void> {
+  await db.query("DELETE FROM initiatives WHERE starts_with(id, $1)", [CANARY_PREFIX]);
+}
+
+/** Runs `checks` with the canary in the database, and removes it whatever happens. */
+export async function withCanary(db: SmokeSql, canary: string, checks: () => Promise<void>): Promise<void> {
+  await seedCanary(db, canary);
+  try {
+    await checks();
+  } finally {
+    await removeCanaries(db);
+  }
+}
+
+/**
+ * Stamps the migrated smoke database `production`, or keeps the stamp of an
+ * earlier run, and refuses a database that is stamped demo.
+ *
+ * It then clears the canary of a run that was interrupted: the server would
+ * refuse to start on it. That comes after the stamp check, so a database that
+ * is refused is left as it was.
+ */
+export async function prepareSmokeDatabase(db: SmokeSql, installId: string): Promise<void> {
+  await db.query("INSERT INTO installation (deploy_mode, install_id) VALUES ('production', $1) ON CONFLICT (id) DO NOTHING", [installId]);
+  const { rows } = await db.query("SELECT deploy_mode FROM installation");
+  if (rows.length !== 1 || (rows[0] as { deploy_mode: string }).deploy_mode !== "production") {
+    throw new Error("this database is stamped demo; use a fresh jeeves_smoke_* database");
+  }
+  await removeCanaries(db);
+}
+
+/** Opens a connection to the smoke database for `run` and closes it whatever happens. */
+async function withSmokeDatabase<T>(databaseUrl: string, run: (db: SmokeSql) => Promise<T>): Promise<T> {
+  const { Client } = await import("pg");
+  const client = new Client({ connectionString: databaseUrl });
+  // The connection is idle while the wire checks run. If the server drops it then, a client
+  // without a listener raises an uncaught exception, and the server under test is never stopped.
+  // With one, the next query on this client rejects, and the run fails in the ordinary way.
+  client.on("error", () => {});
+  await client.connect();
+  try {
+    return await run(client);
+  } finally {
+    await client.end();
+  }
+}
+
+async function migrateAndStamp(databaseUrl: string): Promise<void> {
   const tsx = path.join(REPO_ROOT, "node_modules/tsx/dist/cli.mjs");
   const migrate = await runToCompletion([tsx, "scripts/migrate.ts"], { ...baseEnv(), DATABASE_URL: databaseUrl });
   if (migrate.code !== 0) throw new Error(`migration failed:\n${redact(migrate.output, [databaseUrl])}`);
 
-  const { Client } = await import("pg");
-  const client = new Client({ connectionString: databaseUrl });
-  await client.connect();
-  try {
-    await client.query("INSERT INTO installation (deploy_mode, install_id) VALUES ('production', $1) ON CONFLICT (id) DO NOTHING", [
-      `smoke-${randomBytes(4).toString("hex")}`,
-    ]);
-    const { rows } = await client.query<{ deploy_mode: string }>("SELECT deploy_mode FROM installation");
-    if (rows.length !== 1 || rows[0].deploy_mode !== "production") {
-      throw new Error("this database is stamped demo; use a fresh jeeves_smoke_* database");
-    }
-    // A canary row so "no data leaked" checks can actually fail on a gated read.
-    // Written only after the stamp check, so a database that is refused gets no canary row.
-    await client.query(
-      "INSERT INTO initiatives (id, slug, title, requester, state, created_at, updated_at) VALUES ($1, $1, $1, 'smoke', 'intake_draft', now(), now()) ON CONFLICT (id) DO NOTHING",
-      [canary],
-    );
-  } finally {
-    await client.end();
-  }
+  await withSmokeDatabase(databaseUrl, (db) => prepareSmokeDatabase(db, `smoke-${randomBytes(4).toString("hex")}`));
 }
 
 async function runBootRefusal(c: BootRefusalCase, cmd: ServerCommand, good: Record<string, string>, secrets: string[]): Promise<string[]> {
@@ -553,8 +614,7 @@ async function main(): Promise<void> {
   );
 
   console.log("Migrating and stamping the smoke database...");
-  const canary = `smoke-canary-${randomBytes(4).toString("hex")}`;
-  await migrateAndStamp(databaseUrl, canary);
+  await migrateAndStamp(databaseUrl);
 
   const good = buildServerEnv({ databaseUrl, port, cookieSecret: randomBytes(32).toString("hex") });
   let failed = 0;
@@ -580,15 +640,21 @@ async function main(): Promise<void> {
       process.exitCode = 1;
       return;
     }
-    for (const check of buildSmokeChecks(canary)) {
-      try {
-        const observed = await request(port, check);
-        const problems = evaluateCheck(check, observed);
-        record(problems.length === 0, check.name, problems.length ? [...problems, `observed status ${observed.status}, location ${observed.headers.location ?? "none"}`] : []);
-      } catch (err) {
-        record(false, check.name, [`request failed: ${err instanceof Error ? err.message : "unknown error"}`]);
-      }
-    }
+    // The server has passed its boot check on a database without the canary. Only now is it written.
+    const canary = `${CANARY_PREFIX}${randomBytes(4).toString("hex")}`;
+    await withSmokeDatabase(databaseUrl, (db) =>
+      withCanary(db, canary, async () => {
+        for (const check of buildSmokeChecks(canary)) {
+          try {
+            const observed = await request(port, check);
+            const problems = evaluateCheck(check, observed);
+            record(problems.length === 0, check.name, problems.length ? [...problems, `observed status ${observed.status}, location ${observed.headers.location ?? "none"}`] : []);
+          } catch (err) {
+            record(false, check.name, [`request failed: ${err instanceof Error ? err.message : "unknown error"}`]);
+          }
+        }
+      }),
+    );
   } finally {
     await stopChild(child);
   }
