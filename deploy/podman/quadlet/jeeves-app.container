@@ -32,6 +32,10 @@ PublishPort=3000:3000
 # key that signs browser workspace cookies. Without it the cookie can be
 # neither signed nor trusted, so a visitor whose session has ended comes back
 # to a new, empty workspace.
+# It also carries JEEVES_DB_ALLOW_UNVERIFIED=same-host, which production mode
+# needs to reach the jeeves-db container without TLS on this host's private
+# network (demo mode ignores it). Delete that line from jeeves.env if
+# DATABASE_URL ever points at another machine: that one needs verified TLS.
 EnvironmentFile=%h/.config/containers/systemd/jeeves.env
 Environment=DATA_PROVIDER=db
 Environment=NODE_ENV=production
