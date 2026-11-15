@@ -35,3 +35,13 @@ describe("OverviewTab quick links", () => {
     expect(screen.queryByRole("link", { name: /Operate/ })).toBeNull();
   });
 });
+
+describe("OverviewTab tier rule explanation", () => {
+  it("does not claim 'no overlay flags' when only non-tier flags are set", async () => {
+    const detail = await detailWith([]);
+    const flags = { ...detail.summary.flags, careCoverageInfluence: false, phi: false, memberFacing: false, individualImpact: false, vendorHosted: true, humanInLoop: true };
+    renderWithProviders(<OverviewTab detail={{ ...detail, summary: { ...detail.summary, flags } }} />);
+    expect(screen.getByText(/Rule 7:/).textContent).toContain("no tier-raising flags");
+    expect(screen.queryByText(/no overlay flags/)).toBeNull();
+  });
+});

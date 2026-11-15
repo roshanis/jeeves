@@ -1,7 +1,7 @@
 // Overview tab (ui-spec §3.1): "read this and understand the whole
 // initiative in 20 seconds."
 import type { InitiativeDetail, ReviewRow } from "@/lib/data/dto";
-import type { OverlayFlags } from "@/lib/domain/types";
+import { tierRuleText } from "@/lib/client/tier-preview";
 import {
   Activity,
   AlertTriangle,
@@ -22,33 +22,6 @@ import { EvidenceLink } from "./evidence-link";
 import { DOMAIN_LABEL } from "./domain-labels";
 import { DEPLOYMENT_STATUS_LABEL } from "./deployments-tab";
 import { PRE_REVIEW_STATES } from "./initiative-blockers-rail";
-
-/**
- * Human-readable explanation of which triage rule matched — mirrors
- * lib/triage/rules.ts#deriveTier exactly (first match wins). Display-only;
- * the authoritative derivation is always the imported rules module.
- */
-function tierRuleExplanation(flags: OverlayFlags): string {
-  if (flags.careCoverageInfluence && !flags.humanInLoop) {
-    return "Rule 1: care-coverage ∧ ¬human-in-loop → Critical";
-  }
-  if (flags.careCoverageInfluence && flags.humanInLoop) {
-    return "Rule 2: care-coverage ∧ human-in-loop → High";
-  }
-  if (flags.phi) {
-    return "Rule 3: PHI → High";
-  }
-  if (flags.memberFacing && flags.individualImpact) {
-    return "Rule 4: member-facing ∧ individual-impact → High";
-  }
-  if (flags.individualImpact) {
-    return "Rule 5: individual-impact → Medium";
-  }
-  if (flags.memberFacing) {
-    return "Rule 6: member-facing → Medium";
-  }
-  return "Rule 7: no overlay flags → Low";
-}
 
 // Domain-status cell styling (goal #3): neutral/medium/good/serious per the
 // reserved status family + the blue tier-medium slot for "in progress".
@@ -122,7 +95,7 @@ export function OverviewTab({ detail }: { detail: InitiativeDetail }) {
             <div className="flex flex-wrap items-center gap-2 rounded-lg border border-dashed bg-muted/40 px-3 py-2">
               <TierBadge tier={summary.tier} />
               <code className="font-mono text-[11px] text-muted-foreground">
-                {tierRuleExplanation(summary.flags)}
+                {tierRuleText(summary.flags)}
               </code>
             </div>
 
