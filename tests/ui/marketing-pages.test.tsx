@@ -54,6 +54,19 @@ describe("skip-link target (#main-content)", () => {
   });
 });
 
+describe("framework disclaimer contrast", () => {
+  it("is not shrunk or faded below AA in the footer or on the pilot page", () => {
+    for (const ui of [<MarketingLayout key="l"><p>x</p></MarketingLayout>, <PilotPage key="p" />]) {
+      const { getAllByText, unmount } = render(ui);
+      const el = getAllByText(FRAMEWORK_DISCLAIMER).at(-1)!;
+      expect(el.className).not.toMatch(/text-muted-foreground\/\d+/);
+      expect(el.className).not.toContain("text-[11px]");
+      expect(el.className).toContain("text-muted-foreground");
+      unmount();
+    }
+  });
+});
+
 describe("MarketingLayout", () => {
   it("shows the exact demo banner string (moved here from LandingPage)", () => {
     const { getByText } = render(

@@ -90,7 +90,7 @@ export default function MarketingLayout({
           Fictional demo. Synthetic data only. Not affiliated with any real
           organization.
         </p>
-        <p className="mt-1 text-[11px] text-muted-foreground/70">
+        <p className="mt-1 text-xs text-muted-foreground">
           {FRAMEWORK_DISCLAIMER}
         </p>
         <nav

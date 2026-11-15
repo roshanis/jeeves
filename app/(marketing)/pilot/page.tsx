@@ -135,7 +135,7 @@ export default function PilotPage() {
             </Link>
           </div>
 
-          <p className="mt-10 text-[11px] text-muted-foreground/70">
+          <p className="mt-10 text-xs text-muted-foreground">
             {FRAMEWORK_DISCLAIMER}
           </p>
         </div>
