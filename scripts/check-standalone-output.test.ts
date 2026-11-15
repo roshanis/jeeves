@@ -22,8 +22,18 @@ describe("findUnexpectedEntries", () => {
         "docs",
         "docs/policies",
         "docs/policies/INDEX.md",
+        "drizzle",
+        "drizzle/meta",
+        "drizzle/meta/_journal.json",
       ]),
     ).toEqual([]);
+  });
+
+  it("allows only the migration journal from drizzle/", () => {
+    expect(findUnexpectedEntries(["drizzle/0001_x.sql", "drizzle/meta/0000_snapshot.json"])).toEqual([
+      "drizzle/0001_x.sql",
+      "drizzle/meta/0000_snapshot.json",
+    ]);
   });
 
   it.each([

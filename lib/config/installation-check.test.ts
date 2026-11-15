@@ -133,6 +133,32 @@ describe("verifyInstallation", () => {
       expect(err.message).toMatch(/production mode/);
     });
 
+    it("refuses a stamped database whose schema lags the bundled migration journal", async () => {
+      const lagging = await createTestDb();
+      try {
+        await lagging.insert(installation).values({ deployMode: "production", installId: "inst-production" });
+        await expect(verifyInstallation(lagging, "production")).resolves.toBeUndefined();
+        // An upgrade whose migrate step failed: the newest migration row is missing.
+        await lagging.execute(sql`DELETE FROM drizzle.__drizzle_migrations WHERE id = (SELECT max(id) FROM drizzle.__drizzle_migrations)`);
+        const err = await failure(verifyInstallation(lagging, "production"));
+        expect(err.code).toBe("schema_behind");
+        expect(err.message).toMatch(/npm run db:migrate/);
+        expect(err.message).toMatch(/1 of \d+ migrations/);
+      } finally {
+        await closeTestDb(lagging);
+      }
+    }, LAGGING_DB_TIMEOUT_MS);
+
+    it("leaves a demo database alone when migrations lag: demo tolerates a deploy that outruns its migration", async () => {
+      const lagging = await createTestDb();
+      try {
+        await lagging.execute(sql`DELETE FROM drizzle.__drizzle_migrations WHERE id = (SELECT max(id) FROM drizzle.__drizzle_migrations)`);
+        await expect(verifyInstallation(lagging, "demo")).resolves.toBeUndefined();
+      } finally {
+        await closeTestDb(lagging);
+      }
+    }, LAGGING_DB_TIMEOUT_MS);
+
     it("passes on a production-stamped database with no demo data", async () => {
       await stamp(db, "production");
       await addInitiative(db, "real-1", "org-acme");

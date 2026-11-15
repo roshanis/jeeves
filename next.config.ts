@@ -56,6 +56,10 @@ const nextConfig: NextConfig = {
     "/api/agents/health": ["./agents/**/*.md", "./docs/policies/**/*.md"],
     "/api/monitor/run": ["./agents/**/*.md", "./docs/policies/**/*.md"],
     "/api/cron/monitor": ["./agents/**/*.md", "./docs/policies/**/*.md"],
+    // The production boot check (lib/config/installation-check.ts) compares the
+    // applied migrations with this journal; the standalone output is the union
+    // of every route's trace, so including it here ships it.
+    "/api/health": ["./drizzle/meta/_journal.json"],
   },
 
   // Baseline security response headers, applied to every route. Includes a

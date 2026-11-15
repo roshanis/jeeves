@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-require-imports -- Plain CommonJS Node script. */
 /* Guard for the deployable artifact: .next/standalone is what the container
  * image ships, so it must hold only the traced server, the agent prompts and
- * the policy corpus, never the source tree (tests, scripts, planning notes).
+ * the policy corpus and the migration journal, never the source tree (tests, scripts, planning notes).
  * Run after a build:
  *   node scripts/check-standalone-output.cjs [path/to/.next/standalone]
  * Plain Node, no dependencies, read-only.
@@ -9,7 +9,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 
-const TOP_LEVEL = new Set([".next", "node_modules", "package.json", "server.js", "agents", "docs"]);
+const TOP_LEVEL = new Set([".next", "node_modules", "package.json", "server.js", "agents", "docs", "drizzle"]);
 
 /** Returns the relative paths (POSIX separators) that are not on the allowlist. */
 function findUnexpectedEntries(relativePaths) {
@@ -23,6 +23,9 @@ function findUnexpectedEntries(relativePaths) {
       ok = parts.length === 1 || rel.endsWith(".md");
     } else if (ok && top === "docs") {
       ok = parts.length === 1 || (parts[1] === "policies" && (parts.length === 2 || rel.endsWith(".md")));
+    } else if (ok && top === "drizzle") {
+      // Only the migration journal: the production boot check compares it with the database.
+      ok = parts.length === 1 || (parts[1] === "meta" && (parts.length === 2 || rel === "drizzle/meta/_journal.json"));
     }
     if (!ok) bad.push(rel);
   }
@@ -55,13 +58,13 @@ function main() {
   // Directories are only judged by their position; a file check covers content.
   const bad = findUnexpectedEntries(entries).filter((p) => {
     const abs = path.join(dir, p);
-    return !(fs.statSync(abs).isDirectory() && /^(agents|docs)(\/|$)/.test(p));
+    return !(fs.statSync(abs).isDirectory() && /^(agents|docs|drizzle)(\/|$)/.test(p));
   });
   if (bad.length > 0) {
     console.error(`check-standalone-output: ${bad.length} unexpected path(s) in ${dir}:`);
     for (const p of bad.slice(0, 30)) console.error(`  ${p}`);
     if (bad.length > 30) console.error(`  ... and ${bad.length - 30} more`);
-    console.error("Only .next, node_modules, package.json, server.js, agents/**/*.md and docs/policies/**/*.md may ship.");
+    console.error("Only .next, node_modules, package.json, server.js, agents/**/*.md, docs/policies/**/*.md and drizzle/meta/_journal.json may ship.");
     process.exit(1);
   }
   console.log(`check-standalone-output: OK (${entries.length} entries, allowlist respected)`);

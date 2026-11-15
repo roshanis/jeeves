@@ -5,6 +5,8 @@
 // is how a demo process ends up serving passwordless personas on a customer's
 // data, or a production process ends up serving a database full of seeded demo
 // rows, so every boot compares them and refuses on any mismatch.
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { sql } from "drizzle-orm";
 import { ensureDemoInstallation } from "../demo/bootstrap";
 import {
@@ -22,7 +24,11 @@ export type InstallationCheckCode =
   /** The stamp says one mode and the process is running the other. */
   | "mode_mismatch"
   /** Production, and the database holds demo rows. */
-  | "demo_data";
+  | "demo_data"
+  /** Production, and the applied migrations do not cover the bundled journal. */
+  | "schema_behind"
+  /** Production, and the bundled migration journal could not be read. */
+  | "journal_unreadable";
 
 /**
  * Thrown by verifyInstallation(). The message names what was found and what to
@@ -83,6 +89,39 @@ async function countDemoData(db: InstallationDb): Promise<DemoDataCounts> {
     realRequestWorkspace: Number(row.real_request_workspace),
     sessions: Number(row.sessions),
   };
+}
+
+/**
+ * The `when` of every entry in the bundled drizzle/meta/_journal.json; drizzle
+ * stores it as created_at in drizzle.__drizzle_migrations. The literal
+ * path.join(process.cwd(), ...) and the outputFileTracingIncludes entry in
+ * next.config.ts are what put the file into the standalone output.
+ */
+async function bundledMigrationTimes(): Promise<number[]> {
+  const raw = await readFile(path.join(process.cwd(), "drizzle/meta/_journal.json"), "utf8");
+  const journal = JSON.parse(raw) as { entries?: { when: number }[] };
+  return (journal.entries ?? []).map((e) => Number(e.when));
+}
+
+/** How many bundled migrations the database has not applied. */
+async function countUnappliedMigrations(db: InstallationDb): Promise<number> {
+  let bundled: number[];
+  try {
+    bundled = await bundledMigrationTimes();
+  } catch {
+    throw new InstallationCheckError(
+      "journal_unreadable",
+      "The bundled migration journal (drizzle/meta/_journal.json) could not be read, so the database schema cannot be " +
+        "checked against this build. Refusing to start.",
+    );
+  }
+  const result = await db.execute(sql`
+    SELECT CASE WHEN to_regclass('drizzle.__drizzle_migrations') IS NULL THEN NULL
+      ELSE (SELECT json_agg(created_at) FROM drizzle.__drizzle_migrations) END AS applied
+  `);
+  const rows = (Array.isArray(result) ? result : result.rows) as { applied: unknown }[];
+  const applied = new Set(((rows[0]?.applied as (string | number)[] | null) ?? []).map(Number));
+  return bundled.filter((when) => !applied.has(when)).length;
 }
 
 function plural(n: number, singular: string, pluralForm = `${singular}s`): string {
@@ -158,6 +197,17 @@ export async function verifyInstallation(db: InstallationDb, mode: DeploymentMod
   }
 
   if (mode === "production") {
+    // Demo deliberately tolerates a database that lags (a deploy that outruns
+    // its migration must not take the demo down); a production install must
+    // fail the deploy, not serve 500s from the load balancer's healthy pool.
+    const unapplied = await countUnappliedMigrations(db);
+    if (unapplied > 0) {
+      throw new InstallationCheckError(
+        "schema_behind",
+        `The database schema is behind this build: ${unapplied} of ${(await bundledMigrationTimes()).length} migrations are not applied. ` +
+          "Run `npm run db:migrate` against this database, then restart. Refusing to start.",
+      );
+    }
     const found = describeDemoData(await countDemoData(db));
     if (found.length > 0) {
       throw new InstallationCheckError(
