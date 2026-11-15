@@ -31,7 +31,7 @@ export default function FrameworksIndexPage() {
               </CardHeader>
               <CardContent>
                 <p className="text-sm text-muted-foreground">
-                  {page.intro.split(". ")[0]}.
+                  {page.summary}
                 </p>
                 <Link
                   href={`/frameworks/${page.slug}`}
