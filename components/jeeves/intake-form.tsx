@@ -170,7 +170,6 @@ function TextField({
           value={value}
           maxLength={maxLength}
           required={required}
-          aria-required={required || undefined}
           aria-invalid={gapIds?.length ? true : undefined}
           aria-describedby={describedBy}
           onChange={(e) => onChange(e.target.value)}
@@ -209,7 +208,6 @@ function TextAreaField({
           value={value}
           maxLength={maxLength}
           required={required}
-          aria-required={required || undefined}
           aria-invalid={gapIds?.length ? true : undefined}
           aria-describedby={describedBy}
           onChange={(e) => onChange(e.target.value)}
@@ -235,10 +233,14 @@ function LinesField({
   label,
   values,
   onChange,
+  required,
+  gapIds,
 }: {
   label: string;
   values: string[];
   onChange: (entries: string[]) => void;
+  required?: boolean;
+  gapIds?: string[];
 }) {
   const [text, setText] = React.useState(values.join("\n"));
   const [seen, setSeen] = React.useState(values);
@@ -250,6 +252,8 @@ function LinesField({
     <TextAreaField
       label={label}
       value={text}
+      required={required}
+      gapIds={gapIds}
       onChange={(v) => {
         setText(v);
         onChange(splitLines(v));
@@ -721,6 +725,8 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
               <LinesField
                 label="Data source(s) — one per line"
                 values={payload.data.dataSources}
+                required
+                gapIds={gapIdsFor("data.dataSources")}
                 onChange={(entries) => {
                   patch((p) => ({ ...p, data: { ...p.data, dataSources: entries } }));
                 }}
@@ -936,7 +942,12 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
             </CardHeader>
             <CardContent className="flex flex-col gap-4">
               {OVERLAY_QUESTIONS.map(({ key, question, helper }, index) => (
-                <fieldset key={key} className="flex flex-col gap-1" data-slot="overlay-question">
+                <fieldset
+                  key={key}
+                  className="flex flex-col gap-1"
+                  data-slot="overlay-question"
+                  aria-describedby={gapIdsFor(`overlay.${key}`)?.join(" ") || undefined}
+                >
                   <legend className="text-sm font-medium">
                     {index + 1}. <span>{question}</span>
                   </legend>
@@ -950,6 +961,7 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
                         <input
                           type="radio"
                           name={`overlay-${key}`}
+                          required
                           checked={payload.overlay[key] === value}
                           onChange={() =>
                             patch((p) => ({ ...p, overlay: { ...p.overlay, [key]: value } }))
