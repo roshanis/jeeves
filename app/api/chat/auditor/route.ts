@@ -17,7 +17,7 @@
  * Body:  { question: string }
  * 200:   { answerMd: string, citedEvents: string[], queryUsed: string, rows: unknown[] }
  * 401:   { error: string }  (no/invalid session)
- * 429:   { error: string }  (rate limit or demo token budget exhausted)
+ * 429:   { error: string }  (rate limit or daily model budget reached)
  * 400:   { error: string }  (malformed body / input-size cap exceeded)
  * 502:   { error: string }  (PortFailure kind "provider")
  * 504:   { error: string }  (PortFailure kind "timeout")
@@ -237,15 +237,27 @@ export async function POST(req: Request): Promise<Response> {
 
   // Citations the model returns are shown as evidence: keep only labels that
   // exist in the grounding rows (timestamps, ids, or the row-N fallback label).
+  // A timestamp also matches by instant, so a different ISO spelling of a real
+  // row timestamp (no milliseconds, +00:00 offset) is kept; unparseable text is not.
   const known = new Set<string>(rows.map((_, i) => `row-${i}`));
+  const knownInstants = new Set<string>();
   for (const row of rows) {
     for (const key of ["eventTs", "ts", "id"]) {
       const value = row[key];
-      if (typeof value === "string" && value.length > 0) known.add(value);
+      if (typeof value === "string" && value.length > 0) {
+        known.add(value);
+        const ms = Date.parse(value);
+        if (!Number.isNaN(ms)) knownInstants.add(new Date(ms).toISOString());
+      }
     }
   }
+  const isGrounded = (c: string): boolean => {
+    if (known.has(c)) return true;
+    const ms = Date.parse(c);
+    return !Number.isNaN(ms) && knownInstants.has(new Date(ms).toISOString());
+  };
   const citedEvents = [...new Set(result.value.citedEvents)]
-    .filter((c) => known.has(c))
+    .filter(isGrounded)
     .slice(0, MAX_GROUNDING_ROWS);
 
   return Response.json(
