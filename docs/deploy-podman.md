@@ -25,7 +25,7 @@ Podman-specific.
 ```bash
 cd deploy/podman
 cp env.example .env          # then edit: set POSTGRES_PASSWORD and JEEVES_COOKIE_SECRET
-podman compose build
+podman compose --profile tools build   # the app and the migrate/seed image
 podman compose run --rm migrate      # create the schema, before the app takes traffic
 podman compose run --rm seed         # load the synthetic demo data
 podman compose up -d
@@ -113,12 +113,13 @@ mkdir -p ~/.config/containers/systemd
 cp deploy/podman/quadlet/* ~/.config/containers/systemd/
 cp deploy/podman/env.example ~/.config/containers/systemd/jeeves.env
 chmod 600 ~/.config/containers/systemd/jeeves.env    # it holds the database password and the cookie key
-$EDITOR ~/.config/containers/systemd/jeeves.env
 # env.example has no DATABASE_URL (compose builds it inline; Quadlet cannot), so add
-# this line to jeeves.env yourself, with the same password as POSTGRES_PASSWORD:
+# this line to jeeves.env while you edit it, with the same password as POSTGRES_PASSWORD:
 #   DATABASE_URL=postgres://jeeves:PASSWORD@jeeves-db:5432/jeeves
-# Without it the app falls back to a local PGlite store, which the read-only
-# root filesystem refuses, and the unit restarts in a loop.
+# Without it the app falls back to a local PGlite store, which the read-only root
+# filesystem refuses: the app runs without a database, its data pages fail and
+# the health check reports unhealthy.
+$EDITOR ~/.config/containers/systemd/jeeves.env
 
 systemctl --user daemon-reload
 systemctl --user start jeeves-db
@@ -210,20 +211,22 @@ these. A backup you have not restored from is a hypothesis.
 
 ### Stopping during a draft run
 
-Draft runs execute inside the HTTP request, and a deep review makes many model
-calls. Podman sends SIGKILL after 10 s by default, which cuts a live run off.
-Give the app time to drain: `podman compose stop -t 60 app` for compose, and
-for Quadlet a drop-in `~/.config/containers/systemd/jeeves-app.container.d/stop.conf`
-containing `[Container]` and `StopTimeout=60`. On ECS set the container
-`stopTimeout` to 60 as well.
+Draft runs execute inside the HTTP request. One run may take up to 60 s, or
+120 s with deep review (`JEEVES_DEEP_REVIEW=1`). Podman sends SIGKILL 10 s
+after the stop signal by default, which cuts a live run off. Give the app
+longer than one run: `podman compose stop -t 130 app` (and `up -d -t 130`
+when an upgrade replaces the container) for compose, and for Quadlet a drop-in
+`~/.config/containers/systemd/jeeves-app.container.d/stop.conf` containing
+`[Container]` and `StopTimeout=130`. The server stops as soon as its open
+requests finish, so the longer limit costs nothing when nothing is running.
 
 ### Upgrading
 
 ```bash
 git pull
-podman compose build
-podman compose run --rm migrate     # only if drizzle/ changed
-podman compose up -d
+podman compose --profile tools build   # rebuilds the migrator, so migrate sees the new drizzle/
+podman compose run --rm migrate        # only if drizzle/ changed
+podman compose up -d -t 130            # lets a running draft finish
 ```
 
 **Upgrading an older `.env`.** The compose stack now requires a non-empty

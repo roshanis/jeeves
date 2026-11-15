@@ -29,7 +29,7 @@ Arize evaluations and W&B training provenance appear as **Not connected** source
 
 ## Deployment
 
-This line has no production mode: every install offers passwordless demo entry, so any visitor can upload. Keep to fictional documents.
+Jeeves has no production mode yet: every install with a database offers passwordless demo entry, so any visitor can upload. Keep to fictional documents.
 
 Apply migration `0011_evidence_submission.sql` using the existing `npm run db:migrate` path against the intended database before enabling this release. Do not use `db:seed` to migrate an existing database. The migration is additive and introduces immutable document/assessment records and immutable submitted packets. If application rollback is necessary, deploy the previous application version and retain the new tables and history; do not drop evidence tables.
 

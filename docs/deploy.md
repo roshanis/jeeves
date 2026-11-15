@@ -295,20 +295,25 @@ for what a release contains): **back up, migrate, deploy the app, verify.**
 1. **Back up.** Take the Neon branch from "Take a branch before any
    migration" above, or your platform's snapshot.
 2. **Migrate** with `npm run db:migrate` as in section 2 step 4, using
-   `DATABASE_MIGRATION_URL` when the runtime role is not the schema owner.
+   `DATABASE_MIGRATION_URL` for a separate operator connection (Supabase
+   needs one: its transaction pooler cannot migrate).
    The app never migrates itself on boot.
 3. **Deploy the app**, then check `/api/health` and that your own rows are
    still there.
 
-Migrate before deploying: new code can expect tables or columns that the old
-schema lacks, while the previous release has not been tested against a newer
-schema. Do not deploy first and migrate afterwards.
+Migrate before deploying: the new code can expect tables or columns that the
+old schema lacks. Between the two steps the previous release runs against the
+newer schema, which is safe when the migrations only add. Do not deploy first
+and migrate afterwards.
 
-There are no down migrations. To roll back, redeploy the previous app version
-only if the release notes say the migration was additive; otherwise restore
-the pre-migration backup as described under Restore and redeploy the previous
-version against it. A restore brings back the database as it was, including
-its append-only triggers; it is not a way to edit or delete `audit_events`.
+There are no down migrations. To roll back, read the release's SQL under
+`drizzle/`. If every migration only adds (new tables, or new columns that are
+nullable or have a default), redeploy the previous app version against the
+migrated database. Otherwise restore the pre-migration backup as described
+under Restore and redeploy the previous version against it. A restore
+discards everything written since the backup, `audit_events` rows included,
+and brings the append-only triggers back with it; it is never a way to edit
+or delete audit history.
 
 ### Not covered
 

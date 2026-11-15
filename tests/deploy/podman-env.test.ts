@@ -2,6 +2,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { reviewInvocationLimits, type AgentRuntimeConfig } from "@/lib/agents/runtime";
 
 const read = (...p: string[]) => readFileSync(path.join(process.cwd(), ...p), "utf-8");
 const compose = read("deploy", "podman", "compose.yaml");
@@ -35,8 +36,11 @@ describe("Podman stack configuration", () => {
     expect(quadlet).toContain("DATABASE_URL=postgres://jeeves:");
   });
 
-  it("documents a stop timeout longer than Podman's 10 s default", () => {
-    expect(guide).toMatch(/podman (compose )?stop -t 60/);
-    expect(guide).toContain("StopTimeout=60");
+  it("documents a stop timeout that outlasts the longest draft run", () => {
+    const longestRunSeconds = reviewInvocationLimits({ deepReviewEnabled: true } as AgentRuntimeConfig).timeoutMs / 1000;
+    const composeStop = Number(/podman compose stop -t (\d+)/.exec(guide)?.[1]);
+    const quadletStop = Number(/StopTimeout=(\d+)/.exec(guide)?.[1]);
+    expect(composeStop).toBeGreaterThan(longestRunSeconds);
+    expect(quadletStop).toBeGreaterThan(longestRunSeconds);
   });
 });
