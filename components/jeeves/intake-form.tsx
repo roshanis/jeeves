@@ -443,7 +443,11 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
       }
     } catch (err) {
       if (isApiError(err)) {
-        const message = err.status === 409 ? "This draft changed in another tab. Reload it before trying again." : apiErrorToMessage(err);
+        const message = err.status === 409
+          ? err.code === "INTAKE_NOT_EDITABLE"
+            ? "This intake was already submitted and can no longer be edited. Open its case file from your initiatives list."
+            : "This draft changed in another tab. Reloading discards what you typed here, so copy your text first."
+          : apiErrorToMessage(err);
         setError(message);
         toast.error(message);
         if (err.status === 401) {

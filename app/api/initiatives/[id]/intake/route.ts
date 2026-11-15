@@ -9,7 +9,7 @@ import { INTAKE_AUTHOR_ROLES } from "@/lib/services/intake-author-roles";
 function failure(error: unknown): Response {
   if (error instanceof NotFoundError) return Response.json({ error: error.message }, { status: 404 });
   if (error instanceof IllegalTransitionError) return Response.json({ error: error.message }, { status: 403 });
-  if (error instanceof ConflictError) return Response.json({ error: error.message }, { status: 409 });
+  if (error instanceof ConflictError) return Response.json({ error: error.message, ...(error.code ? { code: error.code } : {}) }, { status: 409 });
   throw error;
 }
 

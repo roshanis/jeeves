@@ -91,8 +91,11 @@ export class ValidationError extends Error {
  * under concurrency"). Route handlers map this to HTTP 409.
  */
 export class ConflictError extends Error {
-  constructor(message: string) {
+  /** Stable machine-readable reason, for clients that must not parse `message`. */
+  readonly code?: string;
+  constructor(message: string, code?: string) {
     super(message);
+    this.code = code;
     this.name = "ConflictError";
   }
 }
@@ -446,9 +449,9 @@ export async function getIntakeDraft(
   const initiative = await loadInitiativeOrThrow(db as Tx, initiativeId);
   assertEditableDraftWorkspace(initiative.workspaceId, workspaceId, initiativeId);
   requireRequesterOwnership(actor, initiative);
-  if (initiative.state !== "intake_draft") throw new ConflictError("intake is no longer editable");
+  if (initiative.state !== "intake_draft") throw new ConflictError("intake is no longer editable", "INTAKE_NOT_EDITABLE");
   const intake = await latestIntakeVersion(db as Tx, initiativeId);
-  if (!intake || intake.submitted) throw new ConflictError("intake is no longer editable");
+  if (!intake || intake.submitted) throw new ConflictError("intake is no longer editable", "INTAKE_NOT_EDITABLE");
   return { initiativeId, slug: initiative.slug, intakeVersionId: intake.id, version: intake.version, payload: normalizeAdditionalAnswers(intake.fields as unknown as IntakePayload) };
 }
 
@@ -460,9 +463,9 @@ export async function updateIntakeDraft(
     const initiative = await loadInitiativeOrThrow(tx, input.initiativeId, true);
     assertEditableDraftWorkspace(initiative.workspaceId, input.workspaceId, input.initiativeId);
     requireRequesterOwnership(input.actor, initiative);
-    if (initiative.state !== "intake_draft") throw new ConflictError("intake is no longer editable");
+    if (initiative.state !== "intake_draft") throw new ConflictError("intake is no longer editable", "INTAKE_NOT_EDITABLE");
     const current = await latestIntakeVersion(tx, input.initiativeId);
-    if (!current || current.submitted) throw new ConflictError("intake is no longer editable");
+    if (!current || current.submitted) throw new ConflictError("intake is no longer editable", "INTAKE_NOT_EDITABLE");
     if (current.version !== input.expectedVersion) throw new ConflictError(`draft changed concurrently (expected version ${input.expectedVersion})`);
     // A repeated save of the same content must not append another full copy.
     if (isDeepStrictEqual(JSON.parse(JSON.stringify(input.payload)), current.fields)) {
@@ -473,7 +476,7 @@ export async function updateIntakeDraft(
     const intakeVersionId = `iv-${randomUUID()}`;
     await tx.insert(intakeVersions).values({ id: intakeVersionId, initiativeId: input.initiativeId, version: nextVersion, submitted: false, fields: input.payload, missing: completeness.gaps.map((g) => g.field), createdAt: new Date(nowTs()) });
     const initiativeUpdate = await tx.update(initiatives).set({ title: input.payload.basics.title, updatedAt: new Date(nowTs()) }).where(and(eq(initiatives.id, input.initiativeId), eq(initiatives.state, "intake_draft"))).returning();
-    if (initiativeUpdate.length === 0) throw new ConflictError("intake is no longer editable");
+    if (initiativeUpdate.length === 0) throw new ConflictError("intake is no longer editable", "INTAKE_NOT_EDITABLE");
     return { initiativeId: input.initiativeId, slug: initiative.slug, intakeVersionId, version: nextVersion, payload: input.payload };
   });
 }

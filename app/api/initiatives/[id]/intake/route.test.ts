@@ -148,6 +148,17 @@ describe("GET/PUT /api/initiatives/[id]/intake", () => {
     expect(response.status).toBe(409);
   });
 
+  it("labels a 409 on a submitted draft with a stable code", async () => {
+    const { submitIntake } = await import("@/lib/services/initiative-service");
+    await submitIntake(state.db!, initiativeId, state.actor!, state.workspaceId);
+    const response = await PUT(
+      putRequest({ payload: CHAMPION_PREFILL_PAYLOAD, expectedVersion: 1 }),
+      context(initiativeId),
+    );
+    expect(response.status).toBe(409);
+    expect(((await response.json()) as { code?: string }).code).toBe("INTAKE_NOT_EDITABLE");
+  });
+
   it("rejects a body larger than 64KB", async () => {
     const response = await PUT(
       new Request("http://localhost/api/initiatives/id/intake", {
