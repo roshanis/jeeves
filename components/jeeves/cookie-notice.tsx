@@ -92,6 +92,14 @@ export function useCookieNoticeAcknowledged(): boolean {
   return React.useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
 }
 
+/** Spacer for the end of a page: reserves the notice's height only while the
+ *  notice is showing, so the footer links are never covered and no empty band
+ *  stays after dismissal. Server and first client render emit nothing. */
+export function CookieNoticeClearance() {
+  if (useCookieNoticeAcknowledged()) return null;
+  return <div className="h-24 print:hidden" aria-hidden data-slot="cookie-notice-clearance" />;
+}
+
 export function CookieNotice() {
   const acknowledged = useCookieNoticeAcknowledged();
 

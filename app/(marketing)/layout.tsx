@@ -3,7 +3,7 @@ import { ShieldCheck } from "lucide-react";
 import { TryDemoButton } from "@/components/jeeves/try-demo-button";
 import { DEMO_BANNER_TEXT } from "@/lib/demo-banner";
 import { FRAMEWORK_DISCLAIMER } from "@/lib/marketing/framework-mappings";
-import { CookieNotice } from "@/components/jeeves/cookie-notice";
+import { CookieNotice, CookieNoticeClearance } from "@/components/jeeves/cookie-notice";
 import { StickyMobileCta } from "@/components/jeeves/sticky-mobile-cta";
 import { configuredOperatorToken } from "@/lib/services/route-guard";
 
@@ -85,7 +85,7 @@ export default function MarketingLayout({
         hint="No sign-up needed"
       />
 
-      <footer className="border-t px-5 py-4 pb-24 text-center text-xs text-muted-foreground">
+      <footer className="border-t px-5 py-4 max-sm:pb-24 text-center text-xs text-muted-foreground">
         <p>
           Fictional demo. Synthetic data only. Not affiliated with any real
           organization.
@@ -107,6 +107,7 @@ export default function MarketingLayout({
             Frameworks
           </Link>
         </nav>
+        <CookieNoticeClearance />
       </footer>
 
       <CookieNotice />

@@ -68,11 +68,22 @@ describe("framework disclaimer contrast", () => {
 });
 
 describe("MarketingLayout footer", () => {
-  it("keeps bottom padding at every width so the fixed cookie notice never covers the legal links", () => {
+  it("reserves room for the fixed cookie notice only while the notice is showing", async () => {
+    const { CookieNoticeClearance, resetCookieNoticeForTests } = await import("@/components/jeeves/cookie-notice");
+    window.localStorage.setItem("jeeves_cookie_notice_ack", "1");
+    resetCookieNoticeForTests();
     const { container } = render(<MarketingLayout><p>x</p></MarketingLayout>);
-    const cls = container.querySelector("footer")!.className;
-    expect(cls).toContain("pb-24");
-    expect(cls).not.toContain("sm:pb-4");
+    const footer = () => container.querySelector("footer")!;
+    // Acknowledged (the server render and the first client render): no spacer.
+    expect(footer().querySelector("[data-slot='cookie-notice-clearance']")).toBeNull();
+    expect(footer().className).not.toMatch(/(^| )pb-24/);
+    cleanup();
+    window.localStorage.clear();
+    resetCookieNoticeForTests();
+    const shown = render(<CookieNoticeClearance />);
+    expect(shown.container.querySelector("[data-slot='cookie-notice-clearance']")).not.toBeNull();
+    window.localStorage.setItem("jeeves_cookie_notice_ack", "1");
+    resetCookieNoticeForTests();
   });
 });
 
