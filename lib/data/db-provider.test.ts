@@ -8,7 +8,9 @@ import {
   effectiveControls,
   initiativeDecisions,
   initiatives,
+  intakeVersions,
   reviewCycles,
+  riskAssessments,
   reviewDecisions,
 } from "../db/schema";
 import { setEvalThreshold } from "../services/admin-service";
@@ -821,5 +823,72 @@ describe("lib/data/db-provider", () => {
         spy.mockRestore();
       }
     });
+  });
+});
+
+describe("lib/data/db-provider read-model edge cases (peer review, low)", () => {
+  let db: TestDb;
+  const t0 = new Date("2026-07-01T00:00:00.000Z");
+  const DAY = 24 * 60 * 60 * 1000;
+
+  beforeAll(async () => {
+    db = await createTestDb();
+    await db.insert(initiatives).values({
+      id: "edge-init",
+      slug: "edge-init",
+      title: "Edge case initiative",
+      requester: "Priya Raman",
+      state: "rejected",
+      tier: "high",
+      createdAt: t0,
+      updatedAt: t0,
+      workspaceId: null,
+    });
+    await db.insert(intakeVersions).values({
+      id: "edge-iv",
+      initiativeId: "edge-init",
+      version: 1,
+      fields: {},
+      createdAt: t0,
+    });
+    await db.insert(riskAssessments).values({
+      id: "edge-ra",
+      initiativeId: "edge-init",
+      version: 1,
+      intakeVersionId: "edge-iv",
+      tier: "high",
+      flags: {},
+      requiredDomains: ["security"],
+      createdAt: t0,
+    });
+    // Two closed cycles of 1.5 and 2.2 days: the median is 1.85 days.
+    await db.insert(reviewCycles).values([
+      { id: "edge-c1", initiativeId: "edge-init", kind: "initial", riskAssessmentId: "edge-ra", openedAt: t0, closedAt: new Date(t0.getTime() + 1.5 * DAY) },
+      { id: "edge-c2", initiativeId: "edge-init", kind: "reassessment", riskAssessmentId: "edge-ra", openedAt: t0, closedAt: new Date(t0.getTime() + 2.2 * DAY) },
+    ]);
+    // A returned review that stayed behind in a closed cycle.
+    await db.insert(reviewDecisions).values({
+      id: "edge-rd1",
+      cycleId: "edge-c1",
+      domain: "security",
+      status: "returned",
+      reviewer: "Sofia Grant",
+      createdAt: t0,
+    });
+  });
+
+  afterAll(async () => {
+    await closeTestDb(db);
+  });
+
+  it("rounds the median review cycle time to one decimal", async () => {
+    const m = await new DbDataProvider(db).outcomeMetrics();
+    expect(m.medianReviewCycleDays).toBe(1.9);
+  });
+
+  it("ignores returned reviews of closed cycles in overdueControls and the overdue-controls query", async () => {
+    const provider = new DbDataProvider(db);
+    expect((await provider.outcomeMetrics()).overdueControls).toBe(0);
+    expect(await provider.auditQuery("overdue-controls")).toEqual([]);
   });
 });
