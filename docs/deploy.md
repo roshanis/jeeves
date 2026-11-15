@@ -90,7 +90,7 @@ npm run start        # next start (after build)
    | `DATABASE_SSL_CA` | Optional | Optional CA (PEM). Applies to every PostgreSQL host reached through node-postgres, not to Neon, which uses its own driver and public certificates. When set, the connection uses TLS and verifies the server against this CA (for Amazon RDS, the RDS CA bundle). It cannot be combined with `sslmode=disable` or `no-verify`, or with `sslrootcert`, `sslcert` or `sslkey` in the URL. Supabase hosts additionally always verify and use a pool of one. |
    | `DATABASE_POOL_MAX` | Optional | Largest number of connections one app instance opens through node-postgres (its default is 10). Not used for Neon hosts (own driver) or Supabase hosts (always one connection). |
    | `DATABASE_STATEMENT_TIMEOUT_MS`, `DATABASE_IDLE_IN_TRANSACTION_TIMEOUT_MS` | Optional | Server-side limits, in milliseconds, for one statement and for a transaction left idle (default `60000` each). node-postgres sends them as startup parameters. `0` turns one off and sends nothing: use that behind a pooler that refuses startup parameters it does not track (PgBouncer without `ignore_startup_parameters`), and set the limits on the database role instead. Not sent to Neon or Supabase hosts. |
-   | `DATABASE_MIGRATION_LOCK_TIMEOUT_MS` | Optional | How long `npm run db:migrate` waits for a lock before it fails and can be retried, in milliseconds (default `10000`; `0` turns it off). Migrations have no statement timeout. Not sent to Neon or Supabase hosts. |
+   | `DATABASE_MIGRATION_LOCK_TIMEOUT_MS` | Optional | How long `npm run db:migrate` waits for a lock before it fails and can be retried, in milliseconds (default `10000`; `0` turns it off). Migrations have no statement timeout. On a node-postgres host it also bounds the wait for the migration advisory lock, so an overlapping `db:migrate` fails after this time (SQLSTATE 55P03) instead of waiting. Neon pooled (`-pooler`) endpoints take no advisory lock. Not sent to Neon or Supabase hosts. |
    | `DATA_PROVIDER` | Optional | Defaults to DB when either runtime URL exists. `db` makes this explicit; `mock` deliberately shows the read-only preview dataset. |
    | `JEEVES_COOKIE_SECRET` | Yes for new deployments | Random server-only signing key for browser workspace continuity. Visitor entry is passwordless. Existing DEMO_PASSCODE can serve only as a deprecated signing fallback. |
    | `OPERATOR_TOKEN` | Optional | At least 32 characters (for example `openssl rand -hex 32`). Opens the "Send a real request" door and unlocks the `/operator` queue where those requests are read, sent as `Authorization: Bearer <token>`. While it is unset or shorter than 32 characters the real-request door is closed (`POST /api/public-session` answers 404 and the intake form does not offer it), because nobody could read what a visitor sent. |
@@ -269,7 +269,7 @@ different problems.
 
    ```bash
    # before: neonctl branches create --name pre-0009 --parent main
-   DATABASE_URL="<pooled url>" npm run db:migrate
+   DATABASE_URL="<direct (unpooled) url>" npm run db:migrate
    ```
 
    `npm run db:migrate` is non-destructive and tested as such
@@ -290,17 +290,20 @@ events" path to undo *with* — the trigger rejects `DELETE` from the app
 entirely.
 
 **Always restore into a new database or instance, never over the live one.**
-`audit_events` rejects `UPDATE`, `DELETE` and `TRUNCATE` by trigger, so
-loading a dump on top of existing rows (for example `pg_restore --clean`
-against the running database) fights those triggers. Restore into an empty
+`audit_events` rejects `UPDATE` and `DELETE` by trigger, so clearing the bad
+rows before loading a dump means deleting them, which the triggers reject, and
+`pg_restore --clean` against the running database drops and recreates every
+table, which discards every audit row written since the backup and leaves
+nothing to compare against. Restore into an empty
 database, check it as below, then repoint `DATABASE_URL` (and
 `DATABASE_MIGRATION_URL`) at it and retire the old one.
 
 The same rule gives the per-platform recipes:
 
 - **Neon:** branch from a timestamp (above); the branch is the new database.
-- **Supabase:** use the project's backups or point-in-time recovery if your
-  plan includes them, or restore a dump into a new project. The transaction
+- **Supabase:** restore a dump into a new project. The dashboard's backup and
+  point-in-time recovery restore in place over the live project, so use them only
+  as a last resort, after taking a fresh dump to keep the current rows. The transaction
   pooler cannot restore or migrate: use the direct or session connection
   string for the restore and the checks below.
 - **AWS RDS for PostgreSQL:** turn on automated backups with a retention
@@ -310,9 +313,10 @@ The same rule gives the per-platform recipes:
 - **Podman:** `deploy-podman.md` covers the volume export and an online
   `pg_dump`. Restore a dump into a fresh database, not into the one that
   holds the bad data:
-  `createdb -U jeeves jeeves_restored`, then
-  `pg_restore -U jeeves --no-owner -d jeeves_restored backup.dump` for a
-  `pg_dump -Fc` file, or `psql` for a plain `.sql` file.
+  `podman compose exec -T db createdb -U jeeves jeeves_restored`, then
+  `podman compose exec -T db psql -U jeeves -d jeeves_restored < backup.sql`
+  for a plain `.sql` file, or `pg_restore -U jeeves --no-owner -d
+  jeeves_restored` for a `pg_dump -Fc` file.
 
 After any restore, before sending traffic to it:
 
@@ -329,7 +333,7 @@ After any restore, before sending traffic to it:
 Evidence files are stored in the database as `bytea`, so the database size,
 and with it backup time and restore time, grows with uploads. Sessions and
 rate-limit buckets are disposable: nothing is lost if they are absent after a
-restore, and users simply sign in again. Backups also hold whatever real
+restore. Backups also hold whatever real
 requests visitors submitted through the intake door, so apply your retention
 and deletion rules to backups too.
 
