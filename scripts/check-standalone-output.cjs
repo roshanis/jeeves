@@ -88,7 +88,7 @@ function walk(dir, base, out) {
         for (const child of fs.readdirSync(abs)) out.push(path.join(rel, child));
         continue;
       }
-      if (rel.split(path.sep)[0] === ".next" || rel.split(path.sep)[0] === "node_modules") continue;
+      if (rel.split(path.sep)[0] === ".next") continue;
       walk(abs, base, out);
     } else {
       out.push(rel);
