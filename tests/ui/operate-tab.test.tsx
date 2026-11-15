@@ -6,6 +6,7 @@ import {
   useLiveSession,
 } from "@/lib/client/session-context";
 import { EvalsTab, seriesYDomain } from "@/components/jeeves/operate-tab";
+import { OFFLINE_COMPARISON_SLUG, OFFLINE_COMPARISON_VERSIONS } from "@/components/jeeves/eval-comparison";
 import { MockDataProvider } from "@/lib/data/mock-provider";
 import { installResizeObserverStub, renderWithProviders } from "./helpers";
 
@@ -58,6 +59,17 @@ describe("EvalsTab — breach initiative (#4 member-chat-copilot)", () => {
     expect(
       container.querySelector('[data-kind="gpu_util_pct"]'),
     ).not.toBeNull();
+  });
+});
+
+describe("EvalsTab — offline promotion comparison (#5)", () => {
+  it("titles the panel with the pair the Promotions pointer names", async () => {
+    const detail = await new MockDataProvider().getInitiativeDetail(OFFLINE_COMPARISON_SLUG);
+    expect(detail).not.toBeNull();
+    renderWithProviders(<EvalsTab slug={detail!.summary.slug} telemetry={detail!.telemetry} />);
+    const { current, candidate } = OFFLINE_COMPARISON_VERSIONS;
+    expect(screen.getByText(`Offline eval — ${current} vs ${candidate}`)).toBeDefined();
+    expect(screen.getByText(new RegExp(`${candidate.replace(".", "\\.")} checkpoint cannot be promoted`))).toBeDefined();
   });
 });
 

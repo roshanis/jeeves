@@ -2,13 +2,11 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { closeTestDb, createTestDb, type TestDb } from "../db/test-client";
-import { deploymentVersions, initiatives, sessions } from "../db/schema";
+import { initiatives, sessions } from "../db/schema";
 import { issueDemoSession } from "./route-guard";
 import { signWorkspaceId } from "../security/workspace-cookie";
 import {
-  deploymentWorkspaceMap,
   initiativeWorkspaceMap,
-  isDeploymentVisible,
   isInitiativeVisible,
   resolveViewerWorkspaceId,
 } from "./viewer-workspace";
@@ -120,70 +118,6 @@ describe("lib/services/viewer-workspace", () => {
     });
   });
 
-  describe("deploymentWorkspaceMap / isDeploymentVisible", () => {
-    const now = new Date("2026-07-10T00:00:00.000Z");
-
-    beforeEach(async () => {
-      await testDb.insert(initiatives).values([
-        {
-          id: "init-seeded",
-          slug: "seeded-initiative",
-          title: "Seeded",
-          requester: "Dan Kowalski",
-          state: "deployed",
-          tier: "low",
-          accountableApprover: null,
-          createdAt: now,
-          updatedAt: now,
-          workspaceId: null,
-        },
-        {
-          id: "init-ws-a",
-          slug: "ws-a-initiative",
-          title: "Workspace A",
-          requester: "Priya Raman",
-          state: "deployed",
-          tier: "low",
-          accountableApprover: null,
-          createdAt: now,
-          updatedAt: now,
-          workspaceId: "ws_A",
-        },
-      ]);
-      await testDb.insert(deploymentVersions).values([
-        { id: "dep-seeded", initiativeId: "init-seeded", version: "v1.0", status: "deployed", deployedAt: now },
-        { id: "dep-ws-a", initiativeId: "init-ws-a", version: "v1.0", status: "deployed", deployedAt: now },
-      ]);
-    });
-
-    it("a seeded (null-workspace) deployment is visible to anonymous, a foreign workspace, and its own workspace alike", async () => {
-      const map = await deploymentWorkspaceMap(testDb);
-      expect(isDeploymentVisible(map, "dep-seeded", null)).toBe(true);
-      expect(isDeploymentVisible(map, "dep-seeded", "ws_B")).toBe(true);
-      expect(isDeploymentVisible(map, "dep-seeded", "ws_A")).toBe(true);
-    });
-
-    it("a workspace-owned deployment is visible only to its own workspace, not anonymous or a foreign workspace", async () => {
-      const map = await deploymentWorkspaceMap(testDb);
-      expect(isDeploymentVisible(map, "dep-ws-a", null)).toBe(false);
-      expect(isDeploymentVisible(map, "dep-ws-a", "ws_B")).toBe(false);
-      expect(isDeploymentVisible(map, "dep-ws-a", "ws_A")).toBe(true);
-    });
-
-    it("loads only seeded deployments and the viewer's own when a viewer is given", async () => {
-      const keys = async (viewer: string | null) => [...(await deploymentWorkspaceMap(testDb, viewer)).keys()].sort();
-      expect(await keys("ws_A")).toEqual(["dep-seeded", "dep-ws-a"]);
-      expect(await keys("ws_B")).toEqual(["dep-seeded"]);
-      expect(await keys(null)).toEqual(["dep-seeded"]);
-    });
-
-    it("an unknown deploymentId is never visible", async () => {
-      const map = await deploymentWorkspaceMap(testDb);
-      expect(isDeploymentVisible(map, "does-not-exist", "ws_A")).toBe(false);
-      expect(isDeploymentVisible(map, "does-not-exist", null)).toBe(false);
-    });
-  });
-
   describe("initiativeWorkspaceMap / isInitiativeVisible", () => {
     const now = new Date("2026-07-10T00:00:00.000Z");
 
@@ -223,7 +157,7 @@ describe("lib/services/viewer-workspace", () => {
       expect(await keys(null)).toEqual(["init-seeded-2"]);
     });
 
-    it("mirrors deploymentWorkspaceMap's visibility semantics for initiative-keyed rows", async () => {
+    it("applies seeded-plus-own visibility semantics to initiative-keyed rows", async () => {
       const map = await initiativeWorkspaceMap(testDb);
       expect(isInitiativeVisible(map, "init-seeded-2", null)).toBe(true);
       expect(isInitiativeVisible(map, "init-seeded-2", "ws_B")).toBe(true);

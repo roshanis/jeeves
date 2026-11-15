@@ -107,12 +107,12 @@ npm run start        # next start (after build)
    | Variable | Required | Notes |
    |---|---|---|
    | `DATABASE_URL` or `POSTGRES_URL` | Yes | Explicit nonblank `DATABASE_URL` wins; otherwise the Vercel integration `POSTGRES_URL` is used consistently for runtime, pages and incident reads. Neon hosts use the Neon driver; other PostgreSQL hosts use `pg`. Vercel refuses local PGlite fallback. |
-   | `DATABASE_MIGRATION_URL` | For Supabase migrations | Direct or session-pooler connection on port 5432. Runtime transaction-pooler URLs on port 6543 cannot run migrations. |
+   | `DATABASE_MIGRATION_URL` | For Supabase migrations; recommended for Neon | Supabase: direct or session-pooler connection on port 5432; its transaction pooler on port 6543 cannot run migrations. Neon: the direct (non `-pooler`) endpoint, so overlapping runs serialise on the advisory lock; through `-pooler` they run without it. |
    | `DATABASE_SSL_CA` | Optional | Optional CA (PEM). Applies to every PostgreSQL host reached through node-postgres, not to Neon, which uses its own driver and public certificates. When set, the connection uses TLS and verifies the server against this CA (for Amazon RDS, the RDS CA bundle). It cannot be combined with `sslmode=disable` or `no-verify`, or with `sslrootcert`, `sslcert` or `sslkey` in the URL. Supabase hosts additionally always verify and use a pool of one. |
    | `JEEVES_MODE` | **Yes: `demo`** | Must be exactly `demo` in Production, Preview and Development, or the deployment runs in production mode (see the note at the top of this page). Server-only; never `NEXT_PUBLIC_`. |
    | `DATABASE_POOL_MAX` | Optional | Largest number of connections one app instance opens through node-postgres (its default is 10). Not used for Neon hosts (own driver) or Supabase hosts (always one connection). |
    | `DATABASE_STATEMENT_TIMEOUT_MS`, `DATABASE_IDLE_IN_TRANSACTION_TIMEOUT_MS` | Optional | Server-side limits, in milliseconds, for one statement and for a transaction left idle (default `60000` each). node-postgres sends them as startup parameters. `0` turns one off and sends nothing: use that behind a pooler that refuses startup parameters it does not track (PgBouncer without `ignore_startup_parameters`), and set the limits on the database role instead. Not sent to Neon or Supabase hosts. |
-   | `DATABASE_MIGRATION_LOCK_TIMEOUT_MS` | Optional | How long `npm run db:migrate` waits for a lock before it fails and can be retried, in milliseconds (default `10000`; `0` turns it off). Migrations have no statement timeout. Not sent to Neon or Supabase hosts. |
+   | `DATABASE_MIGRATION_LOCK_TIMEOUT_MS` | Optional | How long `npm run db:migrate` waits for a lock before it fails and can be retried, in milliseconds (default `10000`; `0` turns it off). Migrations have no statement timeout. On other node-postgres hosts it also bounds the wait for the migration advisory lock, so an overlapping `db:migrate` fails after this time (SQLSTATE 55P03) instead of waiting. Supabase and direct Neon endpoints wait for the lock without a limit, and Neon pooled (`-pooler`) endpoints take no advisory lock. Not sent to Neon or Supabase hosts. |
    | `DATA_PROVIDER` | Optional | Defaults to DB when either runtime URL exists. `db` makes this explicit; `mock` deliberately shows the read-only preview dataset. |
    | `JEEVES_COOKIE_SECRET` | Yes for new deployments | Random server-only signing key for browser workspace continuity. Visitor entry is passwordless. Existing DEMO_PASSCODE can serve only as a deprecated signing fallback. |
    | `OPERATOR_TOKEN` | Optional | At least 32 characters (for example `openssl rand -hex 32`). Opens the "Send a real request" door and unlocks the `/operator` queue where those requests are read, sent as `Authorization: Bearer <token>`. While it is unset or shorter than 32 characters the real-request door is closed (`POST /api/public-session` answers 404 and the intake form does not offer it), because nobody could read what a visitor sent. |
@@ -275,8 +275,9 @@ current code, not hypothetical ones.
 ## 4. Backups and restore
 
 Short version: **Neon's own branching and point-in-time restore are the
-backup mechanism; this repository adds nothing on top, and nothing here
-substitutes for setting a retention window on the Neon project.**
+backup mechanism on Neon (Supabase, RDS and Podman have their own, below);
+this repository adds nothing on top, and nothing here substitutes for setting
+a retention window on your platform.**
 
 That matters more here than in a typical app. `audit_events` is append-only
 at the database level, which protects it from the *application* — it does not
@@ -295,7 +296,7 @@ different problems.
 
    ```bash
    # before: neonctl branches create --name pre-0009 --parent main
-   DATABASE_URL="<pooled url>" npm run db:migrate
+   DATABASE_URL="<direct (unpooled) url>" npm run db:migrate
    ```
 
    `npm run db:migrate` is non-destructive and tested as such
@@ -312,10 +313,62 @@ different problems.
 
 ### Restore
 
-Restore is a Neon operation, not an application one: branch from a timestamp
-before the bad write and repoint `DATABASE_URL` at the new branch. There is
-no application-level undo, and there deliberately is no "delete audit events"
-path to undo *with* — the trigger rejects `DELETE` from the app entirely.
+Restore is a platform operation, not an application one. On Neon, branch from
+a timestamp before the bad write and repoint `DATABASE_URL` at the new branch.
+There is no application-level undo, and there deliberately is no "delete audit
+events" path to undo *with* — the trigger rejects `DELETE` from the app
+entirely.
+
+**Always restore into a new database or instance, never over the live one.**
+`audit_events` rejects `UPDATE` and `DELETE` by trigger, so clearing the bad
+rows before loading a dump means deleting them, which the triggers reject, and
+`pg_restore --clean` against the running database drops and recreates every
+table, which discards every audit row written since the backup and leaves
+nothing to compare against. Restore into an empty
+database, check it as below, then repoint `DATABASE_URL` (and
+`DATABASE_MIGRATION_URL`) at it and retire the old one.
+
+The same rule gives the per-platform recipes:
+
+- **Neon:** branch from a timestamp (above); the branch is the new database.
+- **Supabase:** restore into a new project, never in place. On a paid plan
+  with physical backups, use the dashboard's "Restore to a New Project" for a
+  daily backup or, with the PITR add-on, a point in time; otherwise restore a
+  dump into a new project. The in-place backup restore and point-in-time
+  recovery replace the live project's database, so do not use them for Jeeves.
+  The transaction pooler cannot restore or migrate: use the direct or session
+  connection string for the restore and the checks below.
+- **AWS RDS for PostgreSQL:** turn on automated backups with a retention
+  window, and take a manual snapshot before every upgrade. "Restore to point
+  in time" and "Restore snapshot" both create a *new* DB instance with a new
+  endpoint; repoint `DATABASE_URL` at it.
+- **Podman:** `deploy-podman.md` covers the volume export and an online
+  `pg_dump`. Restore a dump into a fresh database, not into the one that
+  holds the bad data:
+  `podman compose exec -T db createdb -U jeeves jeeves_restored`, then
+  `podman compose exec -T db psql -U jeeves -d jeeves_restored < backup.sql`
+  for a plain `.sql` file, or
+  `podman compose exec -T db pg_restore -U jeeves --no-owner -d jeeves_restored < backup.dump`
+  for a `pg_dump -Fc` file.
+
+After any restore, before sending traffic to it:
+
+1. The migration journal matches the build you are about to run: every entry
+   of `drizzle/meta/_journal.json` has a row in `drizzle.__drizzle_migrations`
+   (`npm run db:migrate` checks this and refuses to continue when one is
+   missing).
+2. Boot the app against the restored database and `GET /api/health` answers
+   200.
+3. Compare `select count(*) from audit_events` with the source (or with what
+   you expect at the restore point), and open a recent initiative and one of
+   its evidence files.
+
+Evidence files are stored in the database as `bytea`, so the database size,
+and with it backup time and restore time, grows with uploads. Sessions and
+rate-limit buckets are disposable: nothing is lost if they are absent after a
+restore. Backups also hold whatever real
+requests visitors submitted through the intake door, so apply your retention
+and deletion rules to backups too.
 
 ### Upgrades and rollback
 
@@ -347,10 +400,10 @@ or delete audit history.
 
 ### Not covered
 
-No automated backup verification, and no drill. A backup nobody has restored
-from is a hypothesis. If this goes to a pilot, restoring into a scratch
-branch and booting the app against it should be part of the runbook, not a
-thing discovered during an incident.
+No automated backup verification. A backup nobody has restored from is a
+hypothesis. Run the three checks under Restore as a drill on a schedule
+(restore into a scratch database, boot the app against it, then discard it)
+so it is not discovered during an incident.
 
 ---
 

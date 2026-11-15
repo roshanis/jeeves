@@ -67,6 +67,15 @@ describe("demoDoorFallbacks", () => {
     ]);
   });
 
+  it("covers only the methods a route implementing several leaves out", () => {
+    expect(Object.keys(demoDoorFallbacks("POST", "DELETE")).sort()).toEqual(["GET", "HEAD", "OPTIONS", "PATCH", "PUT"]);
+  });
+
+  it("lists every implemented method in the demo OPTIONS Allow header", () => {
+    vi.stubEnv("JEEVES_MODE", "demo");
+    expect(demoDoorFallbacks("POST", "DELETE").OPTIONS(req).headers.get("allow")).toBe("DELETE, OPTIONS, POST");
+  });
+
   // Next derives HEAD from GET on its own; exporting a HEAD would replace that.
   it("leaves HEAD to Next when the route implements GET", () => {
     expect(Object.keys(demoDoorFallbacks("GET")).sort()).toEqual(["DELETE", "OPTIONS", "PATCH", "POST", "PUT"]);

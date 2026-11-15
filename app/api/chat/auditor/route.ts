@@ -32,7 +32,7 @@ import type { AgentPort, PortFailure } from "@/lib/agents/ports";
 import { agentInitializationResponse, llmNotConfigured, llmNotConfiguredResponse } from "@/lib/services/agent-error-response";
 import { getProvider } from "@/lib/data";
 import type { AuditQueryRow, CannedAuditQueryId } from "@/lib/data/dto";
-import { reserveDailyBudget, runMutationGuard } from "@/lib/services/route-guard";
+import { guardFailureResponse, reserveDailyBudget, runMutationGuard } from "@/lib/services/route-guard";
 
 const bodySchema = z.object({
   question: z.string().min(1).max(2000),
@@ -172,7 +172,7 @@ export async function POST(req: Request): Promise<Response> {
     inputTotalCap: QUESTION_MAX_CHARS,
   });
   if (!guard.ok) {
-    return Response.json({ error: guard.failure.message }, { status: guard.failure.status });
+    return guardFailureResponse(guard.failure);
   }
   const json = guard.json;
 

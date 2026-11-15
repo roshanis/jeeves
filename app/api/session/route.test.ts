@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { sql } from "drizzle-orm";
 import { createTestDb, closeTestDb, type TestDb } from "@/lib/db/test-client";
 import { sessions } from "@/lib/db/schema";
 import { issuePublicSession, resetHousekeepingCounterForTests } from "@/lib/services/route-guard";
-import { POST } from "./route";
+import { DELETE, POST } from "./route";
 
 let db: TestDb;
 const getDbMock = vi.fn(() => db);
@@ -143,5 +144,73 @@ describe("public demo entry", () => {
     const headers = { ...ip, authorization: `Bearer ${pub.token}` };
     for (let i = 0; i < 5; i++) expect((await enter("priya-raman", headers)).status).toBe(200);
     expect((await enter("priya-raman", headers)).status).toBe(429);
+  });
+});
+
+describe("cross-site session requests (auth-F10)", () => {
+  it("refuses a foreign Origin with 403, no cookie, and no session row", async () => {
+    const res = await enter("priya-raman", { origin: "https://evil.example" });
+    expect(res.status).toBe(403);
+    expect(res.headers.has("set-cookie")).toBe(false);
+    expect(await db.select().from(sessions)).toHaveLength(0);
+  });
+
+  it("refuses a body not declared application/json with 415", async () => {
+    const res = await POST(new Request("http://localhost/api/session", {
+      method: "POST",
+      headers: { "content-type": "text/plain" },
+      body: JSON.stringify({ personaKey: "priya-raman" }),
+    }));
+    expect(res.status).toBe(415);
+    expect(res.headers.has("set-cookie")).toBe(false);
+  });
+
+  it("still serves a same-origin Origin and a request with no Origin", async () => {
+    expect((await enter("priya-raman", { origin: "http://localhost" })).status).toBe(200);
+    expect((await enter("priya-raman")).status).toBe(200);
+  });
+
+  it("public-session refuses a foreign Origin and a declared non-JSON body, and serves a bare same-origin POST", async () => {
+    vi.stubEnv("OPERATOR_TOKEN", "op-test-token-0123456789abcdefghijklmnop");
+    const { POST: publicPost } = await import("../public-session/route");
+    const foreign = await publicPost(new Request("http://localhost/api/public-session", { method: "POST", headers: { origin: "https://evil.example" } }));
+    expect(foreign.status).toBe(403);
+    const form = await publicPost(new Request("http://localhost/api/public-session", { method: "POST", headers: { "content-type": "text/plain" }, body: "x" }));
+    expect(form.status).toBe(415);
+    const ok = await publicPost(new Request("http://localhost/api/public-session", { method: "POST", headers: { origin: "http://localhost" } }));
+    expect(ok.status).toBe(200);
+  });
+});
+
+describe("DELETE (server-side exit)", () => {
+  const exit = (token?: string) => DELETE(new Request("http://localhost/api/session", {
+    method: "DELETE", headers: token ? { authorization: `Bearer ${token}` } : {},
+  }));
+
+  it("removes exactly the presented token and answers 204 (auth-F19)", async () => {
+    const a = await (await enter()).json();
+    const b = await (await enter("marcus-webb", { authorization: `Bearer ${a.token}` })).json();
+    expect((await exit(a.token)).status).toBe(204);
+    const left = await db.select().from(sessions);
+    expect(left.map((r) => r.token)).toEqual([b.token]);
+    expect((await exit(a.token)).status).toBe(401);
+  });
+
+  it("refuses a missing token and a public session, deleting nothing", async () => {
+    expect((await exit()).status).toBe(401);
+    const pub = await issuePublicSession("203.0.113.51");
+    if (!("token" in pub)) throw new Error("expected a public session");
+    expect((await exit(pub.token)).status).toBe(403);
+    expect(await db.select().from(sessions)).toHaveLength(1);
+  });
+
+  it("never lets the bound token reach a thrown error when the delete fails (auth-F19)", async () => {
+    const a = await (await enter()).json();
+    await db.execute(sql`create function fail_session_delete() returns trigger language plpgsql as $$ begin raise exception 'boom'; end $$`);
+    await db.execute(sql`create trigger fail_session_delete before delete on sessions for each row execute function fail_session_delete()`);
+    const thrown = await exit(a.token).then(() => null, (err: unknown) => err);
+    expect(thrown).toBeInstanceOf(Error);
+    expect((thrown as Error).message).toMatch(/^Database query failed/);
+    expect(String((thrown as Error).message)).not.toContain(a.token);
   });
 });

@@ -19,7 +19,10 @@ function findUnexpectedEntries(relativePaths) {
     const parts = rel.split("/");
     const top = parts[0];
     let ok = TOP_LEVEL.has(top);
-    if (ok && top === "agents") {
+    if (ok && top === "node_modules") {
+      // The app never calls sharp (images are unoptimized); keep its LGPL libvips binaries out of the image.
+      ok = parts[1] !== "sharp" && parts[1] !== "@img";
+    } else if (ok && top === "agents") {
       ok = parts.length === 1 || rel.endsWith(".md");
     } else if (ok && top === "docs") {
       ok = parts.length === 1 || (parts[1] === "policies" && (parts.length === 2 || rel.endsWith(".md")));
@@ -80,7 +83,12 @@ function walk(dir, base, out) {
     // Files are what ship; list a directory only so an empty or top-level one is judged too.
     if (entry.isDirectory()) {
       out.push(rel);
-      if (rel.split(path.sep)[0] === ".next" || rel.split(path.sep)[0] === "node_modules") continue;
+      if (rel === "node_modules") {
+        // List the first level only (node_modules/<name>, node_modules/@scope) so the sharp and @img guard can fire.
+        for (const child of fs.readdirSync(abs)) out.push(path.join(rel, child));
+        continue;
+      }
+      if (rel.split(path.sep)[0] === ".next") continue;
       walk(abs, base, out);
     } else {
       out.push(rel);

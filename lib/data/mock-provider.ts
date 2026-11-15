@@ -857,7 +857,12 @@ function approvedByTorresQuery(): AuditQueryRow[] {
   // fixture always stores the display name today, but goes through the same
   // actorMatches()/displayNameFor() helpers so the two providers implement
   // identical logic rather than the mock happening to agree by coincidence.
-  return INITIATIVES.filter((init) => actorMatches(init.accountableApprover, "angela-torres"))
+  // Rejections are not approvals (the DB provider excludes d.type "rejected").
+  return INITIATIVES.filter(
+    (init) =>
+      actorMatches(init.accountableApprover, "angela-torres") &&
+      buildDecisions(init)[0]?.type !== "rejected",
+  )
     .map((init) => {
       const decision = buildDecisions(init)[0];
       return {

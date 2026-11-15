@@ -116,4 +116,19 @@ describe("loadIncidentsForViewer", () => {
     ]);
     expect(foreign).toEqual({ status: "success", incidents: [] });
   });
+
+  it("reads incidents with one workspace-scoped query instead of two unscoped table loads", async () => {
+    let selects = 0;
+    const counting = new Proxy(db, {
+      get(target, key, receiver) {
+        if (key === "select") return (...args: unknown[]) => { selects += 1; return (target as never as { select: (...a: unknown[]) => unknown }).select(...args); };
+        return Reflect.get(target, key, receiver);
+      },
+    });
+
+    const result = await loadIncidentsForViewer("ws-owner", { providerMode: "db", db: counting as never });
+
+    expect(result.status === "success" ? result.incidents.map((row) => row.id) : result).toEqual(["incident-owned"]);
+    expect(selects).toBe(1);
+  });
 });

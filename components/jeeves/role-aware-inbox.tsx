@@ -79,6 +79,9 @@ const DECISION_META: Record<
 
 type DecisionEntry = { dec: DecisionRow; title: string; slug: string };
 
+/** Portfolio-wide decision totals (the feed above is only the newest few). */
+export type DecisionCounts = { approved: number; conditional: number; rejected: number; total: number };
+
 /** One initiative's slug/title/tier/state plus its reviews' domain+status —
  * enough for the reviewer Inbox view to scope a queue to a single domain
  * without needing a full InitiativeSummary. */
@@ -425,6 +428,7 @@ function ViewLink({ href, children }: { href: string; children: React.ReactNode 
 export function RoleAwareInbox({
   initiatives,
   recentDecisions,
+  decisionCounts,
   alerts,
   incidentCount,
   counts,
@@ -434,6 +438,7 @@ export function RoleAwareInbox({
 }: {
   initiatives: InitiativeSummary[];
   recentDecisions: DecisionEntry[];
+  decisionCounts: DecisionCounts;
   alerts: InitiativeSummary[];
   incidentCount: number | null;
   counts: { inReview: number; slaBreaches: number; reassessing: number; deployed: number };
@@ -451,6 +456,7 @@ export function RoleAwareInbox({
         reviewerDomain={reviewerDomain}
         initiatives={initiatives}
         recentDecisions={recentDecisions}
+        decisionCounts={decisionCounts}
         alerts={alerts}
         incidentCount={incidentCount}
         counts={counts}
@@ -468,6 +474,7 @@ function RoleView({
   reviewerDomain,
   initiatives,
   recentDecisions,
+  decisionCounts,
   alerts,
   incidentCount,
   counts,
@@ -480,6 +487,7 @@ function RoleView({
   reviewerDomain: Domain | null;
   initiatives: InitiativeSummary[];
   recentDecisions: DecisionEntry[];
+  decisionCounts: DecisionCounts;
   alerts: InitiativeSummary[];
   incidentCount: number | null;
   counts: { inReview: number; slaBreaches: number; reassessing: number; deployed: number };
@@ -505,7 +513,7 @@ function RoleView({
       );
     case "audit":
       return (
-        <AuditView initiatives={initiatives} recentDecisions={recentDecisions} />
+        <AuditView initiatives={initiatives} recentDecisions={recentDecisions} decisionCounts={decisionCounts} />
       );
     case "admin":
       return (
@@ -1067,20 +1075,20 @@ function ReviewerView({
 function AuditView({
   initiatives,
   recentDecisions,
+  decisionCounts,
 }: {
   initiatives: InitiativeSummary[];
   recentDecisions: DecisionEntry[];
+  decisionCounts: DecisionCounts;
 }) {
   const awaitingDecision = initiatives.filter(
     (i) => i.decisionReadiness?.canApprove || i.decisionReadiness?.canConditionallyApprove,
   );
-  const approvedCount = recentDecisions.filter(
-    (d) => d.dec.type === "approved" || d.dec.type === "fast_lane_approved",
-  ).length;
-  const conditionalCount = recentDecisions.filter(
-    (d) => d.dec.type === "conditionally_approved",
-  ).length;
-  const rejectedCount = recentDecisions.filter((d) => d.dec.type === "rejected").length;
+  // Portfolio-wide totals computed by the page (the feed holds only the newest six).
+  const totals = decisionCounts;
+  const approvedCount = totals.approved;
+  const conditionalCount = totals.conditional;
+  const rejectedCount = totals.rejected;
 
   return (
     <>
@@ -1104,23 +1112,23 @@ function AuditView({
             icon: CheckCircle2,
             value: approvedCount,
             label: "Approved",
-            context: shareText(approvedCount, recentDecisions.length),
-            fraction: shareFraction(approvedCount, recentDecisions.length),
+            context: shareText(approvedCount, totals.total),
+            fraction: shareFraction(approvedCount, totals.total),
           },
           {
             icon: FileCheck2,
             value: conditionalCount,
             label: "Conditional",
-            context: shareText(conditionalCount, recentDecisions.length),
-            fraction: shareFraction(conditionalCount, recentDecisions.length),
+            context: shareText(conditionalCount, totals.total),
+            fraction: shareFraction(conditionalCount, totals.total),
           },
           {
             icon: XCircle,
             value: rejectedCount,
             label: "Rejected",
             tone: "alert",
-            context: shareText(rejectedCount, recentDecisions.length),
-            fraction: shareFraction(rejectedCount, recentDecisions.length),
+            context: shareText(rejectedCount, totals.total),
+            fraction: shareFraction(rejectedCount, totals.total),
           },
         ]}
       />

@@ -147,6 +147,8 @@ function TextField({
   type = "text",
   hint,
   maxLength,
+  required,
+  gapIds,
 }: {
   label: string;
   value: string;
@@ -154,19 +156,28 @@ function TextField({
   type?: string;
   hint?: string;
   maxLength?: number;
+  required?: boolean;
+  gapIds?: string[];
 }) {
+  const hintId = React.useId();
+  const describedBy = [hint ? hintId : "", ...(gapIds ?? [])].filter(Boolean).join(" ") || undefined;
   return (
-    <label className="flex flex-col gap-1 text-sm">
-      <span className="font-medium">{label}</span>
-      <input
-        type={type}
-        value={value}
-        maxLength={maxLength}
-        onChange={(e) => onChange(e.target.value)}
-        className={inputClass}
-      />
-      {hint ? <span className="text-xs text-muted-foreground">{hint}</span> : null}
-    </label>
+    <div className="flex flex-col gap-1 text-sm">
+      <label className="flex flex-col gap-1">
+        <span className="font-medium">{label}</span>
+        <input
+          type={type}
+          value={value}
+          maxLength={maxLength}
+          required={required}
+          aria-invalid={gapIds?.length ? true : undefined}
+          aria-describedby={describedBy}
+          onChange={(e) => onChange(e.target.value)}
+          className={inputClass}
+        />
+      </label>
+      {hint ? <span id={hintId} className="text-xs text-muted-foreground">{hint}</span> : null}
+    </div>
   );
 }
 
@@ -176,19 +187,35 @@ function TextAreaField({
   onChange,
   hint,
   maxLength,
+  required,
+  gapIds,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   hint?: string;
   maxLength?: number;
+  required?: boolean;
+  gapIds?: string[];
 }) {
+  const hintId = React.useId();
+  const describedBy = [hint ? hintId : "", ...(gapIds ?? [])].filter(Boolean).join(" ") || undefined;
   return (
-    <label className="flex flex-col gap-1 text-sm">
-      <span className="font-medium">{label}</span>
-      <textarea value={value} maxLength={maxLength} onChange={(e) => onChange(e.target.value)} className={textareaClass} />
-      {hint ? <span className="text-xs text-muted-foreground">{hint}</span> : null}
-    </label>
+    <div className="flex flex-col gap-1 text-sm">
+      <label className="flex flex-col gap-1">
+        <span className="font-medium">{label}</span>
+        <textarea
+          value={value}
+          maxLength={maxLength}
+          required={required}
+          aria-invalid={gapIds?.length ? true : undefined}
+          aria-describedby={describedBy}
+          onChange={(e) => onChange(e.target.value)}
+          className={textareaClass}
+        />
+      </label>
+      {hint ? <span id={hintId} className="text-xs text-muted-foreground">{hint}</span> : null}
+    </div>
   );
 }
 
@@ -206,10 +233,14 @@ function LinesField({
   label,
   values,
   onChange,
+  required,
+  gapIds,
 }: {
   label: string;
   values: string[];
   onChange: (entries: string[]) => void;
+  required?: boolean;
+  gapIds?: string[];
 }) {
   const [text, setText] = React.useState(values.join("\n"));
   const [seen, setSeen] = React.useState(values);
@@ -221,6 +252,8 @@ function LinesField({
     <TextAreaField
       label={label}
       value={text}
+      required={required}
+      gapIds={gapIds}
       onChange={(v) => {
         setText(v);
         onChange(splitLines(v));
@@ -310,7 +343,7 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
   realRequestsEnabled?: boolean;
 } = {}) {
   const router = useRouter();
-  const { session, logout, startDemo, startPublicSession, pending } = useLiveSession();
+  const { session, logout, expired, startDemo, startPublicSession, pending } = useLiveSession();
 
   const [internalPayload, setInternalPayload] = React.useState<IntakePayload>(initialPayload ?? EMPTY_PAYLOAD);
   const payload = initialPayload ?? internalPayload;
@@ -374,6 +407,14 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
   const completeness = evaluateCompleteness(payload, preview?.tier);
   const gapsByLevel = (level: CompletenessGap["level"]) =>
     completeness.gaps.filter((g) => g.level === level);
+  // Ids of the blocking-gap rows that name a field, so the control can point
+  // at them. Nothing is flagged while the form is still untouched.
+  const gapIdsFor = (field: string) =>
+    pristine
+      ? undefined
+      : completeness.gaps
+          .filter((g) => g.level === "BLOCKING" && g.field.split(",").includes(field))
+          .map((g) => `intake-gap-${g.ruleId}`);
 
   // Who may author an intake: a requester persona (the playground) or a
   // `public` session (a real request to the operator). The public role can
@@ -483,6 +524,16 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
       data-slot="intake-form"
     >
       <div className="flex flex-col gap-4">
+        {!session && expired ? (
+          <Alert variant="destructive" role="status">
+            <AlertTitle>Your session expired</AlertTitle>
+            <AlertDescription>
+              {pristine ? null : "What you typed is still on this page. "}Use{" "}
+              {expired.kind === "public" && realRequestsEnabled ? "“Send a real request”" : "“Start the demo”"}{" "}
+              below to start a new session, then submit again.
+            </AlertDescription>
+          </Alert>
+        ) : null}
         {!session ? (
           <Alert>
             <AlertTitle>{realRequestsEnabled ? "Try it, or send a real request" : "Try the demo"}</AlertTitle>
@@ -577,18 +628,24 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
             <CardContent className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <TextField
                 label="Initiative title"
+                required
+                gapIds={gapIdsFor("basics.title")}
                 maxLength={INTAKE_LIMITS.short}
                 value={payload.basics.title}
                 onChange={(v) => patch((p) => ({ ...p, basics: { ...p.basics, title: v } }))}
               />
               <TextField
                 label="Sponsor organization"
+                required
+                gapIds={gapIdsFor("basics.sponsorOrg")}
                 maxLength={INTAKE_LIMITS.short}
                 value={payload.basics.sponsorOrg}
                 onChange={(v) => patch((p) => ({ ...p, basics: { ...p.basics, sponsorOrg: v } }))}
               />
               <TextField
                 label="Requester name"
+                required
+                gapIds={gapIdsFor("basics.requesterName")}
                 maxLength={INTAKE_LIMITS.short}
                 value={payload.basics.requesterName}
                 onChange={(v) =>
@@ -597,6 +654,8 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
               />
               <TextField
                 label="Requester email"
+                required
+                gapIds={gapIdsFor("basics.requesterEmail")}
                 maxLength={INTAKE_LIMITS.line}
                 type="email"
                 value={payload.basics.requesterEmail}
@@ -607,6 +666,8 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
               <div className="sm:col-span-2">
                 <TextAreaField
                   label="Business problem"
+                  required
+                  gapIds={gapIdsFor("basics.businessProblem")}
                   maxLength={INTAKE_LIMITS.businessProblem}
                   value={payload.basics.businessProblem}
                   hint="Describe the problem being solved, not the solution (20–2000 chars)."
@@ -664,12 +725,14 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
               <LinesField
                 label="Data source(s) — one per line"
                 values={payload.data.dataSources}
+                required
+                gapIds={gapIdsFor("data.dataSources")}
                 onChange={(entries) => {
                   patch((p) => ({ ...p, data: { ...p.data, dataSources: entries } }));
                 }}
               />
-              <div className="flex flex-col gap-1 text-sm">
-                <span className="font-medium">PHI categories touched</span>
+              <fieldset className="flex flex-col gap-1 text-sm">
+                <legend className="font-medium">PHI categories touched</legend>
                 <div className="grid grid-cols-1 gap-1 sm:grid-cols-2">
                   {PHI_CATEGORIES.map((category) => (
                     <label key={category} className="flex items-center gap-2 text-sm font-normal">
@@ -693,7 +756,7 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
                     </label>
                   ))}
                 </div>
-              </div>
+              </fieldset>
               {payload.data.phiCategories.includes("Other") ? (
                 <TextField
                   label="Other PHI category"
@@ -879,7 +942,12 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
             </CardHeader>
             <CardContent className="flex flex-col gap-4">
               {OVERLAY_QUESTIONS.map(({ key, question, helper }, index) => (
-                <fieldset key={key} className="flex flex-col gap-1" data-slot="overlay-question">
+                <fieldset
+                  key={key}
+                  className="flex flex-col gap-1"
+                  data-slot="overlay-question"
+                  aria-describedby={gapIdsFor(`overlay.${key}`)?.join(" ") || undefined}
+                >
                   <legend className="text-sm font-medium">
                     {index + 1}. <span>{question}</span>
                   </legend>
@@ -893,6 +961,7 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
                         <input
                           type="radio"
                           name={`overlay-${key}`}
+                          required
                           checked={payload.overlay[key] === value}
                           onChange={() =>
                             patch((p) => ({ ...p, overlay: { ...p.overlay, [key]: value } }))
@@ -970,6 +1039,7 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
               <ProgressLabel>Evaluated rules passing</ProgressLabel>
               <ProgressValue />
             </Progress>
+            <div aria-live="polite" className="space-y-3">
             {completeness.canSubmit ? (
               <p className="text-xs text-emerald-700 dark:text-emerald-400">
                 Submission is not blocked — all blocking rules pass.
@@ -1001,6 +1071,7 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
                     {gaps.map((gap) => (
                       <li
                         key={gap.ruleId}
+                        id={`intake-gap-${gap.ruleId}`}
                         className={`text-xs ${levelClass}`}
                         data-slot="completeness-gap"
                         data-rule={gap.ruleId}
@@ -1013,6 +1084,7 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
                 </div>
               );
             })}
+            </div>
           </CardContent>
         </Card>
       </div>

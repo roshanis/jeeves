@@ -105,13 +105,13 @@ async function issueDemoRows(): Promise<{ persona: string; publicToken: string }
 }
 
 describe("production: the demo-only doors answer 404 first", () => {
-  type Door = { name: string; mod: RouteModule; path: string; implements: Method; probe: Record<string, string>; body?: unknown };
+  type Door = { name: string; mod: RouteModule; path: string; implements: Method[]; probe: Record<string, string>; body?: unknown };
   const doors: Door[] = [
     {
       name: "/api/session",
       mod: sessionRoute as RouteModule,
       path: "/api/session",
-      implements: "POST",
+      implements: ["POST", "DELETE"],
       probe: {},
       body: { personaKey: "priya-raman" },
     },
@@ -119,21 +119,21 @@ describe("production: the demo-only doors answer 404 first", () => {
       name: "/api/public-session",
       mod: publicSessionRoute as RouteModule,
       path: "/api/public-session",
-      implements: "POST",
+      implements: ["POST"],
       probe: { "x-forwarded-for": "198.51.100.7" },
     },
     {
       name: "/api/public-intake",
       mod: publicIntakeRoute as RouteModule,
       path: "/api/public-intake",
-      implements: "GET",
+      implements: ["GET"],
       probe: { authorization: `Bearer ${OPERATOR_TOKEN}` },
     },
     {
       name: "/api/monitor/run",
       mod: monitorRunRoute as RouteModule,
       path: "/api/monitor/run",
-      implements: "POST",
+      implements: ["POST"],
       probe: {},
       body: { nowTs: "2026-07-15T00:00:00Z" },
     },
@@ -141,7 +141,7 @@ describe("production: the demo-only doors answer 404 first", () => {
       name: "/api/cron/monitor",
       mod: cronMonitorRoute as RouteModule,
       path: "/api/cron/monitor",
-      implements: "GET",
+      implements: ["GET"],
       probe: { authorization: `Bearer ${CRON_SECRET}` },
     },
   ];
@@ -158,16 +158,17 @@ describe("production: the demo-only doors answer 404 first", () => {
       expect(await sessionCount()).toBe(0);
     });
 
-    it("is 404 with a valid persona session behind the request", async () => {
+    it.each(door.implements)("%s is 404 with a valid persona session behind the request", async (method) => {
       const { persona } = await issueDemoRows();
       getDbSpy.mockClear();
       const res = await dispatch(
         door.mod,
-        door.implements,
-        request(door.path, door.implements, { ...door.probe, authorization: `Bearer ${persona}` }, door.body),
+        method,
+        request(door.path, method, { ...door.probe, authorization: `Bearer ${persona}` }, door.body),
       );
       expect(res.status).toBe(404);
       expect(getDbSpy).not.toHaveBeenCalled();
+      expect(await sessionCount()).toBe(2);
     });
   });
 
@@ -362,14 +363,14 @@ describe("demo: the doors still work", () => {
 
   it("the other methods keep Next's defaults (empty 405, OPTIONS 204 with Allow)", async () => {
     const mod = sessionRoute as RouteModule;
-    for (const method of ["GET", "HEAD", "PUT", "PATCH", "DELETE"] as const) {
+    for (const method of ["GET", "HEAD", "PUT", "PATCH"] as const) {
       const res = await dispatch(mod, method, request("/api/session", method));
       expect(res.status, method).toBe(405);
       expect(await res.text()).toBe("");
     }
     const options = await dispatch(mod, "OPTIONS", request("/api/session", "OPTIONS"));
     expect(options.status).toBe(204);
-    expect(options.headers.get("allow")).toBe("OPTIONS, POST");
+    expect(options.headers.get("allow")).toBe("DELETE, OPTIONS, POST");
 
     // GET routes keep the HEAD-from-GET behaviour Next adds automatically.
     const intake = publicIntakeRoute as RouteModule;

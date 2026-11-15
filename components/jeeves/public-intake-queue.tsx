@@ -63,6 +63,25 @@ function errorMessage(err: unknown): string {
 // parameters (? & % , ; # =) is shown as text so it cannot add cc/bcc/body.
 const SAFE_MAILTO_RE = /^[A-Za-z0-9._+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;
 
+function RequestProblem({ text }: { text: string }) {
+  const [expanded, setExpanded] = React.useState(false);
+  return (
+    <>
+      <p
+        data-slot="request-problem"
+        className={`text-sm text-muted-foreground ${expanded ? "whitespace-pre-wrap" : "line-clamp-3"}`}
+      >
+        {text}
+      </p>
+      {text.length > 160 ? (
+        <Button type="button" size="sm" variant="ghost" className="self-start" aria-expanded={expanded} onClick={() => setExpanded((v) => !v)}>
+          {expanded ? "Show less" : "Show full request"}
+        </Button>
+      ) : null}
+    </>
+  );
+}
+
 type State =
   | { kind: "locked"; error: string | null }
   | { kind: "loading" }
@@ -71,14 +90,19 @@ type State =
 export function PublicIntakeQueue() {
   const [state, setState] = React.useState<State>({ kind: "locked", error: null });
   const [draft, setDraft] = React.useState("");
+  const [refreshing, setRefreshing] = React.useState(false);
+  const [refreshError, setRefreshError] = React.useState<string | null>(null);
 
   const manualOpen = React.useRef(false);
+  const tokenRef = React.useRef("");
 
   const open = React.useCallback(async (token: string) => {
     manualOpen.current = true;
+    setRefreshError(null);
     setState({ kind: "loading" });
     try {
       const rows = await listPublicSubmissions(token);
+      tokenRef.current = token;
       writeStoredToken(token);
       setState({ kind: "open", rows });
     } catch (err) {
@@ -98,7 +122,10 @@ export function PublicIntakeQueue() {
     let cancelled = false;
     listPublicSubmissions(remembered).then(
       (rows) => {
-        if (!cancelled && !manualOpen.current) setState({ kind: "open", rows });
+        if (!cancelled && !manualOpen.current) {
+          tokenRef.current = remembered;
+          setState({ kind: "open", rows });
+        }
       },
       (err) => {
         // A remembered token the server rejects is forgotten; any other
@@ -114,9 +141,39 @@ export function PublicIntakeQueue() {
     };
   }, []);
 
+  // Reloads the list in place with the token already accepted, so the queue
+  // stays on screen instead of dropping back to the token form. A 429, a 5xx
+  // or a network error keeps the rows and the token and says the refresh
+  // failed; only a rejected token (401/404) drops to the form.
+  async function refresh() {
+    if (refreshing) return;
+    // Lock may be pressed while this is in flight; a stale result must not
+    // re-open the queue or resurrect an error after the token is gone.
+    const token = tokenRef.current;
+    setRefreshing(true);
+    setRefreshError(null);
+    try {
+      const rows = await listPublicSubmissions(token);
+      if (tokenRef.current !== token) return;
+      setState({ kind: "open", rows });
+    } catch (err) {
+      if (tokenRef.current !== token) return;
+      if (tokenRejected(err)) {
+        writeStoredToken(null);
+        setState({ kind: "locked", error: errorMessage(err) });
+      } else {
+        setRefreshError(`Refresh failed — the list shown is the last one loaded. ${errorMessage(err)}`);
+      }
+    } finally {
+      setRefreshing(false);
+    }
+  }
+
   function lock() {
+    tokenRef.current = "";
     writeStoredToken(null);
     setDraft("");
+    setRefreshError(null);
     setState({ kind: "locked", error: null });
   }
 
@@ -129,12 +186,31 @@ export function PublicIntakeQueue() {
           <span className="stat-value text-xs text-foreground">{state.rows.length}</span>
         ) : null}
         {state.kind === "open" ? (
-          <Button type="button" size="sm" variant="ghost" className="ml-auto" onClick={lock}>
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            className="ml-auto"
+            disabled={refreshing}
+            aria-busy={refreshing || undefined}
+            onClick={() => void refresh()}
+          >
+            Refresh
+          </Button>
+        ) : null}
+        {state.kind === "open" ? (
+          <Button type="button" size="sm" variant="ghost" onClick={lock}>
             <LogOut className="size-3.5" aria-hidden />
             Lock
           </Button>
         ) : null}
       </div>
+
+      {state.kind === "open" && refreshError ? (
+        <p className="border-b px-4 py-2 text-sm text-destructive" role="alert">
+          {refreshError}
+        </p>
+      ) : null}
 
       {state.kind !== "open" ? (
         <form
@@ -194,16 +270,14 @@ export function PublicIntakeQueue() {
                 <span className="rounded border border-border bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
                   {LIFECYCLE_LABEL[row.state as LifecycleState] ?? row.state}
                 </span>
-                <p className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
+                <p title={row.title} className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
                   {row.title}
                 </p>
                 <span className="text-xs text-muted-foreground">
                   {row.createdAt.slice(0, 10)}
                 </span>
               </div>
-              {row.businessProblem ? (
-                <p className="line-clamp-3 text-sm text-muted-foreground">{row.businessProblem}</p>
-              ) : null}
+              {row.businessProblem ? <RequestProblem text={row.businessProblem} /> : null}
               <p className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
                 <span>{row.requester}</span>
                 {row.requesterEmail && !SAFE_MAILTO_RE.test(row.requesterEmail) ? (

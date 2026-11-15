@@ -23,7 +23,9 @@ import {
 import {
   runMonitor,
   listIncidents,
+  listIncidentsForViewer,
   UNSCOPED_WORKSPACE,
+  ConflictError,
 } from "./monitor-service";
 import { SYSTEM_ACTOR } from "./actors";
 import { resumeDeployment } from "./admin-service";
@@ -428,6 +430,42 @@ describe("lib/services/monitor-service", () => {
       }
     });
 
+    it("a CAS conflict against an incident another run just recorded is reported as already known, not as a failure", async () => {
+      const { dep } = await memberChatCopilot(db);
+
+      /* eslint-disable @typescript-eslint/no-explicit-any */
+      const dbAny = db as any;
+      const realTransaction = dbAny.transaction.bind(dbAny);
+      let txCallCount = 0;
+      const spy = vi.spyOn(dbAny, "transaction").mockImplementation((cb: any) => {
+        txCallCount += 1;
+        if (txCallCount !== 2) return realTransaction(cb);
+        // The overlapping run committed the incident; this run's transaction
+        // then loses its state CAS and throws ConflictError.
+        return realTransaction(cb).then(() => {
+          throw new ConflictError("initiative changed concurrently (expected state 'deployed')");
+        });
+      });
+      /* eslint-enable @typescript-eslint/no-explicit-any */
+      const log = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      let result;
+      try {
+        result = await runMonitor(db, SYSTEM_ACTOR, PLUS_14D, UNSCOPED_WORKSPACE);
+      } finally {
+        spy.mockRestore();
+        log.mockRestore();
+      }
+
+      expect(result.errors.find((e) => e.deploymentId === dep.id)).toBeUndefined();
+      const breach = result.breaches.find((b) => b.deploymentId === dep.id)!;
+      expect(breach.failed).toBeUndefined();
+      expect(breach.isNew).toBe(false);
+      expect(breach.incidentId).not.toBe("");
+      expect(result.alreadyKnown).toBe(1);
+      expect(result.incidentsCreated).toBe(0);
+    });
+
     it("a concurrent write that changes the initiative's state before the breach-pause CAS update is recorded in result.errors and does not abort the run (no partial write for that candidate)", async () => {
       const { init, dep } = await memberChatCopilot(db);
 
@@ -675,7 +713,7 @@ describe("lib/services/monitor-service", () => {
     });
   });
 
-  describe("listIncidents — public read-only", () => {
+  describe("listIncidents — unscoped baseline", () => {
     it("returns incidents sorted most-recent-first after a breach", async () => {
       await runMonitor(db, RAY_CHEN, PLUS_14D, UNSCOPED_WORKSPACE);
       const rows = await listIncidents(db);
@@ -686,6 +724,25 @@ describe("lib/services/monitor-service", () => {
     it("returns an empty list before any breach has been detected", async () => {
       const rows = await listIncidents(db);
       expect(rows).toEqual([]);
+    });
+  });
+
+  describe("listIncidentsForViewer", () => {
+    it("returns seeded-deployment incidents for any viewer, newest first, and none once the deployment's initiative belongs to another workspace", async () => {
+      const { init } = await memberChatCopilot(db);
+      await runMonitor(db, RAY_CHEN, PLUS_14D, UNSCOPED_WORKSPACE);
+      const all = await listIncidents(db);
+      expect(all.length).toBeGreaterThanOrEqual(1);
+
+      const seeded = await listIncidentsForViewer(db, null);
+      expect(seeded).toEqual(all);
+      const times = seeded.map((r) => r.detectedAt);
+      expect(times).toEqual(times.slice().sort().reverse());
+
+      await db.update(initiatives).set({ workspaceId: "ws-owner" }).where(eq(initiatives.id, init.id));
+      expect(await listIncidentsForViewer(db, null)).toEqual([]);
+      expect(await listIncidentsForViewer(db, "ws-other")).toEqual([]);
+      expect((await listIncidentsForViewer(db, "ws-owner")).length).toBe(all.length);
     });
   });
 });

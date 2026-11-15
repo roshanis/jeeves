@@ -102,3 +102,67 @@ describe("data disclaimers cover the real-request door (docs-F23)", () => {
     expect(read("docs/ARCHITECTURE.md")).not.toMatch(/no real PHI,\s+PII, or production data exists anywhere/);
   });
 });
+
+describe("docs/deploy.md section 4 backups (docs-F28)", () => {
+  const doc = read("docs/deploy.md");
+  const section = doc.slice(doc.indexOf("## 4. Backups and restore"), doc.indexOf("## 5. Staging"));
+  it("covers RDS and Supabase, not only Neon", () => {
+    expect(section).toMatch(/RDS/);
+    expect(section).toMatch(/Supabase/);
+  });
+  it("says to restore into a new database because of the append-only triggers", () => {
+    expect(section).toMatch(/new database/);
+    expect(section).toMatch(/drops and recreates every\s+table/);
+    // Only while no migration guards TRUNCATE: the production-mode line's 0014 does.
+    const migrations = readdirSync("drizzle").filter((f) => f.endsWith(".sql")).map((f) => read(`drizzle/${f}`)).join("\n");
+    if (!/BEFORE\s+TRUNCATE/i.test(migrations)) expect(section).not.toMatch(/TRUNCATE/);
+    expect(section).toMatch(/Restore to a New Project/i);
+  });
+  it("checks the migration journal and health after a restore", () => {
+    expect(section).toMatch(/__drizzle_migrations/);
+    expect(section).toMatch(/\/api\/health/);
+  });
+});
+
+describe("README drift (docs-F31)", () => {
+  const readme = read("README.md");
+  it("hard-codes no Playwright or unit-test counts", () => {
+    expect(readme).not.toMatch(/\b8 Playwright/);
+    expect(readme).not.toMatch(/several hundred/i);
+  });
+  it("lists Agents in the left-nav sentence", () => {
+    const i = readme.indexOf("a left-nav ops shell");
+    expect(readme.slice(i, i + 250)).toMatch(/Agents/);
+  });
+  it("says node-postgres serves non-Neon hosts, not neon-serverless 'in production'", () => {
+    expect(readme).not.toMatch(/neon-serverless`? driver in\s+production/);
+    expect(readme).toMatch(/node-postgres/);
+  });
+  it("names Node 22 instead of pointing at a package.json range that does not exist", () => {
+    expect(readme).not.toMatch(/see `package\.json`\/`next` 16/);
+    expect(readme).toMatch(/Node\.js 22/);
+  });
+  it("does not give Luna completeness checks or triage narration", () => {
+    expect(readme).not.toMatch(/triage narration/);
+    // Luna's duties are the text up to the first em dash; the model id holds dots, so a [^.] span never reached it.
+    const lunaDuties = /\*\*Luna\*\*[^—]*/.exec(readme)?.[0] ?? "";
+    expect(lunaDuties).toContain("intake turns");
+    expect(lunaDuties).not.toContain("completeness");
+  });
+  it("lists the lib directories and scripts that exist", () => {
+    for (const p of ["  demo/ ", "  evidence/ ", "  reviews/ ", "  telemetry/ ", "  deployments/ ", "  format/ ", "  http/ ", "  marketing/ ", "\nagents/ ", "\ndeploy/ ", "migrate.ts", "reset-demo.ts"]) {
+      expect(readme, p).toContain(p);
+    }
+  });
+  it("ends with the License section", () => {
+    expect(readme.trimEnd().endsWith("each of which carries its own terms.")).toBe(true);
+  });
+});
+
+describe("docs/deploy-podman.md image healthcheck (deploy-F16)", () => {
+  it("says an OCI-format build drops the image HEALTHCHECK and names --format docker", () => {
+    const doc = read("docs/deploy-podman.md");
+    expect(doc).toMatch(/--format docker/);
+    expect(doc).toMatch(/HEALTHCHECK/);
+  });
+});

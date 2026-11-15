@@ -487,7 +487,7 @@ export class DbDataProvider implements DataProvider {
       .sort((a, b) => a.decidedAt.getTime() - b.decidedAt.getTime())
       .map((d) => ({
         type: d.type as DecisionRow["type"],
-        approver: d.approver,
+        approver: displayNameFor(d.approver),
         at: toIso(d.decidedAt),
         conditions: d.conditions,
         citations: d.citations,
@@ -570,7 +570,7 @@ export class DbDataProvider implements DataProvider {
   async outcomeMetrics(opts?: WorkspaceScopedReadOptions): Promise<OutcomeMetrics> {
     const snap = this.visibleSnapshot(await this.loadSnapshot(), opts);
 
-    // Median review cycle time over CLOSED cycles, in whole days.
+    // Median review cycle time over CLOSED cycles, in days to one decimal.
     const durations = snap.cycles
       .filter((c) => c.closedAt !== null)
       .map((c) => (c.closedAt!.getTime() - c.openedAt.getTime()) / DAY_MS)
@@ -578,8 +578,9 @@ export class DbDataProvider implements DataProvider {
     let medianReviewCycleDays = 0;
     if (durations.length > 0) {
       const mid = Math.floor(durations.length / 2);
-      medianReviewCycleDays =
+      const median =
         durations.length % 2 === 1 ? durations[mid]! : (durations[mid - 1]! + durations[mid]!) / 2;
+      medianReviewCycleDays = Math.round(median * 10) / 10;
     }
 
     // First-pass completeness: share of v1 intakes submitted (or drafted)
@@ -621,7 +622,9 @@ export class DbDataProvider implements DataProvider {
     const initiativesWithReturnedReview = new Set(
       snap.reviewDecisions
         .filter((rd) => rd.status === "returned")
-        .map((rd) => snap.cycles.find((c) => c.id === rd.cycleId)?.initiativeId)
+        .map((rd) => snap.cycles.find((c) => c.id === rd.cycleId))
+        // A returned review in a closed cycle no longer blocks anything.
+        .map((c) => (c && c.closedAt === null ? c.initiativeId : undefined))
         .filter((id): id is string => !!id),
     ).size;
     const overdueControls = overdueEcs + exceptionEcs + initiativesWithReturnedReview;
@@ -727,7 +730,7 @@ export class DbDataProvider implements DataProvider {
               title: init.title,
               tier: (init.tier ?? null) as Tier | null,
               state: init.state,
-              approver: init.accountableApprover,
+              approver: init.accountableApprover ? displayNameFor(init.accountableApprover) : null,
               detail: controlSummary,
               eventTs: null,
             };
@@ -796,6 +799,7 @@ export class DbDataProvider implements DataProvider {
         for (const rd of snap.reviewDecisions) {
           if (rd.status !== "returned") continue;
           const cycle = snap.cycles.find((c) => c.id === rd.cycleId);
+          if (cycle?.closedAt) continue; // closed cycle: nothing is blocked any more
           const init = cycle ? initById.get(cycle.initiativeId) : undefined;
           const def = snap.controlDefs.find(
             (d) => d.domain === rd.domain && d.enforcementMode === "gate",

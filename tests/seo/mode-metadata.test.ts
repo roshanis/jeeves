@@ -163,7 +163,8 @@ describe("root metadata", () => {
       "Fictional demo — synthetic data. AI governance workflow demo for a fictional healthcare payer.",
     );
     expect(metadata.applicationName).toBe("Jeeves");
-    expect(metadata.openGraph).toMatchObject({ siteName: "Jeeves", url: SITE_URL });
+    expect(metadata.openGraph).toMatchObject({ siteName: "Jeeves" });
+    expect(metadata.openGraph).not.toHaveProperty("url");
     expect(metadata.robots).toBeUndefined();
   });
 
@@ -179,7 +180,8 @@ describe("root metadata", () => {
     asProduction("https://jeeves.acme.example");
     const metadata = rootMetadata();
     expect(String(metadata.metadataBase)).toBe("https://jeeves.acme.example/");
-    expect(metadata.openGraph).toMatchObject({ url: "https://jeeves.acme.example/" });
+    // No og:url: a root-level one would make every page claim the homepage (see page-metadata.test.ts).
+    expect(metadata.openGraph).not.toHaveProperty("url");
   });
 
   it("omits the base rather than inventing one when APP_BASE_URL is not usable", () => {

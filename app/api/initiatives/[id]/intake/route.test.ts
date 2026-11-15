@@ -13,7 +13,8 @@ const state = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => state.db }));
-vi.mock("@/lib/services/route-guard", () => ({
+vi.mock("@/lib/services/route-guard", async (importOriginal) => ({
+  guardFailureResponse: (await importOriginal<typeof import("@/lib/services/route-guard")>()).guardFailureResponse,
   extractSessionToken: () => "test-token",
   resolveSession: async () => ({ actor: state.actor, workspaceId: state.workspaceId }),
   runMutationGuard: async () => state.actor

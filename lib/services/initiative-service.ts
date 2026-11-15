@@ -52,6 +52,7 @@ import { runSingleDomainDraft, type RunSingleDomainOptions } from "../workflow/r
 import type { AgentPort } from "../agents/ports";
 import { evaluateCompleteness } from "../intake/completeness";
 import type { IntakePayload } from "../intake/types";
+import { intakePayloadSchema } from "../intake/schema";
 import { normalizeAdditionalAnswers } from "../intake/additional-questions";
 import { deriveTier } from "../triage/rules";
 import { requiredDomains } from "../triage/routing";
@@ -82,6 +83,14 @@ export class ValidationError extends Error {
     this.name = "ValidationError";
     this.issues = issues;
   }
+}
+
+/** Stored intake fields as a payload; a legacy flat record is a typed error, not a TypeError. */
+function storedPayloadOrThrow(fields: unknown): IntakePayload {
+  if (!intakePayloadSchema.safeParse(fields).success) {
+    throw new ValidationError("stored intake is not in the current format");
+  }
+  return fields as IntakePayload;
 }
 
 /**
@@ -248,6 +257,21 @@ async function loadInitiativeOrThrow(
   const row = rows[0];
   if (!row) throw new NotFoundError("initiative", initiativeId);
   return row;
+}
+
+/**
+ * Lock the initiative row only after the caller is authorized: an unlocked
+ * read first, so a visitor from another workspace who sends a shared seeded
+ * id gets the NotFoundError without ever holding a lock on that shared row.
+ * An initiative's workspace never changes, so the peek cannot go stale.
+ */
+async function lockAuthorizedInitiative(
+  tx: Tx,
+  initiativeId: string,
+  authorize: (resourceWorkspaceId: string | null) => void,
+): Promise<typeof initiatives.$inferSelect> {
+  authorize((await loadInitiativeOrThrow(tx, initiativeId)).workspaceId);
+  return loadInitiativeOrThrow(tx, initiativeId, true);
 }
 
 /**
@@ -460,8 +484,8 @@ export async function updateIntakeDraft(
   input: { initiativeId: string; payload: IntakePayload; expectedVersion: number; actor: Actor; workspaceId: string | null },
 ): Promise<IntakeDraftResult> {
   return db.transaction(async (tx) => {
-    const initiative = await loadInitiativeOrThrow(tx, input.initiativeId, true);
-    assertEditableDraftWorkspace(initiative.workspaceId, input.workspaceId, input.initiativeId);
+    const initiative = await lockAuthorizedInitiative(tx, input.initiativeId, (ws) =>
+      assertEditableDraftWorkspace(ws, input.workspaceId, input.initiativeId));
     requireRequesterOwnership(input.actor, initiative);
     if (initiative.state !== "intake_draft") throw new ConflictError("intake is no longer editable", "INTAKE_NOT_EDITABLE");
     const current = await latestIntakeVersion(tx, input.initiativeId);
@@ -517,8 +541,8 @@ export async function submitIntake(
   sessionWorkspaceId: string | null = null,
 ): Promise<SubmitIntakeResult | SubmitIntakeBlockedResult> {
   return db.transaction(async (tx) => {
-    const initiative = await loadInitiativeOrThrow(tx, initiativeId, true);
-    assertWorkspaceAccess(initiative.workspaceId, sessionWorkspaceId, "initiative", initiativeId);
+    const initiative = await lockAuthorizedInitiative(tx, initiativeId, (ws) =>
+      assertWorkspaceAccess(ws, sessionWorkspaceId, "initiative", initiativeId));
     requireRequesterOwnership(actor, initiative);
     const intake = await latestIntakeVersion(tx, initiativeId);
     if (!intake) {
@@ -526,11 +550,11 @@ export async function submitIntake(
     }
 
     if (initiative.state === "submitted" && intake.submitted) {
-      const completeness = evaluateCompleteness(intake.fields as unknown as IntakePayload);
+      const completeness = evaluateCompleteness(storedPayloadOrThrow(intake.fields));
       return { submitted: true, completenessPct: completeness.completenessPct };
     }
 
-    const payload = intake.fields as unknown as IntakePayload;
+    const payload = storedPayloadOrThrow(intake.fields);
     const completeness = evaluateCompleteness(payload);
 
     if (!completeness.canSubmit) {
@@ -631,14 +655,14 @@ export async function startQc(
   sessionWorkspaceId: string | null = null,
 ): Promise<StartQcResult> {
   return db.transaction(async (tx) => {
-    const initiative = await loadInitiativeOrThrow(tx, initiativeId, true);
-    assertWorkspaceAccess(initiative.workspaceId, sessionWorkspaceId, "initiative", initiativeId);
+    const initiative = await lockAuthorizedInitiative(tx, initiativeId, (ws) =>
+      assertWorkspaceAccess(ws, sessionWorkspaceId, "initiative", initiativeId));
 
     const intake = await latestIntakeVersion(tx, initiativeId);
     if (!intake) {
       throw new ValidationError("initiative has no intake version to QC");
     }
-    const completeness = evaluateCompleteness(intake.fields as unknown as IntakePayload);
+    const completeness = evaluateCompleteness(storedPayloadOrThrow(intake.fields));
 
     const result = transition(initiative.state as LifecycleState, "start_qc", actor, {
       ts: nowTs(),
@@ -686,8 +710,8 @@ export async function returnFromQc(
   }
 
   return db.transaction(async (tx) => {
-    const initiative = await loadInitiativeOrThrow(tx, initiativeId, true);
-    assertWorkspaceAccess(initiative.workspaceId, sessionWorkspaceId, "initiative", initiativeId);
+    const initiative = await lockAuthorizedInitiative(tx, initiativeId, (ws) =>
+      assertWorkspaceAccess(ws, sessionWorkspaceId, "initiative", initiativeId));
 
     const result = transition(initiative.state as LifecycleState, "return_to_requester", actor, {
       ts: nowTs(),
@@ -725,13 +749,13 @@ export async function triage(
   passedBy?: Actor,
 ): Promise<TriageFastLaneResult | TriageReviewResult> {
   return db.transaction(async (tx) => {
-    const initiative = await loadInitiativeOrThrow(tx, initiativeId, true);
-    assertWorkspaceAccess(initiative.workspaceId, sessionWorkspaceId, "initiative", initiativeId);
+    const initiative = await lockAuthorizedInitiative(tx, initiativeId, (ws) =>
+      assertWorkspaceAccess(ws, sessionWorkspaceId, "initiative", initiativeId));
     const intake = await latestIntakeVersion(tx, initiativeId);
     if (!intake) {
       throw new ValidationError("initiative has no intake version to triage");
     }
-    const payload = intake.fields as unknown as IntakePayload;
+    const payload = storedPayloadOrThrow(intake.fields);
     const flags = overlayFromStoredIntake(payload);
     const tier = deriveTier(flags);
     const domains = [...requiredDomains(tier, flags)].sort() as Domain[];
@@ -1299,8 +1323,8 @@ export async function decide(
   }
 
   return db.transaction(async (tx) => {
-    const initiative = await loadInitiativeOrThrow(tx, initiativeId, true);
-    assertWorkspaceAccess(initiative.workspaceId, sessionWorkspaceId, "initiative", initiativeId);
+    const initiative = await lockAuthorizedInitiative(tx, initiativeId, (ws) =>
+      assertWorkspaceAccess(ws, sessionWorkspaceId, "initiative", initiativeId));
     const cycle = await latestReviewCycle(tx, initiativeId);
     if (!cycle) {
       throw new ValidationError("initiative has no review cycle to decide on");

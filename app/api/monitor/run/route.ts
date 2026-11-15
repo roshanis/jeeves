@@ -24,7 +24,7 @@ import { z } from "zod";
 import { demoDoorClosed, demoDoorFallbacks } from "@/lib/config/demo-doors";
 import { getDb } from "@/lib/db/client";
 import { runMonitor } from "@/lib/services/monitor-service";
-import { runMutationGuard } from "@/lib/services/route-guard";
+import { guardFailureResponse, runMutationGuard } from "@/lib/services/route-guard";
 
 /**
  * Demo's fixed base date (docs/seed-spec.md top: "fixed base date
@@ -57,7 +57,7 @@ export async function POST(req: Request): Promise<Response> {
 
   const guard = await runMutationGuard(req, () => undefined, { bodyOptional: true });
   if (!guard.ok) {
-    return Response.json({ error: guard.failure.message }, { status: guard.failure.status });
+    return guardFailureResponse(guard.failure);
   }
   const parsed = bodySchema.safeParse(guard.json ?? {});
 

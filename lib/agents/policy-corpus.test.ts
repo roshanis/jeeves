@@ -302,3 +302,10 @@ describe("policy-corpus - symlinked directories and truncation", () => {
     }
   });
 });
+
+describe("policy-corpus - no rejected framework names (docs-F35)", () => {
+  it("no policy file names the rejected framework 'eve'", () => {
+    const hits = listPolicyCorpusFiles().filter((f) => /\beve\b/.test(readFileSync(path.join(repoRoot, f), "utf8")));
+    expect(hits).toEqual([]);
+  });
+});

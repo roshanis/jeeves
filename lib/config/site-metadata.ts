@@ -56,13 +56,14 @@ function demoMetadata(): Metadata {
     description:
       "Fictional demo — synthetic data. AI governance workflow demo for a fictional healthcare payer.",
     applicationName: "Jeeves",
+    // No openGraph.url in either mode: a root-level one would make every page
+    // claim the homepage as its canonical URL (tests/seo/page-metadata.test.ts).
     openGraph: {
       type: "website",
       siteName: "Jeeves",
       title: "Jeeves — AI Governance Gateway",
       description:
         "Intake, risk tiering, domain review, approval and continuous monitoring for AI initiatives — demonstrated end to end on a fictional healthcare payer.",
-      url: SITE_URL,
     },
     twitter: {
       card: "summary_large_image",
@@ -90,7 +91,6 @@ function productionMetadata(env: Env): Metadata {
       siteName: "Jeeves",
       title: "Jeeves — AI Governance Gateway",
       description,
-      ...(base ? { url: base.href } : {}),
     },
     twitter: {
       card: "summary_large_image",

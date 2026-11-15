@@ -11,6 +11,7 @@
 import { describe, expect, it } from "vitest";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { rootMetadata } from "@/lib/config/site-metadata";
 
 const APP_DIR = join(process.cwd(), "app");
 
@@ -73,6 +74,19 @@ describe("site-wide head", () => {
   it("declares a metadataBase so Open Graph URLs resolve absolutely", () => {
     const src = readFileSync(ROOT_METADATA_SOURCE, "utf8");
     expect(/metadataBase/.test(src)).toBe(true);
+  });
+
+  it.each([
+    ["demo", { JEEVES_MODE: "demo" }],
+    ["production", { JEEVES_MODE: "production", APP_BASE_URL: "https://jeeves.acme.example" }],
+  ])("does not pin openGraph.url to the site root for every page (%s)", (_mode, env) => {
+    // A root-level og:url makes /frameworks/eu-ai-act claim the homepage as
+    // its canonical URL. Without it Next (resolve-opengraph.js) resolves
+    // og:url to null, so no page emits one and crawlers use the URL fetched.
+    // The layout takes its metadata from rootMetadata(), so check its output.
+    const og = rootMetadata(env).openGraph;
+    expect(og).toBeDefined();
+    expect(og).not.toHaveProperty("url");
   });
 
   it("has a root not-found page, not just the console one", () => {

@@ -2,7 +2,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks=vi.hoisted(()=>({guard:vi.fn(),session:vi.fn(),state:vi.fn(),upload:vi.fn(),download:vi.fn()}));
 vi.mock('@/lib/db/client',()=>({getDb:()=>({})}));
-vi.mock('@/lib/services/route-guard',()=>({runMutationGuard:mocks.guard,resolveSession:mocks.session,extractSessionToken:()=>null}));
+vi.mock('@/lib/services/route-guard',async(importOriginal)=>({guardFailureResponse:(await importOriginal<typeof import('@/lib/services/route-guard')>()).guardFailureResponse,runMutationGuard:mocks.guard,resolveSession:mocks.session,extractSessionToken:()=>null}));
 vi.mock('@/lib/services/evidence-service',()=>({getEvidence:mocks.state,uploadEvidence:mocks.upload,downloadEvidence:mocks.download,saveEvidenceDraft:vi.fn(),submitEvidence:vi.fn(),assessEvidence:vi.fn()}));
 import { GET, POST } from '../../initiatives/[id]/evidence/route';
 import { GET as download } from '../../initiatives/[id]/evidence/[documentId]/route';

@@ -8,9 +8,14 @@
  * Does:
  *   1. Re-seeds the database (canonical 12 initiatives + control catalog +
  *      the one seeded pending control-exception; clears any live-created data).
- *   2. Clears live session + budget state (invalidates outstanding demo
- *      sessions; resets the daily token budget) — these live outside the
- *      seed's own reset scope.
+ *   2. Clears live session, budget and rate-limit state (invalidates
+ *      outstanding demo sessions; resets the daily token budget and the
+ *      limiter buckets). Sessions and rate-limit buckets live outside the
+ *      seed's own reset scope; the seed re-inserts a run_budget row for its
+ *      base day, which the reset deletes so the daily budget starts empty.
+ *      Steps 1 and 2 run in ONE transaction with lock_timeout 10 s: if
+ *      anything fails (including a lock not granted in time), everything
+ *      rolls back and the old seed and sessions stay as they were.
  *   3. Prints a checklist: workspace signing, agent (OpenAI) connector, telemetry
  *      connector, cron secret, build SHA, and a seed smoke-count.
  *
@@ -24,7 +29,7 @@ import { resolveWorkspaceCookieSecret } from "../lib/security/workspace-cookie";
 import { execSync } from "node:child_process";
 import { getDb, closeDb, type Db } from "../lib/db/client";
 import { assertDemoMode, DemoOnlyError } from "../lib/config/demo-doors";
-import { initiatives, runBudget, sessions } from "../lib/db/schema";
+import { initiatives, rateLimitBuckets, runBudget, sessions } from "../lib/db/schema";
 import { assertDemoDatabase } from "../lib/demo/bootstrap";
 import { seedDatabase } from "./seed";
 import { agentRuntimeStatus } from "../lib/agents/registry";
@@ -64,13 +69,17 @@ export async function resetDemo(database?: Db): Promise<void> {
 
   // 1. Re-seed to canonical state.
   console.log("Re-seeding database…");
-  const counts = await seedDatabase(db);
+  // Live state is cleared in the seed's own transaction: a failure leaves the
+  // old sessions AND the old seed intact instead of old sessions on new data.
+  const counts = await seedDatabase(db, async (tx) => {
+    await tx.delete(sessions);
+    await tx.delete(runBudget);
+    await tx.delete(rateLimitBuckets);
+  });
   ok("Seed", `${counts.initiatives} initiatives, ${counts.effectiveControls} effective controls`);
 
-  // 2. Clear live session + budget state (outside the seed's reset scope).
-  await db.delete(sessions);
-  await db.delete(runBudget);
-  ok("Live state", "sessions cleared, daily token budget reset");
+  // 2. Live session, budget and rate-limit state was cleared in that transaction.
+  ok("Live state", "sessions cleared, daily token budget and rate limits reset");
 
   // 3. Readiness checklist.
   console.log("\nPre-flight checklist:");

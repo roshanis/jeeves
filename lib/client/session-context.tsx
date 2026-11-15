@@ -55,6 +55,8 @@ export interface LiveSessionContextValue {
    *  operator — distinct from startDemo, which opens the sandbox playground. */
   startPublicSession: () => Promise<LiveSession>;
   logout: () => void;
+  /** Set when a session lapsed by its clock (not by Exit); cleared by any new session. */
+  expired: { kind: "public" | "persona" } | null;
   pending: boolean;
   startError: string | null;
   /** Start a requester session directly from an action's entry point. */
@@ -170,6 +172,7 @@ export function LiveSessionProvider({ children, liveModeAvailable = true }: {
     getSessionServerSnapshot,
   );
   const { setPersonaKey } = useRole();
+  const [expiredKind, setExpiredKind] = React.useState<"public" | "persona" | null>(null);
 
   React.useEffect(() => {
     if (!session) return;
@@ -181,11 +184,13 @@ export function LiveSessionProvider({ children, liveModeAvailable = true }: {
       setPersonaKey(session.personaKey);
     }
     const remainingMs = session.expiresAt - Date.now();
+    const kind = session.personaKey === PUBLIC_PERSONA_KEY ? "public" : "persona";
+    const expire = () => { setExpiredKind(kind); setStoredSession(null); };
     if (remainingMs <= 0) {
-      setStoredSession(null);
+      expire();
       return;
     }
-    const timer = window.setTimeout(() => setStoredSession(null), remainingMs);
+    const timer = window.setTimeout(expire, remainingMs);
     return () => window.clearTimeout(timer);
   }, [session, setPersonaKey]);
 
@@ -215,6 +220,7 @@ export function LiveSessionProvider({ children, liveModeAvailable = true }: {
         const next: LiveSession = {
           ...result, personaKey, personaLabel: persona.label, role: persona.role,
         };
+        setExpiredKind(null);
         setStoredSession(next);
         setPersonaKey(personaKey);
         return next;
@@ -267,6 +273,7 @@ export function LiveSessionProvider({ children, liveModeAvailable = true }: {
           personaLabel: "Public visitor",
           role: "public",
         };
+        setExpiredKind(null);
         setStoredSession(next);
         return next;
       } catch (err) {
@@ -290,6 +297,14 @@ export function LiveSessionProvider({ children, liveModeAvailable = true }: {
     entryRequest.current = null;
     setPending(false);
     setStartError(null);
+    setExpiredKind(null);
+    // Revoke a persona token on the server too (best-effort, never blocks Exit). Public sessions are left to expire.
+    const current = getSessionSnapshot();
+    if (current && current.personaKey !== PUBLIC_PERSONA_KEY) {
+      try {
+        void fetch("/api/session", { method: "DELETE", keepalive: true, headers: { Authorization: `Bearer ${current.token}` } }).catch(() => {});
+      } catch { /* ignore */ }
+    }
     setStoredSession(null);
   }, []);
 
@@ -297,9 +312,10 @@ export function LiveSessionProvider({ children, liveModeAvailable = true }: {
     void login("priya-raman").catch(() => { /* startError is rendered by entry controls. */ });
   }, [login]);
 
+  const expired = React.useMemo(() => (!session && expiredKind ? { kind: expiredKind } : null), [session, expiredKind]);
   const value = React.useMemo(
-    () => ({ session, liveModeAvailable, login, logout, pending, startError, startDemo, startPublicSession }),
-    [session, liveModeAvailable, login, logout, pending, startError, startDemo, startPublicSession],
+    () => ({ session, liveModeAvailable, login, logout, expired, pending, startError, startDemo, startPublicSession }),
+    [session, liveModeAvailable, login, logout, expired, pending, startError, startDemo, startPublicSession],
   );
 
   return <LiveSessionContext.Provider value={value}>{children}</LiveSessionContext.Provider>;

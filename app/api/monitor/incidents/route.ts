@@ -18,24 +18,13 @@
  * 503: this server failed its boot checks
  */
 import { getDb } from "@/lib/db/client";
-import { listIncidents } from "@/lib/services/monitor-service";
-import {
-  deploymentWorkspaceMap,
-  isDeploymentVisible,
-} from "@/lib/services/viewer-workspace";
+import { listIncidentsForViewer } from "@/lib/services/monitor-service";
 import { requireViewerForRequest } from "@/lib/services/require-viewer";
 
 export async function GET(req: Request): Promise<Response> {
   const gate = await requireViewerForRequest(req);
   if (!gate.ok) return gate.response;
   const db = getDb();
-  const viewerWorkspaceId = gate.viewer.workspaceId;
-  const [incidents, workspaceByDeployment] = await Promise.all([
-    listIncidents(db),
-    deploymentWorkspaceMap(db, viewerWorkspaceId),
-  ]);
-  const visible = incidents.filter((inc) =>
-    isDeploymentVisible(workspaceByDeployment, inc.deploymentId, viewerWorkspaceId),
-  );
-  return Response.json({ incidents: visible }, { status: 200 });
+  const incidents = await listIncidentsForViewer(db, gate.viewer.workspaceId);
+  return Response.json({ incidents }, { status: 200 });
 }

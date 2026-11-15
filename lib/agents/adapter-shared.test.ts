@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
-import { readAgentFile } from "./adapter-shared";
+import { isAbortError, readAgentFile } from "./adapter-shared";
 
 describe("readAgentFile containment", () => {
   it("still reads the instruction files, including nested tracks", () => {
@@ -19,5 +19,16 @@ describe("readAgentFile containment", () => {
     [[]],
   ])("refuses %j", (rest) => {
     expect(() => readAgentFile("reviewer", ...rest)).toThrow(/refused/);
+  });
+});
+
+describe("isAbortError", () => {
+  it("does not treat a transient upstream 'aborted' message as a cancellation", () => {
+    expect(isAbortError(new Error("Request aborted by upstream"))).toBe(false);
+    expect(isAbortError(new Error("socket aborted"))).toBe(false);
+  });
+
+  it("still recognises an error named AbortError", () => {
+    expect(isAbortError(Object.assign(new Error("x"), { name: "AbortError" }))).toBe(true);
   });
 });

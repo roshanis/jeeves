@@ -359,15 +359,18 @@ export async function promoteCheckpoint(
     // The initiative row is locked FOR UPDATE so a concurrent admin pause or
     // resume cannot interleave with this promotion. Every path that changes
     // deployments takes the initiative row first and deployment rows second.
+    // Authorize on an unlocked read first, so a foreign caller never takes a lock on a shared row.
+    const [visibleInitiative] = await tx.select().from(initiatives).where(eq(initiatives.id, target.initiativeId));
+    if (!visibleInitiative || mutationWorkspaceMismatch(visibleInitiative.workspaceId, sessionWorkspaceId)) {
+      throw new NotFoundError("deploymentVersion", deploymentVersionId);
+    }
     const initiativeRows = await tx
       .select()
       .from(initiatives)
       .where(eq(initiatives.id, target.initiativeId))
       .for("update");
     const owningInitiative = initiativeRows[0];
-    if (!owningInitiative || mutationWorkspaceMismatch(owningInitiative.workspaceId, sessionWorkspaceId)) {
-      throw new NotFoundError("deploymentVersion", deploymentVersionId);
-    }
+    if (!owningInitiative) throw new NotFoundError("deploymentVersion", deploymentVersionId);
 
     requireInServiceLifecycle(owningInitiative, "promote a checkpoint");
     if (owningInitiative.state !== "deployed") {
@@ -605,18 +608,20 @@ export async function rollbackDeployment(
   return db.transaction(async (tx) => {
     // Lock the initiative row first (same order as every other deployment
     // mutation) so a concurrent admin pause or resume cannot interleave.
+    // Workspace authorization (external-review finding #1): same NotFoundError
+    // shape as an unknown id on mismatch — never leaks that the initiative
+    // exists in a different workspace. Checked on an unlocked read first, so a
+    // foreign caller never takes a lock on a shared row.
+    const [visibleInitiative] = await tx.select().from(initiatives).where(eq(initiatives.id, initiativeId));
+    if (!visibleInitiative || mutationWorkspaceMismatch(visibleInitiative.workspaceId, sessionWorkspaceId)) {
+      throw new NotFoundError("initiative", initiativeId);
+    }
     const initiativeRows = await tx
       .select()
       .from(initiatives)
       .where(eq(initiatives.id, initiativeId))
       .for("update");
     if (!initiativeRows[0]) throw new NotFoundError("initiative", initiativeId);
-    // Workspace authorization (external-review finding #1): same NotFoundError
-    // shape as an unknown id on mismatch — never leaks that the initiative
-    // exists in a different workspace.
-    if (mutationWorkspaceMismatch(initiativeRows[0].workspaceId, sessionWorkspaceId)) {
-      throw new NotFoundError("initiative", initiativeId);
-    }
     requireInServiceLifecycle(initiativeRows[0], "roll back a deployment");
 
     const siblingRows = await tx

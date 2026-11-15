@@ -2,9 +2,10 @@
  * server-issued, workspace-bound session. No visitor password is required. */
 import { z } from "zod";
 import { demoDoorClosed, demoDoorFallbacks } from "@/lib/config/demo-doors";
-import { checkReadOnlyMode, checkSessionAttempt, clientKeyFor, issueDemoSession, extractSessionToken, resolveSession } from "@/lib/services/route-guard";
+import { checkReadOnlyMode, checkSessionAttempt, clientKeyFor, guardFailureResponse, issueDemoSession, extractSessionToken, resolveSession, revokeSession, runMutationGuard } from "@/lib/services/route-guard";
 import { isPersonaKey, resolveActor } from "@/lib/services/actors";
 import { safeDriverCode } from "@/lib/db/driver-error";
+import { isSameOriginRequest } from "@/lib/security/same-origin";
 import { BodyReadError, PRE_SESSION_BODY_MAX_BYTES, readJsonBody } from "@/lib/http/read-json-body";
 import {
   resolveWorkspaceCookieSecret,
@@ -75,12 +76,18 @@ function storageUnavailable(error: unknown): Response {
 }
 
 // Production has no persona sessions: 404 first, before the body is parsed or
-// any limiter or database is touched (lib/config/demo-doors.ts).
-export const { GET, HEAD, PUT, PATCH, DELETE, OPTIONS } = demoDoorFallbacks("POST");
+// any limiter or database is touched (lib/config/demo-doors.ts). POST and
+// DELETE each answer it themselves.
+export const { GET, HEAD, PUT, PATCH, OPTIONS } = demoDoorFallbacks("POST", "DELETE");
 
 export async function POST(req: Request): Promise<Response> {
   const closed = demoDoorClosed();
   if (closed) return closed;
+  // A cross-site form can POST here (req.json() ignores Content-Type) and replace the victim's workspace cookie.
+  if (!isSameOriginRequest(req)) return Response.json({ error: "cross-origin requests are not permitted" }, { status: 403 });
+  if (!req.headers.get("content-type")?.toLowerCase().startsWith("application/json")) {
+    return Response.json({ error: "content-type must be application/json" }, { status: 415 });
+  }
 
   const readOnlyFailure = checkReadOnlyMode();
   if (readOnlyFailure) {
@@ -163,4 +170,16 @@ export async function POST(req: Request): Promise<Response> {
 
   const headers = { "Set-Cookie": workspaceCookieHeader(result.workspaceId, secret) };
   return Response.json(result, { status: 200, headers });
+}
+
+/** Exit: delete exactly the presented token's row. A persona session only (the guard refuses `public`), same session and rate limit as every mutation. */
+export async function DELETE(req: Request): Promise<Response> {
+  const closed = demoDoorClosed();
+  if (closed) return closed;
+  if (!isSameOriginRequest(req)) return Response.json({ error: "cross-origin requests are not permitted" }, { status: 403 });
+  const guard = await runMutationGuard(req, undefined);
+  if (!guard.ok) return guardFailureResponse(guard.failure);
+  const token = extractSessionToken(req);
+  if (token) await revokeSession(token);
+  return new Response(null, { status: 204 });
 }

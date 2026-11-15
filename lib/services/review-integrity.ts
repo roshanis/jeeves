@@ -28,6 +28,14 @@ export async function lockCurrentReviewCycle(
   const [owner] = await tx.select({ initiativeId: reviewCycles.initiativeId })
     .from(reviewCycles).where(eq(reviewCycles.id, cycleId));
   if (!owner) throw new ReviewIntegrityError("not_found", "Review cycle not found.");
+  if (sessionWorkspaceId !== undefined) {
+    // Refuse a foreign workspace before taking the row lock, so a stranger cannot block a shared seeded row. Re-checked after the lock below.
+    const [peek] = await tx.select({ workspaceId: initiatives.workspaceId }).from(initiatives)
+      .where(eq(initiatives.id, owner.initiativeId));
+    if (!peek || mutationWorkspaceMismatch(peek.workspaceId, sessionWorkspaceId)) {
+      throw new ReviewIntegrityError("not_found", "Review cycle not found.");
+    }
+  }
   const [initiative] = await tx.select().from(initiatives)
     .where(eq(initiatives.id, owner.initiativeId)).for("update");
   if (!initiative || (sessionWorkspaceId !== undefined && mutationWorkspaceMismatch(initiative.workspaceId, sessionWorkspaceId))) {

@@ -44,14 +44,14 @@
  * recoverable only by reading audit rows.
  */
 import { randomUUID } from "node:crypto";
-import { and, eq, inArray, lte } from "drizzle-orm";
+import { and, eq, inArray, isNull, lte, or } from "drizzle-orm";
 import type { Db } from "../db/client";
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import type * as schema from "../db/schema";
 import { auditEvents, controlExceptions, deploymentVersions, effectiveControls, initiatives } from "../db/schema";
 import type { Actor } from "../domain/types";
 import { ConflictError, NotFoundError, ValidationError, IllegalTransitionError } from "./initiative-service";
-import { workspaceMismatch, mutationWorkspaceMismatch, viewerCannotMutate } from "./workspace-guard";
+import { mutationWorkspaceMismatch, viewerCannotMutate } from "./workspace-guard";
 
 type Tx = PgDatabase<PgQueryResultHKT, typeof schema>;
 
@@ -147,23 +147,6 @@ async function assertExceptionWorkspaceAccess(
 }
 
 /**
- * Batch-resolve `workspaceId` for a set of initiative ids — used by
- * `listExceptions`'s viewer-scoping filter (external-review finding #2
- * spillover). A single query rather than the per-row, transaction-scoped
- * `initiativeWorkspaceId` helper above (that one is typed to `Tx` for the
- * single-row mutation guards; this one runs a plain read, possibly outside
- * any transaction).
- */
-async function initiativeWorkspaceIds(db: Db, initiativeIds: string[]): Promise<Map<string, string | null>> {
-  if (initiativeIds.length === 0) return new Map();
-  const rows = await db
-    .select({ id: initiatives.id, workspaceId: initiatives.workspaceId })
-    .from(initiatives)
-    .where(inArray(initiatives.id, initiativeIds));
-  return new Map(rows.map((r) => [r.id, r.workspaceId]));
-}
-
-/**
  * Derive `effective_controls.status` from ALL of a control's
  * `control_exceptions` rows and write it — the fix for external-review
  * finding #5 ("Renewal leaves the original exception approved while opening
@@ -253,6 +236,19 @@ export async function requestException(
     throw new ValidationError("exception request requires a non-empty reason");
   }
   return db.transaction(async (tx) => {
+    // Authorize on an unlocked read first, so a foreign caller never takes a lock on a shared row.
+    const [visible] = await tx.select().from(effectiveControls).where(eq(effectiveControls.id, effectiveControlId));
+    if (!visible) throw new NotFoundError("effectiveControl", effectiveControlId);
+
+    const initiativeIdForCheck = await initiativeIdForEffectiveControl(tx, visible.deploymentId);
+    await assertExceptionWorkspaceAccess(
+      tx,
+      initiativeIdForCheck,
+      sessionWorkspaceId,
+      "effectiveControl",
+      effectiveControlId,
+    );
+
     // FOR UPDATE serializes concurrent requests on this control, so the
     // active-exception check below cannot race into the unique index.
     const [ec] = await tx
@@ -261,15 +257,6 @@ export async function requestException(
       .where(eq(effectiveControls.id, effectiveControlId))
       .for("update");
     if (!ec) throw new NotFoundError("effectiveControl", effectiveControlId);
-
-    const initiativeIdForCheck = await initiativeIdForEffectiveControl(tx, ec.deploymentId);
-    await assertExceptionWorkspaceAccess(
-      tx,
-      initiativeIdForCheck,
-      sessionWorkspaceId,
-      "effectiveControl",
-      effectiveControlId,
-    );
 
     if (!ELIGIBLE_EXCEPTION_REQUEST_STATUSES.has(ec.status)) {
       throw new ValidationError(
@@ -652,34 +639,37 @@ export interface ListExceptionsOptions {
 /**
  * List exceptions, optionally filtered by status. Public read model support.
  *
- * `opts` omitted -> unfiltered, for internal callers (e.g.
- * app/controls/page.tsx, which renders the full board for an already
- * workspace-agnostic view). Passing `opts` (even `{ viewerWorkspaceId: null
- * }`) scopes the result to what that viewer may see — this is what
- * `GET /api/exceptions` always does.
+ * `opts` omitted -> unfiltered, for internal callers. Passing `opts` (even
+ * `{ viewerWorkspaceId: null }`) scopes the result to what that viewer may
+ * see, in SQL — both callers (app/(console)/controls/page.tsx and
+ * `GET /api/exceptions`) always pass it.
  */
 export async function listExceptions(
   db: Db,
   status?: ExceptionStatus,
   opts?: ListExceptionsOptions,
 ): Promise<ExceptionRow[]> {
-  const rows = status
-    ? await db.select().from(controlExceptions).where(eq(controlExceptions.status, status))
-    : await db.select().from(controlExceptions);
-
-  const initiativeIds = Array.from(
-    new Set(rows.map((r) => r.initiativeId).filter((id): id is string => id !== null)),
-  );
-  const workspaceIds = await initiativeWorkspaceIds(db, initiativeIds);
-  let visibleRows = rows;
+  const conditions = [];
+  if (status) conditions.push(eq(controlExceptions.status, status));
   if (opts) {
     const viewerWorkspaceId = opts.viewerWorkspaceId ?? null;
-    visibleRows = rows.filter((r) => {
-      if (!r.initiativeId) return true;
-      const resourceWorkspaceId = workspaceIds.get(r.initiativeId) ?? null;
-      return !workspaceMismatch(resourceWorkspaceId, viewerWorkspaceId);
-    });
+    // Same rule as workspaceMismatch(): visible when there is no owning
+    // initiative or it has no workspace, or the workspace is the viewer's.
+    conditions.push(
+      or(
+        isNull(controlExceptions.initiativeId),
+        isNull(initiatives.workspaceId),
+        viewerWorkspaceId === null ? undefined : eq(initiatives.workspaceId, viewerWorkspaceId),
+      )!,
+    );
   }
+  const joined = await db
+    .select({ row: controlExceptions, workspaceId: initiatives.workspaceId })
+    .from(controlExceptions)
+    .leftJoin(initiatives, eq(controlExceptions.initiativeId, initiatives.id))
+    .where(conditions.length > 0 ? and(...conditions) : undefined);
+  const visibleRows = joined.map((j) => j.row);
+  const workspaceIds = new Map(joined.map((j) => [j.row.id, j.workspaceId]));
 
   return visibleRows
     .slice()
@@ -700,7 +690,7 @@ export async function listExceptions(
       supersedesId: r.supersedesId,
       isShared: opts
         ? viewerCannotMutate(
-            r.initiativeId ? (workspaceIds.get(r.initiativeId) ?? null) : null,
+            r.initiativeId ? (workspaceIds.get(r.id) ?? null) : null,
             opts.viewerWorkspaceId ?? null,
           )
         : false,

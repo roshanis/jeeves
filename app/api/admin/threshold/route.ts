@@ -30,7 +30,7 @@ import {
   NotFoundError,
   ValidationError,
 } from "@/lib/services/admin-service";
-import { runMutationGuard } from "@/lib/services/route-guard";
+import { guardFailureResponse, runMutationGuard } from "@/lib/services/route-guard";
 
 const bodySchema = z.object({
   controlId: z.string().min(1).max(50),
@@ -51,7 +51,7 @@ export async function POST(req: Request): Promise<Response> {
     inputTotalCap: 2000,
   });
   if (!guard.ok) {
-    return Response.json({ error: guard.failure.message }, { status: guard.failure.status });
+    return guardFailureResponse(guard.failure);
   }
   const json = guard.json;
 

@@ -5,7 +5,12 @@
 // being compared since there is no per-checkpoint eval series in the data.
 import { describe, expect, it } from "vitest";
 import { screen } from "@testing-library/react";
-import { EvalComparison } from "@/components/jeeves/eval-comparison";
+import {
+  EvalComparison,
+  hasOfflineComparisonFor,
+  OFFLINE_COMPARISON_SLUG,
+  OFFLINE_COMPARISON_VERSIONS,
+} from "@/components/jeeves/eval-comparison";
 import { renderWithProviders } from "./helpers";
 
 describe("EvalComparison", () => {
@@ -69,5 +74,33 @@ describe("EvalComparison", () => {
       />,
     );
     expect(screen.getByText(/live eval series/)).toBeDefined();
+  });
+
+  it("points to the labelled offline comparison only when the Evals tab renders it", () => {
+    const evalSeries = {
+      kind: "eval_hallucination",
+      points: [{ ts: "2026-06-01T00:00:00.000Z", value: 0.04 }],
+      threshold: 0.08,
+    };
+    const { unmount } = renderWithProviders(
+      <EvalComparison candidateVersion="v2.1" currentVersion="v2.0" evalSeries={evalSeries} hasOfflineComparison />,
+    );
+    expect(screen.getByText(/offline v2\.0 vs v2\.1 comparison is on the initiative's Evals tab/)).toBeDefined();
+    unmount();
+    renderWithProviders(
+      <EvalComparison candidateVersion="v3.4" currentVersion="v3.3" evalSeries={evalSeries} />,
+    );
+    expect(screen.queryByText(/offline .* comparison is on the initiative's Evals tab/)).toBeNull();
+    expect(screen.getByText(/live eval series/)).toBeDefined();
+  });
+
+  it("offers the pointer only to the card proposing the pair the Evals-tab panel compares", () => {
+    expect(OFFLINE_COMPARISON_SLUG).toBe("pa-correspondence-model");
+    expect(OFFLINE_COMPARISON_VERSIONS).toEqual({ current: "v2.0", candidate: "v2.1" });
+    expect(hasOfflineComparisonFor(OFFLINE_COMPARISON_SLUG, "v2.0", "v2.1")).toBe(true);
+    expect(hasOfflineComparisonFor(OFFLINE_COMPARISON_SLUG, "v2.1", "v2.2")).toBe(false);
+    expect(hasOfflineComparisonFor(OFFLINE_COMPARISON_SLUG, "v2.1", "v2.0")).toBe(false);
+    expect(hasOfflineComparisonFor(OFFLINE_COMPARISON_SLUG, null, "v2.1")).toBe(false);
+    expect(hasOfflineComparisonFor("case-one", "v2.0", "v2.1")).toBe(false);
   });
 });

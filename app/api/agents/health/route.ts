@@ -14,7 +14,7 @@
  *      reachable yet: production has no valid session until customer sign-in
  *      exists, so the guard answers 401 first.
  */
-import { runMutationGuard } from "@/lib/services/route-guard";
+import { guardFailureResponse, runMutationGuard } from "@/lib/services/route-guard";
 import { PROBE_MAX_OUTPUT_TOKENS, probeConnector } from "@/lib/agents/health";
 import { agentInitializationResponse } from "@/lib/services/agent-error-response";
 
@@ -27,7 +27,7 @@ export async function POST(req: Request): Promise<Response> {
     estimatedTokens: ESTIMATED_TOKENS,
   });
   if (!guard.ok) {
-    return Response.json({ error: guard.failure.message }, { status: guard.failure.status });
+    return guardFailureResponse(guard.failure);
   }
 
   try {

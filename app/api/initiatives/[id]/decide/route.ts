@@ -23,7 +23,7 @@ import {
   ValidationError,
   decide,
 } from "@/lib/services/initiative-service";
-import { runMutationGuard } from "@/lib/services/route-guard";
+import { guardFailureResponse, runMutationGuard } from "@/lib/services/route-guard";
 import { isRouteId, notFoundResponse } from "@/lib/http/route-id";
 
 const bodySchema = z.object({
@@ -40,7 +40,7 @@ export async function POST(
 ): Promise<Response> {
   const guard = await runMutationGuard(req, () => undefined);
   if (!guard.ok) {
-    return Response.json({ error: guard.failure.message }, { status: guard.failure.status });
+    return guardFailureResponse(guard.failure);
   }
 
   const parsed = bodySchema.safeParse(guard.json);

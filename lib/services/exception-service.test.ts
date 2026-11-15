@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
+import { PgSelectBase } from "drizzle-orm/pg-core";
 import { createTestDb, closeTestDb, type TestDb } from "../db/test-client";
+import { recordLocks } from "../db/test-lock-recorder";
 import { seedDatabase } from "../../scripts/seed";
 import { auditEvents, controlDefinitions, controlExceptions, deploymentVersions, effectiveControls } from "../db/schema";
 import * as svc from "./exception-service";
@@ -345,6 +347,26 @@ describe("exception-service", () => {
       await expect(svc.requestException(db, ecId, REQUESTER, "ws-B", "reason")).rejects.toThrow(
         `effectiveControl not found: ${ecId}`,
       );
+    });
+
+    it("requestException: a foreign workspace is refused without FOR UPDATE on the control; the owner still locks it", async () => {
+      const { ecId } = await anEffectiveControlInWorkspace("ws-A");
+      const foreign = recordLocks(db);
+      try {
+        await expect(svc.requestException(db, ecId, REQUESTER, "ws-B", "reason")).rejects.toThrow(NotFoundError);
+      } finally {
+        foreign.spy.mockRestore();
+      }
+      expect(foreign.events).toContain("from:effective_controls");
+      expect(foreign.events).not.toContain("lock:effective_controls");
+
+      const owner = recordLocks(db);
+      try {
+        await svc.requestException(db, ecId, REQUESTER, "ws-A", "reason");
+      } finally {
+        owner.spy.mockRestore();
+      }
+      expect(owner.events).toContain("lock:effective_controls");
     });
 
     it("requestException: the owning workspace session succeeds", async () => {
@@ -815,6 +837,26 @@ describe("exception-service", () => {
       // The seeded exception has a null initiativeId (or a null-workspace
       // initiative) and stays visible to every viewer, including anonymous.
       expect(anonymous.some((r) => r.id === "exc-seed-hr-r01")).toBe(true);
+    });
+
+    it("applies the workspace filter in the database query: other workspaces' rows are never read", async () => {
+      const { ecId: ecA } = await anEffectiveControlInWorkspace("ws-A");
+      const { ecId: ecB } = await anEffectiveControlInWorkspace("ws-B");
+      await svc.requestException(db, ecA, REQUESTER, "ws-A", "ws-A reason");
+      await svc.requestException(db, ecB, REQUESTER, "ws-B", "ws-B reason");
+
+      const read: unknown[] = [];
+      const original = PgSelectBase.prototype.then;
+      const spy = vi.spyOn(PgSelectBase.prototype, "then").mockImplementation(function (this: never, res: never, rej: never) {
+        return (original as (...a: unknown[]) => unknown).call(this, (rows: unknown) => { read.push(rows); return (res as (r: unknown) => unknown)?.(rows); }, rej);
+      } as never);
+      try {
+        await svc.listExceptions(db, undefined, { viewerWorkspaceId: "ws-A" });
+      } finally {
+        spy.mockRestore();
+      }
+      expect(JSON.stringify(read)).toContain("ws-A reason");
+      expect(JSON.stringify(read)).not.toContain("ws-B reason");
     });
 
     it("isShared means the viewer cannot act on the row (api-initiatives-F11)", async () => {

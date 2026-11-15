@@ -182,7 +182,14 @@ export async function setEvalThreshold(
       if (!input.tier) {
         throw new ValidationError("setEvalThreshold: tier is required when initiativeId is null (tier-default change)");
       }
-      const currentDefaults = (def.tierDefaultThresholds ?? {}) as Record<string, number>;
+      // Lock the definition row so two concurrent tier edits cannot restore each other's old value.
+      const [lockedDef] = await tx
+        .select()
+        .from(controlDefinitions)
+        .where(eq(controlDefinitions.id, input.controlId))
+        .for("update");
+      if (!lockedDef) throw new NotFoundError("controlDefinition", input.controlId);
+      const currentDefaults = (lockedDef.tierDefaultThresholds ?? {}) as Record<string, number>;
       const before = currentDefaults[input.tier] ?? null;
       const nextDefaults = { ...currentDefaults, [input.tier]: input.newValue };
 
@@ -213,16 +220,17 @@ export async function setEvalThreshold(
     }
 
     // Project/deployment override.
-    const initiativeRows = await tx.select().from(initiatives).where(eq(initiatives.id, input.initiativeId));
-    const initiative = initiativeRows[0];
-    if (!initiative) throw new NotFoundError("initiative", input.initiativeId);
+    // Authorize on an unlocked read first, so a foreign caller never takes a lock on a shared row.
+    const [visibleInitiative] = await tx.select().from(initiatives).where(eq(initiatives.id, input.initiativeId));
     // Workspace authorization (P1 fix, see doc comment above) — BEFORE any
     // further business-logic lookups, same NotFoundError shape as an
     // unknown initiative id on mismatch (never leaks that the initiative
     // exists in a different workspace).
-    if (mutationWorkspaceMismatch(initiative.workspaceId, sessionWorkspaceId)) {
+    if (!visibleInitiative || mutationWorkspaceMismatch(visibleInitiative.workspaceId, sessionWorkspaceId)) {
       throw new NotFoundError("initiative", input.initiativeId);
     }
+    // FOR UPDATE serialises concurrent edits of one deployment's override (read-modify-write below).
+    await tx.select({ id: initiatives.id }).from(initiatives).where(eq(initiatives.id, input.initiativeId)).for("update");
 
     const depRows = await tx
       .select()
@@ -300,13 +308,15 @@ async function loadInitiativeAndDeploymentOrThrow(
   initiative: typeof initiatives.$inferSelect;
   deployment: typeof deploymentVersions.$inferSelect;
 }> {
+  // Authorize on an unlocked read first, so a foreign caller never takes a lock on a shared row.
+  const [visible] = await tx.select().from(initiatives).where(eq(initiatives.id, initiativeId));
+  if (!visible || mutationWorkspaceMismatch(visible.workspaceId, sessionWorkspaceId)) {
+    throw new NotFoundError("initiative", initiativeId);
+  }
   // Match review/approval lock order: parent first, then deployment and cycle.
   const initiativeRows = await tx.select().from(initiatives).where(eq(initiatives.id, initiativeId)).for("update");
   const initiative = initiativeRows[0];
   if (!initiative) throw new NotFoundError("initiative", initiativeId);
-  if (mutationWorkspaceMismatch(initiative.workspaceId, sessionWorkspaceId)) {
-    throw new NotFoundError("initiative", initiativeId);
-  }
 
   const depRows = await tx.select().from(deploymentVersions).where(eq(deploymentVersions.initiativeId, initiativeId));
   const deployment = operationalDeployment(depRows);

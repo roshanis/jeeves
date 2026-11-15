@@ -66,10 +66,13 @@ export type DemoDoorFallbacks<M extends HttpMethod> = Omit<
  * methods), so demo behaviour does not change.
  *
  *   export const { GET, HEAD, PUT, PATCH, DELETE, OPTIONS } = demoDoorFallbacks("POST");
+ *   export const { GET, HEAD, PUT, PATCH, OPTIONS } = demoDoorFallbacks("POST", "DELETE");
+ *
+ * Each implemented handler must still start with demoDoorClosed().
  */
-export function demoDoorFallbacks<M extends HttpMethod>(implemented: M): DemoDoorFallbacks<M> {
-  const own = new Set<HttpMethod>([implemented]);
-  if (implemented === "GET") own.add("HEAD");
+export function demoDoorFallbacks<M extends HttpMethod>(...implemented: [M, ...M[]]): DemoDoorFallbacks<M> {
+  const own = new Set<HttpMethod>(implemented);
+  if (own.has("GET")) own.add("HEAD");
   const allow = [...own, "OPTIONS"].sort().join(", ");
 
   const handlers: Partial<Record<HttpMethod, (req: Request) => Response>> = {};

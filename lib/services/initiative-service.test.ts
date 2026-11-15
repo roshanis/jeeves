@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTestDb, closeTestDb, type TestDb } from "../db/test-client";
+import { recordLocks } from "../db/test-lock-recorder";
 import { CHAMPION_PREFILL_PAYLOAD } from "../intake/champion-prefill";
 import type { IntakePayload } from "../intake/types";
 import {
@@ -100,6 +101,20 @@ describe("lib/services/initiative-service", () => {
 
   afterEach(async () => {
     await closeTestDb(db);
+  });
+
+  describe("legacy flat intake records", () => {
+    it("submitIntake, startQc and triage reject a flat stored intake with a ValidationError, not a TypeError", async () => {
+      const draft = await svc.createDraft(db, {
+        payload: CHAMPION_PREFILL_PAYLOAD, requesterActor: REQUESTER, requesterName: "Priya Raman",
+      });
+      await db.update(intakeVersions)
+        .set({ fields: { "overlay.phi": true, "overlay.memberFacing": true } as never })
+        .where(eq(intakeVersions.initiativeId, draft.initiativeId));
+      await expect(svc.submitIntake(db, draft.initiativeId, REQUESTER)).rejects.toBeInstanceOf(ValidationError);
+      await expect(svc.startQc(db, draft.initiativeId, PROGRAM)).rejects.toBeInstanceOf(ValidationError);
+      await expect(svc.triage(db, draft.initiativeId)).rejects.toBeInstanceOf(ValidationError);
+    });
   });
 
   describe("review integrity regression", () => {
@@ -869,6 +884,57 @@ describe("lib/services/initiative-service", () => {
 
       const row = (await db.select().from(initiatives).where(eq(initiatives.id, draft.initiativeId)))[0]!;
       expect(row.state).toBe("intake_draft"); // unchanged
+    });
+  });
+
+  describe("row locks vs workspace authorization", () => {
+    async function foreignRefusalLocks(call: () => Promise<unknown>): Promise<string[]> {
+      const { events, spy } = recordLocks(db);
+      try {
+        await expect(call()).rejects.toThrow(NotFoundError);
+      } finally {
+        spy.mockRestore();
+      }
+      return events;
+    }
+
+    it("a caller from another workspace is refused without FOR UPDATE on the initiative row", async () => {
+      const draft = await svc.createDraft(db, {
+        payload: CHAMPION_PREFILL_PAYLOAD,
+        requesterActor: REQUESTER,
+        requesterName: "Priya Raman",
+        workspaceId: "ws-owner",
+      });
+      const id = draft.initiativeId;
+      const calls: Record<string, () => Promise<unknown>> = {
+        updateIntakeDraft: () => svc.updateIntakeDraft(db, { initiativeId: id, payload: CHAMPION_PREFILL_PAYLOAD, expectedVersion: 1, actor: REQUESTER, workspaceId: "ws-other" }),
+        submitIntake: () => svc.submitIntake(db, id, REQUESTER, "ws-other"),
+        startQc: () => svc.startQc(db, id, PROGRAM, "ws-other"),
+        returnFromQc: () => svc.returnFromQc(db, id, REVIEWER, "Foreign lock check.", "ws-other"),
+        triage: () => svc.triage(db, id, SYSTEM_ACTOR, "ws-other"),
+        decide: () => svc.decide(db, id, APPROVER, "ws-other", { decision: "rejected" }),
+      };
+      for (const [name, call] of Object.entries(calls)) {
+        const events = await foreignRefusalLocks(call);
+        expect(events, name).toContain("from:initiatives");
+        expect(events, name).not.toContain("lock:initiatives");
+      }
+    });
+
+    it("the owning workspace's call still locks the initiative row", async () => {
+      const draft = await svc.createDraft(db, {
+        payload: CHAMPION_PREFILL_PAYLOAD,
+        requesterActor: REQUESTER,
+        requesterName: "Priya Raman",
+        workspaceId: "ws-owner",
+      });
+      const { events, spy } = recordLocks(db);
+      try {
+        await svc.submitIntake(db, draft.initiativeId, REQUESTER, "ws-owner");
+      } finally {
+        spy.mockRestore();
+      }
+      expect(events).toContain("lock:initiatives");
     });
   });
 
