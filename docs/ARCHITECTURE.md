@@ -347,11 +347,16 @@ driver is stateless per query — no coherence problem) or in mock mode
 `POST /api/initiatives` creates the `initiatives` + first `intake_versions`
 row (`lib/services/initiative-service.ts`). `POST /api/initiatives/[id]/submit`
 enforces requester ownership (§6.4) and transitions `intake_draft →
-submitted`. `POST /api/initiatives/[id]/triage` computes the tier and
-required-domain set deterministically (`lib/triage/rules.ts` +
-`lib/triage/routing.ts`, §2.6), writes a `risk_assessments` row, and
-transitions to `in_review` or, for an eligible Low-tier initiative, directly
-to the fast lane (§2.6, §5.5).
+submitted`. A submitted intake then passes the QC gate (§2.5):
+`POST /api/initiatives/[id]/qc` (Program Office or Admin) opens QC
+(`submitted → in_qc`), and `POST /api/initiatives/[id]/qc-return` sends a
+failing intake back to the requester with a reason. `POST
+/api/initiatives/[id]/triage` is only reachable from `in_qc` and is itself
+a Program Office / Admin call (the choice to pass QC; the actor is recorded
+as `qc_passed`). It computes the tier and required-domain set
+deterministically (`lib/triage/rules.ts` + `lib/triage/routing.ts`, §2.6),
+writes a `risk_assessments` row, and transitions to `in_review` or, for an
+eligible Low-tier initiative, directly to the fast lane (§2.6, §5.5).
 
 ### 5.2 Draft-run fan-out — bounded concurrency + retry
 
