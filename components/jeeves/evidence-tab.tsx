@@ -27,6 +27,7 @@ export function EvidenceTab({slug}:{slug:string}) {
 function EvidenceWorkspace({slug,token}:{slug:string;token:string}) {
   const router=useRouter();
   const live=useLiveSessionOptional();
+  const logout=live?.logout;
   const [state,setState]=useState<EvidenceState|null>(null);
   const [entries,setEntries]=useState<EvidenceEntry[]>([]);
   const [error,setError]=useState<string|null>(null);
@@ -42,15 +43,15 @@ function EvidenceWorkspace({slug,token}:{slug:string;token:string}) {
   const [retry,setRetry]=useState(0);
   useEffect(()=>{
     const controller=new AbortController();
-    evidenceRequest<EvidenceState>(slug,token,undefined,controller.signal).then(next=>{setState(next);setEntries(next.draft?.entries??next.latest?.entries??[]);setPendingSubmission(null);setError(null);}).catch(e=>{if(controller.signal.aborted)return;if(e instanceof ApiError&&e.status===401)live?.logout?.();setError(message(e));});
+    evidenceRequest<EvidenceState>(slug,token,undefined,controller.signal).then(next=>{setState(next);setEntries(next.draft?.entries??next.latest?.entries??[]);setPendingSubmission(null);setError(null);}).catch(e=>{if(controller.signal.aborted)return;if(e instanceof ApiError&&e.status===401)logout?.();setError(message(e));});
     return ()=>controller.abort();
-  },[slug,token,retry]);
+  },[slug,token,retry,logout]);
   async function refresh(preserveEdits=false) {
     const next=await evidenceRequest<EvidenceState>(slug,token);setState(next);
     if(!preserveEdits)setEntries(next.draft?.entries??next.latest?.entries??[]);
     router.refresh();
   }
-  async function perform(action:()=>Promise<void>) {setBusy(true);setError(null);setNotice('');try{await action();}catch(e){if(e instanceof ApiError&&e.status===401)live?.logout?.();setError(message(e));}finally{setBusy(false);}}
+  async function perform(action:()=>Promise<void>) {setBusy(true);setError(null);setNotice('');try{await action();}catch(e){if(e instanceof ApiError&&e.status===401)logout?.();setError(message(e));}finally{setBusy(false);}}
   const boundEntries=entries.filter(e=>e.documentId);
   function chooseFile(selected:File|undefined) {
     if(!selected)return;
