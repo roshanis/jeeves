@@ -35,6 +35,7 @@ import {
 } from "@/lib/client/api";
 import { useLiveSessionOptional } from "@/lib/client/session-context";
 import { DOMAIN_LABEL, ReviewStatusBadge } from "./domain-labels";
+import { formatUtcTimestamp } from "@/lib/format/timestamp";
 import { failedDraftRunDomains } from "@/lib/client/review-actions";
 
 // Re-exported for backwards compatibility with earlier imports; the
@@ -253,7 +254,7 @@ function ReviewsTabContent({ reviews, slug, initiativeId, isSeeded }: {
                 ) : null}
                 {review.signedAt ? (
                   <span className="text-xs text-muted-foreground">
-                    signed {review.signedAt.slice(0, 10)}
+                    signed <time dateTime={review.signedAt}>{formatUtcTimestamp(review.signedAt)}</time>
                   </span>
                 ) : null}
               </div>

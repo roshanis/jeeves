@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 import { AuditTab } from "@/components/jeeves/audit-tab";
 import { DecisionsTab } from "@/components/jeeves/decisions-tab";
+import { ReviewsTab } from "@/components/jeeves/reviews-tab";
 import { AuditConsole } from "@/components/jeeves/audit-console";
 import { renderWithProviders } from "./helpers";
 
@@ -25,6 +27,15 @@ describe("audit timestamps", () => {
       <DecisionsTab slug="x" decisions={[{ type: "approved", approver: "A B", at: "2026-09-07T19:05:00.000Z", conditions: [], citations: [] }]} />,
     );
     expect(container.querySelector("time")?.textContent).toBe("2026-09-07 19:05 UTC");
+  });
+
+  it("reviews tab signed date shows time of day with UTC in a <time dateTime>", () => {
+    const { container } = renderWithProviders(
+      <ReviewsTab slug="x" reviews={[{ domain: "privacy-hipaa", status: "signed", reviewer: "A B", createdAt: "2026-09-07T10:00:00.000Z", signedAt: "2026-09-07T19:05:00.000Z", draftMd: null, citations: [] }]} />,
+    );
+    const t = container.querySelector("time");
+    expect(t?.getAttribute("datetime")).toBe("2026-09-07T19:05:00.000Z");
+    expect(t?.textContent).toBe("2026-09-07 19:05 UTC");
   });
 });
 
