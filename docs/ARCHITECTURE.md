@@ -495,7 +495,7 @@ on the first failure:
 3. **Input size** — `validateInputSize()` against per-field caps and a total
    payload cap (default 100 KB); fails → 400 with per-field gaps.
 4. **Budget** (opt-in via `options.requiresBudget`) — atomic daily reserve
-   (§6.3); denied → 429 "demo token budget exhausted for today".
+   (§6.3); denied → 429 "daily model budget reached".
 
 On success, callers get back `{ actor, workspaceId }` — the workspace comes
 from the session row, never re-derived from anything client-supplied. 

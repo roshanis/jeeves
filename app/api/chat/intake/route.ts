@@ -18,7 +18,7 @@
  * 200:   { reply: string, updatedPayload: object, gaps: CompletenessGap[], done: boolean }
  * 401:   { error: string }  (no/invalid session)
  * 403:   { error: string }  (non-requester persona)
- * 429:   { error: string }  (rate limit or demo token budget exhausted)
+ * 429:   { error: string }  (rate limit or daily model budget reached)
  * 400:   { error: string }  (malformed body / input-size cap exceeded)
  * 502/504/499: as app/api/chat/auditor/route.ts's PortFailure mapping.
  */
