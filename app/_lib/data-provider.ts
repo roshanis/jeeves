@@ -1,5 +1,6 @@
 import { runtimeDatabaseUrl } from "@/lib/db/runtime-config";
 /** Viewer-scoped server reads over the shared provider factory. */
+import { cache } from "react";
 import { cookies, headers } from "next/headers";
 import type { DataProvider } from "@/lib/data/provider";
 import type { InitiativeDetail, InitiativeSummary } from "@/lib/data/dto";
@@ -57,16 +58,29 @@ export async function getInitiativeDetailForViewer(
 export async function getInitiativeDetailCoherent(
   slug: string,
 ): Promise<InitiativeDetail | null> {
+  return loadInitiativeDetailCoherent(slug, await getCurrentWorkspaceId());
+}
+
+/**
+ * Request-scoped (React cache) so generateMetadata and the page share one
+ * snapshot load. The viewer workspace is an explicit argument, so it is part
+ * of the cache key: two workspaces can never share an entry, and the cache
+ * never outlives a request.
+ */
+const loadInitiativeDetailCoherent = cache(async (
+  slug: string,
+  viewerWorkspaceId: string | null,
+): Promise<InitiativeDetail | null> => {
   const hasDatabaseUrl = !!runtimeDatabaseUrl();
   const pgliteDbMode = resolveDataProviderMode(process.env.DATA_PROVIDER, hasDatabaseUrl) === "db" && !hasDatabaseUrl;
   if (!pgliteDbMode) {
-    return getInitiativeDetailForViewer(slug);
+    return getAppProvider().getInitiativeDetail(slug, { viewerWorkspaceId });
   }
 
   const requestHeaders = await headers();
   const host = requestHeaders.get("host");
   if (!host) {
-    return getInitiativeDetailForViewer(slug);
+    return getAppProvider().getInitiativeDetail(slug, { viewerWorkspaceId });
   }
   const proto = requestHeaders.get("x-forwarded-proto") ?? "http";
   const res = await fetch(
@@ -86,4 +100,4 @@ export async function getInitiativeDetailCoherent(
     throw new Error(`detail-data fetch failed (${res.status})`);
   }
   return (await res.json()) as InitiativeDetail;
-}
+});

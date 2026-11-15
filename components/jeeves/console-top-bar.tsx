@@ -18,9 +18,7 @@ import { AppTopBar } from "./app-topbar";
 // palette never surfaces the seeded workspace's initiatives or vice versa.
 export async function ConsoleTopBar() {
   const viewerWorkspaceId = await getCurrentWorkspaceId();
-  const initiatives = (
-    await getAppProvider().listInitiatives({ viewerWorkspaceId })
-  ).map((i) => ({ slug: i.slug, title: i.title }));
+  const initiatives = await getAppProvider().listInitiativeIndex({ viewerWorkspaceId });
 
   return <AppTopBar initiatives={initiatives} />;
 }

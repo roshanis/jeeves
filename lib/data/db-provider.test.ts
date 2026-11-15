@@ -503,6 +503,22 @@ describe("lib/data/db-provider", () => {
       expect(rows.map((r) => r.slug)).not.toContain("ws-beta-initiative");
     });
 
+    it("listInitiativeIndex reads slug/title only, in one query, scoped like listInitiatives", async () => {
+      const spy = vi.spyOn(db, "select");
+      try {
+        const rows = await provider.listInitiativeIndex({ viewerWorkspaceId: WS_A });
+        expect(spy).toHaveBeenCalledTimes(1);
+        expect(rows).toHaveLength(13);
+        expect(Object.keys(rows[0]).sort()).toEqual(["slug", "title"]);
+        expect(rows.map((r) => r.slug)).toContain("ws-alpha-initiative");
+        expect(rows.map((r) => r.slug)).not.toContain("ws-beta-initiative");
+      } finally {
+        spy.mockRestore();
+      }
+      const anon = await provider.listInitiativeIndex({ viewerWorkspaceId: null });
+      expect(anon).toHaveLength(12);
+    });
+
     it("getInitiativeDetail returns the row when omitted/matching workspace, and null for a foreign workspace", async () => {
       expect(await provider.getInitiativeDetail("ws-alpha-initiative")).not.toBeNull();
       expect(

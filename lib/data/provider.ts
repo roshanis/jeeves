@@ -38,6 +38,8 @@ export interface WorkspaceScopedReadOptions {
 
 export interface DataProvider {
   listInitiatives(opts?: WorkspaceScopedReadOptions): Promise<InitiativeSummary[]>;
+  /** Slim slug/title index for the ⌘K palette: one narrow select, no snapshot. */
+  listInitiativeIndex(opts?: WorkspaceScopedReadOptions): Promise<Array<{ slug: string; title: string }>>;
   /** Load all details visible to one viewer from one request-local read snapshot. */
   listInitiativeDetails(opts?: WorkspaceScopedReadOptions): Promise<InitiativeDetail[]>;
   getInitiativeDetail(
