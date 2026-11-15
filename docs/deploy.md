@@ -13,8 +13,8 @@ data (see "Personal data" in section 5). See the top of
 Deploy itself is **not executed by any agent** in this repo — this document
 only describes the steps. A human runs them.
 
-> **Before this change is deployed: set `JEEVES_MODE=demo` in Vercel.**
-> The deployment mode now **defaults to production**. Demo is an explicit
+> **Deployment mode: set `JEEVES_MODE=demo` in Vercel for the demo.**
+> The deployment mode **defaults to production**. Demo is an explicit
 > opt-in: only the exact value `JEEVES_MODE=demo` selects it, and anything else
 > (unset, empty, `Demo`, `prod`) is production — a closed shell with no
 > personas, no playground and no public intake, which also refuses to boot
@@ -23,9 +23,9 @@ only describes the steps. A human runs them.
 > **flips the live demo into production mode on its next deploy.**
 >
 > In the Vercel project settings, add `JEEVES_MODE` = `demo` to **Production,
-> Preview and Development** (all three), and only then merge or deploy this
-> change. Preview deployments are the ones people forget. Local development,
-> the test suite, Playwright, CI and the Podman stack set it themselves
+> Preview and Development** (all three) before deploying. Preview deployments
+> are the ones people forget. Local development, the test suite, Playwright,
+> CI and the Podman stack set it themselves
 > (`.env.example`, `vitest.config.ts`, `playwright.config.ts`,
 > `.github/workflows/ci.yml`, `deploy/podman/`); Vercel is the one place only a
 > human can set it. Never expose it as `NEXT_PUBLIC_JEEVES_MODE`: the mode is
@@ -305,10 +305,10 @@ different problems.
    every seeded table and disables the `audit_events` append-only triggers to
    do it. The `ALLOW_SEED=1` guard applies only when `NODE_ENV=production` is
    set for the seed run (`npm run db:seed` from a laptop does not set it), so
-   check `DATABASE_URL` yourself before every run. The one exception is a
+   check `DATABASE_URL` yourself before every run. Section 2 step 5 lists
+   the refusals that hold whatever `ALLOW_SEED` and `NODE_ENV` say; one is a
    database stamped `production` (`installation.deploy_mode`, migration
-   0015): the seed and reset scripts refuse that one whatever `ALLOW_SEED`
-   and `NODE_ENV` say.
+   0015), which the seed and reset scripts refuse.
 
 ### Restore
 
