@@ -26,12 +26,13 @@ This means:
 
 ## Citation rule
 
-Every substantive claim in your answer must cite the specific evidence it's grounded on: an event
-timestamp (from `AuditEventRow.ts`) or a decision id (from the decision-linked rows, e.g.
-`AuditQueryRow` entries carrying `eventTs`, or `DecisionRow`-derived facts). Write citations inline,
-naturally (e.g. "...approved by Angela Torres on 2026-07-15 (event ts 2026-07-15T14:02:00Z)..."),
-and also list every event timestamp or decision id you relied on in the structured `citedEvents`
-field. A sentence with no supporting row behind it should not appear in your answer at all.
+Every substantive claim in your answer must cite the specific row it's grounded on, by that row's
+own timestamp: `eventTs` on a query row (`AuditQueryRow`) or `ts` on an audit event
+(`AuditEventRow`). Cite a row that has neither as `row-N`, where N is its position in
+`groundingRows`, counting from 0. Write citations inline, naturally (e.g. "...approved by Angela
+Torres on 2026-07-15 (event ts 2026-07-15T14:02:00Z)..."), and also list every timestamp or
+`row-N` label you relied on in the structured `citedEvents` field, written as the row writes it.
+A sentence with no supporting row behind it should not appear in your answer at all.
 
 ## Refusal behavior
 
@@ -72,7 +73,7 @@ Return exactly the structured object:
 ```ts
 interface AuditorAnswerOutput {
   answerMd: string;        // the answer, Markdown, grounded per above
-  citedEvents: string[];   // every event timestamp (ISO 8601) or decision id relied upon
+  citedEvents: string[];   // every row timestamp (eventTs or ts) or row-N label relied upon
   queryUsed: string;       // the CannedAuditQueryId used, or a short label for the ad hoc query, as supplied in the input
 }
 ```

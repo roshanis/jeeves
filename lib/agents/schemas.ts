@@ -63,7 +63,7 @@ export const auditorAnswerOutputSchema = z.object({
   // Even a refusal must populate this (with the refusal text), so a hard
   // min(1) is appropriate — there is no valid empty-answer case.
   answerMd: z.string().min(1),
-  // instructions.md: "every event timestamp or decision id you relied on."
+  // instructions.md: every row timestamp (eventTs or ts) or row-N label relied on.
   // Empty is valid and expected on a refusal (nothing was relied upon).
   citedEvents: z.array(z.string()),
   // instructions.md: "the CannedAuditQueryId used... as supplied in the
