@@ -1,3 +1,4 @@
+import * as React from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, screen } from "@testing-library/react";
 import { renderWithProviders } from "./helpers";
@@ -5,16 +6,25 @@ import { MockDataProvider } from "@/lib/data/mock-provider";
 import type { InitiativeDetail } from "@/lib/data/dto";
 import InitiativeDetailPage from "@/app/(console)/initiatives/[slug]/page";
 
-const navigation = vi.hoisted(() => ({ push: vi.fn(), refresh: vi.fn(), query: "" }));
+const navigation = vi.hoisted(() => ({ push: vi.fn(), refresh: vi.fn(), query: "", listeners: new Set<() => void>() }));
 const data = vi.hoisted(() => ({ detail: null as InitiativeDetail | null }));
 vi.mock("next/navigation", () => ({
   useRouter: () => navigation,
   usePathname: () => "/initiatives/manual-pause",
-  useSearchParams: () => new URLSearchParams(navigation.query),
+  useSearchParams: () => {
+    // Subscribe so a mocked router.push re-renders consumers, as the real hook does.
+    const [, bump] = React.useState(0);
+    React.useEffect(() => { const l = () => bump((n) => n + 1); navigation.listeners.add(l); return () => { navigation.listeners.delete(l); }; }, []);
+    return new URLSearchParams(navigation.query);
+  },
   notFound: () => { throw new Error("not found"); },
 }));
 vi.mock("@/app/_lib/data-provider", () => ({
   getInitiativeDetailCoherent: async () => data.detail,
+}));
+
+vi.mock("@/components/jeeves/evidence-tab", () => ({
+  EvidenceTab: () => <textarea aria-label="Evidence note" />,
 }));
 
 beforeEach(async () => {
@@ -55,5 +65,16 @@ describe("case-file navigation and pause evidence", () => {
     navigation.query = "tab=operate";
     await renderPage("operate");
     expect(screen.getByRole("tab", { name: "Evals" }).getAttribute("aria-selected")).toBe("true");
+  });
+
+  it("keeps unsaved Evidence-tab work when the user visits another tab and returns", async () => {
+    // The URL owns the tab, so make the mocked router update it and notify subscribers.
+    navigation.push.mockImplementation((url: string) => { navigation.query = url.split("?")[1]; navigation.listeners.forEach((l) => l()); });
+    navigation.query = "tab=evidence";
+    renderWithProviders(await InitiativeDetailPage({ params: Promise.resolve({ slug: "manual-pause" }), searchParams: Promise.resolve({ tab: "evidence" }) }));
+    fireEvent.change(screen.getByLabelText("Evidence note"), { target: { value: "bound to control 4" } });
+    fireEvent.click(screen.getByRole("tab", { name: /^Reviews$/ }));
+    fireEvent.click(screen.getByRole("tab", { name: /^Evidence$/ }));
+    expect((screen.getByLabelText("Evidence note") as HTMLTextAreaElement).value).toBe("bound to control 4");
   });
 });
