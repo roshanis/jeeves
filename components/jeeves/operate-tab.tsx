@@ -24,6 +24,7 @@ import {
 import type { TelemetrySeries } from "@/lib/data/dto";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { OFFLINE_COMPARISON_SLUG } from "./eval-comparison";
 import { SyntheticDataLabel } from "./synthetic-data-label";
 import { RunMonitorPanel } from "./run-monitor-panel";
 
@@ -343,7 +344,7 @@ export function EvalsTab({
   slug: string;
   telemetry: TelemetrySeries[];
 }) {
-  const isPromotionStory = slug === "pa-correspondence-model";
+  const isPromotionStory = slug === OFFLINE_COMPARISON_SLUG;
   const evalSeries = telemetry.filter((s) => s.kind === "eval_hallucination" || s.kind === "eval_relevance");
   const costSeries = telemetry.filter((s) => s.kind === "cost_tokens_usd_day");
   const gpuSeries = telemetry.filter((s) => s.kind === "gpu_util_pct");

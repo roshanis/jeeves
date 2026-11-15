@@ -43,4 +43,16 @@ describe("promotion recovery navigation", () => {
     expect(screen.queryByRole("button", { name: "Promote" })).toBeNull();
     expect(screen.getByText(/sample data/i)).toBeTruthy();
   });
+
+  it("points to the offline Evals-tab comparison only for the initiative that has one", async () => {
+    const base = (await mocks.promotions())[0];
+    const ctx = { evalSeries: { kind: "eval_hallucination" as const, points: [{ ts: "2026-06-01T00:00:00.000Z", value: 0.04 }], threshold: 0.08 }, history: [] };
+    mocks.promotions.mockResolvedValue([
+      { ...base, deploymentVersionId: "seeded", initiativeId: "seeded", initiativeSlug: "pa-correspondence-model", initiativeTitle: "PA model" },
+      { ...base, deploymentVersionId: "other", initiativeId: "other", initiativeSlug: "case-one", initiativeTitle: "Case one" },
+    ]);
+    renderWithProviders(<PromotionsPageClient historyByInitiativeId={{ seeded: ctx, other: ctx }} />);
+    await screen.findByText("Case one", { selector: "a" });
+    expect(screen.getAllByText(/offline v2\.0 vs v2\.1 comparison is on the initiative's Evals tab/)).toHaveLength(1);
+  });
 });

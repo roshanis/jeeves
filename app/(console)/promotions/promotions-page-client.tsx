@@ -45,7 +45,7 @@ import {
   type PromotionAttestationInput,
 } from "@/components/jeeves/promotion-dialog";
 import { DeploymentHistory } from "@/components/jeeves/deployment-history";
-import { EvalComparison } from "@/components/jeeves/eval-comparison";
+import { EvalComparison, OFFLINE_COMPARISON_SLUG } from "@/components/jeeves/eval-comparison";
 import type { Tier } from "@/lib/domain/types";
 import type { InitiativeHistoryContext } from "./page";
 
@@ -236,6 +236,7 @@ export function PromotionsPageClient({
                   candidateVersion={item.version}
                   currentVersion={item.supersedesVersion}
                   evalSeries={ctx?.evalSeries ?? null}
+                  hasOfflineComparison={item.initiativeSlug === OFFLINE_COMPARISON_SLUG}
                 />
                 <Link
                   href={`/initiatives/${encodeURIComponent(item.initiativeSlug)}?tab=deployments`}

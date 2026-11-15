@@ -21,6 +21,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { SyntheticDataLabel } from "@/components/jeeves/synthetic-data-label";
 import { cn } from "@/lib/utils";
 
+/** The one initiative whose Evals tab renders the offline version comparison
+ * panel (operate-tab.tsx); the Promotions pointer is shown only for it. */
+export const OFFLINE_COMPARISON_SLUG = "pa-correspondence-model";
+
 export interface EvalSeriesLike {
   kind: string;
   points: { ts: string; value: number }[];
@@ -57,6 +61,7 @@ export function EvalComparison({
   candidateVersion,
   currentVersion,
   evalSeries,
+  hasOfflineComparison = false,
 }: {
   /** The checkpoint proposed for promotion, e.g. "v2.1". */
   candidateVersion: string;
@@ -68,6 +73,8 @@ export function EvalComparison({
    * series, not a per-version one (see file-level honesty note).
    */
   evalSeries: EvalSeriesLike | null;
+  /** True only when the initiative's Evals tab renders the offline comparison panel. */
+  hasOfflineComparison?: boolean;
 }) {
   if (!evalSeries || evalSeries.points.length === 0) {
     return (
@@ -122,8 +129,10 @@ export function EvalComparison({
             compared: the initiative&apos;s live eval series (not a
             per-checkpoint series — the candidate checkpoint has not yet run
             its own separate eval telemetry) against the runtime threshold
-            this deployment is gated on. A separate, labelled offline v2.0 vs
-            v2.1 comparison is on the initiative&apos;s Evals tab.
+            this deployment is gated on.
+            {hasOfflineComparison && currentVersion
+              ? ` A separate, labelled offline ${currentVersion} vs ${candidateVersion} comparison is on the initiative's Evals tab.`
+              : null}
           </p>
           <div className="flex flex-wrap items-center gap-3">
             <span className="stat-value text-2xl" data-slot="eval-comparison-latest">

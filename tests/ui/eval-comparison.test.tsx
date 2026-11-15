@@ -5,7 +5,7 @@
 // being compared since there is no per-checkpoint eval series in the data.
 import { describe, expect, it } from "vitest";
 import { screen } from "@testing-library/react";
-import { EvalComparison } from "@/components/jeeves/eval-comparison";
+import { EvalComparison, OFFLINE_COMPARISON_SLUG } from "@/components/jeeves/eval-comparison";
 import { renderWithProviders } from "./helpers";
 
 describe("EvalComparison", () => {
@@ -71,18 +71,25 @@ describe("EvalComparison", () => {
     expect(screen.getByText(/live eval series/)).toBeDefined();
   });
 
-  it("points to the labelled offline v2.0 vs v2.1 comparison on the Evals tab", () => {
-    renderWithProviders(
-      <EvalComparison
-        candidateVersion="v2.1"
-        currentVersion="v2.0"
-        evalSeries={{
-          kind: "eval_hallucination",
-          points: [{ ts: "2026-06-01T00:00:00.000Z", value: 0.04 }],
-          threshold: 0.08,
-        }}
-      />,
+  it("points to the labelled offline comparison only when the Evals tab renders it", () => {
+    const evalSeries = {
+      kind: "eval_hallucination",
+      points: [{ ts: "2026-06-01T00:00:00.000Z", value: 0.04 }],
+      threshold: 0.08,
+    };
+    const { unmount } = renderWithProviders(
+      <EvalComparison candidateVersion="v2.1" currentVersion="v2.0" evalSeries={evalSeries} hasOfflineComparison />,
     );
     expect(screen.getByText(/offline v2\.0 vs v2\.1 comparison is on the initiative's Evals tab/)).toBeDefined();
+    unmount();
+    renderWithProviders(
+      <EvalComparison candidateVersion="v3.4" currentVersion="v3.3" evalSeries={evalSeries} />,
+    );
+    expect(screen.queryByText(/offline .* comparison is on the initiative's Evals tab/)).toBeNull();
+    expect(screen.getByText(/live eval series/)).toBeDefined();
+  });
+
+  it("uses the promotion-story slug shared with the Evals tab", () => {
+    expect(OFFLINE_COMPARISON_SLUG).toBe("pa-correspondence-model");
   });
 });
