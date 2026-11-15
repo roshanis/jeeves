@@ -135,11 +135,13 @@ describe("a refused draft run leaves no trace", () => {
   });
 });
 
-// The chat routes ask the mutation guard for a token reservation, which is the
-// only thing that spends the daily LLM budget. With no LLM there is nothing to
-// spend it on, so they must not ask. The guard is replaced in this file, so it
-// is stood in by its budget step: the same reserve() against the same store,
-// whenever the route passes `requiresBudget`.
+// The chat routes reserve their tokens themselves (reserveDailyBudget), once
+// the caller is authenticated, has the right role and sent a valid body. That
+// reservation is the only thing that spends the daily LLM budget. With no LLM
+// there is nothing to spend it on, so they must not make one. The guard is
+// replaced in this file; should a route go back to asking the guard for a
+// reservation (`requiresBudget`), the stand-in makes it the way the real guard
+// does, so the run_budget assertions below see either path.
 describe("chat routes reserve no tokens when the install has no LLM", () => {
   const CHAT_ROUTES = ROUTES.filter((route) => route.name.startsWith("POST /api/chat/"));
 
@@ -163,7 +165,6 @@ describe("chat routes reserve no tokens when the install has no LLM", () => {
     expect(response.status).toBe(503);
     expect(await response.json()).toMatchObject({ error: "llm_not_configured" });
     expect(await testDb.select().from(runBudget)).toEqual([]);
-    expect(guard.runMutationGuard.mock.calls[0][2]).toMatchObject({ requiresBudget: false });
   });
 
   it.each(CHAT_ROUTES)("$name still authenticates first: an anonymous caller gets the guard's 401", async ({ call }) => {
@@ -199,7 +200,7 @@ describe("chat routes reserve no tokens when the install has no LLM", () => {
     expect(await testDb.select().from(runBudget)).toEqual([]);
   });
 
-  // Positive control: the stand-in does see a reservation, and demo still makes one.
+  // Positive control: demo still makes a reservation, and this file sees it.
   it.each(CHAT_ROUTES)("$name reserves tokens in demo, where the keyless mock answers", async ({ actor, call }) => {
     vi.stubEnv("JEEVES_MODE", "demo");
     vi.stubEnv("OPENAI_API_KEY", undefined);
@@ -208,7 +209,6 @@ describe("chat routes reserve no tokens when the install has no LLM", () => {
     const response = await call();
 
     expect(response.status).toBe(200);
-    expect(guard.runMutationGuard.mock.calls[0][2]).toMatchObject({ requiresBudget: true });
     expect(await testDb.select().from(runBudget)).toHaveLength(1);
   });
 });

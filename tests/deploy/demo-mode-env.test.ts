@@ -61,8 +61,10 @@ describe("explicit JEEVES_MODE=demo for every demo, dev, test and CI path", () =
     expect(read("deploy/podman/env.example")).toMatch(/^#?\s*JEEVES_COOKIE_SECRET=/m);
   });
 
-  it("the compose app service passes the cookie secret through", () => {
-    expect(read("deploy/podman/compose.yaml")).toMatch(/JEEVES_COOKIE_SECRET:\s*\$\{JEEVES_COOKIE_SECRET:-\}/);
+  // The stack no longer has a passcode to derive the key from, so the
+  // variable is required (tests/deploy/podman-env.test.ts pins the message).
+  it("the compose app service passes the cookie secret through and requires it", () => {
+    expect(read("deploy/podman/compose.yaml")).toMatch(/JEEVES_COOKIE_SECRET:\s*\$\{JEEVES_COOKIE_SECRET:\?[^}]+\}/);
   });
 
   it("the Containerfile builder stage sets it for the build only", () => {
