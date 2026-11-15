@@ -230,9 +230,9 @@ const REQUIRED_FOR_TIER_RULES: TieredRuleCheck[] = [
   },
   {
     ruleId: "RFT-08",
-    field: "data.dataSources",
+    field: "data.retentionIntent",
     message:
-      "Training/fine-tuning use requires at least one data source that is not ephemeral/session-only.",
+      "Training/fine-tuning use conflicts with session-only retention of PHI: choose a retention intent that persists the data, or switch to inference-only use.",
     triggers: (p) =>
       p.data.trainingVsInference === "Fine-tuning/training" || p.data.trainingVsInference === "Both",
     passes: (p) => {

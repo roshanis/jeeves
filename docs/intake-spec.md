@@ -177,7 +177,7 @@ with a known gap and the completeness check flags it after the fact).
 | `RFT-05` | `overlay.vendorHosted = false` | `hosting` | must equal `Self-hosted (Meridian infra)` (consistency check) |
 | `RFT-06` | `overlay.careCoverageInfluence = true` | `decisionInformed` | non-empty, ≥10 chars (care/coverage cases must clearly name the decision) |
 | `RFT-07` | tier ∈ {High, Critical} | `expectedHarms` | non-empty, ≥10 chars, distinct from `expectedBenefits` |
-| `RFT-08` | `trainingVsInference ∈ {Fine-tuning/training, Both}` | `dataSources` | at least one entry must not be marked ephemeral/session-only (cross-check against `retentionIntent ≠ Session-only` when PHI=Y) |
+| `RFT-08` | `trainingVsInference ∈ {Fine-tuning/training, Both}` | `retentionIntent` | must not be `Session-only (no persistence)` when PHI=Y (training/fine-tuning needs persisted data; the gap is anchored on the retention field) |
 
 ### Level 3 — ADVISORY (warnings only; feed the "first-pass completeness" outcome metric, plan §2 outcome strip)
 
