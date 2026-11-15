@@ -320,7 +320,7 @@ describe("remaining mutation routes enforce session workspace authorization", ()
     expect(sharedAfterPromote!.status).toBe("awaiting_promotion_signoff");
   });
 
-  it("project threshold override returns the unknown-initiative 404 shape and allows the owning workspace and refuses shared seeded rows (404, unchanged)", async () => {
+  it("project threshold override returns the unknown-initiative 404 shape and allows the owning workspace and refuses shared seeded rows (404)", async () => {
     const requester = await issueSession("priya-raman", "70.0.3.1");
     const initiativeId = await createLiveInitiative(requester.token, "70.0.3.2");
     const owner = await issueSession("ray-chen", "70.0.3.3", requester.workspaceCookie);

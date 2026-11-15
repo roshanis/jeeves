@@ -578,7 +578,7 @@ describe("deep-review budget multiplier on draft-run", () => {
         body: JSON.stringify({ payload: CHAMPION_PAYLOAD, requestId: `routes-helper-${ip.replaceAll(".", "-")}` }),
       }),
     );
-    expect(createRes.status).toBeLessThan(300);
+    expect(createRes.status).toBe(200);
     const { initiativeId } = await createRes.json();
     const { POST: submitPost } = await import("../initiatives/[id]/submit/route");
     const submitRes = await submitPost(
