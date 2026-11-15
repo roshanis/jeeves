@@ -240,7 +240,7 @@ export function buildSmokeChecks(canary?: string): SmokeCheck[] {
     name: "GET /operator is closed",
     method: "GET",
     path: "/operator",
-    expect: { status: 404, bodyExcludes: ["Operator queue"] },
+    expect: { status: 404, bodyExcludes: ["Real requests", "operator-token-input"] },
   });
 
   // E. Reads are gated.

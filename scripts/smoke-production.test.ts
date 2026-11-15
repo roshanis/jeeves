@@ -1,4 +1,7 @@
 // @vitest-environment node
+import { readFileSync } from "node:fs";
+import net from "node:net";
+import path from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   assertDisposableDatabaseUrl,
@@ -407,5 +410,16 @@ describe("parsePort", () => {
   });
   it.each(["", "abc", "0", "70000", "3217.5", "-1"])("rejects %j", (value) => {
     expect(() => parsePort(value)).toThrow(/SMOKE_PORT/);
+  });
+});
+
+describe("the /operator is-closed check", () => {
+  it("excludes only markers the operator page actually renders", () => {
+    const check = buildSmokeChecks().find((c) => c.path === "/operator")!;
+    const source = ["app/operator/page.tsx", "components/jeeves/public-intake-queue.tsx"]
+      .map((f) => readFileSync(path.join(__dirname, "..", f), "utf8"))
+      .join("\n");
+    expect(check.expect.bodyExcludes?.length).toBeGreaterThan(0);
+    for (const marker of check.expect.bodyExcludes ?? []) expect(source, marker).toContain(marker);
   });
 });
