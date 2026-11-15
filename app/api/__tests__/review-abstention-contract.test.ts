@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ abstain: vi.fn(), resume: vi.fn(), guard: vi.fn(), db: {} }));
 vi.mock("@/lib/db/client", () => ({ getDb: () => mocks.db }));
-vi.mock("@/lib/services/route-guard", () => ({ runMutationGuard: mocks.guard }));
+vi.mock("@/lib/services/route-guard", async (importOriginal) => ({ guardFailureResponse: (await importOriginal<typeof import("@/lib/services/route-guard")>()).guardFailureResponse, runMutationGuard: mocks.guard }));
 vi.mock("@/lib/services/initiative-service", () => ({
   abstainReview: mocks.abstain, resumeReview: mocks.resume,
   ConflictError: class ConflictError extends Error {}, IllegalTransitionError: class IllegalTransitionError extends Error {},
