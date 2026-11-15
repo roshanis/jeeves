@@ -36,6 +36,7 @@ has no effect. Secrets are marked; never log or commit them.
 | `JEEVES_PGLITE_DIR` | optional | unused | runtime | no | `./.pglite` | Directory of the local PGlite store when no URL is set. | `lib/db/client.ts` |
 | `DATA_PROVIDER` | optional | must not be `mock` | runtime | no | `db` if a URL is set, else `mock` | `mock` serves fixture data (read-only preview); `db` reads the database. Production refuses `mock`. | `lib/data/provider-mode.ts`, `lib/config/deployment-mode.ts` |
 | `ALLOW_SEED` | n/a | n/a | runtime | no | unset | `1` lets `npm run db:seed` / reset run with `NODE_ENV=production`. The seed is destructive. | `scripts/seed.ts`, `scripts/reset-demo.ts` |
+| `ALLOW_DISCARD_PUBLIC_REQUESTS` | n/a | n/a | runtime | no | unset | Must equal the number of initiatives in `public-` workspaces for `db:seed` or `reset:demo` to proceed; otherwise the run is refused. | `scripts/seed.ts` |
 
 ## 3. Identity and sessions
 

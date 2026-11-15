@@ -201,7 +201,10 @@ The volume is named `jeeves-pgdata` on both install paths (`compose.yaml` and
 the Quadlet unit pin it). A compose install created before the name was pinned
 holds its data in `podman_jeeves-pgdata` (the project name is the prefix): run
 `podman volume ls` to see which one you have, export that one, and import the
-tar into `jeeves-pgdata` before starting the new stack.
+tar into `jeeves-pgdata` before starting the new stack. A Quadlet install created
+before this change holds its data in the volume `jeeves-db`: export `jeeves-db`
+and import it into `jeeves-pgdata` the same way before starting the new units,
+otherwise Postgres starts on an empty `jeeves-pgdata` volume.
 
 Stop the stack first — exporting a volume under a running Postgres captures a
 torn snapshot. For a consistent online backup use `pg_dump` instead:
