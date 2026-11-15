@@ -94,8 +94,17 @@ npm run start        # next start (after build)
    | `JEEVES_COOKIE_SECRET` | Yes for new deployments | Random server-only signing key for browser workspace continuity. Visitor entry is passwordless. Existing DEMO_PASSCODE can serve only as a deprecated signing fallback. |
    | `OPERATOR_TOKEN` | Optional | At least 32 characters (for example `openssl rand -hex 32`). Opens the "Send a real request" door and unlocks the `/operator` queue where those requests are read, sent as `Authorization: Bearer <token>`. While it is unset or shorter than 32 characters the real-request door is closed (`POST /api/public-session` answers 404 and the intake form does not offer it), because nobody could read what a visitor sent. |
    | `CRON_SECRET` | Optional | Bearer token for `GET /api/cron/monitor` (the 6-hourly Vercel cron in `vercel.json`). Unset, the cron endpoint returns 503; the manual `POST /api/monitor/run` admin action still works. |
+   | `NEXT_PUBLIC_SITE_URL` | Yes for a public deploy (build-time) | Absolute origin, for example `https://jeeves.example.com`, used by `/sitemap.xml`, `/robots.txt` and Open Graph URLs (`lib/marketing/site-config.ts`). Inlined when `next build` runs, so set it before the build, not only at runtime. Default when unset: `http://localhost:3000`, which publishes dead localhost URLs. |
+   | `NEXT_PUBLIC_CONTACT_URL` | Yes for a public deploy (build-time) | Target of the marketing call-to-action buttons, for example `mailto:you@example.com` or a booking link. Inlined at build. Default when unset: a `mailto:` address of the original author, so set your own. |
+   | `NEXT_PUBLIC_PRIVACY_CONTACT` | Optional (build-time) | Contact shown on the privacy and terms pages for data-protection requests. Inlined at build. Default when unset: the value of `NEXT_PUBLIC_CONTACT_URL`. |
+   | `NEXT_PUBLIC_PILOT_PRICE` | Optional (build-time) | Price text for the pilot page. Inlined at build. Default when unset: the page shows "Contact for pricing". |
    | `OPENAI_API_KEY` | Optional | Only set this if you want **live** LLM-drafted reviews during the demo. Omit it and the app runs entirely on the keyless mock adapter — safe default for a public URL. |
    | `OPENAI_MODEL` | Optional (only meaningful with `OPENAI_API_KEY`) | Model id for the real adapter, e.g. the value in `.env.example` (`gpt-5.1`). Unused when `OPENAI_API_KEY` is unset. |
+
+   The four `NEXT_PUBLIC_*` variables are build-time: Vercel reads them from the
+   project settings at build, and changing one needs a redeploy. The Podman image
+   is built by `deploy/podman/Containerfile`, which does not yet pass them through
+   as build arguments, so an image built from it carries the defaults above.
 
 4. **Migrate the selected database first.** There is no migrate or seed step that runs on
    Vercel itself — Vercel serves the app, it does not run one-off scripts.
