@@ -162,3 +162,12 @@ answer `503` with `Retry-After: 15` and the console shows a notice;
 `/api/health` answers `503` `degraded`. The check is retried from requests, at
 most every 15 seconds. A stamp mismatch still exits at once; a credentials or TLS
 error exits after the retries; production never holds: it exits.
+
+## 9. Evidence storage
+
+| Variable | Demo | Production | When | Secret | Default | Effect | Source |
+|---|---|---|---|---|---|---|---|
+| `JEEVES_EVIDENCE_WORKSPACE_MAX_MIB` | optional | optional | runtime | no | demo `100`, production off | Most evidence one workspace may hold, in whole MiB; `none` lifts the ceiling. An upload past it is refused with 413. Malformed (`0`, `100MB`, `1.5`): demo uses `100`; production pauses evidence uploads (503) and logs the variable name. In production it is off unless set. Customer sign-in is not built yet; if an install keeps all initiatives in one workspace, this value caps the whole install. | `lib/evidence/storage-limits.ts` |
+| `JEEVES_EVIDENCE_TOTAL_MAX_MIB` | optional | ignored | runtime | no | demo `2048` | Most evidence the whole database may hold, in whole MiB; `none` lifts it. An upload past it is refused with 413. Malformed (`0`, `100MB`, `1.5`): demo uses `2048` and logs the variable name. Ignored in production. | `lib/evidence/storage-limits.ts` |
+
+Both are read per upload, not by the boot checks (section 8).

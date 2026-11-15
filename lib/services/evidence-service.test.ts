@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { beforeEach, afterEach, describe, it, expect, vi } from 'vitest';
+import { type EvidenceStorageLimits } from '../evidence/storage-limits';
 import { eq } from 'drizzle-orm';
 import { createTestDb, closeTestDb, type TestDb } from '../db/test-client';
 import { initiatives, controlDefinitions, intakeVersions, riskAssessments, reviewCycles, reviewDecisions, auditEvents, evidenceDocuments, evidencePackets } from '../db/schema';
@@ -189,4 +190,84 @@ it('blocks evidence assessment while abstained and restores it after explicit re
  expect((await getEvidence(db,'i',reviewer)).reviewerDomain).toBe('privacy-hipaa');
  await assessEvidence(db,'i',reviewer,{packetId:submitted.id,controlId:'H-01',decision:'accepted',reason:'Independent review completed'});
  expect((await getEvidence(db,'i',reviewer)).requirements[0].status).toBe('accepted');
+});
+
+describe('evidence storage ceilings',()=>{
+  const limits=(o:Partial<EvidenceStorageLimits>={}):EvidenceStorageLimits=>({workspaceBytes:null,totalBytes:null,demo:true,misconfigured:false,lockTimeoutMs:10000,...o});
+  // A valid PDF of exactly n bytes: '%PDF-1.4\n' header, padding, '%%EOF' at the end.
+  const pdf=(n:number)=>{const head='%PDF-1.4\n',tail='\n%%EOF';return Buffer.from(head+'x'.repeat(n-head.length-tail.length)+tail);};
+  const put=(id:string,b:Buffer,l:EvidenceStorageLimits,o:{ref?:string;v?:typeof owner}={})=>uploadEvidence(db,o.ref??'i',o.v??owner,{requestId:id,fileName:`${id}.pdf`,mediaType:'application/pdf',contentBase64:b.toString('base64')},l);
+  beforeEach(async()=>{
+    const now=new Date();
+    await db.insert(initiatives).values({id:'i2',slug:'second-case',title:'Second case',requester:'Priya Raman',workspaceId:'workspace-a',state:'in_review',tier:'high',createdAt:now,updatedAt:now});
+    await db.insert(initiatives).values({id:'k',slug:'other-case',title:'Other case',requester:'Priya Raman',workspaceId:'workspace-b',state:'in_review',tier:'high',createdAt:now,updatedAt:now});
+  });
+  afterEach(()=>{vi.unstubAllEnvs();vi.restoreAllMocks();});
+  const count=async()=>(await db.select().from(evidenceDocuments)).length;
+  it('refuses an upload that pushes a workspace past its ceiling, across initiatives',async()=>{
+    const l=limits({workspaceBytes:3000});
+    await put('request-a-0000000001',pdf(2000),l);
+    await expect(put('request-a-0000000002',pdf(1500),l,{ref:'i2'})).rejects.toMatchObject({status:413,message:expect.stringContaining('This demo workspace has reached its evidence storage limit')});
+    expect(await count()).toBe(1);
+    expect((await db.select().from(auditEvents).where(eq(auditEvents.action,'evidence_uploaded')))).toHaveLength(1);
+  });
+  it('uses production wording without "demo" when limits.demo is false',async()=>{
+    const l=limits({demo:false,workspaceBytes:3000});
+    await put('request-p-0000000001',pdf(2000),l);
+    const err=await put('request-p-0000000002',pdf(1500),l,{ref:'i2'}).catch(e=>e);
+    expect(err).toMatchObject({status:413});
+    expect(err.message).toMatch(/^This workspace has reached/);
+    expect(err.message).not.toContain('demo');
+  });
+  it('counts only the uploader\'s workspace',async()=>{
+    const l=limits({workspaceBytes:3000});
+    await put('request-b-0000000001',pdf(2000),l,{ref:'k',v:{...owner,workspaceId:'workspace-b'}});
+    await expect(put('request-b-0000000002',pdf(2000),l)).resolves.toMatchObject({byteSize:2000});
+  });
+  it('refuses past the total ceiling, and the total message wins when both apply',async()=>{
+    vi.spyOn(console,'warn').mockImplementation(()=>{});
+    await put('request-c-0000000001',pdf(2000),limits({}),{ref:'k',v:{...owner,workspaceId:'workspace-b'}});
+    await expect(put('request-c-0000000002',pdf(1500),limits({totalBytes:3000}))).rejects.toMatchObject({status:413,message:expect.stringContaining('shared evidence storage is full')});
+    await expect(put('request-c-0000000003',pdf(1500),limits({totalBytes:3000,workspaceBytes:1000}))).rejects.toMatchObject({status:413,message:expect.stringContaining('shared evidence storage is full')});
+  });
+  it('accepts an upload exactly on the ceiling, replays it, and refuses the next',async()=>{
+    const l=limits({workspaceBytes:3000});
+    const first=await put('request-d-0000000001',pdf(3000),l);
+    await expect(put('request-d-0000000001',pdf(3000),l)).resolves.toMatchObject({id:first.id});
+    await expect(put('request-d-0000000002',pdf(100),l)).rejects.toMatchObject({status:413});
+  });
+  it('lets only one of two concurrent uploads cross the ceiling',async()=>{
+    const l=limits({workspaceBytes:3000});
+    const r=await Promise.allSettled([put('request-e-0000000001',pdf(2000),l),put('request-e-0000000002',pdf(2000),l,{ref:'i2'})]);
+    expect(r.filter(x=>x.status==='fulfilled')).toHaveLength(1);
+    expect(r.filter(x=>x.status==='rejected'&&(x.reason as {status:number}).status===413)).toHaveLength(1);
+  });
+  it('reads the ceiling from the environment when no limits are passed',async()=>{
+    vi.stubEnv('JEEVES_MODE','demo');vi.stubEnv('JEEVES_EVIDENCE_WORKSPACE_MAX_MIB','1');
+    await uploadEvidence(db,'i',owner,{requestId:'request-f-0000000001',fileName:'a.pdf',mediaType:'application/pdf',contentBase64:pdf(700*1024).toString('base64')});
+    await expect(uploadEvidence(db,'i2',owner,{requestId:'request-f-0000000002',fileName:'b.pdf',mediaType:'application/pdf',contentBase64:pdf(700*1024).toString('base64')})).rejects.toMatchObject({status:413});
+  });
+  it('pauses uploads with 503 when the production ceiling is misconfigured',async()=>{
+    await expect(put('request-g-0000000001',pdf(1000),limits({misconfigured:true,demo:false}))).rejects.toMatchObject({status:503,message:expect.stringContaining('JEEVES_EVIDENCE_WORKSPACE_MAX_MIB')});
+    expect(await count()).toBe(0);
+  });
+  it('applies no ceiling when both are off (the production default)',async()=>{
+    const l=limits({demo:false});
+    await put('request-h-0000000001',pdf(1500*1024),l);
+    await expect(put('request-h-0000000002',pdf(1500*1024),l,{ref:'i2'})).resolves.toMatchObject({byteSize:1500*1024});
+  });
+  it('refuses with 503 when the storage lock cannot be taken in time',async()=>{
+    const real=db.transaction.bind(db);
+    const spy=vi.spyOn(db,'transaction').mockImplementation(((cb:(tx:never)=>unknown)=>real(async tx=>{
+      const exec=tx.execute.bind(tx);
+      vi.spyOn(tx,'execute').mockImplementation((async(q:never)=>{
+        if(JSON.stringify(q).includes('pg_advisory_xact_lock')) throw Object.assign(new Error('lock timeout'),{code:'55P03'});
+        return exec(q);
+      }) as never);
+      return cb(tx as never);
+    })) as never);
+    await expect(put('request-i-0000000001',pdf(1000),limits({workspaceBytes:5000}))).rejects.toMatchObject({status:503,retryAfter:5,message:expect.stringContaining('busy')});
+    spy.mockRestore();
+    expect(await count()).toBe(0);
+  });
 });

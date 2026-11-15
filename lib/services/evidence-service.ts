@@ -6,6 +6,7 @@ import type { Actor, Domain, OverlayFlags, Tier } from '../domain/types';
 import type { EvidenceAssessment, EvidenceDocument, EvidenceEntry, EvidencePacket, EvidenceState } from '../evidence/types';
 import { MAX_FILE_BYTES, MAX_INITIATIVE_BYTES } from '../evidence/types';
 import { EvidenceError, validateDocument } from '../evidence/files';
+import { evidenceStorageLimits, formatCeiling, type EvidenceStorageLimits } from '../evidence/storage-limits';
 import { actorName, reviewerDomainFor } from './actors';
 import { applicabilityApplies } from './applicability';
 export { EvidenceError } from '../evidence/files';
@@ -79,7 +80,33 @@ export async function getEvidence(db:Reader, ref:string, viewer:EvidenceViewer):
     history:submitted.map(p=>({...packetDto(p),assessments:assessments.filter(a=>a.packetId===p.id).map(a=>({...a,decision:a.decision as EvidenceAssessment['decision'],reviewedAt:a.reviewedAt.toISOString(),inherited:false}))}))};
 }
 export type UploadEvidenceInput={requestId:string;fileName:string;mediaType:string;contentBase64:string;supersedesId?:string};
-export async function uploadEvidence(db:Db, ref:string, viewer:EvidenceViewer, input:UploadEvidenceInput):Promise<EvidenceDocument> {
+let lastTotalWarning=0;
+/** Refuse an upload that would push a workspace, or the whole database, past its evidence ceiling. */
+async function enforceStorageCeilings(tx:Tx, workspaceId:string, incoming:number, limits:EvidenceStorageLimits) {
+  if(limits.misconfigured) throw new EvidenceError(503,'Evidence uploads are paused because the evidence storage limit is misconfigured. Ask your administrator to fix JEEVES_EVIDENCE_WORKSPACE_MAX_MIB.');
+  if(limits.workspaceBytes===null&&limits.totalBytes===null) return;
+  // One advisory lock serializes uploads so two concurrent ones cannot both pass.
+  // The sums below rely on READ COMMITTED: they must stay statements issued after the lock.
+  if(!Number.isSafeInteger(limits.lockTimeoutMs)||limits.lockTimeoutMs<=0) throw new Error('Invalid evidence lock timeout.');
+  await tx.execute(sql`SET LOCAL lock_timeout = ${sql.raw(String(limits.lockTimeoutMs))}`);
+  try { await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended('jeeves:evidence-storage', 0))`); }
+  catch(error) {
+    const e=error as {code?:string;cause?:{code?:string}};
+    if((e.code??e.cause?.code)==='55P03') throw new EvidenceError(503,'Evidence uploads are busy right now. Try again in a moment.',5);
+    throw error;
+  }
+  const sum=async(workspace:boolean)=>{
+    const query=tx.select({n:sql<string>`coalesce(sum(${evidenceDocuments.byteSize}),0)`}).from(evidenceDocuments);
+    const [row]=await (workspace?query.innerJoin(initiatives,eq(evidenceDocuments.initiativeId,initiatives.id)).where(eq(initiatives.workspaceId,workspaceId)):query);
+    return Number(row?.n??0);
+  };
+  if(limits.totalBytes!==null&&await sum(false)+incoming>limits.totalBytes) {
+    if(Date.now()-lastTotalWarning>60000){lastTotalWarning=Date.now();console.warn('[evidence] demo total evidence ceiling reached; uploads are refused until space is freed or JEEVES_EVIDENCE_TOTAL_MAX_MIB is raised.');}
+    throw new EvidenceError(413,`The demo's shared evidence storage is full (${formatCeiling(limits.totalBytes)}), so new uploads are paused. Your existing documents stay available and the rest of the demo still works.`);
+  }
+  if(limits.workspaceBytes!==null&&await sum(true)+incoming>limits.workspaceBytes) throw new EvidenceError(413,`${limits.demo?'This demo workspace':'This workspace'} has reached its evidence storage limit (${formatCeiling(limits.workspaceBytes)}). Your existing documents stay available: link an uploaded document to more requirements instead of uploading another copy.`);
+}
+export async function uploadEvidence(db:Db, ref:string, viewer:EvidenceViewer, input:UploadEvidenceInput, limits:EvidenceStorageLimits=evidenceStorageLimits()):Promise<EvidenceDocument> {
   if(!/^[A-Za-z0-9_-]{16,100}$/.test(input.requestId)||input.contentBase64.length>Math.ceil(MAX_FILE_BYTES/3)*4||!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(input.contentBase64)) throw new EvidenceError(400,'Invalid upload encoding or request ID.');
   const bytes=Buffer.from(input.contentBase64,'base64');
   const validated=validateDocument(input.fileName,input.mediaType,bytes);
@@ -96,6 +123,7 @@ export async function uploadEvidence(db:Db, ref:string, viewer:EvidenceViewer, i
     const prior=input.supersedesId?docs.find(d=>d.id===input.supersedesId):null;
     if(input.supersedesId&&!prior) throw new EvidenceError(404,'Previous document not found.');
     if(prior&&docs.some(d=>d.supersedesId===prior.id)) throw new EvidenceError(409,'This document already has a newer version.');
+    await enforceStorageCeilings(tx,initiative.workspaceId!,bytes.length,limits);
     const row={id:`doc-${randomUUID()}`,initiativeId:initiative.id,requestId:input.requestId,...validated,content:bytes,version:prior?prior.version+1:1,supersedesId:prior?.id??null,uploadedBy:viewer.actor.id,createdAt:new Date()};
     await tx.insert(evidenceDocuments).values(row);
     await audit(tx,initiative.id,viewer,'evidence_uploaded',`Uploaded ${row.fileName}, version ${row.version}.`,{documentId:row.id,sha256:row.sha256,version:row.version,supersedesId:row.supersedesId,scanStatus:row.scanStatus});
