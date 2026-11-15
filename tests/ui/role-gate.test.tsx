@@ -1,5 +1,5 @@
 import { describe, expect, it, afterEach } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import {
   DEMO_SESSION_TOOLTIP,
   GatedActionButton,
@@ -80,5 +80,18 @@ describe("RoleGate mechanisms", () => {
     expect(button.getAttribute("aria-disabled")).toBe("true");
     expect(describedBy(button)).toBe(DEMO_SESSION_TOOLTIP);
     expect(document.querySelector('span[tabindex="0"]')).toBeNull();
+  });
+
+  it("reveals the reason visibly (not only sr-only) when the disabled button is tapped", async () => {
+    render(<RoleProvider><TooltipProvider><GatedActionButton label="Promote" /></TooltipProvider></RoleProvider>);
+    expect(document.querySelector('[data-slot="tooltip-content"]')).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Promote" }));
+    const popup = await waitFor(() => {
+      const el = document.querySelector('[data-slot="tooltip-content"]');
+      if (!el) throw new Error("no popup");
+      return el;
+    });
+    expect(popup.textContent).toContain(DEMO_SESSION_TOOLTIP);
+    expect(popup.closest(".sr-only")).toBeNull();
   });
 });

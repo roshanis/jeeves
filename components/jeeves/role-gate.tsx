@@ -107,16 +107,40 @@ export function DisableWithTooltip({
 
   const tooltip =
     session?.role === "public"
-      ? "Not available while sending a real request"
+      ? "Not available for a real request"
       : session && requiresRole && !roleSatisfied
       ? `Requires the ${requiresRole} role — choose a persona in the header`
       : DEMO_SESSION_TOOLTIP;
 
-  // aria-disabled (not disabled) keeps the button focusable and named; the reason is
-  // linked with aria-describedby so screen readers and touch users get it, not just hover.
+  return (
+    <DisabledAction
+      label={label}
+      className={className}
+      variant={variant}
+      dataSlot={dataSlot}
+      reason={tooltip}
+      reasonId={reasonId}
+    />
+  );
+}
+
+/**
+ * aria-disabled (not disabled) keeps the button focusable and named. The reason is linked with
+ * aria-describedby for screen readers; sighted hover/focus users get the tooltip, and a tap or
+ * click opens the same tooltip (controlled) so touch users see it too, without layout shift.
+ */
+function DisabledAction({ label, className, variant, dataSlot, reason, reasonId }: {
+  label: string;
+  className?: string;
+  variant?: React.ComponentProps<typeof Button>["variant"];
+  dataSlot?: string;
+  reason: string;
+  reasonId: string;
+}) {
+  const [open, setOpen] = React.useState(false);
   return (
     <span className={cn("inline-flex", className)}>
-      <Tooltip>
+      <Tooltip open={open} onOpenChange={setOpen}>
         <TooltipTrigger
           render={
             <Button
@@ -126,14 +150,15 @@ export function DisableWithTooltip({
               variant={variant}
               className="w-full cursor-not-allowed opacity-50"
               data-slot={dataSlot ?? "button"}
+              onClick={() => setOpen(true)}
             >
               {label}
             </Button>
           }
         />
-        <TooltipContent>{tooltip}</TooltipContent>
+        <TooltipContent>{reason}</TooltipContent>
       </Tooltip>
-      <span id={reasonId} className="sr-only">{tooltip}</span>
+      <span id={reasonId} className="sr-only">{reason}</span>
     </span>
   );
 }

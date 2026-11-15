@@ -72,8 +72,9 @@ describe("DemoModeChip", () => {
     show();
     expect(screen.queryByText("Live demo (session workspace)")).toBeNull();
     expect(screen.queryByRole("button", { name: "Exit demo" })).toBeNull();
-    expect(screen.getByText("Sending a real request")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Cancel request" })).toBeTruthy();
+    expect(screen.getByText("Real request (not the demo)")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Exit" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Cancel request" })).toBeNull();
     expect(screen.queryByRole("combobox", { name: "Demo persona" })).toBeNull();
     expect(screen.queryByText("Program Office")).toBeNull();
     expect(screen.getByText("Public visitor")).toBeTruthy();

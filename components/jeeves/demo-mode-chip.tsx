@@ -14,10 +14,10 @@ export function DemoModeChip() {
         <div className="flex items-center gap-2">
           <span className="inline-flex items-center gap-1.5 text-xs font-medium text-primary">
             <span className="h-1.5 w-1.5 rounded-full bg-primary" aria-hidden />
-            <span>Sending a real request</span>
+            <span>Real request (not the demo)</span>
           </span>
           <Button type="button" variant="ghost" size="sm" data-slot="live-reset" onClick={logout}>
-            Cancel request
+            Exit
           </Button>
         </div>
       ) : session ? (
