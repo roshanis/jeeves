@@ -183,6 +183,7 @@ describe("lib/services/promotion-service", () => {
       } finally {
         foreign.spy.mockRestore();
       }
+      expect(foreign.events).toContain("from:initiatives");
       expect(foreign.events).not.toContain("lock:initiatives");
 
       const owner = recordLocks(db);

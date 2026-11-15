@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { beforeEach, afterEach, describe, it, expect } from 'vitest';
+import { beforeEach, afterEach, describe, it, expect, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { createTestDb, closeTestDb, type TestDb } from '../db/test-client';
 import { initiatives, controlDefinitions, intakeVersions, riskAssessments, reviewCycles, reviewDecisions, auditEvents, evidenceDocuments, evidencePackets } from '../db/schema';
@@ -26,6 +26,39 @@ async function packet(documentId:string, includeAll=true) {
   const state = await getEvidence(db,'i',owner);
   return saveEvidenceDraft(db,'i',owner,{cycleId:'cycle',expectedRevision:state.draft?.revision ?? 0,entries:(includeAll?['H-01','H-02']:['H-01']).map(controlId=>({controlId,documentId,pageReference:'1',note:'Retention policy evidence'}))});
 }
+/**
+ * Runs `move` inside the service's own transaction just before its first
+ * FOR UPDATE read executes, standing in for a concurrent writer (PGlite cannot
+ * interleave a second session).
+ */
+/* eslint-disable @typescript-eslint/no-explicit-any */
+function beforeFirstLock(move:(tx:any)=>Promise<void>) {
+  const dbAny=db as any;
+  const realTransaction=dbAny.transaction.bind(dbAny);
+  let ran=false;
+  const spy=vi.spyOn(dbAny,'transaction').mockImplementation((cb:any)=>realTransaction(async(tx:any)=>{
+    const realSelect=tx.select.bind(tx);
+    tx.select=(...a:unknown[])=>{
+      const builder=realSelect(...a);
+      const realFrom=builder.from.bind(builder);
+      builder.from=(...f:unknown[])=>{
+        const query=realFrom(...f);
+        const realFor=query.for.bind(query);
+        query.for=(...args:unknown[])=>{
+          const locked=realFor(...args);
+          const realThen=locked.then.bind(locked);
+          locked.then=(ok:any,fail:any)=>(ran?Promise.resolve():(ran=true,move(tx))).then(()=>realThen(ok,fail),fail);
+          return locked;
+        };
+        return query;
+      };
+      return builder;
+    };
+    return cb(tx);
+  }));
+  return {spy,ran:()=>ran};
+}
+/* eslint-enable @typescript-eslint/no-explicit-any */
 /** Simulate the review/evidence state observed by the client before a normal signature. */
 async function signLoadedEvidenceReview() {
   const [review] = await db.select().from(reviewDecisions).where(eq(reviewDecisions.id, 'review'));
@@ -46,6 +79,27 @@ describe('versioned evidence workflow',()=>{
     const own=recordLocks(db);
     try { await upload('owner-lock-0000001'); } finally { own.spy.mockRestore(); }
     expect(own.events).toContain('lock:initiatives');
+  });
+  it('locks the initiative it authorized, even if its slug moves to another workspace before the lock',async()=>{
+    const now=new Date();
+    await db.insert(initiatives).values({id:'other',slug:'other-case',title:'Other case',requester:'Priya Raman',workspaceId:'workspace-b',state:'in_review',tier:'high',createdAt:now,updatedAt:now});
+    const race=beforeFirstLock(async tx=>{
+      await tx.update(initiatives).set({slug:'evidence-case-moved'}).where(eq(initiatives.id,'i'));
+      await tx.update(initiatives).set({slug:'evidence-case'}).where(eq(initiatives.id,'other'));
+    });
+    try {
+      await uploadEvidence(db,'evidence-case',owner,{requestId:'slug-moves-0000001',fileName:'retention.pdf',mediaType:'application/pdf',contentBase64:bytes.toString('base64')});
+    } finally { race.spy.mockRestore(); }
+    expect(race.ran()).toBe(true);
+    expect(await db.select({initiativeId:evidenceDocuments.initiativeId}).from(evidenceDocuments)).toEqual([{initiativeId:'i'}]);
+  });
+  it('refuses the upload if the initiative left the viewer workspace before the lock',async()=>{
+    const race=beforeFirstLock(async tx=>{await tx.update(initiatives).set({workspaceId:'workspace-b'}).where(eq(initiatives.id,'i'));});
+    try {
+      await expect(upload('workspace-moves-001')).rejects.toMatchObject({status:404});
+    } finally { race.spy.mockRestore(); }
+    expect(race.ran()).toBe(true);
+    expect(await db.select({id:evidenceDocuments.id}).from(evidenceDocuments)).toEqual([]);
   });
   it('replays a retried upload after the initiative left the editable states',async()=>{
     const first=await upload('lost-response-000001');

@@ -909,6 +909,7 @@ describe("lib/services/initiative-service", () => {
       const calls: Record<string, () => Promise<unknown>> = {
         updateIntakeDraft: () => svc.updateIntakeDraft(db, { initiativeId: id, payload: CHAMPION_PREFILL_PAYLOAD, expectedVersion: 1, actor: REQUESTER, workspaceId: "ws-other" }),
         submitIntake: () => svc.submitIntake(db, id, REQUESTER, "ws-other"),
+        startQc: () => svc.startQc(db, id, PROGRAM, "ws-other"),
         returnFromQc: () => svc.returnFromQc(db, id, REVIEWER, "Foreign lock check.", "ws-other"),
         triage: () => svc.triage(db, id, SYSTEM_ACTOR, "ws-other"),
         decide: () => svc.decide(db, id, APPROVER, "ws-other", { decision: "rejected" }),
