@@ -158,8 +158,56 @@ describe("PublicIntakeQueue (operator)", () => {
     expect(problem.textContent).toBe(long);
 
     mocks.listPublicSubmissions.mockClear();
+    mocks.listPublicSubmissions.mockResolvedValueOnce([
+      ROW,
+      { ...ROW, initiativeId: "init-2", title: "Prior Auth Triage Helper" },
+    ]);
     fireEvent.click(screen.getByRole("button", { name: /refresh/i }));
     await waitFor(() => expect(mocks.listPublicSubmissions).toHaveBeenCalledWith("the-operator-token"));
+    expect(await screen.findByText("Prior Auth Triage Helper")).toBeDefined();
+  });
+
+  it("keeps the rows and token on screen when a refresh fails with a 5xx", async () => {
+    renderWithProviders(<PublicIntakeQueue />);
+    unlockWith("the-operator-token");
+    await screen.findByText("Appointment Reminder Summarizer");
+
+    mocks.listPublicSubmissions.mockRejectedValueOnce(new ApiError(500, "boom"));
+    fireEvent.click(screen.getByRole("button", { name: /refresh/i }));
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toMatch(/refresh failed/i);
+    expect(screen.getByText("Appointment Reminder Summarizer")).toBeDefined();
+    expect(document.querySelector('[data-slot="operator-token-input"]')).toBeNull();
+    expect(window.sessionStorage.getItem("jeeves_operator_token")).toBe("the-operator-token");
+  });
+
+  it("drops to the token form when a refresh is rejected with a 401", async () => {
+    renderWithProviders(<PublicIntakeQueue />);
+    unlockWith("the-operator-token");
+    await screen.findByText("Appointment Reminder Summarizer");
+
+    mocks.listPublicSubmissions.mockRejectedValueOnce(new ApiError(401, "no"));
+    fireEvent.click(screen.getByRole("button", { name: /refresh/i }));
+    await waitFor(() => expect(document.querySelector('[data-slot="operator-token-input"]')).not.toBeNull());
+    expect(window.sessionStorage.getItem("jeeves_operator_token")).toBeNull();
+  });
+
+  it("sends no second request while a refresh is pending", async () => {
+    renderWithProviders(<PublicIntakeQueue />);
+    unlockWith("the-operator-token");
+    await screen.findByText("Appointment Reminder Summarizer");
+
+    let resolve!: (rows: unknown[]) => void;
+    mocks.listPublicSubmissions.mockClear();
+    mocks.listPublicSubmissions.mockReturnValueOnce(new Promise((r) => { resolve = r; }));
+    const button = screen.getByRole("button", { name: /refresh/i }) as HTMLButtonElement;
+    fireEvent.click(button);
+    expect(button.disabled).toBe(true);
+    expect(button.getAttribute("aria-busy")).toBe("true");
+    fireEvent.click(button);
+    expect(mocks.listPublicSubmissions).toHaveBeenCalledTimes(1);
+    resolve([ROW]);
+    await waitFor(() => expect(button.disabled).toBe(false));
   });
 
   it("ignores a refresh that resolves after Lock", async () => {

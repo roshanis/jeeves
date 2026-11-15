@@ -90,12 +90,15 @@ type State =
 export function PublicIntakeQueue() {
   const [state, setState] = React.useState<State>({ kind: "locked", error: null });
   const [draft, setDraft] = React.useState("");
+  const [refreshing, setRefreshing] = React.useState(false);
+  const [refreshError, setRefreshError] = React.useState<string | null>(null);
 
   const manualOpen = React.useRef(false);
   const tokenRef = React.useRef("");
 
   const open = React.useCallback(async (token: string) => {
     manualOpen.current = true;
+    setRefreshError(null);
     setState({ kind: "loading" });
     try {
       const rows = await listPublicSubmissions(token);
@@ -139,19 +142,30 @@ export function PublicIntakeQueue() {
   }, []);
 
   // Reloads the list in place with the token already accepted, so the queue
-  // stays on screen instead of dropping back to the token form.
+  // stays on screen instead of dropping back to the token form. A 429, a 5xx
+  // or a network error keeps the rows and the token and says the refresh
+  // failed; only a rejected token (401/404) drops to the form.
   async function refresh() {
+    if (refreshing) return;
     // Lock may be pressed while this is in flight; a stale result must not
     // re-open the queue or resurrect an error after the token is gone.
     const token = tokenRef.current;
+    setRefreshing(true);
+    setRefreshError(null);
     try {
       const rows = await listPublicSubmissions(token);
       if (tokenRef.current !== token) return;
       setState({ kind: "open", rows });
     } catch (err) {
       if (tokenRef.current !== token) return;
-      if (tokenRejected(err)) writeStoredToken(null);
-      setState({ kind: "locked", error: errorMessage(err) });
+      if (tokenRejected(err)) {
+        writeStoredToken(null);
+        setState({ kind: "locked", error: errorMessage(err) });
+      } else {
+        setRefreshError(`Refresh failed — the list shown is the last one loaded. ${errorMessage(err)}`);
+      }
+    } finally {
+      setRefreshing(false);
     }
   }
 
@@ -159,6 +173,7 @@ export function PublicIntakeQueue() {
     tokenRef.current = "";
     writeStoredToken(null);
     setDraft("");
+    setRefreshError(null);
     setState({ kind: "locked", error: null });
   }
 
@@ -171,7 +186,15 @@ export function PublicIntakeQueue() {
           <span className="stat-value text-xs text-foreground">{state.rows.length}</span>
         ) : null}
         {state.kind === "open" ? (
-          <Button type="button" size="sm" variant="ghost" className="ml-auto" onClick={() => void refresh()}>
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            className="ml-auto"
+            disabled={refreshing}
+            aria-busy={refreshing || undefined}
+            onClick={() => void refresh()}
+          >
             Refresh
           </Button>
         ) : null}
@@ -182,6 +205,12 @@ export function PublicIntakeQueue() {
           </Button>
         ) : null}
       </div>
+
+      {state.kind === "open" && refreshError ? (
+        <p className="border-b px-4 py-2 text-sm text-destructive" role="alert">
+          {refreshError}
+        </p>
+      ) : null}
 
       {state.kind !== "open" ? (
         <form
