@@ -9,6 +9,7 @@ import {
   effectiveControls,
   initiativeDecisions,
   initiatives,
+  intakeVersions,
   reviewCycles,
   reviewDecisions,
   riskAssessments,
@@ -1395,6 +1396,21 @@ describe("lib/services/initiative-service", () => {
       const updated = await svc.updateIntakeDraft(db, { initiativeId: draft.initiativeId, payload: changed, expectedVersion: 1, actor: REQUESTER, workspaceId: "ws-intake-cas" });
       expect(updated.version).toBe(2);
       await expect(svc.updateIntakeDraft(db, { initiativeId: draft.initiativeId, payload: changed, expectedVersion: 1, actor: REQUESTER, workspaceId: "ws-intake-cas" })).rejects.toThrow(ConflictError);
+    });
+
+    it("does not append a new intake version when a save repeats the current payload", async () => {
+      const draft = await svc.createDraft(db, { payload: CHAMPION_PREFILL_PAYLOAD, requesterActor: REQUESTER, requesterName: "Priya Raman", workspaceId: "ws-dedupe" });
+      const changed = { ...CHAMPION_PREFILL_PAYLOAD, basics: { ...CHAMPION_PREFILL_PAYLOAD.basics, title: "Deduped draft" } };
+      const save = (expectedVersion: number, payload: IntakePayload) =>
+        svc.updateIntakeDraft(db, { initiativeId: draft.initiativeId, payload, expectedVersion, actor: REQUESTER, workspaceId: "ws-dedupe" });
+      const first = await save(1, changed);
+      const repeat = await save(first.version, changed);
+      expect(repeat.version).toBe(first.version);
+      expect(repeat.intakeVersionId).toBe(first.intakeVersionId);
+      const versions = await db.select().from(intakeVersions).where(eq(intakeVersions.initiativeId, draft.initiativeId));
+      expect(versions).toHaveLength(2);
+      const next = await save(repeat.version, { ...changed, basics: { ...changed.basics, title: "Deduped draft 2" } });
+      expect(next.version).toBe(3);
     });
 
     it("commits only one of two concurrent edits with the same expected version", async () => {

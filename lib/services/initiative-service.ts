@@ -29,6 +29,7 @@ import { evidenceForSignature, EvidenceError } from './evidence-service';
 import { currentAbstention, isResumableReviewStatus } from "../reviews/abstention";
 import { overlayFromStoredIntake } from "../intake/stored-overlay";
 import { createHash, randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { and, desc, eq, isNull } from "drizzle-orm";
 import type { Db } from "../db/client";
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
@@ -279,9 +280,10 @@ async function latestIntakeVersion(
   const rows = await tx
     .select()
     .from(intakeVersions)
-    .where(eq(intakeVersions.initiativeId, initiativeId));
-  if (rows.length === 0) return null;
-  return rows.slice().sort((a, b) => b.version - a.version)[0]!;
+    .where(eq(intakeVersions.initiativeId, initiativeId))
+    .orderBy(desc(intakeVersions.version))
+    .limit(1);
+  return rows[0] ?? null;
 }
 
 async function firstIntakeVersion(
@@ -301,9 +303,10 @@ async function latestRiskAssessment(
   const rows = await tx
     .select()
     .from(riskAssessments)
-    .where(eq(riskAssessments.initiativeId, initiativeId));
-  if (rows.length === 0) return null;
-  return rows.slice().sort((a, b) => b.version - a.version)[0]!;
+    .where(eq(riskAssessments.initiativeId, initiativeId))
+    .orderBy(desc(riskAssessments.version))
+    .limit(1);
+  return rows[0] ?? null;
 }
 
 async function latestReviewCycle(
@@ -460,6 +463,10 @@ export async function updateIntakeDraft(
     const current = await latestIntakeVersion(tx, input.initiativeId);
     if (!current || current.submitted) throw new ConflictError("intake is no longer editable");
     if (current.version !== input.expectedVersion) throw new ConflictError(`draft changed concurrently (expected version ${input.expectedVersion})`);
+    // A repeated save of the same content must not append another full copy.
+    if (isDeepStrictEqual(JSON.parse(JSON.stringify(input.payload)), current.fields)) {
+      return { initiativeId: input.initiativeId, slug: initiative.slug, intakeVersionId: current.id, version: current.version, payload: input.payload };
+    }
     const nextVersion = current.version + 1;
     const completeness = evaluateCompleteness(input.payload);
     const intakeVersionId = `iv-${randomUUID()}`;
