@@ -240,6 +240,10 @@ describe("exception-service", () => {
     const [ec] = await db.select().from(effectiveControls).where(eq(effectiveControls.id, ecId));
     expect(ec!.status).toBe("overdue");
 
+    // The audit record carries the deadline that lapsed, not just the sweep time.
+    const [expiredEvt] = await db.select().from(auditEvents).where(eq(auditEvents.action, "control_exception_expired"));
+    expect(expiredEvt!.metadata).toMatchObject({ exceptionId: req.id, expiresAt: pastExpiry });
+
     // Idempotent: a second sweep finds nothing.
     const again = await svc.expireDueExceptions(db, Date.now());
     expect(again).toHaveLength(0);

@@ -611,7 +611,7 @@ export async function expireDueExceptions(
         `Exception for ${exc.controlId} expired at ${new Date(nowMs).toISOString()}.`,
         "approved",
         "expired",
-        { exceptionId: exc.id, controlId: exc.controlId },
+        { exceptionId: exc.id, controlId: exc.controlId, expiresAt: exc.expiresAt },
       );
       expired.push(exc.id);
     });
