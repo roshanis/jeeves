@@ -109,7 +109,7 @@ export default async function AgentDetailPage({
           <span>
             Accountable reviewer:{" "}
             <span className="font-medium text-foreground">
-              {agent.accountablePersonaName ?? "Rotational — no fixed reviewer"}
+              {(isDemoMode() ? agent.accountablePersonaName : null) ?? "Rotational — no fixed reviewer"}
             </span>
           </span>
           <span>

@@ -122,7 +122,7 @@ export default async function AdminPage() {
                 </TableRow>
                 <TableRow>
                   <TableCell className="font-medium">Critical-tier default</TableCell>
-                  <TableCell className="tabular-nums">0.05</TableCell>
+                  <TableCell className="tabular-nums">{isProductionMode() ? "Per control definition" : "0.05"}</TableCell>
                   <TableCell className="text-xs text-muted-foreground">
                     block · 3-point window
                   </TableCell>
