@@ -74,6 +74,18 @@ describe("RoleGate mechanisms", () => {
     resetLiveSessionForTests();
   });
 
+  it("explains a signed-in reviewer's disabled action with the supplied reason, not the demo prompt", () => {
+    resetLiveSessionForTests();
+    sessionStorage.setItem("jeeves_live_session", JSON.stringify({ token: "tok-rev", workspaceId: "w-1", expiresAt: Date.now() + 60_000, personaKey: "marcus-webb", personaLabel: "Marcus Webb", role: "reviewer" }));
+    render(
+      <RoleProvider><LiveSessionProvider><TooltipProvider><GatedActionButton label="Sign" requiresRole="reviewer" disabledReason="Only the Legal reviewer can sign this review" /></TooltipProvider></LiveSessionProvider></RoleProvider>,
+    );
+    const button = screen.getByRole("button", { name: "Sign" });
+    expect(button.getAttribute("aria-disabled")).toBe("true");
+    expect(describedBy(button)).toBe("Only the Legal reviewer can sign this review");
+    resetLiveSessionForTests();
+  });
+
   it("exposes the disabled reason to assistive tech instead of a hover-only tooltip", () => {
     render(<RoleProvider><TooltipProvider><GatedActionButton label="Promote" /></TooltipProvider></RoleProvider>);
     const button = screen.getByRole("button", { name: "Promote" });

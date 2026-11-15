@@ -2,7 +2,7 @@
 // that were both inert. Measured before the change: Meta+K left focus on
 // <body> and opened no dialog; typing a query and pressing Enter navigated
 // nowhere.
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, screen } from "@testing-library/react";
 import {
   CommandPalette,
@@ -143,5 +143,33 @@ describe("CommandPalette — the shortcut actually works", () => {
     // The wide trigger is the one hidden on small screens.
     const wide = document.querySelector('[data-slot="command-palette-trigger"]');
     expect(wide?.className).toContain("xl:flex");
+  });
+});
+
+describe("palette keyboard accessibility", () => {
+  // Restore the jsdom stub even when an assertion fails.
+  afterEach(() => {
+    // @ts-expect-error cleanup of the jsdom stub
+    delete Element.prototype.scrollIntoView;
+  });
+
+  it("scrolls the active option into view and keeps options out of the tab order", () => {
+    const scroll = vi.fn();
+    Object.defineProperty(Element.prototype, "scrollIntoView", { value: scroll, configurable: true, writable: true });
+    open();
+    const input = screen.getByRole("textbox", { name: /search initiatives/i });
+    scroll.mockClear();
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    expect(scroll).toHaveBeenCalledWith({ block: "nearest" });
+    const active = screen.getAllByRole("option").find((o) => o.getAttribute("aria-selected") === "true")!;
+    expect(scroll.mock.instances[scroll.mock.instances.length - 1]).toBe(active);
+    for (const o of screen.getAllByRole("option")) expect(o.getAttribute("tabindex")).toBe("-1");
+  });
+
+  it("puts group headings in role=group, not directly in the listbox", () => {
+    open();
+    const listbox = screen.getByRole("listbox");
+    expect(listbox.querySelectorAll(":scope > p")).toHaveLength(0);
+    expect(screen.getAllByRole("group").length).toBeGreaterThan(0);
   });
 });

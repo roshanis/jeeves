@@ -9,9 +9,13 @@ import * as React from "react";
 export default function GlobalError({
   error,
   reset,
+  retry,
 }: {
   error: Error & { digest?: string };
   reset: () => void;
+  // Next 16 passes retry(), which re-fetches; reset() re-renders from the
+  // cached payload, so a server-thrown error re-throws.
+  retry?: () => void;
 }) {
   React.useEffect(() => {
     console.error("Global route error:", error);
@@ -35,15 +39,16 @@ export default function GlobalError({
           </p>
           <h1 style={{ fontSize: "1.5rem", fontWeight: 600 }}>This screen didn&apos;t load</h1>
           <p style={{ fontSize: "0.875rem", opacity: 0.75 }}>
-            The error has been logged. Nothing you were looking at was changed —
-            this failure happened while reading.
+            The error has been logged. This console only writes when you
+            explicitly act, but if you had just made a change, check the audit
+            log before repeating it.
           </p>
           {error.digest ? (
             <p style={{ fontFamily: "monospace", fontSize: "0.75rem", opacity: 0.75 }}>
               Reference: {error.digest}
             </p>
           ) : null}
-          <button type="button" onClick={reset} style={{ marginRight: "0.5rem" }}>
+          <button type="button" onClick={() => (retry ?? reset)()} style={{ marginRight: "0.5rem" }}>
             Try again
           </button>
           <a href="/inbox">Back to Inbox</a>

@@ -87,6 +87,20 @@ describe("loadIncidentsForViewer", () => {
     expect(result).toEqual({ status: "unavailable", reason: "load_failed", incidents: null });
   });
 
+  it("logs a failed DB read with the driver code but never the connection string or message", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const failure = Object.assign(new Error("connect failed postgres://user:secret@db.example.test/x"), { code: "ECONNREFUSED" });
+    const brokenDb = { select: () => { throw failure; } };
+
+    const result = await loadIncidentsForViewer(null, { providerMode: "db", db: brokenDb as never });
+
+    expect(result).toEqual({ status: "unavailable", reason: "load_failed", incidents: null });
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(spy.mock.calls[0])).toContain("ECONNREFUSED");
+    expect(JSON.stringify(spy.mock.calls[0])).not.toContain("secret");
+    spy.mockRestore();
+  });
+
   it("returns a successful empty list when the query succeeds with no visible incidents", async () => {
     const result = await loadIncidentsForViewer(null, { providerMode: "db", db });
 

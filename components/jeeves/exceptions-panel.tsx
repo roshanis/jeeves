@@ -9,6 +9,7 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
+  ApiError,
   apiErrorToMessage,
   decideException,
   isApiError,
@@ -57,7 +58,7 @@ const ACTION_LABEL: Record<ActionKind, string> = {
   renew: "Renew exception",
 };
 
-export function ExceptionsPanel({ exceptions }: { exceptions: ExceptionRow[] }) {
+export function ExceptionsPanel({ exceptions, loadFailed = false }: { exceptions: ExceptionRow[]; loadFailed?: boolean }) {
   const router = useRouter();
   const live = useLiveSessionOptional();
   const session = live?.session ?? null;
@@ -78,7 +79,11 @@ export function ExceptionsPanel({ exceptions }: { exceptions: ExceptionRow[] }) 
   }
 
   async function confirm() {
-    if (!session || !dialog) return;
+    if (!dialog) return;
+    if (!session) {
+      toast.error(apiErrorToMessage(new ApiError(401, "session expired")));
+      return;
+    }
     const trimmed = reason.trim();
     if (trimmed.length === 0) {
       toast.error("A reason is required.");
@@ -110,7 +115,11 @@ export function ExceptionsPanel({ exceptions }: { exceptions: ExceptionRow[] }) 
         </p>
       </CardHeader>
       <CardContent className="p-0">
-        {exceptions.length === 0 ? (
+        {loadFailed ? (
+          <p role="status" className="px-4 py-4 text-sm text-muted-foreground">
+            Control exceptions could not be loaded. Refresh to try again.
+          </p>
+        ) : exceptions.length === 0 ? (
           <p className="px-4 py-4 text-sm text-muted-foreground">No control exceptions on file.</p>
         ) : (
           <div className="scroll-x-pane overflow-x-auto">

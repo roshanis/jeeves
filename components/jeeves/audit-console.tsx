@@ -17,7 +17,10 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import type { LifecycleState } from "@/lib/domain/types";
 import { TierBadge } from "./tier-badge";
+import { formatUtcTimestamp } from "@/lib/format/timestamp";
+import { LIFECYCLE_LABEL, LifecycleBadge } from "./lifecycle-badge";
 import { EvidenceLink } from "./evidence-link";
 
 const QUERY_META: { id: CannedAuditQueryId; label: string; explanation: string }[] = [
@@ -87,7 +90,7 @@ export function AuditConsole({
           <CardContent>
             {rows.length === 0 ? (
               <p className="text-sm text-muted-foreground">
-                No records match this query — try broadening filters.
+                No records match this canned query in your workspace.
               </p>
             ) : (
               <Table data-slot="audit-results" containerLabel="Audit query results, scrollable horizontally">
@@ -111,7 +114,9 @@ export function AuditConsole({
                       <TableCell>
                         {row.tier ? <TierBadge tier={row.tier} /> : "—"}
                       </TableCell>
-                      <TableCell className="text-muted-foreground">{row.state}</TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {row.state in LIFECYCLE_LABEL ? <LifecycleBadge state={row.state as LifecycleState} /> : row.state}
+                      </TableCell>
                       <TableCell className="text-muted-foreground">
                         {row.approver ?? "—"}
                       </TableCell>
@@ -119,7 +124,7 @@ export function AuditConsole({
                         {row.detail}
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground">
-                        {row.eventTs ? row.eventTs.slice(0, 10) : "—"}
+                        {row.eventTs ? <time dateTime={row.eventTs}>{formatUtcTimestamp(row.eventTs)}</time> : "—"}
                       </TableCell>
                       <TableCell>
                         {row.slug ? (

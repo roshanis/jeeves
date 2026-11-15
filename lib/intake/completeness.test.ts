@@ -206,6 +206,15 @@ describe("evaluateCompleteness — BLK rules each block submission when violated
     expect(result.gaps.some((g) => g.ruleId === "BLK-03")).toBe(true);
   });
 
+  it("BLK-03 requesterEmail carrying mailto parameters -> blocks", () => {
+    for (const bad of ["a@b.co?bcc=evil%40x.com&body=hi", "a@b.co,c@d.co", "a@b.co;c@d.co", "a@b.co%0Abcc=x"]) {
+      const payload = completePayload();
+      payload.basics.requesterEmail = bad;
+      const result = evaluateCompleteness(payload);
+      expect(result.gaps.some((g) => g.ruleId === "BLK-03"), bad).toBe(true);
+    }
+  });
+
   it("BLK-03 requesterEmail malformed -> blocks", () => {
     const payload = completePayload();
     payload.basics.requesterEmail = "not-an-email";
@@ -477,6 +486,15 @@ describe("evaluateCompleteness — RFT rules fire only when trigger condition ho
     payload.data.trainingVsInference = "Fine-tuning/training";
     const result = evaluateCompleteness(payload);
     expect(result.gaps.some((g) => g.ruleId === "RFT-08")).toBe(true);
+  });
+
+  it("RFT-08 points at the retention intent, the field that clears it", () => {
+    const payload = completePayload();
+    payload.overlay.touchesPHI = true;
+    payload.data.retentionIntent = "Session-only (no persistence)";
+    payload.data.trainingVsInference = "Fine-tuning/training";
+    const gap = evaluateCompleteness(payload).gaps.find((g) => g.ruleId === "RFT-08");
+    expect(gap?.field).toBe("data.retentionIntent");
   });
 
   it("RFT-08 fires when trainingVsInference=Both under session-only PHI retention", () => {

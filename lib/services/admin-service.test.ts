@@ -195,6 +195,18 @@ describe("lib/services/admin-service", () => {
       ).rejects.toThrow(ValidationError);
     });
 
+    it("rejects a control the monitor never evaluates (no tier defaults / sustained window)", async () => {
+      const initiativeId = await memberChatCopilotId(db);
+      const [other] = (await db.select().from(controlDefinitions)).filter((c) => c.id !== "Q-01" && !c.tierDefaultThresholds);
+      const controlId = other!.id;
+      await expect(
+        setEvalThreshold(db, RAY_CHEN, null, { controlId, initiativeId, newValue: 0.06, reason: "No runtime evaluation." }),
+      ).rejects.toThrow(ValidationError);
+      await expect(
+        setEvalThreshold(db, RAY_CHEN, null, { controlId, initiativeId: null, tier: "high", newValue: 0.06, reason: "No runtime evaluation." }),
+      ).rejects.toThrow(ValidationError);
+    });
+
     it("requires a non-empty reason", async () => {
       const initiativeId = await memberChatCopilotId(db);
       await expect(

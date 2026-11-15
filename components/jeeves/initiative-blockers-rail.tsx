@@ -11,6 +11,7 @@ import { AlertOctagon, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { latestQcReturn } from "@/lib/data/qc-return";
 import { DOMAIN_LABEL } from "./domain-labels";
+import { splitMissing } from "@/lib/intake/split-missing";
 
 interface Blocker {
   label: string;
@@ -80,7 +81,7 @@ function noBlockersMessage(detail: InitiativeDetail): string {
     case "intake_draft": {
       const returned = latestQcReturn(detail.events);
       if (returned) return `Returned from QC by ${returned.actor}: \u201c${returned.reason}\u201d. Fix this and resubmit.`;
-      const gaps = detail.intake?.missing.length ?? 0;
+      const gaps = detail.intake ? splitMissing(detail.intake).blocking.length : 0;
       const gapText =
         gaps > 0
           ? ` Intake has ${gaps} completeness gap${gaps === 1 ? "" : "s"} to resolve first.`

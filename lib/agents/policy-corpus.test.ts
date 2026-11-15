@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { RunContext } from "@openai/agents-core";
@@ -246,5 +247,58 @@ describe("policy-corpus - createPolicyCorpusTools", () => {
       JSON.stringify({ pattern: "Meridian" }),
     );
     expect(onRead).toHaveBeenCalledWith("Meridian");
+  });
+});
+
+describe("policy-corpus - symlinked directories and truncation", () => {
+  function corpusWithEscapingLink() {
+    const root = mkdtempSync(path.join(tmpdir(), "jeeves-corpus-"));
+    mkdirSync(path.join(root, "docs", "policies"), { recursive: true });
+    mkdirSync(path.join(root, "agents", "reviewer"), { recursive: true });
+    mkdirSync(path.join(root, "outside"));
+    writeFileSync(path.join(root, "outside", "x.md"), "needle outside\n");
+    writeFileSync(path.join(root, "docs", "policies", "ok.md"), "needle inside\n");
+    writeFileSync(path.join(root, "agents", "reviewer", "schema.md"), "schema\n");
+    symlinkSync(path.join(root, "outside"), path.join(root, "docs", "policies", "sub"));
+    symlinkSync(path.join(root, "docs", "policies"), path.join(root, "docs", "policies", "loop"));
+    vi.spyOn(process, "cwd").mockReturnValue(root);
+    return root;
+  }
+
+  it("omits symlinked directories from the listing and still searches the valid files", () => {
+    corpusWithEscapingLink();
+    try {
+      expect(listPolicyCorpusFiles()).toEqual(["agents/reviewer/schema.md", "docs/policies/ok.md"]);
+      expect(searchPolicyCorpus("needle")).toEqual([
+        { path: "docs/policies/ok.md", line: 1, text: "needle inside" },
+      ]);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("truncates multi-byte content by bytes, not UTF-16 units", () => {
+    const root = corpusWithEscapingLink();
+    writeFileSync(path.join(root, "docs", "policies", "big.md"), "é".repeat(60_000));
+    try {
+      const out = readPolicyFileSafe("docs/policies/big.md");
+      const body = out.slice(0, out.indexOf("\n\n[... truncated"));
+      expect(Buffer.byteLength(body, "utf-8")).toBeLessThanOrEqual(64 * 1024);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("backs off to a character boundary when the cap falls inside a multi-byte character", () => {
+    const root = corpusWithEscapingLink();
+    writeFileSync(path.join(root, "docs", "policies", "odd.md"), "a" + "é".repeat(40_000));
+    try {
+      const out = readPolicyFileSafe("docs/policies/odd.md");
+      const body = out.slice(0, out.indexOf("\n\n[... truncated"));
+      expect(Buffer.byteLength(body, "utf-8")).toBeLessThanOrEqual(64 * 1024);
+      expect(body).not.toContain("\uFFFD");
+    } finally {
+      vi.restoreAllMocks();
+    }
   });
 });

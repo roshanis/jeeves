@@ -85,6 +85,18 @@ describe("legal pages", () => {
     expect(screen.getAllByText(/do not enter real/i).length).toBeGreaterThan(0);
   });
 
+  it("privacy lists every browser storage key the app writes and scopes the cookie to the demo", () => {
+    const { container } = renderWithProviders(<PrivacyPage />);
+    const text = container.textContent ?? "";
+    for (const key of ["jeeves_live_session", "jeeves-theme", "jeeves_cookie_notice_ack", "localStorage"]) {
+      expect(text, key).toContain(key);
+    }
+    // Nothing writes this key any more (the registry module was deleted), so
+    // the page must not list it.
+    expect(text).not.toContain("jeeves_live_registry");
+    expect(text).toContain("A real request sets no cookie");
+  });
+
   it("privacy is honest that AI processing sends data to OpenAI", () => {
     renderWithProviders(<PrivacyPage />);
     expect(screen.getByText(/OpenAI/)).toBeDefined();
@@ -139,6 +151,11 @@ describe("cookie notice", () => {
     // Not the usual boilerplate: there is genuinely no tracking here, and
     // claiming otherwise would be its own kind of dishonesty.
     expect(screen.getByText(/no third-party analytics/i)).toBeDefined();
+  });
+
+  it("has a 44px dismiss target", () => {
+    renderWithProviders(<CookieNotice />);
+    expect(screen.getByRole("button", { name: /dismiss cookie notice/i }).className).toContain("touch-min");
   });
 
   it("stays dismissed", () => {

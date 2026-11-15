@@ -57,6 +57,14 @@ export type AgentDir = (typeof AGENT_DIRS)[number];
  * guards the result. Keep these literal.
  */
 export function readAgentFile(dir: AgentDir, ...rest: string[]): string {
+  // Containment: plain relative segments only, ending in a .md file.
+  if (
+    rest.length === 0 ||
+    rest.some((seg) => seg === "" || seg === ".." || seg === "." || /[\\/\0]/.test(seg) || path.isAbsolute(seg)) ||
+    !rest[rest.length - 1].endsWith(".md")
+  ) {
+    throw new Error("refused: agent instruction paths must be relative .md files inside the agent directory");
+  }
   switch (dir) {
     case "reviewer":
       return readFileSync(path.join(process.cwd(), "agents", "reviewer", ...rest), "utf-8");

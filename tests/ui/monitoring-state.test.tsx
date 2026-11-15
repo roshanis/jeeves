@@ -18,6 +18,7 @@ vi.mock("@/components/jeeves/role-aware-inbox", () => ({
 
 const state = vi.hoisted(() => ({
   detail: null as InitiativeDetail | null,
+  empty: false,
   incidentResult: { status: "unavailable", reason: "preview", incidents: null } as IncidentLoadResult,
 }));
 afterEach(() => vi.unstubAllEnvs());
@@ -28,13 +29,14 @@ vi.mock("@/app/_lib/data-provider", () => ({
     auditQuery: async () => [],
     listInitiatives: async () => [state.detail!.summary],
     getInitiativeDetail: async () => state.detail,
-    listInitiativeDetails: async () => [state.detail!],
+    listInitiativeDetails: async () => (state.empty ? [] : [state.detail!]),
   }),
 }));
 
 beforeEach(async () => {
   installResizeObserverStub();
   vi.stubEnv("DATA_PROVIDER", "mock");
+  state.empty = false;
   state.incidentResult = { status: "unavailable", reason: "preview", incidents: null };
   const example = await new MockDataProvider().getInitiativeDetail("member-chat-copilot");
   state.detail = {
@@ -104,5 +106,19 @@ describe("Monitoring truthfulness", () => {
       expect(screen.getByText(/No incidents recorded/i)).toBeTruthy();
       expect(screen.queryByRole("status")).toBeNull();
     });
+  });
+});
+
+describe("Empty tables explain themselves", () => {
+  it("shows an empty-state row in the monitoring deployments table", async () => {
+    state.empty = true;
+    renderWithProviders(await MonitoringPage());
+    expect(screen.getByText(/No deployments are being monitored yet/)).toBeTruthy();
+  });
+  it("shows empty-state rows for admin deployments and the control-change log", async () => {
+    state.empty = true;
+    renderWithProviders(await AdminPage());
+    expect(screen.getByText(/No deployments to pause or resume yet/)).toBeTruthy();
+    expect(screen.getByText(/No control changes recorded yet/)).toBeTruthy();
   });
 });

@@ -8,12 +8,10 @@
  * Session-gated for ANY authenticated persona (the route's own doc comment:
  * "an auditor question is a read/explain action, not a role-restricted
  * mutation"). Without a live session, the input + submit are disabled with
- * the standard demo-entry messaging; `DisableWithTooltip` only renders
- * a `<Button>` though, so for a text input this component wraps the
- * input+button pair directly in `Tooltip`/`TooltipTrigger`/`TooltipContent`
- * using the same exact tooltip copy (`DEMO_SESSION_TOOLTIP`) rather than
- * reusing `DisableWithTooltip` itself (judgment call — documented here and
- * in the task report).
+ * the standard demo-entry messaging (`DEMO_SESSION_TOOLTIP`). The reason is
+ * visible text linked with aria-describedby, not a tooltip: a disabled input
+ * cannot be focused or tapped, so a tooltip never reaches touch or
+ * screen-reader users (`DisableWithTooltip` only renders a `<Button>`).
  *
  * SECURITY: `answerMd` is untrusted model output and MUST be rendered as
  * escaped plain text only (a `whitespace-pre-wrap` text node) — never
@@ -25,7 +23,6 @@ import { askAuditor, isApiError, apiErrorToMessage } from "@/lib/client/api";
 import { useLiveSession } from "@/lib/client/session-context";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { DEMO_SESSION_TOOLTIP } from "./role-gate";
 
 interface ChatTurn {
@@ -41,6 +38,7 @@ export function AuditorChat() {
   const [transcript, setTranscript] = React.useState<ChatTurn[]>([]);
   const [pending, setPending] = React.useState(false);
 
+  const reasonId = React.useId();
   const disabled = !session;
 
   async function handleSubmit() {
@@ -63,6 +61,9 @@ export function AuditorChat() {
         },
       ]);
     } catch (err) {
+      // Drop the unanswered turn and give the text back so it need not be retyped.
+      setTranscript((prev) => prev.slice(0, -1));
+      setQuestion((q) => (q === "" ? trimmed : q));
       if (isApiError(err)) {
         toast.error(apiErrorToMessage(err));
         if (err.status === 401) {
@@ -87,72 +88,75 @@ export function AuditorChat() {
           the same queryable evidence as the canned queries above.
         </p>
 
-        {transcript.length > 0 ? (
-          <div className="flex flex-col gap-3" data-slot="auditor-transcript">
-            {transcript.map((turn, i) =>
-              turn.role === "user" ? (
-                <div key={i} className="text-sm font-medium">
-                  <span className="text-muted-foreground">You: </span>
-                  {turn.content}
-                </div>
-              ) : (
-                <div key={i} className="flex flex-col gap-1.5 rounded-lg border p-3">
-                  <div
-                    data-slot="auditor-answer"
-                    className="whitespace-pre-wrap text-sm"
-                  >
+        <div role="log" aria-live="polite" aria-relevant="additions">
+          {transcript.length > 0 ? (
+            <div className="flex flex-col gap-3" data-slot="auditor-transcript">
+              {transcript.map((turn, i) =>
+                turn.role === "user" ? (
+                  <div key={i} className="text-sm font-medium">
+                    <span className="text-muted-foreground">You: </span>
                     {turn.content}
                   </div>
-                  {turn.citedEvents && turn.citedEvents.length > 0 ? (
-                    <ul data-slot="auditor-cited-events" className="flex flex-col gap-0.5">
-                      {turn.citedEvents.map((eventId, j) => (
-                        <li key={j} className="font-mono text-xs text-muted-foreground">
-                          {eventId}
-                        </li>
-                      ))}
-                    </ul>
-                  ) : null}
-                  {turn.queryUsed ? (
-                    <p data-slot="auditor-query-used" className="text-xs text-muted-foreground">
-                      Query used: {turn.queryUsed}
-                    </p>
-                  ) : null}
-                </div>
-              ),
-            )}
-          </div>
-        ) : null}
+                ) : (
+                  <div key={i} className="flex flex-col gap-1.5 rounded-lg border p-3">
+                    <div
+                      data-slot="auditor-answer"
+                      className="whitespace-pre-wrap text-sm"
+                    >
+                      {turn.content}
+                    </div>
+                    {turn.citedEvents && turn.citedEvents.length > 0 ? (
+                      <ul data-slot="auditor-cited-events" className="flex flex-col gap-0.5">
+                        {turn.citedEvents.map((eventId, j) => (
+                          <li key={j} className="font-mono text-xs text-muted-foreground">
+                            {eventId}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                    {turn.queryUsed ? (
+                      <p data-slot="auditor-query-used" className="text-xs text-muted-foreground">
+                        Query used: {turn.queryUsed}
+                      </p>
+                    ) : null}
+                  </div>
+                ),
+              )}
+            </div>
+          ) : null}
+        </div>
 
         {disabled ? (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <div className="flex items-center gap-2" tabIndex={0}>
-                  <input
-                    disabled
-                    placeholder="Ask a question about audit history…"
-                    data-slot="auditor-question-input"
-                    className="h-8 flex-1 rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none disabled:cursor-not-allowed disabled:opacity-60"
-                  />
-                  <Button type="button" disabled data-slot="auditor-submit">
-                    Ask
-                  </Button>
-                </div>
-              }
-            />
-            <TooltipContent>{DEMO_SESSION_TOOLTIP}</TooltipContent>
-          </Tooltip>
+          <div className="flex flex-col gap-1.5">
+            <div className="flex items-center gap-2">
+              <input
+                disabled
+                aria-label="Audit question"
+                aria-describedby={reasonId}
+                placeholder="Ask a question about audit history…"
+                data-slot="auditor-question-input"
+                className="h-8 flex-1 rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none disabled:cursor-not-allowed disabled:opacity-60"
+              />
+              <Button type="button" disabled aria-describedby={reasonId} data-slot="auditor-submit">
+                Ask
+              </Button>
+            </div>
+            <p id={reasonId} data-slot="auditor-disabled-reason" className="text-xs text-muted-foreground">
+              {DEMO_SESSION_TOOLTIP}
+            </p>
+          </div>
         ) : (
           <div className="flex items-center gap-2">
             <input
               value={question}
               onChange={(e) => setQuestion(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && !pending) {
+                if (e.key === "Enter" && !pending && !e.nativeEvent.isComposing) {
                   e.preventDefault();
                   void handleSubmit();
                 }
               }}
+              aria-label="Audit question"
               placeholder="Ask a question about audit history…"
               maxLength={2000}
               data-slot="auditor-question-input"

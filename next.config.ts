@@ -109,6 +109,15 @@ const nextConfig: NextConfig = {
           { key: "X-DNS-Prefetch-Control", value: "off" },
         ],
       },
+      // Per-viewer JSON must never be stored by a shared cache that ignores the
+      // session cookie; the evidence routes already send the same pair.
+      ...["/api/:path*", "/initiatives/:slug/detail-data"].map((source) => ({
+        source,
+        headers: [
+          { key: "Cache-Control", value: "private, no-store" },
+          { key: "Vary", value: "Authorization, Cookie" },
+        ],
+      })),
     ];
   },
 };

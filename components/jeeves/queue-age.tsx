@@ -10,6 +10,8 @@ import * as React from "react";
 import type { ReviewRow } from "@/lib/data/dto";
 import type { LifecycleState } from "@/lib/domain/types";
 import { ageBucket, ageMsSince, formatAge, type AgeBucket } from "@/lib/format/aging";
+import { formatUtcTimestamp } from "@/lib/format/timestamp";
+import { LIFECYCLE_LABEL } from "./lifecycle-badge";
 
 // Lifecycle states where an initiative is settled/terminal — aging is
 // informational, not a bottleneck signal, so its age is shown muted (never
@@ -49,13 +51,44 @@ function AgeDot({ bucket }: { bucket: AgeBucket }) {
   );
 }
 
+// The bucket as text for assistive technology: colour alone must not carry SLA
+// severity (WCAG 1.4.1). "fresh" is the unremarkable default and stays silent.
+function AgeBucketWord({ bucket }: { bucket: AgeBucket }) {
+  return bucket === "fresh" ? null : <span className="sr-only"> ({bucket})</span>;
+}
+
 // Hydration-safe "current time": null on the server (so SSR + first client
-// render match and show the placeholder), then a single cached client clock
-// read. Cached so useSyncExternalStore sees a stable snapshot — the aging view
-// doesn't need a live-ticking clock, and this avoids both a hydration mismatch
-// and a setState-in-effect re-render.
-const SUBSCRIBE_NOOP = (): (() => void) => () => {};
+// render match and show the placeholder), then a cached client clock. Cached
+// so useSyncExternalStore sees a stable snapshot; refreshed every minute and
+// when the tab becomes visible again so a long-lived console keeps advancing
+// ages and SLA colours.
+const CLOCK_REFRESH_MS = 60_000;
+const clockListeners = new Set<() => void>();
 let cachedClientNow: number | null = null;
+let clockTimer: ReturnType<typeof setInterval> | null = null;
+function refreshClock() {
+  cachedClientNow = Date.now();
+  clockListeners.forEach((l) => l());
+}
+function onVisibility() {
+  if (document.visibilityState === "visible") refreshClock();
+}
+function subscribeClock(listener: () => void): () => void {
+  if (cachedClientNow !== null) refreshClock();
+  clockListeners.add(listener);
+  if (clockListeners.size === 1) {
+    clockTimer = setInterval(refreshClock, CLOCK_REFRESH_MS);
+    document.addEventListener("visibilitychange", onVisibility);
+  }
+  return () => {
+    clockListeners.delete(listener);
+    if (clockListeners.size === 0) {
+      if (clockTimer !== null) clearInterval(clockTimer);
+      clockTimer = null;
+      document.removeEventListener("visibilitychange", onVisibility);
+    }
+  };
+}
 function getClientNow(): number {
   if (cachedClientNow === null) cachedClientNow = Date.now();
   return cachedClientNow;
@@ -65,7 +98,7 @@ function getServerNow(): number | null {
 }
 
 export function useClientNow(): number | null {
-  return React.useSyncExternalStore(SUBSCRIBE_NOOP, getClientNow, getServerNow);
+  return React.useSyncExternalStore(subscribeClock, getClientNow, getServerNow);
 }
 
 /**
@@ -95,6 +128,7 @@ export function QueueAgingBadge({ ageMs }: { ageMs: number | null }) {
     >
       <AgeDot bucket={bucket} />
       {formatAge(ageMs)}
+      <AgeBucketWord bucket={bucket} />
     </span>
   );
 }
@@ -129,7 +163,7 @@ export function InitiativeAgeCell({
   return (
     <span
       className={`inline-flex items-center gap-1.5 rounded-md px-1.5 py-0.5 font-mono text-xs font-medium tabular-nums ${cls}`}
-      title={`In "${state}" since ${updatedAt.slice(0, 10)}`}
+      title={`${LIFECYCLE_LABEL[state]} since ${formatUtcTimestamp(updatedAt)}`}
     >
       {settled ? (
         <span className="size-1.5 shrink-0 rounded-full bg-muted-foreground/50" aria-hidden />
@@ -137,6 +171,7 @@ export function InitiativeAgeCell({
         <AgeDot bucket={bucket} />
       )}
       {formatAge(ageMs)}
+      {settled ? null : <AgeBucketWord bucket={bucket} />}
     </span>
   );
 }
@@ -164,10 +199,11 @@ export function QueueAgeCell({
   return (
     <span
       className={`inline-flex items-center gap-1.5 rounded-md px-1.5 py-0.5 font-mono text-xs font-medium tabular-nums ${AGE_BUCKET_CLASSES[bucket]}`}
-      title={`In queue since ${createdAt.slice(0, 10)}`}
+      title={`In queue since ${formatUtcTimestamp(createdAt)}`}
     >
       <AgeDot bucket={bucket} />
       {formatAge(ageMs)}
+      <AgeBucketWord bucket={bucket} />
     </span>
   );
 }

@@ -4,7 +4,7 @@ The initiative Evidence tab supports PDF/DOCX uploads, a reusable document libra
 
 ## Operating boundary
 
-Upload fictional Meridian Health documents only. Documents are **not malware scanned**. Format checks are not malware protection. There is no inline rendering, OCR, text extraction or LLM processing. Downloads are authenticated attachment responses with no-store and nosniff headers. Real company/health documents require production identity and document access controls, a configured malware scanner with fail-closed quarantine, and retention/erasure policy before this feature can serve them.
+Upload fictional Meridian Health documents only. Documents are **not malware scanned**. Format checks are not malware protection. There is no inline rendering, OCR or text extraction, and document contents are never sent to an LLM. Requester notes, page references and file names are included in AI review drafts. Downloads are authenticated attachment responses with no-store and nosniff headers. Real company/health documents require production identity and document access controls, a configured malware scanner with fail-closed quarantine, and retention/erasure policy before this feature can serve them.
 
 For this small demo, private PostgreSQL BYTEA storage keeps document bytes and audit records under the existing database transaction and backup boundary. No public file URL or external storage account is introduced. Files are capped at 2 MiB, initiatives at 20 MiB or 40 immutable versions, and cycles at 100 packets. Larger deployments should use private object storage behind the same authorization boundary. Live Neon upload/download has not been verified by the local PGlite tests.
 

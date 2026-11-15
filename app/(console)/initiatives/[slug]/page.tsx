@@ -197,7 +197,7 @@ export default async function InitiativeDetailPage({
             <div className="flex flex-col gap-1">
               <span className="kicker">Latest deployment</span>
               <span className="font-mono text-sm font-medium tabular-nums text-foreground">
-                v{latestDeployment.version}{" "}
+                {latestDeployment.version}{" "}
                 <span className="font-sans font-normal text-muted-foreground">
                   · {DEPLOYMENT_STATUS_LABEL[latestDeployment.status]}
                 </span>

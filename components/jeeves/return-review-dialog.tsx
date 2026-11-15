@@ -25,11 +25,15 @@ function ReturnReasonForm({
   onCancel,
   onConfirm,
   initialReason = "",
+  serverError = null,
+  onReasonChange,
 }: {
   pending: boolean;
   onCancel: () => void;
   onConfirm: (reason: string) => void;
   initialReason?: string;
+  serverError?: string | null;
+  onReasonChange?: (reason: string) => void;
 }) {
   const [reason, setReason] = React.useState(initialReason);
   const [error, setError] = React.useState<string | null>(null);
@@ -49,19 +53,19 @@ function ReturnReasonForm({
         <span className="font-medium">Reason (required)</span>
         <textarea
           value={reason}
-          onChange={(e) => setReason(e.target.value)}
+          onChange={(e) => { setReason(e.target.value); onReasonChange?.(e.target.value); }}
           maxLength={2000}
           data-slot="return-reason-input"
           className="min-h-24 rounded-lg border border-input bg-transparent p-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
         />
       </label>
-      {error ? (
+      {error || serverError ? (
         <p className="text-sm text-destructive" role="alert">
-          {error}
+          {error ?? serverError}
         </p>
       ) : null}
       <DialogFooter>
-        <Button type="button" variant="outline" onClick={onCancel}>
+        <Button type="button" variant="outline" disabled={pending} onClick={onCancel}>
           Cancel
         </Button>
         <Button
@@ -85,6 +89,8 @@ export function ReturnReviewDialog({
   pending,
   onConfirm,
   initialReason = "",
+  error = null,
+  onReasonChange,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -92,9 +98,11 @@ export function ReturnReviewDialog({
   pending: boolean;
   onConfirm: (reason: string) => void;
   initialReason?: string;
+  error?: string | null;
+  onReasonChange?: (reason: string) => void;
 }) {
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={(next) => { if (!pending) onOpenChange(next); }}>
       <DialogContent data-slot="return-review-dialog">
         <DialogHeader>
           <DialogTitle>Return {domainLabel} review</DialogTitle>
@@ -109,6 +117,8 @@ export function ReturnReviewDialog({
             onCancel={() => onOpenChange(false)}
             onConfirm={onConfirm}
             initialReason={initialReason}
+            serverError={error}
+            onReasonChange={onReasonChange}
           />
         ) : null}
       </DialogContent>

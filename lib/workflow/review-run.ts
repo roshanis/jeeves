@@ -198,7 +198,7 @@ async function executeClaim(db: Db, claim: Claim, port: AgentPort | undefined, o
     if(reserved==="superseded")return {outcome:{cycleId:claim.row.cycleId,domain:claim.row.domain as Domain,status:"skipped",reason:"superseded"}};
     if(reserved==="cancelled"){result={ok:false,error:cancelled()};break;}
     if(reserved==="timed-out"){result={ok:false,error:timeout(bounded(options.runTimeoutMs,90_000,180_000))};break;}
-    if(reserved==="budget-exhausted"){result={ok:false,error:{kind:"budget-exhausted",message:"Demo token reservation budget exhausted for today."}};break;}
+    if(reserved==="budget-exhausted"){result={ok:false,error:{kind:"budget-exhausted",message:"Daily model budget reached."}};break;}
     // Lock acquisition and reservation can consume the remaining run time.
     const dispatchRemaining = deadline-Date.now();
     if (dispatchRemaining<=0) {result={ok:false,error:timeout(bounded(options.runTimeoutMs,90_000,180_000))};break;}
@@ -270,5 +270,5 @@ export async function getRunProgress(db:Db,cycleId:string):Promise<DraftRunProgr
   const rows=await db.select().from(reviewDecisions).where(eq(reviewDecisions.cycleId,cycleId));
   const progressRows:DraftRunProgressRow[]=rows.sort((a,b)=>a.domain.localeCompare(b.domain)).map(r=>({domain:r.domain as Domain,status:r.status as DraftRunDomainStatus,
     ...(r.returnReason&&r.status==="pending"?{lastError:r.returnReason}:{})}));
-  return {cycleId,rows:progressRows,complete:progressRows.length>0&&progressRows.every(r=>["drafted","signed","returned"].includes(r.status))};
+  return {cycleId,rows:progressRows,complete:progressRows.length>0&&progressRows.every(r=>["drafted","signed","returned","abstained"].includes(r.status))};
 }

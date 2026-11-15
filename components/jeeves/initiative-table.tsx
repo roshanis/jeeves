@@ -34,9 +34,9 @@ const NEXT_ACTION: Record<LifecycleState, string> = {
   in_qc: "Pass QC or return",
   triaged: "Start reviews",
   in_review: "Complete reviews",
-  conditionally_approved: "Meet conditions",
-  approved: "Generate controls",
-  fast_lane_approved: "Monitor",
+  conditionally_approved: "Meet conditions, then promote",
+  approved: "Promote / deploy",
+  fast_lane_approved: "Promote / deploy",
   deployed: "Monitor",
   paused: "Reassess",
   re_review: "Reassess",
@@ -75,8 +75,9 @@ function OwnerCell({ name }: { name: string }) {
   return (
     <span className="inline-flex items-center" title={name}>
       <Avatar size="sm">
-        <AvatarFallback>{initials(name)}</AvatarFallback>
+        <AvatarFallback aria-hidden>{initials(name)}</AvatarFallback>
       </Avatar>
+      <span className="sr-only">{name}</span>
     </span>
   );
 }

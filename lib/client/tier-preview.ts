@@ -74,7 +74,7 @@ export function tierRuleText(flags: OverlayFlags): string {
   if (flags.memberFacing) {
     return "Rule 6: member-facing → Medium";
   }
-  return "Rule 7: no overlay flags → Low";
+  return "Rule 7: no tier-raising flags → Low";
 }
 
 export interface TierPreview {

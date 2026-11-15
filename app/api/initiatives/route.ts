@@ -14,7 +14,7 @@
 import { getDb } from "@/lib/db/client";
 import { ConflictError, createDraft } from "@/lib/services/initiative-service";
 import { intakePayloadSchema } from "@/lib/services/intake-payload-schema";
-import { runMutationGuard } from "@/lib/services/route-guard";
+import { guardFailureResponse, runMutationGuard } from "@/lib/services/route-guard";
 import { BodyReadError, hasNul, readBodyText } from "@/lib/http/read-json-body";
 import { ACTOR_DIRECTORY, isPersonaKey } from "@/lib/services/actors";
 import { INTAKE_AUTHOR_ROLES } from "@/lib/services/intake-author-roles";
@@ -23,7 +23,7 @@ import type { PersonaKey } from "@/lib/services/actors";
 export async function POST(req: Request): Promise<Response> {
   const guard = await runMutationGuard(req, undefined, { allowPublic: true });
   if (!guard.ok) {
-    return Response.json({ error: guard.failure.message }, { status: guard.failure.status });
+    return guardFailureResponse(guard.failure);
   }
 
   if (!INTAKE_AUTHOR_ROLES.has(guard.actor.role)) {

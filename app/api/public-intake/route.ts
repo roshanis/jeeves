@@ -27,6 +27,7 @@ import {
   clientKeyFor,
   configuredOperatorToken,
   isOperatorAuthorized,
+  operatorAttemptStatus,
 } from "@/lib/services/route-guard";
 
 const NO_STORE = { "Cache-Control": "no-store" };
@@ -40,6 +41,15 @@ export async function GET(req: Request): Promise<Response> {
   const expected = configuredOperatorToken();
   if (!expected) {
     return Response.json({ error: "not found" }, { status: 404, headers: NO_STORE });
+  }
+
+  // A locked-out client is refused before the compare, right or wrong.
+  const status = await operatorAttemptStatus(clientKeyFor(req));
+  if (!status.allowed) {
+    return Response.json(
+      { error: "too many attempts — try again later" },
+      { status: 429, headers: { ...NO_STORE, "Retry-After": String(status.retryAfterSeconds) } },
+    );
   }
 
   if (!isOperatorAuthorized(req.headers.get("authorization"), expected)) {

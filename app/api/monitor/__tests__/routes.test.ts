@@ -127,6 +127,21 @@ describe("POST /api/monitor/run", () => {
     expect(json.incidentsCreated).toBe(0);
   });
 
+  it("400s a nowTs outside the replay window", async () => {
+    const token = await issueSessionFor("ray-chen", "21.0.0.15");
+    const { POST } = await import("../run/route");
+    for (const nowTs of ["9999-01-01T00:00:00Z", "1970-01-01T00:00:00Z"]) {
+      const res = await POST(
+        new Request("http://localhost/api/monitor/run", {
+          method: "POST",
+          headers: bearer(token, "21.0.0.15"),
+          body: JSON.stringify({ nowTs }),
+        }),
+      );
+      expect(res.status).toBe(400);
+    }
+  });
+
   it("400s an invalid nowTs", async () => {
     const token = await issueSessionFor("ray-chen", "21.0.0.5");
     const { POST } = await import("../run/route");

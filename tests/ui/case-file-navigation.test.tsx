@@ -90,3 +90,13 @@ describe("case-file navigation and pause evidence", () => {
     expect(screen.getByLabelText("Evidence note")).toBeTruthy();
   });
 });
+
+describe("case-file header deployment", () => {
+  it("prints the stored version once, without a doubled v prefix", async () => {
+    data.detail = { ...data.detail!, deployments: [{ ...data.detail!.deployments[0], version: "v2.1", status: "deployed" }] };
+    await renderPage();
+    const header = screen.getByText("Latest deployment").parentElement!;
+    expect(header.textContent).toContain("v2.1");
+    expect(header.textContent).not.toContain("vv");
+  });
+});

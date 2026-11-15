@@ -30,7 +30,7 @@ export async function GET(req:Request,context:Context):Promise<Response> {
 }
 export async function POST(req:Request,context:Context):Promise<Response> {
  try {
-  const guard=await runMutationGuard(req,undefined,{requiresBudget:true,estimatedTokens:0});
+  const guard=await runMutationGuard(req,undefined);
   if(!guard.ok)return Response.json({error:guard.failure.message},{status:guard.failure.status,headers:privateHeaders});
   // JSON + same-origin checks also prevent cross-site cookie-authenticated form uploads.
   if(!isSameOriginRequest(req))throw new EvidenceError(403,'Cross-origin evidence mutations are not permitted.');

@@ -296,6 +296,35 @@ describe("POST /api/initiatives — auth + role-from-session", () => {
       );
     }
     expect(last!.status).toBe(429);
+    expect(Number(last!.headers.get("retry-after"))).toBeGreaterThan(0);
+    const body = (await last!.json()) as { error: string; retryAfterSeconds?: number };
+    expect(body.retryAfterSeconds).toBe(Number(last!.headers.get("retry-after")));
+  });
+
+  it("the intake draft update and the intake submit routes also return Retry-After on a 429", async () => {
+    const token = await issueSessionFor("priya-raman");
+    const intake = await import("../initiatives/[id]/intake/route");
+    const submit = await import("../initiatives/[id]/submit/route");
+    const id = "11111111-1111-4111-8111-111111111111";
+    const burst = async (call: (i: number) => Promise<Response>): Promise<Response> => {
+      let last: Response | null = null;
+      for (let i = 0; i < 25; i++) last = await call(i);
+      return last!;
+    };
+    const put = await burst(() => intake.PUT(
+      new Request(`http://localhost/api/initiatives/${id}/intake`, { method: "PUT", headers: bearer(token, "6.6.6.6"), body: "{}" }),
+      { params: Promise.resolve({ id }) },
+    ));
+    const post = await burst(() => submit.POST(
+      new Request(`http://localhost/api/initiatives/${id}/submit`, { method: "POST", headers: bearer(token, "7.7.7.7") }),
+      { params: Promise.resolve({ id }) },
+    ));
+    for (const res of [put, post]) {
+      expect(res.status).toBe(429);
+      expect(Number(res.headers.get("retry-after"))).toBeGreaterThan(0);
+      const body = (await res.json()) as { retryAfterSeconds?: number };
+      expect(body.retryAfterSeconds).toBe(Number(res.headers.get("retry-after")));
+    }
   });
 });
 

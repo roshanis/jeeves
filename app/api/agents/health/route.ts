@@ -13,11 +13,11 @@
  *      no mock to report on (demo answers 200 with the mock adapter).
  */
 import { runMutationGuard } from "@/lib/services/route-guard";
-import { probeConnector } from "@/lib/agents/health";
+import { PROBE_MAX_OUTPUT_TOKENS, probeConnector } from "@/lib/agents/health";
 import { agentInitializationResponse } from "@/lib/services/agent-error-response";
 
-/** Tiny reserve — a health ping is a single minimal call. */
-const ESTIMATED_TOKENS = 50;
+/** Tiny reserve — a health ping is a single minimal call: ~16 prompt tokens plus the capped reply. */
+const ESTIMATED_TOKENS = PROBE_MAX_OUTPUT_TOKENS + 36;
 
 export async function POST(req: Request): Promise<Response> {
   const guard = await runMutationGuard(req, undefined, {

@@ -27,7 +27,7 @@ const SERIES_COLOR = "var(--chart-1)";
 function formatShortDate(ts: string): string {
   const d = new Date(ts);
   if (Number.isNaN(d.getTime())) return ts.slice(5, 10);
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 }
 
 /**

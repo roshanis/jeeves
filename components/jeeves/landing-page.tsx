@@ -121,6 +121,15 @@ export function LandingPage() {
                 aria-hidden
               />
               <GovernanceLoopDiagram />
+              <ol className="sr-only" aria-label="Governance loop steps">
+                <li>Intake</li>
+                <li>Triage</li>
+                <li>Eight domain reviews: Legal, Tech, Security, Clinical, Procurement, Responsible AI, Privacy, Data Governance</li>
+                <li>Decision by a named approver</li>
+                <li>Effective controls</li>
+                <li>Monitor</li>
+                <li>On a threshold breach, reassess, then return to the decision</li>
+              </ol>
             </div>
           </div>
         </div>
@@ -179,7 +188,7 @@ export function LandingPage() {
               index="04"
               icon={Activity}
               title="Monitoring & audit"
-              description="Live telemetry against thresholds and an append-only audit trail of every event."
+              description="Synthetic telemetry against thresholds and an append-only audit trail of every event."
               href="/audit"
               linkLabel="View audit"
             />
@@ -298,7 +307,7 @@ export function LandingPage() {
           </h2>
           <p className="mt-3 text-sm text-sidebar-foreground-muted">
             Create an initiative, switch roles, and take it through review.
-            Your demo work stays in your browser’s workspace. No sign-up required.
+            Your demo work is kept in your own isolated workspace. No sign-up required.
           </p>
           <div className="mt-6">
             <TryDemoButton />

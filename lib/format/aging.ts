@@ -30,7 +30,7 @@ export function ageBucket(ageMs: number): AgeBucket {
  * slightly-behind client clock — reads "just now", never a negative age).
  */
 export function formatAge(ageMs: number): string {
-  const ms = ageMs < 0 ? 0 : ageMs;
+  const ms = ageMs > 0 ? ageMs : 0; // also maps NaN to 0
   if (ms < MINUTE) return "just now";
   if (ms < HOUR) return `${Math.floor(ms / MINUTE)}m`;
   if (ms < DAY) return `${Math.floor(ms / HOUR)}h`;
@@ -42,5 +42,6 @@ export function formatAge(ageMs: number): string {
 
 /** Age (ms) of an ISO timestamp relative to `nowMs`; clamped at zero. */
 export function ageMsSince(iso: string, nowMs: number): number {
-  return Math.max(0, nowMs - Date.parse(iso));
+  const age = nowMs - Date.parse(iso);
+  return Number.isFinite(age) ? Math.max(0, age) : 0; // unparsable -> not NaN
 }

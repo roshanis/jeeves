@@ -17,7 +17,7 @@
  * Body:  { question: string }
  * 200:   { answerMd: string, citedEvents: string[], queryUsed: string, rows: unknown[] }
  * 401:   { error: string }  (no/invalid session)
- * 429:   { error: string }  (rate limit or demo token budget exhausted)
+ * 429:   { error: string }  (rate limit or daily model budget reached)
  * 400:   { error: string }  (malformed body / input-size cap exceeded)
  * 502:   { error: string }  (PortFailure kind "provider")
  * 504:   { error: string }  (PortFailure kind "timeout")
@@ -46,6 +46,16 @@ const MAX_GROUNDING_ROWS = 50;
 const MAX_GROUNDING_FIELD_CHARS = 500;
 const MAX_SLUG_CANDIDATES = 5;
 const AGENT_TIMEOUT_MS = 10_000;
+
+// A full ISO 8601 date-time with a zone, as the audit rows carry it. Date.parse
+// on its own is too lenient for a citation: it reads "42", a bare year and a
+// bare date as dates.
+const ISO_DATE_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,9})?)?(Z|[+-]\d{2}:?\d{2})$/;
+function isoInstant(text: string): number | null {
+  if (!ISO_DATE_TIME.test(text)) return null;
+  const ms = Date.parse(text);
+  return Number.isNaN(ms) ? null : ms;
+}
 
 /**
  * Deterministic keyword-scoring heuristic to pick the best canned query
@@ -235,7 +245,7 @@ export async function POST(req: Request): Promise<Response> {
   }
   const result = await port.auditorAnswer(
     { question: parsed.data.question, groundingRows: rows, queryUsed },
-    { timeoutMs: AGENT_TIMEOUT_MS },
+    { signal: req.signal, timeoutMs: AGENT_TIMEOUT_MS },
   );
 
   if (!result.ok) {
@@ -243,10 +253,35 @@ export async function POST(req: Request): Promise<Response> {
     return Response.json({ error: message }, { status: statusForFailure(result.error) });
   }
 
+  // Citations the model returns are shown as evidence: keep only labels that
+  // exist in the grounding rows (timestamps, ids, or the row-N fallback label).
+  // A timestamp also matches by instant, so a different ISO spelling of a real
+  // row timestamp (no milliseconds, +00:00 offset) still counts; it is shown
+  // once, in the row's own spelling. Everything else is dropped.
+  const known = new Set<string>(rows.map((_, i) => `row-${i}`));
+  const rowSpelling = new Map<number, string>();
+  for (const row of rows) {
+    for (const key of ["eventTs", "ts", "id"]) {
+      const value = row[key];
+      if (typeof value !== "string" || value.length === 0) continue;
+      known.add(value);
+      const instant = key === "id" ? null : isoInstant(value);
+      if (instant !== null && !rowSpelling.has(instant)) rowSpelling.set(instant, value);
+    }
+  }
+  const grounded = (citation: string): string | null => {
+    if (known.has(citation)) return citation;
+    const instant = isoInstant(citation);
+    return instant === null ? null : rowSpelling.get(instant) ?? null;
+  };
+  const citedEvents = [
+    ...new Set(result.value.citedEvents.map(grounded).filter((c): c is string => c !== null)),
+  ].slice(0, MAX_GROUNDING_ROWS);
+
   return Response.json(
     {
       answerMd: result.value.answerMd,
-      citedEvents: result.value.citedEvents,
+      citedEvents,
       queryUsed: result.value.queryUsed,
       rows,
     },

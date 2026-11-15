@@ -48,7 +48,7 @@ function isNonEmptyStringInRange(value: string | null | undefined, min: number, 
   return len >= min && len <= max;
 }
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const EMAIL_RE = /^[^\s@?&%,;#=]+@[^\s@?&%,;#=]+\.[^\s@?&%,;#=]+$/;
 
 function isValidEmail(value: string | null | undefined): boolean {
   return typeof value === "string" && EMAIL_RE.test(value);
@@ -230,9 +230,9 @@ const REQUIRED_FOR_TIER_RULES: TieredRuleCheck[] = [
   },
   {
     ruleId: "RFT-08",
-    field: "data.dataSources",
+    field: "data.retentionIntent",
     message:
-      "Training/fine-tuning use requires at least one data source that is not ephemeral/session-only.",
+      "Training/fine-tuning use conflicts with session-only retention of PHI: choose a retention intent that persists the data, or switch to inference-only use.",
     triggers: (p) =>
       p.data.trainingVsInference === "Fine-tuning/training" || p.data.trainingVsInference === "Both",
     passes: (p) => {

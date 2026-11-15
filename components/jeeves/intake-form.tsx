@@ -39,7 +39,6 @@ import {
   isApiError,
   apiErrorToMessage,
 } from "@/lib/client/api";
-import { rememberInitiative } from "@/lib/client/live-registry";
 import { useLiveSession } from "@/lib/client/session-context";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -323,6 +322,23 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
   const requestId = React.useRef<string | null>(null);
   const creationPayload = React.useRef<IntakePayload | null>(null);
   const [error, setError] = React.useState<string | null>(null);
+  // A new session in another workspace (an expired real-request session, then
+  // "Send a real request" again) cannot see the old draft: forget it so the
+  // next submit re-creates it from the form instead of updating a 404.
+  const draftWorkspaceId = React.useRef<string | undefined>(undefined);
+  const sessionWorkspaceId = session?.workspaceId;
+  React.useEffect(() => {
+    if (!sessionWorkspaceId) return;
+    if (draftWorkspaceId.current && draftWorkspaceId.current !== sessionWorkspaceId) {
+      setInitiativeId(undefined);
+      setVersion(undefined);
+      setSlug(undefined);
+      setSavedPayload(null);
+      requestId.current = null;
+      creationPayload.current = null;
+    }
+    draftWorkspaceId.current = sessionWorkspaceId;
+  }, [sessionWorkspaceId]);
 
   const patch = React.useCallback((update: (prev: IntakePayload) => IntakePayload) => {
     const next = update(payload);
@@ -416,7 +432,6 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
       setSlug(created.slug);
       setVersion(created.version);
       setSavedPayload(payload);
-      rememberInitiative(created.slug, created.initiativeId);
       const submitted = await submitIntake(session.token, created.initiativeId);
       if (submitted.submitted) {
         // A public submitter goes to the confirmation page, not the case
@@ -443,7 +458,11 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
       }
     } catch (err) {
       if (isApiError(err)) {
-        const message = err.status === 409 ? "This draft changed in another tab. Reload it before trying again." : apiErrorToMessage(err);
+        const message = err.status === 409
+          ? err.code === "INTAKE_NOT_EDITABLE"
+            ? "This intake was already submitted and can no longer be edited. Open its case file from your initiatives list."
+            : "This draft changed in another tab. Reloading discards what you typed here, so copy your text first."
+          : apiErrorToMessage(err);
         setError(message);
         toast.error(message);
         if (err.status === 401) {
@@ -665,6 +684,7 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
                               phiCategories: e.target.checked
                                 ? [...p.data.phiCategories, category]
                                 : p.data.phiCategories.filter((c) => c !== category),
+                              ...(category === "Other" && !e.target.checked ? { phiCategoriesOtherText: null } : {}),
                             },
                           }));
                         }}
@@ -903,7 +923,7 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
           )}
           {session && isRequester && !completeness.canSubmit ? (
             <span className="text-xs text-muted-foreground">
-              Resolve the blocking gaps above to enable submission.
+              Resolve the blocking gaps listed under Completeness to enable submission.
             </span>
           ) : null}
         </div>

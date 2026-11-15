@@ -8,7 +8,7 @@ import { READ_ONLY_PREVIEW_MESSAGE } from "@/lib/data/provider-mode";
 import { useDeploymentMode } from "@/lib/client/deployment-mode-context";
 
 /** One click from the public site to an editable requester intake. */
-export function TryDemoButton({ className, size = "lg", variant }: Pick<ComponentProps<typeof Button>, "className" | "size" | "variant">) {
+export function TryDemoButton({ className, size = "lg", variant, showStatus = true }: Pick<ComponentProps<typeof Button>, "className" | "size" | "variant"> & { showStatus?: boolean }) {
   const { login, liveModeAvailable = true, pending, startError } = useLiveSession();
   const router = useRouter();
   if (useDeploymentMode() === "production") return null;
@@ -22,8 +22,8 @@ export function TryDemoButton({ className, size = "lg", variant }: Pick<Componen
       }}>
         {pending ? "Starting…" : "Try the demo"}
       </Button>
-      {!liveModeAvailable ? <p className="max-w-sm text-sm">{READ_ONLY_PREVIEW_MESSAGE}</p> : null}
-      {startError ? <p role="alert" className="max-w-sm text-sm">{startError}</p> : null}
+      {showStatus && !liveModeAvailable ? <p className="max-w-sm text-sm">{READ_ONLY_PREVIEW_MESSAGE}</p> : null}
+      {showStatus && startError ? <p role="alert" className="max-w-sm text-sm">{startError}</p> : null}
     </div>
   );
 }

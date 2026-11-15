@@ -295,11 +295,12 @@ different problems.
    where the migration is correct and the *schema change* is the mistake.
 3. **Never point `npm run db:seed` at a database with real data.** It wipes
    every seeded table and disables the `audit_events` append-only triggers to
-   do it. The `ALLOW_SEED=1` guard under `NODE_ENV=production` is the only
-   thing standing between a mistyped `DATABASE_URL` and the loss of the
-   compliance record, except against a database stamped `production`
-   (`installation.deploy_mode`, migration 0015): the seed and reset scripts
-   refuse that one whatever `ALLOW_SEED` says.
+   do it. The `ALLOW_SEED=1` guard applies only when `NODE_ENV=production` is
+   set for the seed run (`npm run db:seed` from a laptop does not set it), so
+   check `DATABASE_URL` yourself before every run. The one exception is a
+   database stamped `production` (`installation.deploy_mode`, migration
+   0015): the seed and reset scripts refuse that one whatever `ALLOW_SEED`
+   and `NODE_ENV` say.
 
 ### Restore
 

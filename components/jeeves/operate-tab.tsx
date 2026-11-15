@@ -25,7 +25,7 @@ import type { TelemetrySeries } from "@/lib/data/dto";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { SyntheticDataLabel } from "./synthetic-data-label";
-import { DisableWithTooltip } from "./role-gate";
+import { RunMonitorPanel } from "./run-monitor-panel";
 
 const KIND_TITLE: Record<TelemetrySeries["kind"], string> = {
   cost_tokens_usd_day: "Cost — daily token spend (USD)",
@@ -47,15 +47,30 @@ const PROMOTION_EVAL_COMPARISON = [
   { metric: "Completeness", "v2.0": 0.82, "v2.1": 0.88 },
 ];
 
+/** Y-axis domain: eval/cost series pad the data range, and always reach the
+ * threshold so its reference line is drawn (Recharts discards a line that
+ * falls outside the domain). GPU keeps its fixed 0-100 scale. */
+export function seriesYDomain(
+  kind: TelemetrySeries["kind"],
+  threshold: number | null,
+): [number | ((min: number) => number), number | ((max: number) => number)] {
+  if (kind === "gpu_util_pct") return [0, 100];
+  return [
+    (min: number) => Math.floor(min * 0.9 * 1000) / 1000,
+    (max: number) =>
+      Math.ceil(Math.max(max * 1.15, threshold !== null ? threshold * 1.05 : 0) * 1000) / 1000,
+  ];
+}
+
 function formatShortDate(ts: string): string {
   const d = new Date(ts);
   if (Number.isNaN(d.getTime())) return ts.slice(5, 10);
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 }
 
 function formatValue(kind: TelemetrySeries["kind"], value: number): string {
   if (kind === "gpu_util_pct") return `${value.toFixed(0)}%`;
-  if (kind === "cost_tokens_usd_day") return `$${value.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+  if (kind === "cost_tokens_usd_day") return `$${value.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
   return value.toFixed(4);
 }
 
@@ -196,11 +211,7 @@ function SeriesPanel({ series }: { series: TelemetrySeries }) {
                   tickLine={{ stroke: "var(--chart-axis)" }}
                 />
                 <YAxis
-                  domain={
-                    series.kind === "gpu_util_pct"
-                      ? [0, 100]
-                      : [(min: number) => Math.floor(min * 0.9 * 1000) / 1000, (max: number) => Math.ceil(max * 1.15 * 1000) / 1000]
-                  }
+                  domain={seriesYDomain(series.kind, series.threshold)}
                   tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
                   axisLine={{ stroke: "var(--chart-axis)" }}
                   tickLine={false}
@@ -341,9 +352,7 @@ export function EvalsTab({
     <div className="space-y-4" data-slot="evals-tab">
       <div className="flex items-center justify-between gap-2">
         <h3 className="text-sm font-medium">Evals &amp; telemetry</h3>
-        {/* Admin-shaped action, rendered disabled for every role in this
-            read-only build (auth gating; see role-gate.tsx). */}
-        <DisableWithTooltip label="Run monitor" variant="outline" />
+        <RunMonitorPanel />
       </div>
 
       {telemetry.length === 0 ? (

@@ -4,13 +4,14 @@
 // HTML/markdown — this suite's core assertion is that an HTML-shaped answer
 // never produces a real DOM element.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { renderWithProviders } from "./helpers";
 import {
   LiveSessionProvider,
   resetLiveSessionForTests,
   useLiveSession,
 } from "@/lib/client/session-context";
+import { DEMO_SESSION_TOOLTIP } from "@/components/jeeves/role-gate";
 import { AuditorChat } from "@/components/jeeves/auditor-chat";
 
 function jsonResponse(status: number, body: unknown): Response {
@@ -52,6 +53,20 @@ describe("AuditorChat — no live session", () => {
     ) as HTMLButtonElement;
     expect(input.disabled).toBe(true);
     expect(submit.disabled).toBe(true);
+  });
+
+  it("explains the disabled input in visible text linked to the controls", () => {
+    renderChat();
+    const reason = screen.getByText(DEMO_SESSION_TOOLTIP);
+    expect(reason.closest(".sr-only")).toBeNull();
+    for (const slot of ["auditor-question-input", "auditor-submit"]) {
+      const el = document.querySelector(`[data-slot="${slot}"]`) as HTMLElement;
+      expect(el.hasAttribute("disabled")).toBe(true);
+      const id = el.getAttribute("aria-describedby");
+      expect(id).toBeTruthy();
+      expect(document.getElementById(id!)?.textContent).toBe(DEMO_SESSION_TOOLTIP);
+    }
+    expect(document.querySelector('[data-slot="auditor-chat"] div[tabindex="0"]')).toBeNull();
   });
 });
 
@@ -148,5 +163,58 @@ describe("AuditorChat — live session", () => {
     expect(
       (document.querySelector('[data-slot="auditor-answer"]') as HTMLElement).textContent,
     ).toBe("");
+  });
+
+  it("does not submit when Enter confirms an IME composition", async () => {
+    await renderLoggedIn();
+    const input = document.querySelector('[data-slot="auditor-question-input"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "ご質問" } });
+    fetchMock.mockClear();
+    fireEvent.keyDown(input, { key: "Enter", isComposing: true });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(document.querySelector('[data-slot="auditor-transcript"]')).toBeNull();
+  });
+
+  it("restores the question and drops the orphan turn when the request fails", async () => {
+    await renderLoggedIn();
+    fetchMock.mockResolvedValueOnce(jsonResponse(429, { error: "rate_limited" }));
+    const input = document.querySelector('[data-slot="auditor-question-input"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "who touches PHI?" } });
+    fireEvent.click(document.querySelector('[data-slot="auditor-submit"]') as HTMLButtonElement);
+    await waitFor(() => {
+      expect(
+        (document.querySelector('[data-slot="auditor-submit"]') as HTMLButtonElement).textContent,
+      ).toBe("Ask");
+    });
+    expect((document.querySelector('[data-slot="auditor-question-input"]') as HTMLInputElement).value).toBe("who touches PHI?");
+    expect(document.querySelector('[data-slot="auditor-transcript"]')).toBeNull();
+  });
+
+  it("names the question input and announces appended answers through a polite log", async () => {
+    await renderLoggedIn();
+    expect(screen.getByRole("textbox", { name: /audit question/i })).toBeTruthy();
+    const log = screen.getByRole("log");
+    expect(log.getAttribute("aria-live")).toBe("polite");
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(200, { answerMd: "Answer text", citedEvents: [], queryUsed: "q", rows: [] }),
+    );
+    fireEvent.change(screen.getByRole("textbox", { name: /audit question/i }), { target: { value: "hi" } });
+    fireEvent.click(document.querySelector('[data-slot="auditor-submit"]') as HTMLButtonElement);
+    await waitFor(() => expect(within(screen.getByRole("log")).getByText("Answer text")).toBeTruthy());
+  });
+
+  it("keeps newer text typed while the request was pending when it fails", async () => {
+    await renderLoggedIn();
+    fetchMock.mockResolvedValueOnce(jsonResponse(429, { error: "rate_limited" }));
+    const input = document.querySelector('[data-slot="auditor-question-input"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "who touches PHI?" } });
+    fireEvent.click(document.querySelector('[data-slot="auditor-submit"]') as HTMLButtonElement);
+    fireEvent.change(input, { target: { value: "next question" } });
+    await waitFor(() => {
+      expect(
+        (document.querySelector('[data-slot="auditor-submit"]') as HTMLButtonElement).textContent,
+      ).toBe("Ask");
+    });
+    expect((document.querySelector('[data-slot="auditor-question-input"]') as HTMLInputElement).value).toBe("next question");
   });
 });

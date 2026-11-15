@@ -35,6 +35,12 @@ podman compose run --rm seed         # load the synthetic demo data
 
 Then open `http://localhost:3000`.
 
+Open it as `localhost` (or over HTTPS). The app marks its workspace cookie
+`Secure` because the image runs with `NODE_ENV=production`, and browsers drop a
+`Secure` cookie over plain HTTP from any other address, such as
+`http://192.168.1.20:3000`. The pages then show only the seeded rows and a
+visitor's own initiatives are missing.
+
 The stack runs the demo: `compose.yaml` and the Quadlet unit set
 `JEEVES_MODE=demo`. The deployment mode defaults to **production** when unset,
 which refuses to boot without `APP_BASE_URL`, `JEEVES_TENANT_ID` and a 32+

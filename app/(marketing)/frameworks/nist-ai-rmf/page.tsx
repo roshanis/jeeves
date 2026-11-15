@@ -8,7 +8,7 @@ import { guardDemoPage, demoPageMetadata } from "@/lib/config/demo-pages";
 const page = FRAMEWORK_PAGES.find((p) => p.slug === "nist-ai-rmf")!;
 
 export const generateMetadata = demoPageMetadata({
-  title: `${page.title} — Jeeves`,
+  title: page.title,
   description: page.intro,
 });
 

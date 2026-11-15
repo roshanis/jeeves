@@ -22,7 +22,7 @@
  * which this task does not own) so the route handlers that DO own can filter
  * those services' otherwise-unfiltered results without touching them.
  */
-import { eq } from "drizzle-orm";
+import { eq, isNull, or, type SQL } from "drizzle-orm";
 import type { Db } from "../db/client";
 import { deploymentVersions, initiatives } from "../db/schema";
 import { ViewerRequiredError, requireViewerForRequest } from "./require-viewer";
@@ -54,6 +54,15 @@ export async function resolveViewerWorkspaceId(req: Request): Promise<string | n
   return gate.viewer.workspaceId;
 }
 
+/** SQL form of `workspaceMismatch`: seeded rows plus the viewer's own. Omitting
+ * the viewer loads every row (callers that filter themselves). */
+function viewerRowsFilter(viewerWorkspaceId?: string | null): SQL | undefined {
+  if (viewerWorkspaceId === undefined) return undefined;
+  return viewerWorkspaceId === null
+    ? isNull(initiatives.workspaceId)
+    : or(isNull(initiatives.workspaceId), eq(initiatives.workspaceId, viewerWorkspaceId));
+}
+
 /**
  * deploymentId -> owning initiative's workspaceId, for filtering
  * deployment-scoped read models (incidents, RL-checkpoint promotions) that
@@ -61,11 +70,15 @@ export async function resolveViewerWorkspaceId(req: Request): Promise<string | n
  * has since vanished (should not happen; FK-enforced) is simply absent from
  * the map, and `isDeploymentVisible` treats an absent key as NOT visible.
  */
-export async function deploymentWorkspaceMap(db: Db): Promise<Map<string, string | null>> {
+export async function deploymentWorkspaceMap(
+  db: Db,
+  viewerWorkspaceId?: string | null,
+): Promise<Map<string, string | null>> {
   const rows = await db
     .select({ deploymentId: deploymentVersions.id, workspaceId: initiatives.workspaceId })
     .from(deploymentVersions)
-    .innerJoin(initiatives, eq(deploymentVersions.initiativeId, initiatives.id));
+    .innerJoin(initiatives, eq(deploymentVersions.initiativeId, initiatives.id))
+    .where(viewerRowsFilter(viewerWorkspaceId));
   return new Map(rows.map((r) => [r.deploymentId, r.workspaceId]));
 }
 
@@ -81,10 +94,14 @@ export function isDeploymentVisible(
 /** initiativeId -> workspaceId, for filtering read models keyed directly by
  * initiative id (e.g. RL-checkpoint promotions, which already carry
  * `initiativeId` on each row). */
-export async function initiativeWorkspaceMap(db: Db): Promise<Map<string, string | null>> {
+export async function initiativeWorkspaceMap(
+  db: Db,
+  viewerWorkspaceId?: string | null,
+): Promise<Map<string, string | null>> {
   const rows = await db
     .select({ id: initiatives.id, workspaceId: initiatives.workspaceId })
-    .from(initiatives);
+    .from(initiatives)
+    .where(viewerRowsFilter(viewerWorkspaceId));
   return new Map(rows.map((r) => [r.id, r.workspaceId]));
 }
 

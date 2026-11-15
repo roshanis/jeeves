@@ -4,7 +4,8 @@ import type { Actor, ActorRole, LifecycleState } from "../domain/types";
  * Lifecycle state machine (plan §5, §8 test 4).
  *
  * Graph:
- *   intake_draft -> submitted -> triaged -> (in_review | fast_lane_approved)
+ *   intake_draft -> submitted -> in_qc -> triaged -> (in_review | fast_lane_approved)
+ *   in_qc -> intake_draft (return_to_requester, reason required)
  *   in_review -> (approved | conditionally_approved | rejected)
  *   (approved | conditionally_approved | fast_lane_approved) -> deployed
  *   deployed <-> paused ; paused -> re_review
@@ -111,7 +112,7 @@ const TRANSITIONS: TransitionTable = {
     // `public` submits its own intake and stops there. It is the only
     // lifecycle action an unauthenticated visitor holds: everything past
     // this point — QC, triage, the fan-out, any decision — still needs a
-    // named, passcode-holding human.
+    // named human in a persona role.
     submit: { to: "submitted", allowedRoles: ["requester", "public"] },
   },
   submitted: {

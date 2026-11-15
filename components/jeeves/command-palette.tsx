@@ -141,6 +141,15 @@ export function CommandPalette({ initiatives }: { initiatives: PaletteInitiative
   const activeIndexSafe = activeIndex < results.length ? activeIndex : 0;
   const activeItem = results[activeIndexSafe] ?? null;
 
+  // Keep the keyboard-active option visible: the list scrolls (max-h-80) and
+  // arrow keys only move the highlight. jsdom has no scrollIntoView.
+  React.useEffect(() => {
+    if (!open || !activeItem) return;
+    document
+      .getElementById(`${listId}-${activeItem.key}`)
+      ?.scrollIntoView?.({ block: "nearest" });
+  }, [open, activeItem, listId]);
+
   const setOpenAndReset = React.useCallback((next: boolean) => {
     setOpen(next);
     if (!next) {
@@ -171,10 +180,16 @@ export function CommandPalette({ initiatives }: { initiatives: PaletteInitiative
     }
   }
 
-  // Group headings are rendered by tracking where the group changes, so the
-  // flat `results` array stays the single source of truth for both keyboard
-  // indexing and painting — two parallel structures would drift.
-  let lastGroup: string | null = null;
+  // Results are chunked into consecutive same-group runs for painting (so a
+  // heading can label an ARIA group); each entry keeps its flat index, so the
+  // flat `results` array stays the single source of truth for keyboard
+  // indexing.
+  const groups: { group: string; items: { item: (typeof results)[number]; index: number }[] }[] = [];
+  results.forEach((item, index) => {
+    const last = groups[groups.length - 1];
+    if (last && last.group === item.group) last.items.push({ item, index });
+    else groups.push({ group: item.group, items: [{ item, index }] });
+  });
 
   return (
     <>
@@ -255,44 +270,51 @@ export function CommandPalette({ initiatives }: { initiatives: PaletteInitiative
                 No initiative or page matches “{query}”.
               </p>
             ) : (
-              results.map((item, index) => {
-                const showHeading = item.group !== lastGroup;
-                lastGroup = item.group;
-                const active = index === activeIndexSafe;
-                return (
-                  <React.Fragment key={item.key}>
-                    {showHeading ? (
-                      <p className="kicker px-2.5 pt-2.5 pb-1.5 text-muted-foreground">
-                        {item.group}
-                      </p>
-                    ) : null}
-                    <button
-                      type="button"
-                      id={`${listId}-${item.key}`}
-                      role="option"
-                      aria-selected={active}
-                      data-slot="command-palette-item"
-                      onClick={() => go(item.href)}
-                      onMouseMove={() => setActiveIndex(index)}
-                      className={cn(
-                        "flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-sm",
-                        active ? "bg-accent text-accent-foreground" : "text-foreground",
-                      )}
-                    >
-                      <span className="min-w-0 flex-1 truncate">{item.label}</span>
-                      <span className="shrink-0 font-mono text-[11px] text-muted-foreground">
-                        {item.hint}
-                      </span>
-                      {active ? (
-                        <CornerDownLeft
-                          className="size-3.5 shrink-0 text-muted-foreground"
-                          aria-hidden
-                        />
-                      ) : null}
-                    </button>
-                  </React.Fragment>
-                );
-              })
+              groups.map(({ group, items }, groupIndex) => (
+                <div
+                  key={`${group}-${groupIndex}`}
+                  role="group"
+                  aria-labelledby={`${listId}-group-${groupIndex}`}
+                >
+                  <p
+                    id={`${listId}-group-${groupIndex}`}
+                    className="kicker px-2.5 pt-2.5 pb-1.5 text-muted-foreground"
+                  >
+                    {group}
+                  </p>
+                  {items.map(({ item, index }) => {
+                    const active = index === activeIndexSafe;
+                    return (
+                      <button
+                        key={item.key}
+                        type="button"
+                        id={`${listId}-${item.key}`}
+                        role="option"
+                        tabIndex={-1}
+                        aria-selected={active}
+                        data-slot="command-palette-item"
+                        onClick={() => go(item.href)}
+                        onMouseMove={() => setActiveIndex(index)}
+                        className={cn(
+                          "flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-sm",
+                          active ? "bg-accent text-accent-foreground" : "text-foreground",
+                        )}
+                      >
+                        <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                        <span className="shrink-0 font-mono text-[11px] text-muted-foreground">
+                          {item.hint}
+                        </span>
+                        {active ? (
+                          <CornerDownLeft
+                            className="size-3.5 shrink-0 text-muted-foreground"
+                            aria-hidden
+                          />
+                        ) : null}
+                      </button>
+                    );
+                  })}
+                </div>
+              ))
             )}
           </div>
         </DialogContent>

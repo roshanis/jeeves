@@ -96,7 +96,7 @@ test.describe("champion storyline: read-only golden path", () => {
     const intakeTab = page.locator('[data-slot="intake-tab"]');
     await expect(intakeTab).toBeVisible();
     await expect(intakeTab).toContainText(
-      "Completeness check: missing data.retentionIntent",
+      "Completeness check: missing Data retention",
     );
   });
 

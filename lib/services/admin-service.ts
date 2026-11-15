@@ -168,6 +168,10 @@ export async function setEvalThreshold(
     const defRows = await tx.select().from(controlDefinitions).where(eq(controlDefinitions.id, input.controlId));
     const def = defRows[0];
     if (!def) throw new NotFoundError("controlDefinition", input.controlId);
+    // Only thresholded runtime controls are evaluated (monitor-service); a change to any other would audit as done and do nothing.
+    if (!def.tierDefaultThresholds || def.sustainedWindow === null) {
+      throw new ValidationError(`setEvalThreshold: control ${input.controlId} has no runtime threshold`);
+    }
 
     const ts = Date.now();
 

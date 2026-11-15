@@ -13,10 +13,14 @@ import {
 } from "@/lib/security/workspace-cookie";
 
 // Per-browser workspace cookie (M2.5 inc.2b). Read-scoping ONLY — it is not
-// an auth credential (mutations still require the Bearer token), so it opens
-// no CSRF surface. Set on first login and REUSED on later logins so every
-// persona acting in one browser shares the same demo workspace (the champion
-// loop spans requester -> reviewer -> approver logins).
+// an auth credential (mutations still require the Bearer token, which a
+// browser never attaches on its own), so a forged cross-site request cannot
+// mutate anything. The cookie is SameSite=Lax, so it IS sent on top-level
+// cross-site GET navigations: keep every GET that reads it side-effect free,
+// and keep SameSite/HttpOnly as they are. Set on first login and REUSED on
+// later logins so every persona acting in one browser shares the same demo
+// workspace (the champion loop spans requester -> reviewer -> approver
+// logins).
 //
 // Security-hardening pass (external-review finding #1 continuation): the
 // value is now SIGNED (lib/security/workspace-cookie.ts) — `issueDemoSession`
@@ -122,7 +126,8 @@ export async function POST(req: Request): Promise<Response> {
   let attempt;
   try {
     parent = token ? await resolveSession(token) : null;
-    attempt = await checkSessionAttempt(clientKeyFor(req), Boolean(parent?.actor && parent.workspaceId));
+    attempt = await checkSessionAttempt(clientKeyFor(req), Boolean(parent?.actor && parent.workspaceId && parent.actor.role !== "public"));
+    // A public parent is never a workspace donor (below), so it mints a fresh workspace and pays the anonymous rate.
   } catch (error) {
     return storageUnavailable(error);
   }

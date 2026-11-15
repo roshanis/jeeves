@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTestDb, closeTestDb, type TestDb } from "@/lib/db/test-client";
 import { sessions } from "@/lib/db/schema";
-import { resetHousekeepingCounterForTests } from "@/lib/services/route-guard";
+import { issuePublicSession, resetHousekeepingCounterForTests } from "@/lib/services/route-guard";
 import { POST } from "./route";
 
 let db: TestDb;
@@ -134,5 +134,14 @@ describe("public demo entry", () => {
     const denied = await enter();
     expect(denied.status).toBe(429);
     expect(denied.headers.get("retry-after")).toBeTruthy();
+  });
+
+  it("charges a public parent to the anonymous workspace limiter, not the persona-switch one (auth-F11)", async () => {
+    const ip = { "x-forwarded-for": "203.0.113.9" };
+    const pub = await issuePublicSession("203.0.113.50");
+    if (!("token" in pub)) throw new Error("expected a public session");
+    const headers = { ...ip, authorization: `Bearer ${pub.token}` };
+    for (let i = 0; i < 5; i++) expect((await enter("priya-raman", headers)).status).toBe(200);
+    expect((await enter("priya-raman", headers)).status).toBe(429);
   });
 });

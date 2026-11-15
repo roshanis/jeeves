@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { DAILY_TOKEN_CAP } from "../security/budget";
 import { draftBudgetPolicy } from "./draft-execution-policy";
 
 afterEach(() => vi.unstubAllEnvs());
@@ -19,5 +20,10 @@ describe("resolved draft execution budget", () => {
     expect(draftBudgetPolicy(new Date("2026-09-20T05:00:00Z"))).toEqual({
       day: "2026-09-20", dailyCap: 500_000, tokensPerAttempt,
     });
+  });
+
+  it("uses the same daily cap as the route guard", () => {
+    expect(DAILY_TOKEN_CAP).toBe(500_000);
+    expect(draftBudgetPolicy().dailyCap).toBe(DAILY_TOKEN_CAP);
   });
 });
