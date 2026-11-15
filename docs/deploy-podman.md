@@ -24,7 +24,7 @@ Podman-specific.
 
 ```bash
 cd deploy/podman
-cp env.example .env          # then edit: set POSTGRES_PASSWORD and DEMO_PASSCODE
+cp env.example .env          # then edit: set POSTGRES_PASSWORD and DEMO_PASSCODE (deprecated, still required by compose)
 podman compose up -d --build
 podman compose run --rm migrate      # create the schema
 podman compose run --rm seed         # load the synthetic demo data
@@ -106,7 +106,9 @@ podman build -f deploy/podman/Containerfile --target migrator \
 mkdir -p ~/.config/containers/systemd
 cp deploy/podman/quadlet/* ~/.config/containers/systemd/
 cp deploy/podman/env.example ~/.config/containers/systemd/jeeves.env
-chmod 600 ~/.config/containers/systemd/jeeves.env    # it holds both passwords
+chmod 600 ~/.config/containers/systemd/jeeves.env    # it holds the passwords
+# Edit it: set POSTGRES_PASSWORD, put the same password into DATABASE_URL (the
+# app unit cannot assemble it like compose does), and set JEEVES_COOKIE_SECRET.
 $EDITOR ~/.config/containers/systemd/jeeves.env
 
 systemctl --user daemon-reload
@@ -115,8 +117,16 @@ systemctl --user start jeeves-db
 podman run --rm --network jeeves \
   -e DATABASE_URL='postgres://jeeves:PASSWORD@jeeves-db:5432/jeeves' \
   localhost/jeeves-migrator:latest npm run db:migrate
+# load the synthetic demo data, once, on a fresh database only (DESTRUCTIVE,
+# see §2): without it the app boots against an empty database
+podman run --rm --network jeeves \
+  -e DATABASE_URL='postgres://jeeves:PASSWORD@jeeves-db:5432/jeeves' \
+  localhost/jeeves-migrator:latest npm run db:seed
 systemctl --user start jeeves-app
 ```
+
+Never run the seed step against a database you care about: it wipes every
+seeded table and the audit log. Skip it on any install that already holds data.
 
 For a rootless service that should survive logout:
 `loginctl enable-linger $USER`.
