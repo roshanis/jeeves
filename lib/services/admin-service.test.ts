@@ -8,7 +8,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { eq } from "drizzle-orm";
+import { eq, getTableName } from "drizzle-orm";
 import { createTestDb, closeTestDb, type TestDb } from "../db/test-client";
 import { seedDatabase, BASE_DATE_MS } from "../../scripts/seed";
 import { auditEvents, controlDefinitions, deploymentVersions, effectiveControls, incidents, initiativeDecisions, initiatives, reviewCycles, reviewDecisions } from "../db/schema";
@@ -55,6 +55,72 @@ describe("lib/services/admin-service", () => {
 
   afterEach(async () => {
     await closeTestDb(db);
+  });
+
+  describe("setEvalThreshold — row locks", () => {
+    // PGlite cannot interleave two transactions, so assert the lock itself:
+    // record every table a select reads and every FOR UPDATE inside the tx.
+    /* eslint-disable @typescript-eslint/no-explicit-any */
+    function recordLocks() {
+      const events: string[] = [];
+      const dbAny = db as any;
+      const realTransaction = dbAny.transaction.bind(dbAny);
+      const spy = vi.spyOn(dbAny, "transaction").mockImplementation((cb: any) =>
+        realTransaction(async (tx: any) => {
+          const realSelect = tx.select.bind(tx);
+          tx.select = (...a: unknown[]) => {
+            const wrap = (b: any, table: string | null): any =>
+              new Proxy(b, {
+                get(t, k) {
+                  const v = t[k];
+                  if (typeof v !== "function") return v;
+                  return (...args: unknown[]) => {
+                    if (k === "from") {
+                      const name = getTableName(args[0] as any);
+                      events.push(`from:${name}`);
+                      return wrap(v.apply(t, args), name);
+                    }
+                    if (k === "for") events.push(`lock:${table}`);
+                    const r = v.apply(t, args);
+                    return r && typeof r === "object" && k !== "then" ? wrap(r, table) : r;
+                  };
+                },
+              });
+            return wrap(realSelect(...a), null);
+          };
+          return cb(tx);
+        }),
+      );
+      return { events, spy };
+    }
+    /* eslint-enable @typescript-eslint/no-explicit-any */
+
+    it("locks the initiative row before reading the control revision on the override branch", async () => {
+      const initiativeId = await memberChatCopilotId(db);
+      const { events, spy } = recordLocks();
+      try {
+        await setEvalThreshold(db, RAY_CHEN, null, {
+          controlId: "Q-01", initiativeId, newValue: 0.06, reason: "Lock check.",
+        });
+      } finally {
+        spy.mockRestore();
+      }
+      const lock = events.indexOf("lock:initiatives");
+      expect(lock).toBeGreaterThanOrEqual(0);
+      expect(lock).toBeLessThan(events.indexOf("from:effective_controls"));
+    });
+
+    it("locks the control definition row before reading the tier defaults on the tier-default branch", async () => {
+      const { events, spy } = recordLocks();
+      try {
+        await setEvalThreshold(db, RAY_CHEN, null, {
+          controlId: "Q-01", initiativeId: null, tier: "high", newValue: 0.05, reason: "Lock check.",
+        });
+      } finally {
+        spy.mockRestore();
+      }
+      expect(events).toContain("lock:control_definitions");
+    });
   });
 
   describe("setEvalThreshold — project override", () => {

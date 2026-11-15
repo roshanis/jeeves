@@ -182,7 +182,13 @@ export async function setEvalThreshold(
       if (!input.tier) {
         throw new ValidationError("setEvalThreshold: tier is required when initiativeId is null (tier-default change)");
       }
-      const currentDefaults = (def.tierDefaultThresholds ?? {}) as Record<string, number>;
+      // Lock the definition row so two concurrent tier edits cannot restore each other's old value.
+      const [lockedDef] = await tx
+        .select()
+        .from(controlDefinitions)
+        .where(eq(controlDefinitions.id, input.controlId))
+        .for("update");
+      const currentDefaults = (lockedDef?.tierDefaultThresholds ?? {}) as Record<string, number>;
       const before = currentDefaults[input.tier] ?? null;
       const nextDefaults = { ...currentDefaults, [input.tier]: input.newValue };
 
@@ -213,7 +219,8 @@ export async function setEvalThreshold(
     }
 
     // Project/deployment override.
-    const initiativeRows = await tx.select().from(initiatives).where(eq(initiatives.id, input.initiativeId));
+    // FOR UPDATE serialises concurrent edits of one deployment's override (read-modify-write below).
+    const initiativeRows = await tx.select().from(initiatives).where(eq(initiatives.id, input.initiativeId)).for("update");
     const initiative = initiativeRows[0];
     if (!initiative) throw new NotFoundError("initiative", input.initiativeId);
     // Workspace authorization (P1 fix, see doc comment above) — BEFORE any
