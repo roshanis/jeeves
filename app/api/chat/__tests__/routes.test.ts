@@ -144,6 +144,34 @@ describe("chat routes abort and citation handling", () => {
       expect(res.status).toBe(499);
     } finally { spy.mockRestore(); }
   });
+
+  it("drops model-supplied citedEvents that are not in the grounding rows and caps the list (api-initiatives-F29)", async () => {
+    const token = await issueSessionFor("priya-raman", "42.0.0.3");
+    const { POST } = await import("../auditor/route");
+    let grounded: readonly Record<string, unknown>[] = [];
+    const spy = vi.spyOn(agentsModule, "getAgentPort").mockImplementation(() => ({
+      auditorAnswer: async (input: { groundingRows: readonly Record<string, unknown>[]; queryUsed: string }) => {
+        grounded = input.groundingRows;
+        const real = grounded.map((r) => r["eventTs"]).find((v): v is string => typeof v === "string");
+        return { ok: true, value: {
+          answerMd: "answer", queryUsed: input.queryUsed,
+          citedEvents: [...(real ? [real] : []), "2099-01-01T00:00:00.000Z", "row-0", "invented-decision-id"],
+        } };
+      },
+    }) as unknown as ReturnType<typeof agentsModule.getAgentPort>);
+    try {
+      const res = await POST(new Request("http://localhost/api/chat/auditor", {
+        method: "POST", headers: bearer(token, "42.0.0.3"),
+        body: JSON.stringify({ question: "Which initiatives are member-facing and touch PHI?" }),
+      }));
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json.citedEvents).not.toContain("2099-01-01T00:00:00.000Z");
+      expect(json.citedEvents).not.toContain("invented-decision-id");
+      expect(json.citedEvents).toContain("row-0");
+      expect(json.citedEvents.length).toBeLessThanOrEqual(grounded.length + 1);
+    } finally { spy.mockRestore(); }
+  });
 });
 
 describe("POST /api/chat/auditor", () => {

@@ -235,10 +235,23 @@ export async function POST(req: Request): Promise<Response> {
     return Response.json({ error: message }, { status: statusForFailure(result.error) });
   }
 
+  // Citations the model returns are shown as evidence: keep only labels that
+  // exist in the grounding rows (timestamps, ids, or the row-N fallback label).
+  const known = new Set<string>(rows.map((_, i) => `row-${i}`));
+  for (const row of rows) {
+    for (const key of ["eventTs", "ts", "id"]) {
+      const value = row[key];
+      if (typeof value === "string" && value.length > 0) known.add(value);
+    }
+  }
+  const citedEvents = [...new Set(result.value.citedEvents)]
+    .filter((c) => known.has(c))
+    .slice(0, MAX_GROUNDING_ROWS);
+
   return Response.json(
     {
       answerMd: result.value.answerMd,
-      citedEvents: result.value.citedEvents,
+      citedEvents,
       queryUsed: result.value.queryUsed,
       rows,
     },
