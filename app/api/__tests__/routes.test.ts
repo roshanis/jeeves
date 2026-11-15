@@ -1502,15 +1502,22 @@ describe("triage route: QC pass role gate and error mapping", () => {
     expect(passed!.actorRole).toBe("program");
     const triageEvent = events.find((e) => e.action === "triage");
     expect(triageEvent!.actorRole).toBe("system");
+    // The trail sorts by time: the human's pass comes before the system's
+    // triage, and records the state the pass was made in.
+    expect(passed!.ts.getTime()).toBeLessThan(triageEvent!.ts.getTime());
+    expect([passed!.before, passed!.after]).toEqual(["in_qc", "in_qc"]);
+    expect([triageEvent!.before, triageEvent!.after]).toEqual(["in_qc", "triaged"]);
   });
 
-  it("a repeated triage is a 409, and triage on an intake_draft is not a 500", async () => {
+  it("a repeated triage is a 409, and so is triage on an intake that was never submitted", async () => {
     const { token, workspaceCookie, initiativeId } = await submittedInitiative("72.0.0.1", "routes-triage-gate-0002");
     const { token: niaToken } = await issueSessionInWorkspace("nia-okafor", workspaceCookie);
 
     const draftRes = await triageAs(initiativeId, niaToken, "72.0.0.2");
-    expect(draftRes.status).toBeLessThan(500);
-    expect(draftRes.status).toBeGreaterThanOrEqual(400);
+    expect(draftRes.status).toBe(409);
+    expect(await stateOf(initiativeId)).toBe("intake_draft");
+    const before = await testDb.select().from(auditEvents).where(eq(auditEvents.initiativeId, initiativeId));
+    expect(before.some((e) => e.action === "qc_passed")).toBe(false);
 
     await submit(initiativeId, token, "72.0.0.1");
     await passQcOverHttp(initiativeId, workspaceCookie, "72.0.0.3");

@@ -734,10 +734,30 @@ export async function triage(
     const domains = [...requiredDomains(tier, flags)].sort() as Domain[];
     const completeness = evaluateCompleteness(payload, tier);
 
-    // 1. triage transition: submitted -> triaged
+    // 1. triage transition: in_qc -> triaged. Checked here, before anything
+    // is written. The pass and the triage are one click, and the trail sorts
+    // by time, so the triage is stamped at least a millisecond after the pass.
+    const passTs = nowTs();
     const triageResult = transition(initiative.state as LifecycleState, "triage", actor, {
-      ts: nowTs(),
+      ts: passedBy ? Math.max(nowTs(), passTs + 1) : passTs,
     });
+    // The human who chose to pass QC (the route gates this to program/admin)
+    // is the accountable actor and comes first on the trail, recorded in the
+    // state the pass was made in; the triage transition itself stays `system`.
+    if (passedBy) {
+      await tx.insert(auditEvents).values({
+        id: `evt-${randomUUID()}`,
+        initiativeId,
+        ts: new Date(passTs),
+        actor: passedBy.id,
+        actorRole: passedBy.role,
+        action: "qc_passed",
+        detail: `QC passed by ${passedBy.id} (${passedBy.role}); routed to deterministic triage.`,
+        before: initiative.state,
+        after: initiative.state,
+        metadata: { passedBy: { id: passedBy.id, role: passedBy.role } },
+      });
+    }
     await updateInitiativeState(tx, initiativeId, initiative.state as LifecycleState, triageResult.after, {
       tier,
     });
@@ -748,22 +768,6 @@ export async function triage(
       `Deterministic triage classified tier=${tier} with ${domains.length} required domain(s): ${domains.join(", ")}.`,
       { flags, tier, requiredDomains: domains },
     );
-    // The human who chose to pass QC (the route gates this to program/admin)
-    // is the accountable actor; the triage transition above stays `system`.
-    if (passedBy) {
-      await tx.insert(auditEvents).values({
-        id: `evt-${randomUUID()}`,
-        initiativeId,
-        ts: new Date(nowTs()),
-        actor: passedBy.id,
-        actorRole: passedBy.role,
-        action: "qc_passed",
-        detail: `QC passed by ${passedBy.id} (${passedBy.role}); routed to deterministic triage.`,
-        before: "in_qc",
-        after: "in_qc",
-        metadata: { passedBy: { id: passedBy.id, role: passedBy.role } },
-      });
-    }
 
     // 2. risk_assessments row (versioned)
     const existingRa = await tx
