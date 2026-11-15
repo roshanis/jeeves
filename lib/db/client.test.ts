@@ -144,3 +144,23 @@ describe("getDb deployment mode", () => {
     expect(getDbDriverForHandle(db)).toBe("pglite");
   });
 });
+
+describe("getDb Neon pool hardening", () => {
+  it("registers an error listener that does not throw or log the URL, and bounds connect time", async () => {
+    delete process.env.VERCEL;
+    process.env.DATABASE_URL = "postgres://u:secret-pw@ep-x.us-east-1.aws.neon.tech/db";
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      getDb();
+      const slot = (globalThis as Record<symbol, unknown>)[Symbol.for("jeeves.db.cachedDb")] as {
+        pool: { emit: (e: string, ...a: unknown[]) => boolean; options: { connectionTimeoutMillis?: number } };
+      };
+      expect(slot.pool.options.connectionTimeoutMillis).toBeGreaterThan(0);
+      expect(() => slot.pool.emit("error", new Error("terminating connection secret-pw"))).not.toThrow();
+      expect(JSON.stringify(log.mock.calls)).not.toContain("secret-pw");
+    } finally {
+      log.mockRestore();
+      await closeDb();
+    }
+  });
+});

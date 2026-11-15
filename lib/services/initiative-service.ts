@@ -29,6 +29,7 @@ import { evidenceForSignature, EvidenceError } from './evidence-service';
 import { currentAbstention, isResumableReviewStatus } from "../reviews/abstention";
 import { overlayFromStoredIntake } from "../intake/stored-overlay";
 import { createHash, randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { and, desc, eq, isNull } from "drizzle-orm";
 import type { Db } from "../db/client";
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
@@ -55,6 +56,7 @@ import { normalizeAdditionalAnswers } from "../intake/additional-questions";
 import { deriveTier } from "../triage/rules";
 import { requiredDomains } from "../triage/routing";
 import { fastLaneEligibility } from "../approval/eligibility";
+import { latestDeployment, operationalDeployment } from "../deployments/selection";
 import { reviewDecisionReadiness } from "../approval/review-readiness";
 import { applicabilityApplies } from "./applicability";
 import { enqueueReviewRequests } from "./notification-service";
@@ -279,9 +281,10 @@ async function latestIntakeVersion(
   const rows = await tx
     .select()
     .from(intakeVersions)
-    .where(eq(intakeVersions.initiativeId, initiativeId));
-  if (rows.length === 0) return null;
-  return rows.slice().sort((a, b) => b.version - a.version)[0]!;
+    .where(eq(intakeVersions.initiativeId, initiativeId))
+    .orderBy(desc(intakeVersions.version))
+    .limit(1);
+  return rows[0] ?? null;
 }
 
 async function firstIntakeVersion(
@@ -301,9 +304,10 @@ async function latestRiskAssessment(
   const rows = await tx
     .select()
     .from(riskAssessments)
-    .where(eq(riskAssessments.initiativeId, initiativeId));
-  if (rows.length === 0) return null;
-  return rows.slice().sort((a, b) => b.version - a.version)[0]!;
+    .where(eq(riskAssessments.initiativeId, initiativeId))
+    .orderBy(desc(riskAssessments.version))
+    .limit(1);
+  return rows[0] ?? null;
 }
 
 async function latestReviewCycle(
@@ -460,6 +464,10 @@ export async function updateIntakeDraft(
     const current = await latestIntakeVersion(tx, input.initiativeId);
     if (!current || current.submitted) throw new ConflictError("intake is no longer editable");
     if (current.version !== input.expectedVersion) throw new ConflictError(`draft changed concurrently (expected version ${input.expectedVersion})`);
+    // A repeated save of the same content must not append another full copy.
+    if (isDeepStrictEqual(JSON.parse(JSON.stringify(input.payload)), current.fields)) {
+      return { initiativeId: input.initiativeId, slug: initiative.slug, intakeVersionId: current.id, version: current.version, payload: input.payload };
+    }
     const nextVersion = current.version + 1;
     const completeness = evaluateCompleteness(input.payload);
     const intakeVersionId = `iv-${randomUUID()}`;
@@ -711,6 +719,7 @@ export async function triage(
   initiativeId: string,
   actor: Actor = SYSTEM_ACTOR,
   sessionWorkspaceId: string | null = null,
+  passedBy?: Actor,
 ): Promise<TriageFastLaneResult | TriageReviewResult> {
   return db.transaction(async (tx) => {
     const initiative = await loadInitiativeOrThrow(tx, initiativeId);
@@ -725,10 +734,30 @@ export async function triage(
     const domains = [...requiredDomains(tier, flags)].sort() as Domain[];
     const completeness = evaluateCompleteness(payload, tier);
 
-    // 1. triage transition: submitted -> triaged
+    // 1. triage transition: in_qc -> triaged. Checked here, before anything
+    // is written. The pass and the triage are one click, and the trail sorts
+    // by time, so the triage is stamped at least a millisecond after the pass.
+    const passTs = nowTs();
     const triageResult = transition(initiative.state as LifecycleState, "triage", actor, {
-      ts: nowTs(),
+      ts: passedBy ? Math.max(nowTs(), passTs + 1) : passTs,
     });
+    // The human who chose to pass QC (the route gates this to program/admin)
+    // is the accountable actor and comes first on the trail, recorded in the
+    // state the pass was made in; the triage transition itself stays `system`.
+    if (passedBy) {
+      await tx.insert(auditEvents).values({
+        id: `evt-${randomUUID()}`,
+        initiativeId,
+        ts: new Date(passTs),
+        actor: passedBy.id,
+        actorRole: passedBy.role,
+        action: "qc_passed",
+        detail: `QC passed by ${passedBy.id} (${passedBy.role}); routed to deterministic triage.`,
+        before: initiative.state,
+        after: initiative.state,
+        metadata: { passedBy: { id: passedBy.id, role: passedBy.role } },
+      });
+    }
     await updateInitiativeState(tx, initiativeId, initiative.state as LifecycleState, triageResult.after, {
       tier,
     });
@@ -758,6 +787,23 @@ export async function triage(
       createdAt: new Date(nowTs()),
     });
 
+    // Fast-lane eligibility is decided before any review rows exist: an
+    // approved fast-lane initiative gets an already-closed cycle and no pending
+    // review_decisions, matching the seeded shape.
+    // FL-2.1(2): an incomplete intake is never fast-lane eligible. `canSubmit`
+    // is BLOCKING-only, so also require no REQUIRED_FOR_TIER gap for this tier
+    // and an answered data-retention question. Anything else takes full review.
+    const intakeComplete =
+      completeness.gaps.every((g) => g.level === "ADVISORY") &&
+      payload.data.retentionIntent !== null &&
+      payload.data.retentionIntent !== undefined;
+    const eligibility = fastLaneEligibility({
+      tier,
+      intakeComplete,
+      flags,
+      policy: FAST_LANE_POLICY,
+    });
+
     // 3. review_cycle + pending review_decisions per required domain
     const cycleId = `cycle-${randomUUID()}`;
     await tx.insert(reviewCycles).values({
@@ -766,10 +812,10 @@ export async function triage(
       kind: "initial",
       riskAssessmentId,
       openedAt: new Date(nowTs()),
-      closedAt: null,
+      closedAt: eligibility.eligible ? new Date(nowTs()) : null,
       incidentId: null,
     });
-    for (const domain of domains) {
+    for (const domain of eligibility.eligible ? [] : domains) {
       await tx.insert(reviewDecisions).values({
         id: `rd-${randomUUID()}`,
         cycleId,
@@ -784,15 +830,35 @@ export async function triage(
       });
     }
 
-    // 4. fast-lane branch
-    const eligibility = fastLaneEligibility({
-      tier,
-      intakeComplete: completeness.canSubmit,
-      flags,
-      policy: FAST_LANE_POLICY,
-    });
-
+    // 4. fast-lane branch (eligibility was evaluated before step 3)
     if (eligibility.eligible) {
+      // Per-use record (FL-3.2 / FL-4.1): the criteria evaluated and their
+      // values at routing time, plus the policy version, as one snapshot that
+      // is also carried on the approval event below.
+      const eligibilitySnapshot = {
+        eligible: eligibility.eligible,
+        reasons: eligibility.reasons,
+        tier,
+        flags,
+        intakeComplete,
+        completenessPct: completeness.completenessPct,
+        gaps: completeness.gaps.map((g) => `${g.ruleId}:${g.level}`),
+        retentionAnswered: payload.data.retentionIntent !== null && payload.data.retentionIntent !== undefined,
+        policyId: FAST_LANE_POLICY.policyId,
+        policyVersion: FAST_LANE_POLICY.policyVersion,
+      };
+      await tx.insert(auditEvents).values({
+        id: `evt-${randomUUID()}`,
+        initiativeId,
+        ts: new Date(nowTs()),
+        actor: SYSTEM_ACTOR.id,
+        actorRole: SYSTEM_ACTOR.role,
+        action: "fast_lane_eligibility_computed",
+        detail: `Fast-lane eligibility computed under ${FAST_LANE_POLICY.policyId} ${FAST_LANE_POLICY.policyVersion}: eligible.`,
+        before: null,
+        after: null,
+        metadata: eligibilitySnapshot,
+      });
       const flResult = transition(triageResult.after, "fast_lane_approve", SYSTEM_ACTOR, {
         ts: nowTs(),
         policyId: FAST_LANE_POLICY.policyId,
@@ -806,7 +872,13 @@ export async function triage(
         initiativeId,
         flResult.auditEvent,
         `Fast-lane approved under standing authority ${FAST_LANE_POLICY.policyId}; named accountable approver ${FAST_LANE_POLICY.accountableApprover}.`,
-        { policyId: FAST_LANE_POLICY.policyId },
+        {
+          policyId: FAST_LANE_POLICY.policyId,
+          policyVersion: FAST_LANE_POLICY.policyVersion,
+          accountableApprover: FAST_LANE_POLICY.accountableApprover,
+          ...(passedBy ? { triggeredBy: { id: passedBy.id, role: passedBy.role } } : {}),
+          eligibility: eligibilitySnapshot,
+        },
       );
       await tx.insert(initiativeDecisions).values({
         id: `decision-${randomUUID()}`,
@@ -1166,6 +1238,12 @@ export interface DecideInput {
   decision: DecisionType;
   conditions?: { text: string; controlId: string }[];
   citations?: string[];
+  /**
+   * What the approver's page rendered. Optional: when present the decision is
+   * only recorded if the cycle and every review revision are still these.
+   */
+  expectedCycleId?: string;
+  expectedReviewRevisions?: Record<string, number>;
 }
 
 export interface DecideResult {
@@ -1208,6 +1286,9 @@ export async function decide(
   if (decision === "conditionally_approved" && conditions.length === 0) {
     throw new ValidationError("conditionally_approved requires at least one condition");
   }
+  if (decision !== "conditionally_approved" && conditions.length > 0) {
+    throw new ValidationError("conditions are only allowed on a conditionally_approved decision");
+  }
 
   return db.transaction(async (tx) => {
     const initiative = await loadInitiativeOrThrow(tx, initiativeId, true);
@@ -1231,6 +1312,14 @@ export async function decide(
       .from(riskAssessments)
       .where(and(eq(riskAssessments.id, cycle.riskAssessmentId), eq(riskAssessments.initiativeId, initiativeId)));
     const decisions = await tx.select().from(reviewDecisions).where(eq(reviewDecisions.cycleId, cycle.id));
+    if (input.expectedCycleId !== undefined && input.expectedCycleId !== cycle.id) {
+      throw new ConflictError(`the review cycle changed since this case was loaded (now ${cycle.id}); review the latest reviews`);
+    }
+    if (input.expectedReviewRevisions !== undefined) {
+      const seen = input.expectedReviewRevisions;
+      const stale = decisions.length !== Object.keys(seen).length || decisions.some((row) => seen[row.domain] !== row.revision);
+      if (stale) throw new ConflictError("the reviews changed since this case was loaded; review the latest reviews");
+    }
     const abstentionEvents = decisions.some(row => row.status === "abstained")
       ? await tx.select().from(auditEvents).where(and(eq(auditEvents.initiativeId, initiativeId), eq(auditEvents.action, "review_abstained")))
       : [];
@@ -1398,7 +1487,10 @@ async function generateEffectiveControlsInTx(
     .select()
     .from(deploymentVersions)
     .where(eq(deploymentVersions.initiativeId, initiativeId));
-  let deployment = deploymentRows.slice().sort((a, b) => b.deployedAt.getTime() - a.deployedAt.getTime())[0];
+  // Operational version first (pending promotion candidates are never
+  // operational); with none, the newest row of any status — a first-approval
+  // placeholder is itself awaiting promotion and must keep being reused.
+  let deployment = operationalDeployment(deploymentRows) ?? latestDeployment(deploymentRows) ?? undefined;
   if (!deployment) {
     const deploymentId = `dep-${randomUUID()}`;
     const ts = new Date(nowTs());

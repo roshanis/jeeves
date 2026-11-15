@@ -39,3 +39,18 @@ export function mutationWorkspaceMismatch(
 ): boolean {
   return resourceWorkspaceId !== sessionWorkspaceId;
 }
+
+/**
+ * Display-only twin of the mutation checks: true when a viewer with this
+ * workspace could not change the resource, so a screen should show it
+ * read-only instead of offering an action that will be refused. A mutation
+ * needs a session workspace (`runMutationGuard` refuses a session without
+ * one) and it must be the resource's own, so a viewer with no workspace can
+ * change nothing.
+ */
+export function viewerCannotMutate(
+  resourceWorkspaceId: string | null,
+  viewerWorkspaceId: string | null,
+): boolean {
+  return viewerWorkspaceId === null || mutationWorkspaceMismatch(resourceWorkspaceId, viewerWorkspaceId);
+}

@@ -23,6 +23,7 @@ import type { Actor } from "../domain/types";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { getDb } from "../db/client";
+import { redactDbError } from "../db/redact-error";
 import { sessions } from "../db/schema";
 import { READ_ONLY_PREVIEW_MESSAGE, resolveDataProviderMode } from "../data/provider-mode";
 
@@ -110,12 +111,18 @@ export async function issuePublicSession(
   // session token, stored in a column built to be read by humans.
   const personaKey = `${PUBLIC_PERSONA_PREFIX}${randomUUID()}`;
 
-  await getDb().insert(sessions).values({
-    token: session.token,
-    personaKey,
-    workspaceId,
-    expiresAt: session.expiresAt,
-  });
+  await getDb()
+    .insert(sessions)
+    .values({
+      token: session.token,
+      personaKey,
+      workspaceId,
+      expiresAt: session.expiresAt,
+    })
+    // The driver error embeds the bound token; never let it reach the log.
+    .catch((err: unknown) => {
+      throw redactDbError(err);
+    });
   return { token: session.token, workspaceId, expiresAt: session.expiresAt };
 }
 
@@ -242,12 +249,18 @@ export async function issueDemoSession(
 
   const session = issueSession({ ttlMs: SESSION_TTL_MS }, () => Date.now());
   const workspaceId = existingWorkspaceId ? existingWorkspaceId : session.workspaceId;
-  await getDb().insert(sessions).values({
-    token: session.token,
-    personaKey,
-    workspaceId,
-    expiresAt: session.expiresAt,
-  });
+  await getDb()
+    .insert(sessions)
+    .values({
+      token: session.token,
+      personaKey,
+      workspaceId,
+      expiresAt: session.expiresAt,
+    })
+    // The driver error embeds the bound token; never let it reach the log.
+    .catch((err: unknown) => {
+      throw redactDbError(err);
+    });
   return { token: session.token, workspaceId, expiresAt: session.expiresAt };
 }
 
@@ -280,11 +293,20 @@ export async function resolveSession(token: string | null): Promise<ResolvedSess
     })
     .from(sessions)
     .where(eq(sessions.token, token))
-    .limit(1);
+    .limit(1)
+    // The driver error embeds the bound token; never let it reach the log.
+    .catch((err: unknown) => {
+      throw redactDbError(err);
+    });
   if (!session) return { actor: null, workspaceId: null };
 
   if (session.expiresAt <= Date.now()) {
-    await getDb().delete(sessions).where(eq(sessions.token, token));
+    await getDb()
+      .delete(sessions)
+      .where(eq(sessions.token, token))
+      .catch((err: unknown) => {
+        throw redactDbError(err);
+      });
     return { actor: null, workspaceId: null };
   }
   return { actor: resolveActor(session.personaKey), workspaceId: session.workspaceId ?? null };
@@ -308,7 +330,7 @@ export async function resolveSessionActor(token: string | null): Promise<Actor |
 
 export function extractSessionToken(req: Request): string | null {
   const auth = req.headers.get("authorization");
-  if (auth?.startsWith("Bearer ")) {
+  if (auth && /^bearer /i.test(auth)) {
     return auth.slice("Bearer ".length).trim();
   }
   const cookieHeader = req.headers.get("cookie");
@@ -317,7 +339,14 @@ export function extractSessionToken(req: Request): string | null {
       .split(";")
       .map((p) => p.trim())
       .find((p) => p.startsWith(`${SESSION_COOKIE_NAME}=`));
-    if (match) return decodeURIComponent(match.slice(SESSION_COOKIE_NAME.length + 1));
+    if (match) {
+      // A stray "%" must read as "no session", not throw into a 500.
+      try {
+        return decodeURIComponent(match.slice(SESSION_COOKIE_NAME.length + 1));
+      } catch {
+        return null;
+      }
+    }
   }
   return null;
 }
@@ -502,6 +531,17 @@ export async function runMutationGuard(
   }
 
   return { ok: true, actor, workspaceId };
+}
+
+/**
+ * Reserve daily LLM budget after a route has authenticated, role-checked and
+ * validated the request and sized the real prompt, so refused or malformed
+ * calls never spend the shared cap. Returns a failure when the cap is spent.
+ */
+export async function reserveDailyBudget(tokens: number, day: string = todayUtc()): Promise<GuardFailure | null> {
+  const result = await reserve(budgetStore, day, tokens, DAILY_TOKEN_CAP);
+  if (result.granted) return null;
+  return { kind: "budget_exhausted", status: 429, message: "demo token budget exhausted for today" };
 }
 
 /** Exposed for tests that want to exhaust/reset the shared budget deterministically. */

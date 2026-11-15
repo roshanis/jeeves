@@ -9,6 +9,7 @@ import { createTestDb, closeTestDb, type TestDb } from "@/lib/db/test-client";
 import { seedDatabase } from "@/scripts/seed";
 import { controlDefinitions, deploymentVersions, effectiveControls, sessions } from "@/lib/db/schema";
 import { createDraft } from "@/lib/services/initiative-service";
+import * as exceptionService from "@/lib/services/exception-service";
 import { CHAMPION_PREFILL_PAYLOAD } from "@/lib/intake/champion-prefill";
 import { resolveWorkspaceCookieSecret, signWorkspaceId } from "@/lib/security/workspace-cookie";
 
@@ -162,6 +163,68 @@ describe("POST /api/exceptions (request)", () => {
     const listRes = await GET(new Request("http://localhost/api/exceptions"));
     expect(listRes.status).toBe(200);
     expect((await listRes.json()).exceptions.length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe("duplicate-pending mapping on request and renew (api-initiatives-F13)", () => {
+  const unique = (): Error => Object.assign(new Error("x"), { code: "23505" });
+  const wrappedUnique = (): Error => Object.assign(new Error("x"), { cause: { code: "23505" } });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  async function callRequest(token: string, ip: string): Promise<Response> {
+    const { POST } = await import("../route");
+    return POST(
+      new Request("http://localhost/api/exceptions", {
+        method: "POST",
+        headers: bearer(token, ip),
+        body: JSON.stringify({ effectiveControlId: "ec-any", reason: "Vendor attestation renewal in progress." }),
+      }),
+    );
+  }
+
+  async function callRenew(token: string, ip: string): Promise<Response> {
+    const { POST } = await import("../[id]/renew/route");
+    return POST(
+      new Request("http://localhost/api/exceptions/exc-any/renew", {
+        method: "POST",
+        headers: bearer(token, ip),
+        body: JSON.stringify({ reason: "Still in progress." }),
+      }),
+      { params: Promise.resolve({ id: "exc-any" }) },
+    );
+  }
+
+  it.each([
+    ["a unique violation on the error", unique],
+    ["a unique violation on its cause", wrappedUnique],
+  ])("409s POST /api/exceptions on %s", async (_name, make) => {
+    const token = await issueSessionFor("marcus-webb", "40.0.9.1");
+    vi.spyOn(exceptionService, "requestException").mockRejectedValue(make());
+    const res = await callRequest(token, "40.0.9.1");
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toBe("an exception is already pending for this control");
+  });
+
+  it.each([
+    ["a unique violation on the error", unique],
+    ["a unique violation on its cause", wrappedUnique],
+  ])("409s POST /api/exceptions/[id]/renew on %s", async (_name, make) => {
+    const token = await issueSessionFor("marcus-webb", "40.0.9.2");
+    vi.spyOn(exceptionService, "renewException").mockRejectedValue(make());
+    const res = await callRenew(token, "40.0.9.2");
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toBe("an exception is already pending for this control");
+  });
+
+  it("rethrows an unexpected error from request and renew", async () => {
+    const token = await issueSessionFor("marcus-webb", "40.0.9.3");
+    vi.spyOn(exceptionService, "requestException").mockRejectedValue(new Error("boom"));
+    vi.spyOn(exceptionService, "renewException").mockRejectedValue(new Error("boom"));
+    await expect(callRequest(token, "40.0.9.3")).rejects.toThrow("boom");
+    await expect(callRenew(token, "40.0.9.3")).rejects.toThrow("boom");
   });
 });
 

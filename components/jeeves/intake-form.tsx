@@ -29,6 +29,7 @@ import {
   type CompletenessGap,
 } from "@/lib/intake/completeness";
 import { SAMPLE_INITIATIVE_PAYLOAD } from "@/lib/intake/champion-prefill";
+import { INTAKE_LIMITS } from "@/lib/intake/schema";
 import { previewTier } from "@/lib/client/tier-preview";
 import {
   createInitiative,
@@ -146,12 +147,14 @@ function TextField({
   onChange,
   type = "text",
   hint,
+  maxLength,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   type?: string;
   hint?: string;
+  maxLength?: number;
 }) {
   return (
     <label className="flex flex-col gap-1 text-sm">
@@ -159,6 +162,7 @@ function TextField({
       <input
         type={type}
         value={value}
+        maxLength={maxLength}
         onChange={(e) => onChange(e.target.value)}
         className={inputClass}
       />
@@ -172,18 +176,57 @@ function TextAreaField({
   value,
   onChange,
   hint,
+  maxLength,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   hint?: string;
+  maxLength?: number;
 }) {
   return (
     <label className="flex flex-col gap-1 text-sm">
       <span className="font-medium">{label}</span>
-      <textarea value={value} onChange={(e) => onChange(e.target.value)} className={textareaClass} />
+      <textarea value={value} maxLength={maxLength} onChange={(e) => onChange(e.target.value)} className={textareaClass} />
       {hint ? <span className="text-xs text-muted-foreground">{hint}</span> : null}
     </label>
+  );
+}
+
+function splitLines(text: string): string[] {
+  return text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+}
+
+// One-per-line list field. The raw text lives here so spaces and line breaks
+// survive while typing; the parent only ever sees the trimmed entries. When
+// the entries change from outside (a sample prefill) the text is resynced.
+function LinesField({
+  label,
+  values,
+  onChange,
+}: {
+  label: string;
+  values: string[];
+  onChange: (entries: string[]) => void;
+}) {
+  const [text, setText] = React.useState(values.join("\n"));
+  const [seen, setSeen] = React.useState(values);
+  if (seen !== values) {
+    setSeen(values);
+    if (splitLines(text).join("\n") !== values.join("\n")) setText(values.join("\n"));
+  }
+  return (
+    <TextAreaField
+      label={label}
+      value={text}
+      onChange={(v) => {
+        setText(v);
+        onChange(splitLines(v));
+      }}
+    />
   );
 }
 
@@ -258,12 +301,14 @@ const GAP_LEVEL_CLASS: Record<CompletenessGap["level"], string> = {
  * The form
  * ---------------------------------------------------------------------- */
 
-export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: initialInitiativeId, initialVersion, initialSlug }: {
+export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: initialInitiativeId, initialVersion, initialSlug, realRequestsEnabled = true }: {
   initialPayload?: IntakePayload;
   onPayloadChange?: (payload: IntakePayload) => void;
   initiativeId?: string;
   initialVersion?: number;
   initialSlug?: string;
+  /** False when no operator queue is configured: nobody could read a real request, so that door is not offered. */
+  realRequestsEnabled?: boolean;
 } = {}) {
   const router = useRouter();
   const { session, logout, startDemo, startPublicSession, pending } = useLiveSession();
@@ -303,13 +348,6 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
   // is supplied and this is false from the start, which is right: a loaded
   // draft is not a pristine blank form.
   const pristine = payload === EMPTY_PAYLOAD;
-
-  function splitLines(text: string): string[] {
-    return text
-      .split("\n")
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0);
-  }
 
   function loadChampion() {
     if (onPayloadChange) onPayloadChange(SAMPLE_INITIATIVE_PAYLOAD);
@@ -352,7 +390,20 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
             session.token,
             creationPayload.current ?? payload,
             requestId.current,
-          );
+          ).catch((err: unknown) => {
+            // A definitive rejection (not a lost response, 5xx or 429) means
+            // nothing was created: the next attempt must send what the user
+            // has now, under a fresh idempotency key. 409 is in the list on
+            // purpose: for a create it means the key was already used with a
+            // different payload, so replaying the pinned key and payload would
+            // repeat the 409 forever. A fresh key can leave an earlier draft
+            // behind in the visitor's own workspace, which is the lesser problem.
+            if (isApiError(err) && [400, 403, 404, 409, 413, 422].includes(err.status)) {
+              requestId.current = null;
+              creationPayload.current = null;
+            }
+            throw err;
+          });
       if (!initiativeId && JSON.stringify(creationPayload.current) !== JSON.stringify(payload)) {
         created = await updateIntakeDraft(
           session.token,
@@ -415,11 +466,13 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
       <div className="flex flex-col gap-4">
         {!session ? (
           <Alert>
-            <AlertTitle>Try it, or send a real request</AlertTitle>
+            <AlertTitle>{realRequestsEnabled ? "Try it, or send a real request" : "Try the demo"}</AlertTitle>
             <AlertDescription className="flex flex-col items-start gap-2.5">
-              <span>
-                There are two ways in, and they go to different places.
-              </span>
+              {realRequestsEnabled ? (
+                <span>
+                  There are two ways in, and they go to different places.
+                </span>
+              ) : null}
               <div className="flex flex-col gap-1.5">
                 <span>
                   <span className="font-medium text-foreground">Try the demo</span>{" "}
@@ -427,11 +480,13 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
                   and approve it yourself. It stays in your own sandbox;
                   nobody else sees it.
                 </span>
-                <span>
-                  <span className="font-medium text-foreground">Send a real request</span>{" "}
-                  — it goes to the team running this site, who read every one
-                  and reply by email to the address you give.
-                </span>
+                {realRequestsEnabled ? (
+                  <span>
+                    <span className="font-medium text-foreground">Send a real request</span>{" "}
+                    — it goes to the team running this site, who read every one
+                    and reply by email to the address you give.
+                  </span>
+                ) : null}
               </div>
               {/* Said plainly because strangers are about to type into a form
                   themed as a healthcare payer's intake. This is a synthetic
@@ -450,16 +505,18 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
                 >
                   Start the demo
                 </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  onClick={() => void handleStartPublic()}
-                  disabled={pending}
-                  data-slot="start-public-request"
-                >
-                  Send a real request
-                </Button>
+                {realRequestsEnabled ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => void handleStartPublic()}
+                    disabled={pending}
+                    data-slot="start-public-request"
+                  >
+                    Send a real request
+                  </Button>
+                ) : null}
               </div>
             </AlertDescription>
           </Alert>
@@ -501,16 +558,19 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
             <CardContent className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <TextField
                 label="Initiative title"
+                maxLength={INTAKE_LIMITS.short}
                 value={payload.basics.title}
                 onChange={(v) => patch((p) => ({ ...p, basics: { ...p.basics, title: v } }))}
               />
               <TextField
                 label="Sponsor organization"
+                maxLength={INTAKE_LIMITS.short}
                 value={payload.basics.sponsorOrg}
                 onChange={(v) => patch((p) => ({ ...p, basics: { ...p.basics, sponsorOrg: v } }))}
               />
               <TextField
                 label="Requester name"
+                maxLength={INTAKE_LIMITS.short}
                 value={payload.basics.requesterName}
                 onChange={(v) =>
                   patch((p) => ({ ...p, basics: { ...p.basics, requesterName: v } }))
@@ -518,6 +578,7 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
               />
               <TextField
                 label="Requester email"
+                maxLength={INTAKE_LIMITS.line}
                 type="email"
                 value={payload.basics.requesterEmail}
                 onChange={(v) =>
@@ -527,6 +588,7 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
               <div className="sm:col-span-2">
                 <TextAreaField
                   label="Business problem"
+                  maxLength={INTAKE_LIMITS.businessProblem}
                   value={payload.basics.businessProblem}
                   hint="Describe the problem being solved, not the solution (20–2000 chars)."
                   onChange={(v) =>
@@ -544,6 +606,7 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
             <CardContent className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <TextField
                 label="Who uses it"
+                maxLength={INTAKE_LIMITS.line}
                 value={payload.useCase.primaryUsers}
                 onChange={(v) =>
                   patch((p) => ({ ...p, useCase: { ...p.useCase, primaryUsers: v } }))
@@ -551,6 +614,7 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
               />
               <TextField
                 label="Decision it informs"
+                maxLength={INTAKE_LIMITS.medium}
                 value={payload.useCase.decisionInformed}
                 hint="Name the concrete decision (e.g. coverage approval/denial recommendation)."
                 onChange={(v) =>
@@ -578,11 +642,10 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
               <CardTitle className="text-sm">Data</CardTitle>
             </CardHeader>
             <CardContent className="grid grid-cols-1 gap-3">
-              <TextAreaField
+              <LinesField
                 label="Data source(s) — one per line"
-                value={payload.data.dataSources.join("\n")}
-                onChange={(v) => {
-                  const entries = splitLines(v);
+                values={payload.data.dataSources}
+                onChange={(entries) => {
                   patch((p) => ({ ...p, data: { ...p.data, dataSources: entries } }));
                 }}
               />
@@ -614,6 +677,7 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
               {payload.data.phiCategories.includes("Other") ? (
                 <TextField
                   label="Other PHI category"
+                  maxLength={INTAKE_LIMITS.line}
                   value={payload.data.phiCategoriesOtherText ?? ""}
                   onChange={(v) =>
                     patch((p) => ({
@@ -634,6 +698,7 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
                 />
                 <TextField
                   label="Retention note (optional)"
+                  maxLength={INTAKE_LIMITS.medium}
                   value={payload.data.retentionIntentNote ?? ""}
                   onChange={(v) =>
                     patch((p) => ({
@@ -674,6 +739,7 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
               />
               <TextField
                 label="Vendor name"
+                maxLength={INTAKE_LIMITS.short}
                 value={payload.modelVendor.vendorName ?? ""}
                 onChange={(v) =>
                   patch((p) => ({
@@ -706,11 +772,10 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
               <CardTitle className="text-sm">Population &amp; impact</CardTitle>
             </CardHeader>
             <CardContent className="grid grid-cols-1 gap-3">
-              <TextAreaField
+              <LinesField
                 label="Affected populations — one per line"
-                value={payload.populationImpact.affectedPopulations.join("\n")}
-                onChange={(v) => {
-                  const entries = splitLines(v);
+                values={payload.populationImpact.affectedPopulations}
+                onChange={(entries) => {
                   patch((p) => ({
                     ...p,
                     populationImpact: { ...p.populationImpact, affectedPopulations: entries },
@@ -719,6 +784,7 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
               />
               <TextAreaField
                 label="Expected benefits"
+                maxLength={INTAKE_LIMITS.long}
                 value={payload.populationImpact.expectedBenefits ?? ""}
                 onChange={(v) =>
                   patch((p) => ({
@@ -732,6 +798,7 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
               />
               <TextAreaField
                 label="Expected harms / risks"
+                maxLength={INTAKE_LIMITS.long}
                 value={payload.populationImpact.expectedHarms ?? ""}
                 hint="Must be distinct from expected benefits."
                 onChange={(v) =>
@@ -757,11 +824,10 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
               <CardTitle className="text-sm">Deployment</CardTitle>
             </CardHeader>
             <CardContent className="grid grid-cols-1 gap-3">
-              <TextAreaField
+              <LinesField
                 label="Integration points — one per line"
-                value={payload.deployment.integrationPoints.join("\n")}
-                onChange={(v) => {
-                  const entries = splitLines(v);
+                values={payload.deployment.integrationPoints}
+                onChange={(entries) => {
                   patch((p) => ({
                     ...p,
                     deployment: { ...p.deployment, integrationPoints: entries },
@@ -770,6 +836,7 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
               />
               <TextAreaField
                 label="Rollout plan"
+                maxLength={INTAKE_LIMITS.long}
                 value={payload.deployment.rolloutPlan ?? ""}
                 onChange={(v) =>
                   patch((p) => ({

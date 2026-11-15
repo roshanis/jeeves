@@ -16,19 +16,24 @@
  *
  * Body:  (none)
  * 200:   { token, workspaceId, expiresAt }
+ * 404:   { error }  (no operator queue configured — nobody could read what
+ *                    a visitor sends, so the door stays closed)
  * 429:   { error }  (per-client mint ceiling — the rate at which one caller
  *                    can acquire identities, and so write rows)
  * 404:   production mode — no `public` session can exist there, and the door
  *        answers before it touches the rate limiter or the database.
  */
 import { demoDoorClosed, demoDoorFallbacks } from "@/lib/config/demo-doors";
-import { clientKeyFor, issuePublicSession } from "@/lib/services/route-guard";
+import { clientKeyFor, configuredOperatorToken, issuePublicSession } from "@/lib/services/route-guard";
 
 export const { GET, HEAD, PUT, PATCH, DELETE, OPTIONS } = demoDoorFallbacks("POST");
 
 export async function POST(req: Request): Promise<Response> {
   const closed = demoDoorClosed();
   if (closed) return closed;
+  if (!configuredOperatorToken()) {
+    return Response.json({ error: "not found" }, { status: 404, headers: { "Cache-Control": "no-store" } });
+  }
 
   const result = await issuePublicSession(clientKeyFor(req));
 

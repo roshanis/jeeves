@@ -59,6 +59,17 @@ describe("IntakeForm — two ways in", () => {
     expect(screen.getByText(/goes to the team running this site/i)).toBeDefined();
   });
 
+  it("hides the real-request door when the operator queue is off", () => {
+    renderWithProviders(
+      <LiveSessionProvider>
+        <IntakeForm realRequestsEnabled={false} />
+      </LiveSessionProvider>,
+    );
+    expect(screen.getByRole("button", { name: /start the demo/i })).toBeDefined();
+    expect(screen.queryByRole("button", { name: /send a real request/i })).toBeNull();
+    expect(screen.queryByText(/goes to the team running this site/i)).toBeNull();
+  });
+
   it("mentions no passcode — there isn't one any more", () => {
     render();
     expect(screen.queryByText(/passcode/i)).toBeNull();

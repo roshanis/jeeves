@@ -383,6 +383,16 @@ describe("exception-service", () => {
    * hardcoded status on every transition.
    * -------------------------------------------------------------------- */
   describe("renewal supersession and derived control status (external-review finding #5)", () => {
+    it("a second renewal while one is pending is a ValidationError, not a unique-index violation", async () => {
+      const { ecId } = await anEffectiveControl();
+      const original = await svc.requestException(db, ecId, REQUESTER, null, "original reason");
+      await svc.decideException(db, original.id, APPROVER, null, true, "granted");
+      await svc.renewException(db, original.id, REQUESTER, null, "first renewal");
+      await expect(svc.renewException(db, original.id, REQUESTER, null, "second renewal")).rejects.toThrow(
+        ValidationError,
+      );
+    });
+
     it("rejecting a renewal leaves the control 'exception_requested' — the original approved exception is still active, NOT 'overdue'", async () => {
       const { ecId } = await anEffectiveControl();
       const original = await svc.requestException(db, ecId, REQUESTER, null, "original reason");
@@ -783,6 +793,26 @@ describe("exception-service", () => {
       // The seeded exception has a null initiativeId (or a null-workspace
       // initiative) and stays visible to every viewer, including anonymous.
       expect(anonymous.some((r) => r.id === "exc-seed-hr-r01")).toBe(true);
+    });
+
+    it("isShared means the viewer cannot act on the row (api-initiatives-F11)", async () => {
+      const { ecId: ecA } = await anEffectiveControlInWorkspace("ws-A");
+      await svc.requestException(db, ecA, REQUESTER, "ws-A", "ws-A reason");
+
+      // A row without an owning workspace is shared for a viewer who has one.
+      const asWsA = await svc.listExceptions(db, undefined, { viewerWorkspaceId: "ws-A" });
+      expect(asWsA.find((r) => r.id === "exc-seed-hr-r01")!.isShared).toBe(true);
+      // A viewer's own workspace row is theirs to act on.
+      expect(asWsA.find((r) => r.reason === "ws-A reason")!.isShared).toBe(false);
+
+      // A viewer with no workspace (a first visit, before any session) can
+      // change nothing: every mutation needs a session workspace.
+      const anonymous = await svc.listExceptions(db, undefined, { viewerWorkspaceId: null });
+      expect(anonymous.find((r) => r.id === "exc-seed-hr-r01")!.isShared).toBe(true);
+
+      // Unfiltered internal read: nothing is labelled shared.
+      const all = await svc.listExceptions(db);
+      expect(all.every((r) => r.isShared === false)).toBe(true);
     });
   });
 });

@@ -1,4 +1,5 @@
 /** Prompt loading/building, input checks, and provider-neutral error mapping. */
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
@@ -160,6 +161,35 @@ export function providerFailure(
   return { kind: "provider", message, retryable };
 }
 
+/**
+ * Provider/SDK error text can carry organisation ids, key suffixes, model
+ * names or internal hosts, and PortFailure messages reach clients and are
+ * stored on review rows. Return a fixed message by status class and log the
+ * original server-side under a correlation id.
+ */
+export function sanitizedProviderFailure(
+  err: unknown,
+  status: number | undefined,
+  retryable: boolean,
+): PortFailure {
+  const ref = randomUUID().slice(0, 8);
+  // Log safe fields only: SDK errors carry requestBodyValues (the full prompt,
+  // including intake text and requester PII) and responseBody.
+  console.error(`[agent-provider-error ${ref}]`, {
+    name: err instanceof Error ? err.name : typeof err,
+    status,
+    message: err instanceof Error ? err.message : undefined,
+  });
+  const text =
+    status === 401 || status === 403 ? "The model provider rejected the credentials."
+    : status === 404 ? "The model provider could not find the configured model."
+    : status === 429 ? "The model provider is rate limiting requests."
+    : status !== undefined && status >= 500 ? "The model provider is temporarily unavailable."
+    : status !== undefined ? "The model provider rejected the request."
+    : "The model provider call failed.";
+  return providerFailure(`${text} (ref ${ref})`, retryable);
+}
+
 export function cancelledFailure(reason?: string): PortFailure {
   return reason === undefined
     ? { kind: "cancelled" }
@@ -214,7 +244,7 @@ export function buildDraftReviewPrompt(
   const prompt = JSON.stringify({
     reviewCycleId: input.reviewCycleId,
     domain: input.domain,
-    intake: input.intake,
+    untrustedRequesterInput: input.intake,
     policyContext: input.policyContext ?? [],
   });
 

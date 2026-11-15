@@ -1,6 +1,6 @@
 import { createRequire } from "node:module";
 import { describe, expect, it } from "vitest";
-import { migrationDatabaseUrl, postgresPoolConfig } from "./connection-config";
+import { migrationDatabaseUrl, migrationPoolConfig, postgresPoolConfig } from "./connection-config";
 
 const pooled = "postgresql://user:example@aws-0-example.pooler.supabase.com:6543/postgres";
 const direct = "postgresql://user:example@db.example.supabase.co:5432/postgres";
@@ -97,5 +97,88 @@ describe("DATABASE_SSL_CA on non-Supabase hosts", () => {
     const params = new ConnectionParameters(postgresPoolConfig(`${rds}?sslmode=require`, ca));
     expect(params.ssl.ca).toBe(ca);
     expect(params.ssl.rejectUnauthorized).toBe(true);
+  });
+});
+
+describe("runtime and migration pool limits", () => {
+  const generic = "postgresql://user:example@db.internal.example:5432/jeeves";
+
+  it("sets statement and idle-in-transaction timeouts and an application name", () => {
+    const config = postgresPoolConfig(generic, undefined, {});
+    expect(config.statement_timeout).toBe(60_000);
+    expect(config.idle_in_transaction_session_timeout).toBe(60_000);
+    expect(config.application_name).toBeTruthy();
+    expect(config.keepAlive).toBe(true);
+    expect(config.max).toBeUndefined();
+  });
+
+  it("takes a valid DATABASE_POOL_MAX and ignores an invalid one", () => {
+    expect(postgresPoolConfig(generic, undefined, { DATABASE_POOL_MAX: "4" }).max).toBe(4);
+    expect(postgresPoolConfig(generic, undefined, { DATABASE_POOL_MAX: "0" }).max).toBeUndefined();
+    expect(postgresPoolConfig(generic, undefined, { DATABASE_POOL_MAX: "abc" }).max).toBeUndefined();
+  });
+
+  it("keeps the Supabase pool at one connection whatever DATABASE_POOL_MAX says", () => {
+    expect(postgresPoolConfig(pooled, undefined, { DATABASE_POOL_MAX: "8" }).max).toBe(1);
+  });
+
+  it("gives the migration connection a lock_timeout and no statement_timeout", () => {
+    const config = migrationPoolConfig(generic, undefined, {});
+    expect(config.lock_timeout).toBe(10_000);
+    // Its own key, not `options`: a URL may carry its own options, and the URL's value wins in node-postgres.
+    expect(config).not.toHaveProperty("options");
+    expect(config).not.toHaveProperty("statement_timeout");
+    expect(config).not.toHaveProperty("idle_in_transaction_session_timeout");
+    expect(config.max).toBe(1);
+    expect(migrationPoolConfig(generic, undefined, { DATABASE_MIGRATION_LOCK_TIMEOUT_MS: "2500" }).lock_timeout)
+      .toBe(2500);
+  });
+
+  it("turns a timeout off with an explicit 0, so the parameter is not sent at all", () => {
+    // A pooler such as PgBouncer refuses a connection that carries a startup
+    // parameter it does not track; without an off switch such an install could not connect.
+    const off = postgresPoolConfig(generic, undefined, {
+      DATABASE_STATEMENT_TIMEOUT_MS: "0", DATABASE_IDLE_IN_TRANSACTION_TIMEOUT_MS: " 0 " });
+    expect(off).not.toHaveProperty("statement_timeout");
+    expect(off).not.toHaveProperty("idle_in_transaction_session_timeout");
+
+    const one = postgresPoolConfig(generic, undefined, { DATABASE_STATEMENT_TIMEOUT_MS: "0" });
+    expect(one).not.toHaveProperty("statement_timeout");
+    expect(one.idle_in_transaction_session_timeout).toBe(60_000);
+
+    expect(migrationPoolConfig(generic, undefined, { DATABASE_MIGRATION_LOCK_TIMEOUT_MS: "0" }))
+      .not.toHaveProperty("lock_timeout");
+  });
+
+  it.each(["abc", "-5", "1.5", "0x10", " "])("keeps the default for a timeout that is not whole milliseconds: %j", (bad) => {
+    const config = postgresPoolConfig(generic, undefined, {
+      DATABASE_STATEMENT_TIMEOUT_MS: bad, DATABASE_IDLE_IN_TRANSACTION_TIMEOUT_MS: bad });
+    expect(config.statement_timeout).toBe(60_000);
+    expect(config.idle_in_transaction_session_timeout).toBe(60_000);
+    expect(migrationPoolConfig(generic, undefined, { DATABASE_MIGRATION_LOCK_TIMEOUT_MS: bad }).lock_timeout).toBe(10_000);
+  });
+
+  it("sends no new startup parameter to Supabase, for migrations either", () => {
+    const config = migrationPoolConfig(direct, undefined, { DATABASE_MIGRATION_LOCK_TIMEOUT_MS: "2500" });
+    expect(config).not.toHaveProperty("lock_timeout");
+    expect(config).not.toHaveProperty("options");
+    expect(config).not.toHaveProperty("statement_timeout");
+    expect(config).toMatchObject({ max: 1, ssl: { rejectUnauthorized: true } });
+  });
+
+  it("puts exactly these parameters in the startup packet node-postgres sends", () => {
+    const { Client } = createRequire(import.meta.url)("pg");
+    const startup = (config: object): Record<string, string> => new Client(config).getStartupConf();
+
+    expect(startup(postgresPoolConfig(generic, undefined, {}))).toEqual({
+      user: "user", database: "jeeves", application_name: "jeeves",
+      statement_timeout: "60000", idle_in_transaction_session_timeout: "60000",
+    });
+    expect(startup(postgresPoolConfig(generic, undefined, {
+      DATABASE_STATEMENT_TIMEOUT_MS: "0", DATABASE_IDLE_IN_TRANSACTION_TIMEOUT_MS: "0" })))
+      .toEqual({ user: "user", database: "jeeves", application_name: "jeeves" });
+    expect(startup(migrationPoolConfig(generic, undefined, {})))
+      .toEqual({ user: "user", database: "jeeves", application_name: "jeeves", lock_timeout: "10000" });
+    expect(startup(migrationPoolConfig(direct, undefined, {}))).toEqual({ user: "user", database: "postgres" });
   });
 });

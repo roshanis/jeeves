@@ -237,6 +237,7 @@ describe("lib/services/promotion-service", () => {
         requesterName: "Priya Raman",
         workspaceId,
       });
+      await db.update(initiatives).set({ state: "deployed" }).where(eq(initiatives.id, draft.initiativeId));
       const deployedId = `dep-current-${randomUUID()}`;
       const awaitingId = `dep-awaiting-${randomUUID()}`;
       await db.insert(deploymentVersions).values({
@@ -840,6 +841,74 @@ describe("lib/services/promotion-service", () => {
       const rows = await db.select().from(deploymentVersions).where(eq(deploymentVersions.initiativeId, initiativeId));
       expect(rows.find((d) => d.id === currentId)!.status).toBe("deployed"); // unchanged
       expect(rows.find((d) => d.id === priorId)!.status).toBe("retired"); // unchanged
+    });
+  });
+
+  describe("lifecycle state guard (api-ops-F1, domain-F2)", () => {
+    const REASON = "Approver attests the feedback provenance for this checkpoint.";
+
+    it.each(["paused", "re_review"])(
+      "promoteCheckpoint refuses with ConflictError while the initiative is %s and leaves rows unchanged",
+      async (state) => {
+        const initiativeId = await paCorrespondenceModelId(db);
+        const v21Id = await v21DeploymentId(db, initiativeId);
+        await db.update(initiatives).set({ state }).where(eq(initiatives.id, initiativeId));
+        const before = await db.select().from(deploymentVersions).where(eq(deploymentVersions.initiativeId, initiativeId));
+
+        await expect(promoteCheckpoint(db, v21Id, APPROVER, null, FULL_ATTESTATION, REASON)).rejects.toThrow(
+          ConflictError,
+        );
+
+        const after = await db.select().from(deploymentVersions).where(eq(deploymentVersions.initiativeId, initiativeId));
+        expect(after.map((d) => [d.id, d.status]).sort()).toEqual(before.map((d) => [d.id, d.status]).sort());
+      },
+    );
+
+    it.each(["paused", "re_review"])(
+      "rollbackDeployment refuses with ConflictError while the initiative is %s and leaves rows unchanged",
+      async (state) => {
+        const initiativeId = await paCorrespondenceModelId(db);
+        const rows = await db.select().from(deploymentVersions).where(eq(deploymentVersions.initiativeId, initiativeId));
+        const priorId = rows.find((d) => d.status === "retired")!.id;
+        await db.update(initiatives).set({ state }).where(eq(initiatives.id, initiativeId));
+
+        await expect(rollbackDeployment(db, initiativeId, APPROVER, null, priorId, REASON)).rejects.toThrow(
+          ConflictError,
+        );
+
+        const after = await db.select().from(deploymentVersions).where(eq(deploymentVersions.initiativeId, initiativeId));
+        expect(after.map((d) => [d.id, d.status]).sort()).toEqual(rows.map((d) => [d.id, d.status]).sort());
+      },
+    );
+
+    it("promoteCheckpoint refuses a first-approval placeholder of an initiative that is not deployed", async () => {
+      const draft = await createDraft(db, {
+        payload: CHAMPION_PREFILL_PAYLOAD,
+        requesterActor: { id: "priya-raman", role: "requester" },
+        requesterName: "Priya Raman",
+        workspaceId: null,
+      });
+      await db.update(initiatives).set({ state: "conditionally_approved" }).where(eq(initiatives.id, draft.initiativeId));
+      const placeholderId = `dep-placeholder-${randomUUID()}`;
+      await db.insert(deploymentVersions).values({
+        id: placeholderId,
+        initiativeId: draft.initiativeId,
+        version: "v1.0",
+        status: "awaiting_promotion_signoff",
+        modelVersion: null,
+        selfHosted: false,
+        feedbackProvenanceSignedOff: false,
+        deployedAt: new Date(),
+        pausedAt: null,
+        retiredAt: null,
+      });
+
+      expect((await listPromotions(db)).find((p) => p.deploymentVersionId === placeholderId)).toBeUndefined();
+      await expect(promoteCheckpoint(db, placeholderId, APPROVER, null, FULL_ATTESTATION, REASON)).rejects.toThrow(
+        ValidationError,
+      );
+      const [row] = await db.select().from(deploymentVersions).where(eq(deploymentVersions.id, placeholderId));
+      expect(row!.status).toBe("awaiting_promotion_signoff");
     });
   });
 });

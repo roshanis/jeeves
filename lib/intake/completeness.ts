@@ -44,7 +44,7 @@ export interface CompletenessResult {
 
 function isNonEmptyStringInRange(value: string | null | undefined, min: number, max: number): boolean {
   if (typeof value !== "string") return false;
-  const len = value.length;
+  const len = value.trim().length;
   return len >= min && len <= max;
 }
 

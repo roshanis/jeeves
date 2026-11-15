@@ -27,7 +27,7 @@ Podman-specific.
 
 ```bash
 cd deploy/podman
-cp env.example .env          # then edit: set POSTGRES_PASSWORD and DEMO_PASSCODE (deprecated, still required by compose)
+cp env.example .env          # then edit: set POSTGRES_PASSWORD and JEEVES_COOKIE_SECRET
 podman compose up -d --build
 podman compose run --rm migrate      # create the schema
 podman compose run --rm seed         # load the synthetic demo data
@@ -38,9 +38,15 @@ Then open `http://localhost:3000`.
 The stack runs the demo: `compose.yaml` and the Quadlet unit set
 `JEEVES_MODE=demo`. The deployment mode defaults to **production** when unset,
 which refuses to boot without `APP_BASE_URL`, `JEEVES_TENANT_ID` and a 32+
-character `JEEVES_COOKIE_SECRET`, so do not remove the variable. Set
-`JEEVES_COOKIE_SECRET` (`openssl rand -hex 32`) in `.env`; if it is blank a key
-derived from `DEMO_PASSCODE` is used (deprecated).
+character `JEEVES_COOKIE_SECRET`, so do not remove the variable.
+`JEEVES_COOKIE_SECRET` (`openssl rand -hex 32`) is required in `.env`: compose
+stops with a clear error while it is blank.
+
+`OPERATOR_TOKEN` in `.env` (32+ characters, `openssl rand -hex 32`) is optional.
+It opens the "Send a real request" door and the `/operator` queue that reads
+those requests. While it is unset the door is closed: visitors are not offered
+it, because nobody could read what they sent. The Quadlet units pick it up from
+`jeeves.env` the same way.
 
 `podman compose` needs a compose provider (Podman 4.7+ shells out to
 `docker-compose` or `podman-compose`). If you would rather not have one, use
@@ -109,7 +115,7 @@ podman build -f deploy/podman/Containerfile --target migrator \
 mkdir -p ~/.config/containers/systemd
 cp deploy/podman/quadlet/* ~/.config/containers/systemd/
 cp deploy/podman/env.example ~/.config/containers/systemd/jeeves.env
-chmod 600 ~/.config/containers/systemd/jeeves.env    # it holds the passwords
+chmod 600 ~/.config/containers/systemd/jeeves.env    # it holds the database password and the cookie key
 # Edit it: set POSTGRES_PASSWORD, put the same password into DATABASE_URL (the
 # app unit cannot assemble it like compose does), and set JEEVES_COOKIE_SECRET.
 $EDITOR ~/.config/containers/systemd/jeeves.env
@@ -250,11 +256,23 @@ For the Quadlet units (§3): `git pull`, repeat the two `podman build` commands
 there (both images), re-run the one-off `podman run ... npm run db:migrate`
 against the new migrator image, then `systemctl --user restart jeeves-app`.
 
+**Upgrading an older `.env`.** The compose stack now requires a non-empty
+`JEEVES_COOKIE_SECRET`, and `DEMO_PASSCODE` is gone from the template. A `.env`
+that only sets `DEMO_PASSCODE` makes `podman compose` stop with a clear error.
+Set `JEEVES_COOKIE_SECRET` instead, for example with `openssl rand -hex 32`.
+
+The new secret is not the old derived one. The app signs the workspace cookie
+with `JEEVES_COOKIE_SECRET` whenever it is set, and a cookie signed under the
+previous `DEMO_PASSCODE`-derived secret no longer verifies. On read requests
+such a cookie is treated as no workspace, so a returning visitor sees only the
+seeded data until they get a new cookie.
+
 ---
 
 ## 6. What this does not give you
 
-- **Authentication.** Unchanged by containerisation: a shared passcode, and
+- **Authentication.** Unchanged by containerisation: there is no sign-in
+  (visitors get any persona passwordlessly in their own workspace), and
   the caller picks their own persona, so the named accountable approver is
   self-asserted. See `production-readiness.md` §1.1. Do not put this on a
   public address and treat the approvals as real.

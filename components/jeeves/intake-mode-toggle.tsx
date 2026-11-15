@@ -13,11 +13,12 @@ import { IntakeChat } from "./intake-chat";
 import type { IntakePayload } from "@/lib/intake/types";
 import { EMPTY_INTAKE_PAYLOAD } from "@/lib/intake/defaults";
 
-export function IntakeModeToggle({ initialPayload, initiativeId, initialVersion, initialSlug }: {
+export function IntakeModeToggle({ initialPayload, initiativeId, initialVersion, initialSlug, realRequestsEnabled }: {
   initialPayload?: IntakePayload;
   initiativeId?: string;
   initialVersion?: number;
   initialSlug?: string;
+  realRequestsEnabled?: boolean;
 }) {
   const [mode, setMode] = React.useState("structured");
   const [draft, setDraft] = React.useState({ payload: initialPayload ?? EMPTY_INTAKE_PAYLOAD, revision: 0 });
@@ -41,7 +42,7 @@ export function IntakeModeToggle({ initialPayload, initiativeId, initialVersion,
         <TabsTrigger value="chat">Chat with intake assistant</TabsTrigger>
       </TabsList>
       <TabsContent value="structured" keepMounted>
-        <IntakeForm initialPayload={draft.payload} onPayloadChange={updatePayload} initiativeId={initiativeId} initialVersion={initialVersion} initialSlug={initialSlug} />
+        <IntakeForm initialPayload={draft.payload} onPayloadChange={updatePayload} initiativeId={initiativeId} initialVersion={initialVersion} initialSlug={initialSlug} realRequestsEnabled={realRequestsEnabled} />
       </TabsContent>
       <TabsContent value="chat" keepMounted>
         <IntakeChat payload={draft.payload} payloadRevision={draft.revision} onPayloadChange={applyChatPayload} onReview={() => setMode("structured")} />

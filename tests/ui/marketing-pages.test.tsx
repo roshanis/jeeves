@@ -18,6 +18,11 @@ import { DEMO_BANNER_TEXT } from "@/lib/demo-banner";
 import PilotPage from "@/app/(marketing)/pilot/page";
 import MarketingLayout from "@/app/(marketing)/layout";
 
+// The real bar stays hidden until the visitor scrolls, so expose its label.
+vi.mock("@/components/jeeves/sticky-mobile-cta", () => ({
+  StickyMobileCta: ({ label }: { label: string }) => <p data-testid="sticky-cta">{label}</p>,
+}));
+
 // vitest globals are off in this repo — register RTL cleanup explicitly
 // (see tests/ui/landing-page.test.tsx's comment for why).
 afterEach(cleanup);
@@ -30,6 +35,26 @@ describe("MarketingLayout", () => {
       </MarketingLayout>,
     );
     expect(getByText(DEMO_BANNER_TEXT)).toBeDefined();
+  });
+
+  describe("sticky mobile CTA label", () => {
+    const original = process.env.OPERATOR_TOKEN;
+    afterEach(() => {
+      if (original === undefined) delete process.env.OPERATOR_TOKEN;
+      else process.env.OPERATOR_TOKEN = original;
+    });
+
+    it("offers only the demo when no operator token is configured", () => {
+      delete process.env.OPERATOR_TOKEN;
+      const { getByTestId } = render(<MarketingLayout><p>content</p></MarketingLayout>);
+      expect(getByTestId("sticky-cta").textContent).toBe("Try the demo");
+    });
+
+    it("offers the demo or a request when an operator token is configured", () => {
+      process.env.OPERATOR_TOKEN = "t".repeat(40);
+      const { getByTestId } = render(<MarketingLayout><p>content</p></MarketingLayout>);
+      expect(getByTestId("sticky-cta").textContent).toBe("Try the demo or send a request");
+    });
   });
 });
 

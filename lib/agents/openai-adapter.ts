@@ -45,7 +45,7 @@ import {
   isAbortError,
   loadInstructions,
   mapModelOutputSchemaFailure,
-  providerFailure,
+  sanitizedProviderFailure,
   validateDraftReviewInput,
 } from "./adapter-shared";
 import type {
@@ -87,14 +87,13 @@ function mapCallErrorToPortFailure(err: unknown): PortFailure {
   if (APICallError.isInstance(err)) {
     // 429/5xx-style errors are retryable; other 4xx-style errors are not.
     // `isRetryable` on APICallError already encodes exactly this split.
-    return providerFailure(err.message, err.isRetryable);
+    return sanitizedProviderFailure(err, err.statusCode, err.isRetryable);
   }
 
   // Any other unexpected throw (network failure, JSON parse failure inside
   // the SDK, etc.) is treated as a non-retryable provider failure — we do
   // not know enough about it to safely recommend a retry.
-  const message = err instanceof Error ? err.message : String(err);
-  return providerFailure(message, false);
+  return sanitizedProviderFailure(err, undefined, false);
 }
 
 /* -------------------------------------------------------------------------

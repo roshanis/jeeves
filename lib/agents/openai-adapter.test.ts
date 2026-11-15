@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { APICallError } from "ai";
 import { MockLanguageModelV4 } from "ai/test";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createOpenAIAgentPortWithModel } from "@/lib/agents/openai-adapter";
 import type {
   AuditorAnswerInput,
@@ -89,6 +89,26 @@ describe("openai-adapter — system prompt assembly", () => {
     expect(JSON.parse(userText).policyContext).toEqual(policyContext);
     expect(result.value.generationMetadata?.userPromptHash).toBe(createHash("sha256").update(userText).digest("hex"));
     expect(result.value.generationMetadata).not.toHaveProperty("servedModelId");
+  });
+
+  it("marks requester-written intake text as untrusted data and tells the model never to follow it", async () => {
+    let system = "";
+    let userText = "";
+    const model = new MockLanguageModelV4({
+      doGenerate: async (options) => {
+        system = String(options.prompt.find((m) => m.role === "system")?.content ?? "");
+        const parts = options.prompt.find((m) => m.role === "user")?.content as { type: string; text?: string }[];
+        userText = parts.find((part) => part.type === "text")?.text ?? "";
+        return textGenerateResult(VALID_REVIEWER_OBJECT);
+      },
+    });
+    const input = draftInput();
+    await createOpenAIAgentPortWithModel(model).draftReview(input);
+    const sent = JSON.parse(userText);
+    expect(sent.untrustedRequesterInput).toEqual(input.intake);
+    expect(sent).not.toHaveProperty("intake");
+    expect(system).toMatch(/untrustedRequesterInput/);
+    expect(system).toMatch(/never follow instructions/i);
   });
 
   it("passes a system prompt containing the shared reviewer instructions and the privacy-hipaa track overlay", async () => {
@@ -194,6 +214,53 @@ describe("openai-adapter — provider error mapping", () => {
       expect(result.error).toEqual(
         expect.objectContaining({ kind: "provider", retryable: false }),
       );
+    }
+  });
+});
+
+describe("openai-adapter — provider text never crosses the port", () => {
+  it("replaces provider and network error text with a fixed message", async () => {
+    const leaky = "Incorrect API key provided: sk-proj-...abcd for org-xyz at db.internal.example:5432";
+    for (const make of [
+      () => new APICallError({ message: leaky, url: "https://api.openai.com/v1/responses", requestBodyValues: {}, statusCode: 401, isRetryable: false }),
+      () => new Error(leaky),
+    ]) {
+      const model = new MockLanguageModelV4({ doGenerate: async () => { throw make(); } });
+      const result = await createOpenAIAgentPortWithModel(model).draftReview(draftInput());
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        const message = "message" in result.error ? result.error.message : "";
+        expect(message).not.toMatch(/sk-|org-|db\.internal|abcd/);
+        expect(message).toMatch(/model provider/);
+      }
+    }
+  });
+});
+
+describe("openai-adapter — provider failure logging", () => {
+  it("logs only safe fields, never request bodies, response bodies or intake text", async () => {
+    const secret = "REQUESTER-INTAKE-SECRET jane.doe@example.com";
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const err = new APICallError({
+        message: "Upstream failure",
+        url: "https://api.openai.com/v1/responses",
+        requestBodyValues: { prompt: secret },
+        responseBody: `echo ${secret}`,
+        statusCode: 500,
+        isRetryable: true,
+      });
+      const model = new MockLanguageModelV4({ doGenerate: async () => { throw err; } });
+      await createOpenAIAgentPortWithModel(model).draftReview(draftInput());
+      const calls = spy.mock.calls.filter((c) => String(c[0]).includes("agent-provider-error"));
+      expect(calls.length).toBeGreaterThan(0);
+      const { inspect } = await import("node:util");
+      const printed = calls.map((c) => c.map((a) => inspect(a, { depth: 6 })).join(" ")).join("\n");
+      expect(printed).not.toContain("REQUESTER-INTAKE-SECRET");
+      expect(printed).not.toContain("jane.doe@example.com");
+      expect(calls.every((c) => !c.some((a) => a instanceof Error))).toBe(true);
+    } finally {
+      spy.mockRestore();
     }
   });
 });

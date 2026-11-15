@@ -89,6 +89,7 @@ import {
   loadInstructions,
   mapModelOutputSchemaFailure,
   providerFailure,
+  sanitizedProviderFailure,
   validateDraftReviewInput,
 } from "./adapter-shared";
 import { createPolicyCorpusTools } from "./policy-corpus";
@@ -214,22 +215,21 @@ function mapAgentsErrorToPortFailure(
     err instanceof UserError ||
     err instanceof ToolCallError
   ) {
-    return providerFailure(err.message, false);
+    return sanitizedProviderFailure(err, undefined, false);
   }
 
   const status = extractErrorStatus(err);
-  const message = err instanceof Error ? err.message : String(err);
   if (status !== undefined) {
     // 429/5xx retryable; other 4xx not — same split as openai-adapter.ts's
     // APICallError#isRetryable, applied here from the raw HTTP status since
     // this SDK doesn't expose an equivalent boolean directly.
     const retryable = status === 429 || (status >= 500 && status < 600);
-    return providerFailure(message, retryable);
+    return sanitizedProviderFailure(err, status, retryable);
   }
 
   // Unrecognised throw (network failure, etc.) — not enough information to
   // safely recommend a retry.
-  return providerFailure(message, false);
+  return sanitizedProviderFailure(err, undefined, false);
 }
 
 /* -------------------------------------------------------------------------

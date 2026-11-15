@@ -29,7 +29,7 @@ import { agentInitializationResponse, llmNotConfigured } from "@/lib/services/ag
 import { evaluateCompleteness } from "@/lib/intake/completeness";
 import type { IntakePayload } from "@/lib/intake/types";
 import { EMPTY_INTAKE_PAYLOAD } from "@/lib/intake/defaults";
-import { runMutationGuard } from "@/lib/services/route-guard";
+import { reserveDailyBudget, runMutationGuard } from "@/lib/services/route-guard";
 
 const MAX_MESSAGES = 50;
 const MAX_MESSAGE_CHARS = 4000;
@@ -150,9 +150,9 @@ export async function POST(req: Request): Promise<Response> {
   const estimatedTokens =
     600 + Math.ceil((flattenedConversation.length + serializedPartialPayload.length) / 4);
 
-  // A production install with no LLM has nothing to spend tokens on, so the
-  // guard (which still authenticates first: an anonymous caller gets its 401)
-  // is asked to reserve none; the 503 follows once the caller is accepted.
+  // A production install with no LLM has nothing to spend tokens on, so no
+  // budget is reserved below; the 503 comes from getAgentPort() once the
+  // caller is accepted (the guard still authenticates first).
   const noLlm = llmNotConfigured();
 
   const guard = await runMutationGuard(req, bodyText, {
@@ -161,8 +161,6 @@ export async function POST(req: Request): Promise<Response> {
       { field: "partialPayload", maxChars: MAX_PARTIAL_PAYLOAD_CHARS },
     ],
     inputTotalCap: MAX_MESSAGES * MAX_MESSAGE_CHARS + MAX_PARTIAL_PAYLOAD_CHARS,
-    requiresBudget: !noLlm,
-    estimatedTokens,
   });
   if (!guard.ok) {
     return Response.json({ error: guard.failure.message }, { status: guard.failure.status });
@@ -178,6 +176,13 @@ export async function POST(req: Request): Promise<Response> {
   const parsed = bodySchema.safeParse(json);
   if (!parsed.success) {
     return Response.json({ error: "invalid request body" }, { status: 400 });
+  }
+
+  // Reserve only now that the caller is authenticated, is a requester and
+  // sent a valid body: a refused call never spends the shared daily cap.
+  if (!noLlm) {
+    const budget = await reserveDailyBudget(estimatedTokens);
+    if (budget) return Response.json({ error: budget.message }, { status: budget.status });
   }
 
   let port: AgentPort;

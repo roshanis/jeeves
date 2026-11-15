@@ -1,8 +1,11 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { screen } from "@testing-library/react";
 import { renderWithProviders } from "./helpers";
 import { ExceptionsPanel } from "@/components/jeeves/exceptions-panel";
-import type { ExceptionRow } from "@/lib/client/api";
+import { ApiError, apiErrorToMessage, type ExceptionRow } from "@/lib/client/api";
+
+const mocks = vi.hoisted(() => ({ session: vi.fn() }));
+vi.mock("@/lib/client/session-context", () => ({ useLiveSessionOptional: mocks.session }));
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: () => {}, push: () => {} }),
@@ -23,6 +26,8 @@ const requested: ExceptionRow = {
   expiresAt: null,
   supersedesId: null,
 };
+
+beforeEach(() => mocks.session.mockReturnValue(null));
 
 describe("ExceptionsPanel", () => {
   it("renders exceptions read-only for a public (no session) viewer — no action buttons", () => {
@@ -58,5 +63,25 @@ describe("ExceptionsPanel", () => {
     const unknown = { ...requested, id: "exc-3", status: "some-future-status" } as unknown as ExceptionRow;
     expect(() => renderWithProviders(<ExceptionsPanel exceptions={[unknown]} />)).not.toThrow();
     expect(screen.getByText("some-future-status")).toBeDefined();
+  });
+
+  /* api-initiatives-F11: shared sample rows are immutable to visitors, so no action that always fails. */
+  it("shows a shared sample exception read-only for an approver, and keeps actions on the viewer's own", () => {
+    mocks.session.mockReturnValue({ session: { token: "t", role: "approver" }, logout: vi.fn() });
+    renderWithProviders(<ExceptionsPanel exceptions={[{ ...requested, id: "exc-seed", isShared: true }]} />);
+    expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Reject" })).toBeNull();
+    expect(screen.getByText(/sample data/i)).toBeDefined();
+  });
+
+  it("offers Approve/Reject on an exception owned by the viewer's workspace", () => {
+    mocks.session.mockReturnValue({ session: { token: "t", role: "approver" }, logout: vi.fn() });
+    renderWithProviders(<ExceptionsPanel exceptions={[{ ...requested, id: "exc-own", isShared: false }]} />);
+    expect(screen.getByRole("button", { name: "Approve" })).toBeDefined();
+    expect(screen.getByRole("button", { name: "Reject" })).toBeDefined();
+  });
+
+  it("explains a 404 instead of the generic failure message", () => {
+    expect(apiErrorToMessage(new ApiError(404, "controlException not found: exc-seed-hr-r01"))).toMatch(/no longer available/i);
   });
 });

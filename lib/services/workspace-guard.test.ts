@@ -33,3 +33,18 @@ describe("public demo writes", () => {
     expect(guards.mutationWorkspaceMismatch(resource, session)).toBe(denied);
   });
 });
+
+// What the screens use to decide whether to offer an action at all.
+describe("viewerCannotMutate", () => {
+  it.each([
+    [null, "visitor-a", true],
+    ["visitor-b", "visitor-a", true],
+    ["visitor-a", "visitor-a", false],
+    // A mutation needs a session workspace, so a viewer without one can change nothing.
+    ["visitor-a", null, true],
+    [null, null, true],
+  ] as const)("resource %s / viewer %s read-only=%s", async (resource, viewer, readOnly) => {
+    const guards = await import("./workspace-guard");
+    expect(guards.viewerCannotMutate(resource, viewer)).toBe(readOnly);
+  });
+});

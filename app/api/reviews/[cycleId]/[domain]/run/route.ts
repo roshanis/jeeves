@@ -54,7 +54,7 @@ export async function POST(
   try {
     const result = await runReviewAgent(db, cycleId, domain as Domain, guard.actor, guard.workspaceId, undefined, {
       ...parsed.data, budget: draftBudgetPolicy(), signal: req.signal,
-      runTimeoutMs: limits.timeoutMs,
+      runTimeoutMs: limits.timeoutMs, attemptTimeoutMs: limits.attemptTimeoutMs,
     });
     if (result.errorKind === "budget-exhausted") return Response.json(result, { status: 429 });
     return Response.json(result, { status: 200 });

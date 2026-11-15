@@ -9,6 +9,7 @@ import {
   effectiveControls,
   initiativeDecisions,
   initiatives,
+  intakeVersions,
   reviewCycles,
   reviewDecisions,
   riskAssessments,
@@ -65,7 +66,7 @@ function lowTierPayload(): IntakePayload {
       humanInTheLoop: true,
       individualImpact: false,
     },
-    data: { ...CHAMPION_PREFILL_PAYLOAD.data, phiCategories: [], retentionIntent: null },
+    data: { ...CHAMPION_PREFILL_PAYLOAD.data, phiCategories: [], retentionIntent: "<=30 days" },
     modelVendor: {
       buildOrBuy: "Buy (vendor)",
       vendorName: "Acme Marketing AI",
@@ -399,6 +400,68 @@ describe("lib/services/initiative-service", () => {
         .from(auditEvents)
         .where(eq(auditEvents.initiativeId, draft.initiativeId));
       expect(events.some((e) => e.action === "fast_lane_approve")).toBe(true);
+    });
+
+    it.each([
+      ["a REQUIRED_FOR_TIER gap (vendor name missing, RFT-03)", (p: IntakePayload): IntakePayload => ({ ...p, modelVendor: { ...p.modelVendor, vendorName: null } })],
+      ["no data-retention answer (FL-2.1(2))", (p: IntakePayload): IntakePayload => ({ ...p, data: { ...p.data, retentionIntent: null } })],
+    ])("an incomplete intake is never fast-lane eligible: %s routes to full review", async (_label, mutate) => {
+      const draft = await svc.createDraft(db, {
+        payload: mutate(lowTierPayload()),
+        requesterActor: { id: "dan-kowalski", role: "requester" },
+        requesterName: "Dan Kowalski",
+      });
+      await svc.submitIntake(db, draft.initiativeId, { id: "dan-kowalski", role: "requester" });
+      await svc.startQc(db, draft.initiativeId, PROGRAM);
+      const result = await svc.triage(db, draft.initiativeId);
+      expect(result.tier).toBe("low");
+      expect(result.branch).toBe("review");
+      const row = (await db.select().from(initiatives).where(eq(initiatives.id, draft.initiativeId)))[0]!;
+      expect(row.state).toBe("in_review");
+    });
+
+    it("fast-lane approval records the eligibility snapshot, policy version and accountable approver on the audit trail", async () => {
+      const draft = await svc.createDraft(db, {
+        payload: lowTierPayload(),
+        requesterActor: { id: "dan-kowalski", role: "requester" },
+        requesterName: "Dan Kowalski",
+      });
+      await svc.submitIntake(db, draft.initiativeId, { id: "dan-kowalski", role: "requester" });
+      await svc.startQc(db, draft.initiativeId, PROGRAM);
+      await svc.triage(db, draft.initiativeId, SYSTEM_ACTOR, null, PROGRAM);
+
+      const events = await db.select().from(auditEvents).where(eq(auditEvents.initiativeId, draft.initiativeId));
+      const computed = events.find((e) => e.action === "fast_lane_eligibility_computed");
+      expect(computed).toBeDefined();
+      expect(computed!.metadata).toMatchObject({
+        eligible: true, tier: "low", intakeComplete: true, reasons: [],
+        policyId: "FL-2026-01", policyVersion: "v1",
+      });
+      const approve = events.find((e) => e.action === "fast_lane_approve")!;
+      expect(approve.metadata).toMatchObject({
+        policyId: "FL-2026-01", policyVersion: "v1", accountableApprover: "Angela Torres",
+        triggeredBy: { id: "nia-okafor", role: "program" },
+      });
+      expect((approve.metadata as { eligibility: { eligible: boolean } }).eligibility.eligible).toBe(true);
+    });
+
+    it("fast-lane approval closes its review cycle and leaves no pending review rows", async () => {
+      const draft = await svc.createDraft(db, {
+        payload: lowTierPayload(),
+        requesterActor: { id: "dan-kowalski", role: "requester" },
+        requesterName: "Dan Kowalski",
+      });
+      await svc.submitIntake(db, draft.initiativeId, { id: "dan-kowalski", role: "requester" });
+      await svc.startQc(db, draft.initiativeId, PROGRAM);
+      const result = await svc.triage(db, draft.initiativeId);
+      expect(result.branch).toBe("fast-lane");
+
+      const cycle = (await db.select().from(reviewCycles).where(eq(reviewCycles.id, result.cycleId)))[0]!;
+      expect(cycle.closedAt).not.toBeNull();
+      const rows = await db.select().from(reviewDecisions).where(eq(reviewDecisions.cycleId, result.cycleId));
+      expect(rows).toHaveLength(0);
+      const decision = (await db.select().from(initiativeDecisions).where(eq(initiativeDecisions.initiativeId, draft.initiativeId)))[0]!;
+      expect(decision.cycleId).toBe(result.cycleId);
     });
 
     it("fast-lane approval ALSO generates effective controls — live parity with seeded fast-lane initiatives (seed-spec #2 marketing-ab-tester carries effective_controls against a deployment row)", async () => {
@@ -737,6 +800,29 @@ describe("lib/services/initiative-service", () => {
       expect(res.type).toBe("conditionally_approved");
     });
 
+    it("rejects a decision carrying a stale review revision or another cycle id with ConflictError and records nothing (api-initiatives-F17)", async () => {
+      const { initiativeId, cycleId } = await setUpInReview();
+      await draftAll(cycleId);
+      const rds = await db.select().from(reviewDecisions).where(eq(reviewDecisions.cycleId, cycleId));
+      const seen = Object.fromEntries(rds.map((r) => [r.domain, r.revision]));
+      // A reviewer re-runs one agent after the approver rendered the page.
+      await db.update(reviewDecisions).set({ revision: rds[0]!.revision + 1 }).where(eq(reviewDecisions.id, rds[0]!.id));
+      const input = { decision: "conditionally_approved" as const, conditions: [{ text: "100% human review.", controlId: "C-01" }] };
+
+      await expect(
+        svc.decide(db, initiativeId, APPROVER, null, { ...input, expectedCycleId: cycleId, expectedReviewRevisions: seen }),
+      ).rejects.toThrow(ConflictError);
+      await expect(
+        svc.decide(db, initiativeId, APPROVER, null, { ...input, expectedCycleId: "cycle-other", expectedReviewRevisions: { ...seen, [rds[0]!.domain]: rds[0]!.revision + 1 } }),
+      ).rejects.toThrow(ConflictError);
+      expect(await db.select().from(initiativeDecisions).where(eq(initiativeDecisions.initiativeId, initiativeId))).toHaveLength(0);
+
+      // The current values, and a request without the fields, still succeed.
+      const current = Object.fromEntries(rds.map((r, i) => [r.domain, i === 0 ? r.revision + 1 : r.revision]));
+      const res = await svc.decide(db, initiativeId, APPROVER, null, { ...input, expectedCycleId: cycleId, expectedReviewRevisions: current });
+      expect(res.type).toBe("conditionally_approved");
+    });
+
     it("allows `approved` once all 8 domain reviewers have signed (full completeness)", async () => {
       const { initiativeId, cycleId } = await setUpInReview();
       const domains = await draftAll(cycleId);
@@ -815,6 +901,27 @@ describe("lib/services/initiative-service", () => {
       )[0]!;
       // Still in_review — the failed second triage() did not partially advance state.
       expect(afterFailedRetriage.state).toBe("in_review");
+    });
+
+    it.each(["approved", "rejected"] as const)("decide() refuses conditions on a '%s' decision before any write", async (decision) => {
+      const draft = await svc.createDraft(db, {
+        payload: CHAMPION_PREFILL_PAYLOAD,
+        requesterActor: REQUESTER,
+        requesterName: "Priya Raman",
+      });
+      await svc.submitIntake(db, draft.initiativeId, REQUESTER);
+      await svc.startQc(db, draft.initiativeId, PROGRAM);
+      await svc.triage(db, draft.initiativeId);
+
+      await expect(
+        svc.decide(db, draft.initiativeId, APPROVER, null, {
+          decision,
+          conditions: [{ text: "Retain human review", controlId: "C-01" }],
+        }),
+      ).rejects.toThrow(/conditions are only allowed on a conditionally_approved decision/);
+
+      const row = (await db.select().from(initiatives).where(eq(initiatives.id, draft.initiativeId)))[0]!;
+      expect(row.state).toBe("in_review");
     });
 
     it("decide() with an invalid conditionally_approved (no conditions) throws before any write", async () => {
@@ -971,6 +1078,23 @@ describe("lib/services/initiative-service", () => {
 
       const events = await db.select().from(auditEvents).where(eq(auditEvents.initiativeId, initiativeId));
       expect(events.some((e) => e.action === "effective_controls_generated")).toBe(false);
+    });
+
+    it("attaches effective controls to the operational deployment, not a newer unpromoted candidate", async () => {
+      const { initiativeId } = await setUpSignedInReview();
+      const dep = (id: string, version: string, status: string, deployedAt: string) => ({
+        id, initiativeId, version, status, modelVersion: null, selfHosted: false,
+        feedbackProvenanceSignedOff: false, deployedAt: new Date(deployedAt), pausedAt: null, retiredAt: null,
+      });
+      await db.insert(deploymentVersions).values(dep("dep-operational", "v2.0", "deployed", "2026-04-22T00:00:00Z"));
+      await db.insert(deploymentVersions).values(dep("dep-candidate", "v2.1", "awaiting_promotion_signoff", "2026-06-26T00:00:00Z"));
+
+      const res = await svc.decide(db, initiativeId, APPROVER, null, { decision: "approved" });
+      expect(res.controlsGenerated!.deploymentId).toBe("dep-operational");
+      const onCandidate = await db.select().from(effectiveControls).where(eq(effectiveControls.deploymentId, "dep-candidate"));
+      expect(onCandidate).toHaveLength(0);
+      const onOperational = await db.select().from(effectiveControls).where(eq(effectiveControls.deploymentId, "dep-operational"));
+      expect(onOperational.length).toBeGreaterThan(0);
     });
 
     it("a second decide() on a later reassessment cycle increments effective_controls versions on the SAME deployment", async () => {
@@ -1333,6 +1457,21 @@ describe("lib/services/initiative-service", () => {
       const updated = await svc.updateIntakeDraft(db, { initiativeId: draft.initiativeId, payload: changed, expectedVersion: 1, actor: REQUESTER, workspaceId: "ws-intake-cas" });
       expect(updated.version).toBe(2);
       await expect(svc.updateIntakeDraft(db, { initiativeId: draft.initiativeId, payload: changed, expectedVersion: 1, actor: REQUESTER, workspaceId: "ws-intake-cas" })).rejects.toThrow(ConflictError);
+    });
+
+    it("does not append a new intake version when a save repeats the current payload", async () => {
+      const draft = await svc.createDraft(db, { payload: CHAMPION_PREFILL_PAYLOAD, requesterActor: REQUESTER, requesterName: "Priya Raman", workspaceId: "ws-dedupe" });
+      const changed = { ...CHAMPION_PREFILL_PAYLOAD, basics: { ...CHAMPION_PREFILL_PAYLOAD.basics, title: "Deduped draft" } };
+      const save = (expectedVersion: number, payload: IntakePayload) =>
+        svc.updateIntakeDraft(db, { initiativeId: draft.initiativeId, payload, expectedVersion, actor: REQUESTER, workspaceId: "ws-dedupe" });
+      const first = await save(1, changed);
+      const repeat = await save(first.version, changed);
+      expect(repeat.version).toBe(first.version);
+      expect(repeat.intakeVersionId).toBe(first.intakeVersionId);
+      const versions = await db.select().from(intakeVersions).where(eq(intakeVersions.initiativeId, draft.initiativeId));
+      expect(versions).toHaveLength(2);
+      const next = await save(repeat.version, { ...changed, basics: { ...changed.basics, title: "Deduped draft 2" } });
+      expect(next.version).toBe(3);
     });
 
     it("commits only one of two concurrent edits with the same expected version", async () => {

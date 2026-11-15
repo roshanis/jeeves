@@ -6,6 +6,15 @@
 import { z } from "zod";
 import { ADDITIONAL_ANSWER_MAX_LENGTH } from "@/lib/intake/additional-questions";
 
+/** Server-side caps, exported so the intake form can mirror them as maxLength. */
+export const INTAKE_LIMITS = {
+  short: 120,
+  line: 200,
+  medium: 300,
+  long: 1000,
+  businessProblem: 2000,
+} as const;
+
 const nullableIntakeAnswer = z.string().max(ADDITIONAL_ANSWER_MAX_LENGTH).nullable();
 
 const expectedVolume = z
@@ -39,15 +48,15 @@ function buildIntakePayloadSchema<
 >(additionalAnswer: Answer) {
   return z.object({
     basics: z.object({
-      title: z.string().max(120),
-      sponsorOrg: z.string().max(120),
-      requesterName: z.string().max(120),
-      requesterEmail: z.string().max(200),
-      businessProblem: z.string().max(2000),
+      title: z.string().max(INTAKE_LIMITS.short),
+      sponsorOrg: z.string().max(INTAKE_LIMITS.short),
+      requesterName: z.string().max(INTAKE_LIMITS.short),
+      requesterEmail: z.string().max(INTAKE_LIMITS.line),
+      businessProblem: z.string().max(INTAKE_LIMITS.businessProblem),
     }),
     useCase: z.object({
-      primaryUsers: z.string().max(200),
-      decisionInformed: z.string().max(300),
+      primaryUsers: z.string().max(INTAKE_LIMITS.line),
+      decisionInformed: z.string().max(INTAKE_LIMITS.medium),
       expectedVolume,
       currentWorkflow: additionalAnswer,
       successMetrics: additionalAnswer,
@@ -55,27 +64,27 @@ function buildIntakePayloadSchema<
     data: z.object({
       dataSources: z.array(z.string().max(200)),
       phiCategories: z.array(phiCategory),
-      phiCategoriesOtherText: z.string().max(200).nullable(),
+      phiCategoriesOtherText: z.string().max(INTAKE_LIMITS.line).nullable(),
       retentionIntent,
-      retentionIntentNote: z.string().max(300).nullable(),
+      retentionIntentNote: z.string().max(INTAKE_LIMITS.medium).nullable(),
       trainingVsInference,
       vendorDataReuse: additionalAnswer,
     }),
     modelVendor: z.object({
       buildOrBuy,
-      vendorName: z.string().max(120).nullable(),
+      vendorName: z.string().max(INTAKE_LIMITS.short).nullable(),
       hosting,
       modelType,
     }),
     populationImpact: z.object({
       affectedPopulations: z.array(z.string().max(200)),
-      expectedBenefits: z.string().max(1000).nullable(),
-      expectedHarms: z.string().max(1000).nullable(),
+      expectedBenefits: z.string().max(INTAKE_LIMITS.long).nullable(),
+      expectedHarms: z.string().max(INTAKE_LIMITS.long).nullable(),
       evaluationPlan: additionalAnswer,
     }),
     deployment: z.object({
       integrationPoints: z.array(z.string().max(200)),
-      rolloutPlan: z.string().max(1000).nullable(),
+      rolloutPlan: z.string().max(INTAKE_LIMITS.long).nullable(),
       operationalOwner: additionalAnswer,
       humanReviewProcess: additionalAnswer,
       monitoringPlan: additionalAnswer,

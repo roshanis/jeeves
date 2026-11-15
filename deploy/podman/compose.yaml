@@ -62,16 +62,16 @@ services:
       # refuses to boot without APP_BASE_URL, JEEVES_TENANT_ID and a cookie
       # secret, and closes the demo doors.
       JEEVES_MODE: demo
-      # Signs browser workspace cookies. Blank falls back to a key derived from
-      # DEMO_PASSCODE (deprecated, demo only); set it with `openssl rand -hex 32`.
-      JEEVES_COOKIE_SECRET: ${JEEVES_COOKIE_SECRET:-}
-      DEMO_PASSCODE: ${DEMO_PASSCODE:?set DEMO_PASSCODE in .env}
+      # Signs browser workspace cookies. Required: `openssl rand -hex 32`.
+      JEEVES_COOKIE_SECRET: ${JEEVES_COOKIE_SECRET:?set JEEVES_COOKIE_SECRET in .env (openssl rand -hex 32)}
       # Unset by default: with no key the app uses the deterministic keyless
       # mock adapter and cannot generate spend. Set it only for a controlled
       # live session.
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-}
       CRON_SECRET: ${CRON_SECRET:-}
+      # Optional. Opens the "Send a real request" door and the /operator queue.
+      OPERATOR_TOKEN: ${OPERATOR_TOKEN:-}
     ports:
       - "${APP_PORT:-3000}:3000"
     depends_on:

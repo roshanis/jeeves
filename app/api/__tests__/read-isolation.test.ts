@@ -239,6 +239,14 @@ describe("GET /api/deployments/promotions — read isolation", () => {
     );
 
     const { initiativeId, slug } = await createLiveInitiative(tokenA, "61.0.0.1");
+    await testDb.update(initiatives).set({ state: "deployed" }).where(eq(initiatives.id, initiativeId));
+    await testDb.insert(deploymentVersions).values({
+      id: "dep-ws-a-current",
+      initiativeId,
+      version: "v9.8",
+      status: "deployed",
+      deployedAt: new Date("2026-07-09T00:00:00.000Z"),
+    });
     await testDb.insert(deploymentVersions).values({
       id: "dep-ws-a-promotion",
       initiativeId,
@@ -332,7 +340,7 @@ describe("GET /api/initiatives/[id]/draft-run — read isolation (progress polli
     const triageRes = await triagePost(
       new Request(`http://localhost/api/initiatives/${initiativeId}/triage`, {
         method: "POST",
-        headers: bearer(token, ip),
+        headers: bearer(program.token, ip),
       }),
       { params: Promise.resolve({ id: initiativeId }) },
     );
