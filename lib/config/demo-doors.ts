@@ -5,8 +5,9 @@
 // Two ways to keep them shut:
 //  - the HTTP surface answers a bare 404 (demoDoorClosed, demoDoorFallbacks),
 //    and does so FIRST: before parsing a body, spending a rate-limit token or
-//    checking a secret, so there is no 401/405/429/503 to tell it apart from a
-//    route that was never built;
+//    checking a secret, so there is no 401/405/429/503 to say the door is
+//    there. The empty 404 body does differ from the application's own
+//    not-found page; serving that page instead is an open owner decision;
 //  - code reached some other way refuses (assertDemoMode), as defence in depth
 //    for a caller that skips the route.
 import { bootFailure } from "./boot-state";
