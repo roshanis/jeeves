@@ -23,6 +23,7 @@ import {
   listPromotions,
   promoteCheckpoint,
   isApiError,
+  ApiError,
   apiErrorToMessage,
   type PromotionListItem,
 } from "@/lib/client/api";
@@ -103,7 +104,13 @@ export function PromotionsPageClient({
   }, []);
 
   async function handleConfirm(input: PromotionAttestationInput) {
-    if (!session || !dialogTarget) return;
+    if (!dialogTarget) return;
+    if (!session) {
+      const message = apiErrorToMessage(new ApiError(401, "session expired"));
+      setDialogError(message);
+      toast.error(message);
+      return;
+    }
     setPending(true);
     setDialogError(null);
     try {

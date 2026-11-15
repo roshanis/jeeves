@@ -9,6 +9,7 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
+  ApiError,
   apiErrorToMessage,
   decideException,
   isApiError,
@@ -78,7 +79,11 @@ export function ExceptionsPanel({ exceptions, loadFailed = false }: { exceptions
   }
 
   async function confirm() {
-    if (!session || !dialog) return;
+    if (!dialog) return;
+    if (!session) {
+      toast.error(apiErrorToMessage(new ApiError(401, "session expired")));
+      return;
+    }
     const trimmed = reason.trim();
     if (trimmed.length === 0) {
       toast.error("A reason is required.");
