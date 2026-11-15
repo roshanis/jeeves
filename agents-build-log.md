@@ -1684,3 +1684,21 @@ Hard rules: no violations found.
 - Nothing in .github/, drizzle/, lib/db/schema.ts, AGENTS.md or plan.md was changed. Proposals for those, and the findings that need the owner's decision, are in the review report in the project thread.
 - Codex: two new rules that older fixtures trip over. `decide()` refuses conditions unless the decision is `conditionally_approved`, and the draft path no longer creates review rows, so a fixture that adds a cycle must add its rows the way `triage()` does.
 - Wave 2 follows on this branch: request body limits before authentication, rate-limit key hashing, exception approval roles, accessibility.
+
+## [AGENT: Claude] [2026-11-15T04:10Z]
+### Action: reviewer + implementer: peer-review fix wave 1 on the production-mode line (PR #26, targets PR #23's branch; same human request as the entry above)
+### Files changed: `git log --no-merges HEAD ^claude/peer-review-fixes ^87e75bb` lists the 26 commits of this line. proxy.ts, scripts/smoke-production.ts, scripts/is-main.ts, scripts/seed.ts, scripts/reset-demo.ts, scripts/migrate.ts, lib/config/boot-checks.ts, lib/config/installation-check.ts, lib/config/deployment-mode.ts, lib/db/driver-error.ts, lib/services/route-guard.ts, app/api/session/route.ts, docs/environment-reference.md, docs/deploy-podman.md, docs/deploy.md, docs/production-readiness.md, README.md, and their tests under tests/deploy, tests/docs, scripts and lib/config. Shared files, each in its own commit so it can be dropped: .github/workflows/ci.yml (8de6c6f), package.json (7971d51, one script line), .containerignore and .dockerignore (412ca80), deploy/podman/compose.yaml, env.example and the Quadlet units (91b2a4a, 5833291, 9c88949, 08874f3, dc1e240, 9d62f55, 350f6d1).
+### Diff summary:
+- proxy.ts sent a relative Location, so production mode answered 500 on / and on every signed-out page. The redirect is absolute now.
+- `npm run smoke:production` boots a real production-mode server against a throwaway jeeves_smoke_* database and checks the wire: 44 checks, or 43 on a demo-locked build with SMOKE_DEMO_LOCKED=1.
+- Production boot refuses a schema that is behind the migration journal, append-only triggers that are not enabled, and a missing or malformed JEEVES_TRUSTED_PROXY_HOPS (`none` means no proxy in front).
+- db:seed and reset:demo refuse while real inbound requests exist (ALLOW_DISCARD_PUBLIC_REQUESTS=<count> overrides). db:migrate, db:seed and reset:demo no longer exit 0 without running when the checkout path has a space or a symlink (scripts/is-main.ts).
+- Podman and Quadlet: nested .env files stay out of the build context, one volume name (jeeves-pgdata) with upgrade and restore notes, a DATABASE_URL and seed step for Quadlet, and an upgrade runbook that rebuilds the migrator image.
+- docs/environment-reference.md lists every variable the code reads, with a drift test.
+- Merges of the main-line fixes (PR #25): the chat routes keep "no reservation without an LLM" in the main line's reserve-after-checks order. compose.yaml and env.example keep both sides: cookie secret required, OPERATOR_TOKEN passed through, JEEVES_MODE and proxy hops.
+### Verified: typecheck and lint clean. Unit suite 214 files, 2639 tests (5 tests in two files pinned pre-merge behaviour and were adapted in ed3e641). Turbopack, demo-locked and webpack builds with the standalone and packaged-agent checks. Smoke 44/44 and 43/43. Playwright 28/28. Real-PostgreSQL integrity suite 9/9.
+### Recommendations / Next steps:
+- Merge this PR into PR #23's branch after #25, then run PR #23's own gates.
+- The CI job (8de6c6f) and the deploy template commits need the owner's explicit OK.
+- Correction to the entry above: the review produced 459 findings, of which 443 held up on a second check (19 high, 133 medium, 291 low).
+- Wave 2 follows on this branch: the smoke test's garbage-cookie check must be able to fail.
