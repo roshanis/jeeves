@@ -16,6 +16,7 @@ vi.mock("@/lib/client/api", async (importOriginal) => ({
   submitIntake: mocks.submit,
 }));
 
+import { DeploymentModeProvider } from "@/lib/client/deployment-mode-context";
 import { IntakeForm } from "@/components/jeeves/intake-form";
 
 describe("IntakeForm submit hint", () => {
@@ -29,5 +30,25 @@ describe("IntakeForm submit hint", () => {
     const hint = screen.getByText(/blocking gaps/i);
     expect(hint.textContent).not.toMatch(/above/i);
     expect(hint.textContent).toContain("Completeness");
+  });
+});
+
+describe("IntakeForm sample initiative button", () => {
+  afterEach(cleanup);
+
+  it("is offered in demo mode and hidden in production", () => {
+    const demo = render(
+      <DeploymentModeProvider mode="demo">
+        <IntakeForm />
+      </DeploymentModeProvider>,
+    );
+    expect(screen.queryByRole("button", { name: /sample initiative/i })).not.toBeNull();
+    demo.unmount();
+    render(
+      <DeploymentModeProvider mode="production">
+        <IntakeForm />
+      </DeploymentModeProvider>,
+    );
+    expect(screen.queryByRole("button", { name: /sample initiative/i })).toBeNull();
   });
 });

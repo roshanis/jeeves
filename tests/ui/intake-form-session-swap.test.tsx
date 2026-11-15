@@ -17,6 +17,7 @@ vi.mock("@/lib/client/api", async (importOriginal) => ({
   createIntakeRequestId: () => `unique-intake-request-key-${++mocks.keys}`,
 }));
 
+import { DeploymentModeProvider } from "@/lib/client/deployment-mode-context";
 import { IntakeForm } from "@/components/jeeves/intake-form";
 
 describe("IntakeForm after the session's workspace changes", () => {
@@ -30,14 +31,14 @@ describe("IntakeForm after the session's workspace changes", () => {
   it("creates a fresh draft in the new workspace instead of updating the old initiative", async () => {
     mocks.create.mockResolvedValue({ initiativeId: "init-1", slug: "draft-one", intakeVersionId: "iv-1", version: 1 });
     mocks.submit.mockResolvedValue({ submitted: false, gaps: [] });
-    const { rerender } = render(<IntakeForm />);
+    const { rerender } = render(<DeploymentModeProvider mode="demo"><IntakeForm /></DeploymentModeProvider>);
     fireEvent.click(screen.getByRole("button", { name: "Use a sample initiative" }));
     fireEvent.click(screen.getByRole("button", { name: "Submit intake" }));
     await waitFor(() => expect(mocks.submit).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(screen.getByRole("button", { name: "Submit intake" })).not.toHaveProperty("disabled", true));
 
     mocks.session = { token: "token-b", workspaceId: "public-ws-b", role: "public", personaLabel: "Public visitor" };
-    rerender(<IntakeForm />);
+    rerender(<DeploymentModeProvider mode="demo"><IntakeForm /></DeploymentModeProvider>);
     fireEvent.click(screen.getByRole("button", { name: "Submit intake" }));
     await waitFor(() => expect(mocks.create).toHaveBeenCalledTimes(2));
     expect(mocks.update).not.toHaveBeenCalled();

@@ -40,6 +40,7 @@ import {
   apiErrorToMessage,
 } from "@/lib/client/api";
 import { useLiveSession } from "@/lib/client/session-context";
+import { useDeploymentMode } from "@/lib/client/deployment-mode-context";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -344,6 +345,7 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
 } = {}) {
   const router = useRouter();
   const { session, logout, expired, startDemo, startPublicSession, pending } = useLiveSession();
+  const mode = useDeploymentMode();
 
   const [internalPayload, setInternalPayload] = React.useState<IntakePayload>(initialPayload ?? EMPTY_PAYLOAD);
   const payload = initialPayload ?? internalPayload;
@@ -610,11 +612,13 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
           </Alert>
         ) : null}
 
-        <div>
-          <Button type="button" variant="outline" onClick={loadChampion} disabled={submitting} data-slot="load-champion">
-            Use a sample initiative
-          </Button>
-        </div>
+        {mode !== "production" && (
+          <div>
+            <Button type="button" variant="outline" onClick={loadChampion} disabled={submitting} data-slot="load-champion">
+              Use a sample initiative
+            </Button>
+          </div>
+        )}
 
         <fieldset
           disabled={!isRequester || submitting}
