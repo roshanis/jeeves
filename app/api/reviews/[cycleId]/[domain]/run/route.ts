@@ -1,5 +1,5 @@
 /** Reviewer execution shares the fan-out claim, deadline, and reservation policy. */
-import { randomUUID } from "node:crypto";
+import { logUnexpectedError } from "@/lib/http/log-error";
 import { z } from "zod";
 import { draftBudgetPolicy } from "@/lib/workflow/draft-execution-policy";
 import { resolveAgentRuntimeConfig, reviewInvocationLimits } from "@/lib/agents/runtime";
@@ -80,6 +80,6 @@ export async function POST(
     if (err instanceof ReviewIntegrityError) {
       return Response.json({ error: err.message }, { status: err.kind === "not_found" ? 404 : 409 });
     }
-    return Response.json({ error: "Draft execution could not be completed. Refresh its status before retrying.", requestId: randomUUID() }, { status: 500 });
+    return Response.json({ error: "Draft execution could not be completed. Refresh its status before retrying.", requestId: logUnexpectedError("Draft execution failed", err) }, { status: 500 });
   }
 }

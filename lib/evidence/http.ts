@@ -1,5 +1,6 @@
 import { EvidenceError } from './files';
 import { hasNul } from '../http/read-json-body';
+import { logUnexpectedError } from '../http/log-error';
 export const MAX_UPLOAD_BODY = 2_900_000;
 export const privateHeaders = { 'Cache-Control':'private, no-store', 'Vary':'Authorization, Cookie', 'X-Content-Type-Options':'nosniff' };
 export async function readEvidenceJson(req:Request):Promise<unknown> {
@@ -17,5 +18,5 @@ export async function readEvidenceJson(req:Request):Promise<unknown> {
 export function evidenceResponseError(error:unknown):Response {
   if(error instanceof EvidenceError)return Response.json({error:error.message},{status:error.status,headers:privateHeaders});
   // Do not expose database content, parameters or private file data in errors.
-  return Response.json({error:'Evidence is temporarily unavailable. Please try again.'},{status:503,headers:privateHeaders});
+  return Response.json({error:'Evidence is temporarily unavailable. Please try again.',requestId:logUnexpectedError('Evidence request failed',error)},{status:503,headers:privateHeaders});
 }

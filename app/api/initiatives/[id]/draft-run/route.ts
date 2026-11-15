@@ -1,6 +1,6 @@
 /** Draft review commands reserve estimated capacity only after authorization and a database claim. */
 import { z } from "zod";
-import { randomUUID } from "node:crypto";
+import { logUnexpectedError } from "@/lib/http/log-error";
 import { draftBudgetPolicy } from "@/lib/workflow/draft-execution-policy";
 import { resolveAgentRuntimeConfig, reviewInvocationLimits } from "@/lib/agents/runtime";
 import { ReviewIntegrityError } from "@/lib/services/review-integrity";
@@ -84,7 +84,7 @@ export async function POST(
     if (error instanceof ReviewIntegrityError) {
       return Response.json({ error: error.message }, { status: error.kind === "not_found" ? 404 : 409 });
     }
-    return Response.json({ error: "Draft execution could not be completed. Refresh its status before retrying.", requestId: randomUUID() }, { status: 500 });
+    return Response.json({ error: "Draft execution could not be completed. Refresh its status before retrying.", requestId: logUnexpectedError("Draft execution failed", error) }, { status: 500 });
   }
 }
 

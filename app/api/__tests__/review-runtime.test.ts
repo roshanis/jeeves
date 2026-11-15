@@ -81,3 +81,19 @@ describe("review route runtime reservations", () => {
     }
   });
 });
+
+describe("unexpected draft errors are logged with their request reference", () => {
+  it.each([
+    ["fan-out", () => mocks.startDraftRun.mockRejectedValue(new Error("secret provider detail")), () => fanOut(new Request("http://localhost/api/initiatives/i/draft-run", { method: "POST", body: JSON.stringify({ domains: ["legal"] }) }), { params: Promise.resolve({ id: "i" }) })],
+    ["single", () => mocks.runReviewAgent.mockRejectedValue(new Error("secret provider detail")), () => single(new Request("http://localhost/api/reviews/c/legal/run", { method: "POST" }), { params: Promise.resolve({ cycleId: "c", domain: "legal" }) })],
+  ])("%s logs name and message with the returned requestId and keeps the body generic", async (_name, arrange, call) => {
+    arrange();
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const response = await call();
+    const body = await response.json();
+    expect(response.status).toBe(500);
+    expect(JSON.stringify(body)).not.toContain("secret provider detail");
+    expect(log).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ requestId: body.requestId, errorName: "Error", errorMessage: "secret provider detail" }));
+    log.mockRestore();
+  });
+});
