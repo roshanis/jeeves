@@ -393,7 +393,11 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
           ).catch((err: unknown) => {
             // A definitive rejection (not a lost response, 5xx or 429) means
             // nothing was created: the next attempt must send what the user
-            // has now, under a fresh idempotency key.
+            // has now, under a fresh idempotency key. 409 is in the list on
+            // purpose: for a create it means the key was already used with a
+            // different payload, so replaying the pinned key and payload would
+            // repeat the 409 forever. A fresh key can leave an earlier draft
+            // behind in the visitor's own workspace, which is the lesser problem.
             if (isApiError(err) && [400, 403, 404, 409, 413, 422].includes(err.status)) {
               requestId.current = null;
               creationPayload.current = null;

@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  create: vi.fn(), update: vi.fn(), submit: vi.fn(), push: vi.fn(),
+  create: vi.fn(), update: vi.fn(), submit: vi.fn(), push: vi.fn(), keys: 0,
 }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: mocks.push }) }));
 vi.mock("@/lib/client/session-context", () => ({
@@ -16,7 +16,7 @@ vi.mock("@/lib/client/api", async (importOriginal) => ({
   createInitiative: mocks.create,
   updateIntakeDraft: mocks.update,
   submitIntake: mocks.submit,
-  createIntakeRequestId: () => "unique-intake-request-key",
+  createIntakeRequestId: () => `unique-intake-request-key-${++mocks.keys}`,
 }));
 
 import { IntakeForm } from "@/components/jeeves/intake-form";
@@ -26,7 +26,8 @@ const created = { initiativeId: "init-1", slug: "draft-one", intakeVersionId: "i
 describe("IntakeForm retry recovery", () => {
   afterEach(cleanup);
   beforeEach(() => {
-    for (const mock of Object.values(mocks)) mock.mockReset();
+    mocks.keys = 0;
+    for (const mock of [mocks.create, mocks.update, mocks.submit, mocks.push]) mock.mockReset();
   });
 
   it("replays the original create after a lost response, then CAS-saves intervening edits", async () => {
@@ -65,6 +66,8 @@ describe("IntakeForm retry recovery", () => {
     fireEvent.click(screen.getByRole("button", { name: "Submit intake" }));
     await waitFor(() => expect(mocks.create).toHaveBeenCalledTimes(2));
     expect(mocks.create.mock.calls[1][1].basics.title).toBe("Edited after rejection");
+    expect(mocks.create.mock.calls[1][2]).toBeTruthy();
+    expect(mocks.create.mock.calls[1][2]).not.toBe(mocks.create.mock.calls[0][2]);
   });
 
   it("retries submit directly after its response is lost without creating or updating again", async () => {
