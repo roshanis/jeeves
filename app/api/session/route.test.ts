@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { sql } from "drizzle-orm";
 import { createTestDb, closeTestDb, type TestDb } from "@/lib/db/test-client";
 import { sessions } from "@/lib/db/schema";
 import { issuePublicSession, resetHousekeepingCounterForTests } from "@/lib/services/route-guard";
@@ -199,6 +200,15 @@ describe("cross-site session requests (auth-F10)", () => {
       if (!("token" in pub)) throw new Error("expected a public session");
       expect((await exit(pub.token)).status).toBe(403);
       expect(await db.select().from(sessions)).toHaveLength(1);
+    });
+
+    it("never lets the bound token reach a thrown error when the delete fails (auth-F19)", async () => {
+      const a = await (await enter()).json();
+      await db.execute(sql`create function fail_session_delete() returns trigger language plpgsql as $$ begin raise exception 'boom'; end $$`);
+      await db.execute(sql`create trigger fail_session_delete before delete on sessions for each row execute function fail_session_delete()`);
+      const thrown = await exit(a.token).then(() => null, (err: unknown) => err);
+      expect(thrown).toBeInstanceOf(Error);
+      expect(String((thrown as Error).message)).not.toContain(a.token);
     });
   });
 });

@@ -37,8 +37,8 @@ function handlerBodies(source: string): { method: string; body: string }[] {
 
 /** Doors that mint or switch sessions: they cannot sit behind a session by definition. */
 const NOT_GUARDED: Record<string, string> = {
-  "app/api/session/route.ts": "persona door: issues the playground session, rate-limited per client",
-  "app/api/public-session/route.ts": "real-request door: issues the public-role session, rate-limited per client",
+  "POST app/api/session/route.ts": "persona door: issues the playground session, rate-limited per client",
+  "POST app/api/public-session/route.ts": "real-request door: issues the public-role session, rate-limited per client",
 };
 
 describe("mutation gate inventory", () => {
@@ -52,7 +52,7 @@ describe("mutation gate inventory", () => {
     for (const route of routes) {
       for (const { method, body } of handlerBodies(route.source)) {
         if (/\brunMutationGuard\(/.test(body)) continue;
-        if (NOT_GUARDED[route.path]) continue;
+        if (NOT_GUARDED[`${method} ${route.path}`]) continue;
         unguarded.push(`${method} ${route.path}`);
       }
     }

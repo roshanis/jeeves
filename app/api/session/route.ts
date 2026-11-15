@@ -1,10 +1,7 @@
 /** Public demo entry and persona switching. Every action still needs a
  * server-issued, workspace-bound session. No visitor password is required. */
 import { z } from "zod";
-import { eq } from "drizzle-orm";
-import { getDb } from "@/lib/db/client";
-import { sessions } from "@/lib/db/schema";
-import { checkReadOnlyMode, checkSessionAttempt, clientKeyFor, guardFailureResponse, issueDemoSession, extractSessionToken, resolveSession, runMutationGuard } from "@/lib/services/route-guard";
+import { checkReadOnlyMode, checkSessionAttempt, clientKeyFor, guardFailureResponse, issueDemoSession, extractSessionToken, resolveSession, revokeSession, runMutationGuard } from "@/lib/services/route-guard";
 import { isPersonaKey, resolveActor } from "@/lib/services/actors";
 import { isSameOriginRequest } from "@/lib/security/same-origin";
 import { BodyReadError, PRE_SESSION_BODY_MAX_BYTES, readJsonBody } from "@/lib/http/read-json-body";
@@ -183,6 +180,6 @@ export async function DELETE(req: Request): Promise<Response> {
   const guard = await runMutationGuard(req, undefined);
   if (!guard.ok) return guardFailureResponse(guard.failure);
   const token = extractSessionToken(req);
-  if (token) await getDb().delete(sessions).where(eq(sessions.token, token));
+  if (token) await revokeSession(token);
   return new Response(null, { status: 204 });
 }

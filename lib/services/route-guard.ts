@@ -373,6 +373,16 @@ export async function resolveSession(token: string | null): Promise<ResolvedSess
   return { actor: resolveActor(session.personaKey), workspaceId: session.workspaceId ?? null };
 }
 
+/** Delete exactly one session row by token. The driver error embeds the bound token; never let it reach the log. */
+export async function revokeSession(token: string): Promise<void> {
+  await getDb()
+    .delete(sessions)
+    .where(eq(sessions.token, token))
+    .catch((err: unknown) => {
+      throw redactDbError(err);
+    });
+}
+
 /**
  * Resolve a bearer/cookie session token to its `Actor`. Role ALWAYS comes
  * from the server-side persona directory keyed by the token — never from
