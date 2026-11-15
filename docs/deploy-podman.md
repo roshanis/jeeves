@@ -25,9 +25,10 @@ Podman-specific.
 ```bash
 cd deploy/podman
 cp env.example .env          # then edit: set POSTGRES_PASSWORD and JEEVES_COOKIE_SECRET
-podman compose up -d --build
-podman compose run --rm migrate      # create the schema
+podman compose build
+podman compose run --rm migrate      # create the schema, before the app takes traffic
 podman compose run --rm seed         # load the synthetic demo data
+podman compose up -d
 ```
 
 Then open `http://localhost:3000`.
@@ -54,7 +55,7 @@ the Quadlet units in §3 — they are the Podman-native path.
 
 | Service | Image | Notes |
 |---|---|---|
-| `db` | `postgres:16-alpine` | **Not** published to the host. Data in the `jeeves-pgdata` volume. |
+| `db` | `postgres:16-alpine` | **Not** published to the host. Data in the `jeeves-pgdata` volume (`podman_jeeves-pgdata` on the host). |
 | `app` | built from `Containerfile` (`runner`) | The only published port. Non-root, read-only rootfs. |
 | `migrate` / `seed` | built from `Containerfile` (`migrator`) | One-shot jobs, `tools` profile. |
 
@@ -182,11 +183,14 @@ errors carry the host and port.
 
 ### Backups
 
-The Postgres data lives in a named volume:
+The Postgres data lives in a named volume. Compose prefixes the volume with
+the project name, which defaults to the directory name, so from
+`deploy/podman` it is `podman_jeeves-pgdata` (check with `podman volume ls`).
+The Quadlet path names it `jeeves-db`.
 
 ```bash
-podman volume export jeeves-pgdata --output jeeves-pgdata.tar    # back up
-podman volume import jeeves-pgdata jeeves-pgdata.tar             # restore
+podman volume export podman_jeeves-pgdata --output jeeves-pgdata.tar    # back up
+podman volume import podman_jeeves-pgdata jeeves-pgdata.tar             # restore
 ```
 
 Stop the stack first — exporting a volume under a running Postgres captures a
