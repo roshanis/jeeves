@@ -77,7 +77,7 @@ export async function POST(
   try {
     const result = await startDraftRun(db, id, [...parsed.data.domains] as Domain[], undefined, {
       actor: guard.actor, sessionWorkspaceId: guard.workspaceId, budget: draftBudgetPolicy(), signal: req.signal,
-      runTimeoutMs: limits.timeoutMs,
+      runTimeoutMs: limits.timeoutMs, attemptTimeoutMs: limits.attemptTimeoutMs,
     });
     if (result.outcomes.every((outcome) => outcome.error?.kind === "budget-exhausted")) {
       return Response.json({ ...result, error: "Demo token reservation budget exhausted for today." }, { status: 429 });
