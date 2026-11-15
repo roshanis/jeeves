@@ -137,7 +137,9 @@ export function ExceptionsPanel({ exceptions }: { exceptions: ExceptionRow[] }) 
                       <td className="px-4 py-2.5 text-muted-foreground">{e.requestedBy}</td>
                       <td className="max-w-[24rem] px-4 py-2.5 text-muted-foreground">{e.reason}</td>
                       <td className="px-4 py-2.5">
-                        {canDecide && e.status === "requested" ? (
+                        {e.isShared && canDecide ? (
+                          <span className="text-xs text-muted-foreground">Sample data — read-only</span>
+                        ) : canDecide && e.status === "requested" ? (
                           <div className="flex gap-1.5">
                             <Button size="sm" onClick={() => openDialog("approve", e.id, e.controlId)}>
                               Approve

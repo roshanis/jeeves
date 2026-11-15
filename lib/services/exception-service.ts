@@ -617,6 +617,8 @@ export interface ExceptionRow {
   decisionReason: string | null;
   expiresAt: number | null;
   supersedesId: string | null;
+  /** True for shared sample rows (no owning workspace): visitors cannot act on them. */
+  isShared: boolean;
 }
 
 export interface ListExceptionsOptions {
@@ -649,13 +651,13 @@ export async function listExceptions(
     ? await db.select().from(controlExceptions).where(eq(controlExceptions.status, status))
     : await db.select().from(controlExceptions);
 
+  const initiativeIds = Array.from(
+    new Set(rows.map((r) => r.initiativeId).filter((id): id is string => id !== null)),
+  );
+  const workspaceIds = await initiativeWorkspaceIds(db, initiativeIds);
   let visibleRows = rows;
   if (opts) {
     const viewerWorkspaceId = opts.viewerWorkspaceId ?? null;
-    const initiativeIds = Array.from(
-      new Set(rows.map((r) => r.initiativeId).filter((id): id is string => id !== null)),
-    );
-    const workspaceIds = await initiativeWorkspaceIds(db, initiativeIds);
     visibleRows = rows.filter((r) => {
       if (!r.initiativeId) return true;
       const resourceWorkspaceId = workspaceIds.get(r.initiativeId) ?? null;
@@ -680,5 +682,6 @@ export async function listExceptions(
       decisionReason: r.decisionReason,
       expiresAt: r.expiresAt,
       supersedesId: r.supersedesId,
+      isShared: !r.initiativeId || (workspaceIds.get(r.initiativeId) ?? null) === null,
     }));
 }

@@ -67,6 +67,8 @@ export function apiErrorToMessage(err: ApiError): string {
       return "Rate limit or demo budget reached — try again shortly.";
     case 403:
       return "Not permitted for your current role.";
+    case 404:
+      return "This record is no longer available. Refresh and review the latest information.";
     case 409:
       return "This record changed. Refresh and review the latest information before trying again.";
     case 400:
@@ -762,6 +764,8 @@ export interface ExceptionRow {
   decisionReason: string | null;
   expiresAt: number | null;
   supersedesId: string | null;
+  /** Shared sample row: read-only for visitors. */
+  isShared?: boolean;
 }
 
 export interface ExceptionActionResult {
