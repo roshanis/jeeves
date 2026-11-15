@@ -4,7 +4,7 @@
 **Owner role:** Accountable Approver — Angela Torres, VP, AI Governance (standing authority;
 see FL-3 for the mechanism). Administered day-to-day by the Program Office (Nia Okafor).
 **Applies to:** Low-tier AI/ML initiatives meeting the deterministic eligibility criteria in
-FL-2. Agents (eve) may recommend fast-lane routing but never issue the approval themselves —
+FL-2. Agents may recommend fast-lane routing but never issue the approval themselves —
 approval authority is never delegated to an agent.
 
 > Fictional internal policy for the Jeeves demo. Invented for Meridian Health; no real
