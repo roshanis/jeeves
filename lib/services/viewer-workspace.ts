@@ -18,19 +18,16 @@
  *      -> its embedded workspace id.
  *   3. Otherwise `null` -> seeded-only view (never "all workspaces").
  *
- * Every derived helper below (`*WorkspaceMap` / `isXVisible`) exists because
- * `incidents` and RL-checkpoint "promotions" (deployment_versions rows with
- * status 'awaiting_promotion_signoff') carry no workspace column of their
- * own — ownership resolves through deployment_versions.initiativeId ->
- * initiatives.workspaceId, same as every other derived entity in this
- * schema (see lib/data/db-provider.ts's `visibleSnapshot`). These stay here
- * (rather than in lib/services/monitor-service.ts / promotion-service.ts,
- * which this task does not own) so the route handlers that DO own can filter
- * those services' otherwise-unfiltered results without touching them.
+ * `initiativeWorkspaceMap` / `isInitiativeVisible` exist for read models that
+ * carry an `initiativeId` but no workspace column of their own (RL-checkpoint
+ * "promotions", read via initiatives.workspaceId). Prefer filtering in SQL
+ * with `viewerRowsFilter` (as `listIncidentsForViewer` does through
+ * deployment_versions -> initiatives) and never reach for an unscoped reader
+ * such as monitor-service's `listIncidents` in a route or page.
  */
 import { eq, isNull, or, type SQL } from "drizzle-orm";
 import type { Db } from "../db/client";
-import { deploymentVersions, initiatives } from "../db/schema";
+import { initiatives } from "../db/schema";
 import { extractSessionToken, resolveSession } from "./route-guard";
 import { workspaceMismatch } from "./workspace-guard";
 import {
@@ -81,34 +78,6 @@ export function viewerRowsFilter(viewerWorkspaceId?: string | null): SQL | undef
   return viewerWorkspaceId === null
     ? isNull(initiatives.workspaceId)
     : or(isNull(initiatives.workspaceId), eq(initiatives.workspaceId, viewerWorkspaceId));
-}
-
-/**
- * deploymentId -> owning initiative's workspaceId, for filtering
- * deployment-scoped read models (incidents, RL-checkpoint promotions) that
- * carry no workspace column of their own. A deployment whose initiative row
- * has since vanished (should not happen; FK-enforced) is simply absent from
- * the map, and `isDeploymentVisible` treats an absent key as NOT visible.
- */
-export async function deploymentWorkspaceMap(
-  db: Db,
-  viewerWorkspaceId?: string | null,
-): Promise<Map<string, string | null>> {
-  const rows = await db
-    .select({ deploymentId: deploymentVersions.id, workspaceId: initiatives.workspaceId })
-    .from(deploymentVersions)
-    .innerJoin(initiatives, eq(deploymentVersions.initiativeId, initiatives.id))
-    .where(viewerRowsFilter(viewerWorkspaceId));
-  return new Map(rows.map((r) => [r.deploymentId, r.workspaceId]));
-}
-
-export function isDeploymentVisible(
-  workspaceByDeployment: Map<string, string | null>,
-  deploymentId: string,
-  viewerWorkspaceId: string | null,
-): boolean {
-  if (!workspaceByDeployment.has(deploymentId)) return false;
-  return !workspaceMismatch(workspaceByDeployment.get(deploymentId)!, viewerWorkspaceId);
 }
 
 /** initiativeId -> workspaceId, for filtering read models keyed directly by

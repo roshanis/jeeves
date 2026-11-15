@@ -713,7 +713,7 @@ describe("lib/services/monitor-service", () => {
     });
   });
 
-  describe("listIncidents — public read-only", () => {
+  describe("listIncidents — unscoped baseline", () => {
     it("returns incidents sorted most-recent-first after a breach", async () => {
       await runMonitor(db, RAY_CHEN, PLUS_14D, UNSCOPED_WORKSPACE);
       const rows = await listIncidents(db);

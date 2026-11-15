@@ -644,7 +644,7 @@ export async function runMonitor(
 }
 
 /* -------------------------------------------------------------------------
- * Public read-only incident list (GET /api/monitor/incidents)
+ * Incident list (GET /api/monitor/incidents reads it via listIncidentsForViewer)
  * ---------------------------------------------------------------------- */
 
 export interface IncidentListRow {
@@ -669,6 +669,11 @@ function toIncidentListRow(r: typeof incidents.$inferSelect): IncidentListRow {
   };
 }
 
+/**
+ * Internal and UNSCOPED: every incident of every workspace, newest first.
+ * Not for routes or pages (they must use `listIncidentsForViewer`); kept as
+ * the unfiltered baseline the monitor tests compare against.
+ */
 export async function listIncidents(db: Db): Promise<IncidentListRow[]> {
   const rows = await db.select().from(incidents);
   return rows
