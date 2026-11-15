@@ -19,6 +19,7 @@ import {
   listPromotions,
   promoteCheckpoint,
   deploymentHistory,
+  deploymentHistoryForInitiatives,
   rollbackDeployment,
   ForbiddenError,
   ValidationError,
@@ -483,6 +484,24 @@ describe("lib/services/promotion-service", () => {
       const [init] = await db.select().from(initiatives).where(eq(initiatives.slug, "provider-dedup-agent"));
       const history = await deploymentHistory(db, init!.id);
       expect(history).toEqual([]);
+    });
+  });
+
+  describe("deploymentHistoryForInitiatives", () => {
+    it("matches deploymentHistory per id using a single select", async () => {
+      const paId = await paCorrespondenceModelId(db);
+      const [other] = await db.select().from(initiatives).where(eq(initiatives.slug, "provider-dedup-agent"));
+      const ids = [paId, other!.id];
+      const expected = [await deploymentHistory(db, paId), await deploymentHistory(db, other!.id)];
+
+      const spy = vi.spyOn(db, "select");
+      const batch = await deploymentHistoryForInitiatives(db, ids);
+      expect(spy).toHaveBeenCalledTimes(1);
+      spy.mockRestore();
+
+      expect(batch.get(paId)).toEqual(expected[0]);
+      expect(batch.get(other!.id) ?? []).toEqual(expected[1]);
+      expect(await deploymentHistoryForInitiatives(db, [])).toEqual(new Map());
     });
   });
 

@@ -59,7 +59,7 @@
  * retired, matching `operationalDeployment`'s ordering.
  */
 import { randomUUID } from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import type { Db } from "../db/client";
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import type * as schema from "../db/schema";
@@ -500,6 +500,36 @@ export async function deploymentHistory(
     .from(deploymentVersions)
     .where(eq(deploymentVersions.initiativeId, initiativeId));
 
+  return toHistoryEntries(rows);
+}
+
+/**
+ * `deploymentHistory` for many initiatives in ONE query (promotions page).
+ * Initiatives without rows are absent from the map.
+ */
+export async function deploymentHistoryForInitiatives(
+  db: Db,
+  initiativeIds: string[],
+): Promise<Map<string, DeploymentHistoryEntry[]>> {
+  const out = new Map<string, DeploymentHistoryEntry[]>();
+  if (initiativeIds.length === 0) return out;
+  const rows = await db
+    .select()
+    .from(deploymentVersions)
+    .where(inArray(deploymentVersions.initiativeId, initiativeIds));
+  const grouped = new Map<string, (typeof rows)[number][]>();
+  for (const r of rows) {
+    const list = grouped.get(r.initiativeId) ?? [];
+    list.push(r);
+    grouped.set(r.initiativeId, list);
+  }
+  for (const [id, list] of grouped) out.set(id, toHistoryEntries(list));
+  return out;
+}
+
+function toHistoryEntries(
+  rows: (typeof deploymentVersions.$inferSelect)[],
+): DeploymentHistoryEntry[] {
   return rows
     .slice()
     .sort((a, b) => b.deployedAt.getTime() - a.deployedAt.getTime())
