@@ -14,7 +14,8 @@
     "typecheck": "tsc --noEmit",
     "db:migrate": "tsx scripts/migrate.ts",
     "db:seed": "tsx scripts/seed.ts",
-    "reset:demo": "tsx scripts/reset-demo.ts"
+    "reset:demo": "tsx scripts/reset-demo.ts",
+    "smoke:production": "tsx scripts/smoke-production.ts"
   },
   "dependencies": {
     "@ai-sdk/openai": "^4.0.11",

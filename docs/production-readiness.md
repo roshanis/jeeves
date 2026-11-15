@@ -221,6 +221,30 @@ deployment. The test encodes that distinction.
 The failing state is now reachable from a mock-sourced fixture, so a test
 like the original blockers-rail one would catch the original bug.
 
+### 2.2a Production-mode smoke test — ADDED
+
+Nothing used to start a real production-mode server, which is how a relative
+`Location` in `proxy.ts` made every signed-out page answer 500 unnoticed.
+`npm run smoke:production` closes that gap. It migrates a throwaway Postgres
+database, stamps it `production`, boots the real server (the standalone build
+the container image runs, or `next start`), and checks the HTTP behaviour on
+the wire: redirects, 404s for marketing pages and demo doors, 401s for gated
+reads, the sign-in page and its security headers, robots, sitemap and health.
+It also starts the server four times with a deliberately bad configuration and
+requires each to refuse to boot.
+
+It stamps its database for good, so it only accepts `SMOKE_DATABASE_URL`
+(there is no fallback to `DATABASE_URL`) naming a database called
+`jeeves_smoke_<name>`. Create one with `CREATE DATABASE jeeves_smoke_local;`.
+It needs a finished build and never builds: run
+`DATA_PROVIDER=mock JEEVES_MODE=demo npm run build` first. Then:
+
+    SMOKE_DATABASE_URL=postgres://user:pass@127.0.0.1:5432/jeeves_smoke_local npm run smoke:production
+
+`SMOKE_PORT` changes the port (default 3217) and `SMOKE_SERVER=standalone` or
+`next-start` forces the server command. The run is repeatable on the same
+database and exits 1 if any check fails.
+
 ### 2.3 No staging environment — DOCUMENTED 2026-09-12, not built
 
 `docs/deploy.md` §5 now describes the cheap version — a second Vercel project

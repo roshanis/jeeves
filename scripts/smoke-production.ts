@@ -1,0 +1,533 @@
+/**
+ * `npm run smoke:production`: boot a REAL production-mode server against a
+ * disposable Postgres database and check the HTTP behaviour on the wire.
+ *
+ * Why it exists: a bug shipped unnoticed because nothing ever started a
+ * production-mode server (proxy.ts returned a relative Location, Next's proxy
+ * adapter rejected it, and every signed-out page answered 500). Unit tests call
+ * the proxy function; only a running server shows what a scanner or load
+ * balancer sees.
+ *
+ * SAFETY: this stamps its database `production`, and that stamp is immutable.
+ * It therefore needs SMOKE_DATABASE_URL (no fallback to DATABASE_URL) naming a
+ * database called jeeves_smoke_<something>, and refuses anything else.
+ *
+ *   SMOKE_DATABASE_URL=postgres://user:pass@127.0.0.1:5432/jeeves_smoke_local \
+ *     npm run smoke:production
+ *
+ * Needs a finished build (it never builds). SMOKE_PORT (default 3217) picks the
+ * port; SMOKE_SERVER=standalone|next-start forces the server command.
+ */
+import { spawn, type ChildProcess } from "node:child_process";
+import { randomBytes } from "node:crypto";
+import { existsSync } from "node:fs";
+import http from "node:http";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import {
+  CONSOLE_HOME,
+  CONSOLE_PATH_PREFIXES,
+  MARKETING_PATH_PREFIXES,
+  SIGN_IN_PATH,
+} from "../lib/config/production-routes";
+
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+// ---------------------------------------------------------------------------
+// Safety guard
+// ---------------------------------------------------------------------------
+
+const DISPOSABLE_DB_NAME = /^jeeves_smoke_[a-z0-9_]+$/;
+
+/**
+ * Returns the URL, or throws. The message deliberately names neither the URL
+ * nor any part of it: a rejected URL may well be a real database's credentials.
+ */
+export function assertDisposableDatabaseUrl(url: string | undefined): string {
+  const refusal = new Error(
+    "SMOKE_DATABASE_URL must be a postgres:// or postgresql:// URL whose database is named " +
+      "jeeves_smoke_<lowercase letters, digits or underscores>. The smoke test stamps its database " +
+      "'production' for good, so it only runs against a throwaway one. Create it with " +
+      "CREATE DATABASE jeeves_smoke_local; and point SMOKE_DATABASE_URL at it.",
+  );
+  if (!url) throw refusal;
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw refusal;
+  }
+  if (parsed.protocol !== "postgres:" && parsed.protocol !== "postgresql:") throw refusal;
+  let name: string;
+  try {
+    name = decodeURIComponent(parsed.pathname.replace(/^\//, ""));
+  } catch {
+    throw refusal;
+  }
+  if (!DISPOSABLE_DB_NAME.test(name)) throw refusal;
+  return url;
+}
+
+// ---------------------------------------------------------------------------
+// Server environment
+// ---------------------------------------------------------------------------
+
+/**
+ * Built from scratch, never from process.env: a stray JEEVES_MODE=demo,
+ * DATA_PROVIDER=mock or OPERATOR_TOKEN in the developer's shell must not change
+ * what is being tested.
+ */
+export function buildServerEnv(opts: { databaseUrl: string; port: number; cookieSecret: string }): Record<string, string> {
+  const env: Record<string, string> = { PATH: process.env.PATH ?? "" };
+  if (process.env.HOME) env.HOME = process.env.HOME;
+  return {
+    ...env,
+    NODE_ENV: "production",
+    NEXT_TELEMETRY_DISABLED: "1",
+    PORT: String(opts.port),
+    HOSTNAME: "127.0.0.1",
+    DATABASE_URL: opts.databaseUrl,
+    JEEVES_COOKIE_SECRET: opts.cookieSecret,
+    APP_BASE_URL: "https://jeeves.example.com",
+    JEEVES_TENANT_ID: "smoke-tenant",
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Wire checks
+// ---------------------------------------------------------------------------
+
+export interface SmokeCheck {
+  name: string;
+  method: "GET" | "POST";
+  path: string;
+  headers?: Record<string, string>;
+  body?: string;
+  expect: {
+    status: number;
+    /** Exact raw Location header value. */
+    location?: string;
+    /** Cache-Control must contain "no-store". */
+    noStore?: boolean;
+    bodyIncludes?: string[];
+    bodyExcludes?: string[];
+    emptyBody?: boolean;
+    /** Header must be present and equal (string) or match (RegExp). */
+    headers?: Record<string, string | RegExp>;
+  };
+}
+
+export interface Observed {
+  status: number;
+  headers: Record<string, string>;
+  body: string;
+}
+
+/** Problems found in a response; an empty list means the check passed. */
+export function evaluateCheck(check: SmokeCheck, observed: Observed): string[] {
+  const problems: string[] = [];
+  const headers: Record<string, string> = {};
+  for (const [k, v] of Object.entries(observed.headers)) headers[k.toLowerCase()] = v;
+  const want = check.expect;
+
+  if (observed.status !== want.status) problems.push(`status ${observed.status}, expected ${want.status}`);
+  if (want.location !== undefined && headers["location"] !== want.location) {
+    problems.push(`location ${headers["location"] === undefined ? "missing" : JSON.stringify(headers["location"])}, expected ${JSON.stringify(want.location)}`);
+  }
+  if (want.noStore && !(headers["cache-control"] ?? "").includes("no-store")) {
+    problems.push(`cache-control lacks no-store (${JSON.stringify(headers["cache-control"] ?? null)})`);
+  }
+  for (const needle of want.bodyIncludes ?? []) {
+    if (!observed.body.includes(needle)) problems.push(`body does not include ${JSON.stringify(needle)}`);
+  }
+  for (const needle of want.bodyExcludes ?? []) {
+    if (observed.body.includes(needle)) problems.push(`body includes forbidden ${JSON.stringify(needle)}`);
+  }
+  if (want.emptyBody && observed.body.length > 0) problems.push(`body should be empty, got ${observed.body.length} bytes`);
+  for (const [name, expected] of Object.entries(want.headers ?? {})) {
+    const actual = headers[name.toLowerCase()];
+    if (actual === undefined) problems.push(`header ${name} missing`);
+    else if (typeof expected === "string" ? actual !== expected : !expected.test(actual)) {
+      problems.push(`header ${name} is ${JSON.stringify(actual)}, expected ${String(expected)}`);
+    }
+  }
+  // next.config.ts turns the framework banner off.
+  if ("x-powered-by" in headers) problems.push(`x-powered-by header present (${headers["x-powered-by"]})`);
+  return problems;
+}
+
+const JSON_POST = { "content-type": "application/json" };
+const DEMO_DOORS = ["/api/session", "/api/public-session", "/api/public-intake", "/api/cron/monitor", "/api/monitor/run"];
+
+/** Built from the real route constants, so a page added later is covered automatically. */
+export function buildSmokeChecks(): SmokeCheck[] {
+  const checks: SmokeCheck[] = [];
+
+  // A. Redirects. The raw Location must be relative: Next rewrites a same-host
+  // redirect that way, and an absolute one would leak the host the process
+  // believes it has.
+  const redirect = (name: string, path: string, location: string, headers?: Record<string, string>): void => {
+    checks.push({ name, method: "GET", path, headers, expect: { status: 307, location, noStore: true } });
+  };
+  redirect("GET / redirects to the console home", "/", CONSOLE_HOME);
+  for (const prefix of CONSOLE_PATH_PREFIXES) redirect(`GET ${prefix} signed out redirects to sign-in`, prefix, SIGN_IN_PATH);
+  redirect("GET /initiatives/new?x=1 signed out redirects to sign-in", "/initiatives/new?x=1", SIGN_IN_PATH);
+  redirect("foreign Host header is not echoed in the redirect", "/inbox", SIGN_IN_PATH, { Host: "attacker.example" });
+  checks.push({
+    name: "garbage cookie leaks no data",
+    method: "GET",
+    path: "/inbox",
+    headers: { cookie: "jeeves_session=garbage" },
+    // The proxy only checks that a credential is present, so the status is not asserted.
+    expect: { status: -1, bodyExcludes: ["Meridian", "Synthetic data"] },
+  });
+
+  // B. Marketing pages do not exist in production.
+  for (const prefix of [...MARKETING_PATH_PREFIXES, "/frameworks/nist-ai-rmf"]) {
+    checks.push({ name: `GET ${prefix} is 404`, method: "GET", path: prefix, expect: { status: 404, noStore: true, emptyBody: true } });
+  }
+
+  // C. Sign-in page.
+  checks.push({
+    name: "GET /sign-in renders the SSO notice with security headers",
+    method: "GET",
+    path: "/sign-in",
+    expect: {
+      status: 200,
+      bodyIncludes: ["Single sign-on is not yet configured"],
+      bodyExcludes: ["Meridian", "Synthetic", "persona", "playground"],
+      headers: {
+        "content-security-policy": /frame-ancestors 'none'/,
+        "x-frame-options": "DENY",
+        "x-content-type-options": "nosniff",
+        "strict-transport-security": /max-age=\d+/,
+      },
+    },
+  });
+
+  // D. Demo doors are closed.
+  for (const door of DEMO_DOORS) {
+    checks.push({ name: `GET ${door} is closed`, method: "GET", path: door, expect: { status: 404, noStore: true, emptyBody: true } });
+    checks.push({
+      name: `POST ${door} is closed`,
+      method: "POST",
+      path: door,
+      headers: JSON_POST,
+      body: "{}",
+      expect: { status: 404, noStore: true, emptyBody: true },
+    });
+  }
+  checks.push({
+    name: "GET /operator is closed",
+    method: "GET",
+    path: "/operator",
+    expect: { status: 404, bodyExcludes: ["Operator queue"] },
+  });
+
+  // E. Reads are gated.
+  for (const p of ["/api/exceptions", "/api/monitor/incidents", "/initiatives/x/detail-data"]) {
+    checks.push({
+      name: `GET ${p} is 401 without a session`,
+      method: "GET",
+      path: p,
+      expect: { status: 401, noStore: true, bodyIncludes: ["invalid or missing session"] },
+    });
+  }
+  checks.push({
+    name: "POST /api/initiatives is 401 without a session",
+    method: "POST",
+    path: "/api/initiatives",
+    headers: JSON_POST,
+    body: "{}",
+    expect: { status: 401, bodyIncludes: ["invalid or missing session"] },
+  });
+
+  // F. Crawlers.
+  checks.push({
+    name: "GET /robots.txt disallows everything",
+    method: "GET",
+    path: "/robots.txt",
+    expect: { status: 200, bodyIncludes: ["Disallow: /"], bodyExcludes: ["Sitemap:", "Allow: /"] },
+  });
+  checks.push({ name: "GET /sitemap.xml lists no URLs", method: "GET", path: "/sitemap.xml", expect: { status: 200, bodyExcludes: ["<url>"] } });
+
+  // G. Health.
+  checks.push({
+    name: "GET /api/health is ok",
+    method: "GET",
+    path: "/api/health",
+    expect: { status: 200, noStore: true, bodyIncludes: ['"status":"ok"', '"database":"ok"'] },
+  });
+
+  // H. Unknown path.
+  checks.push({ name: "unknown path is 404", method: "GET", path: "/this-page-does-not-exist", expect: { status: 404 } });
+
+  return checks;
+}
+
+// ---------------------------------------------------------------------------
+// Boot refusals
+// ---------------------------------------------------------------------------
+
+export interface BootRefusalCase {
+  name: string;
+  /** Returns the good server environment with this case's fault applied. */
+  modify: (env: Record<string, string>) => Record<string, string>;
+  /** Text the refusal output must contain. */
+  expectText: string;
+}
+
+export const bootRefusalCases: BootRefusalCase[] = [
+  {
+    name: "missing cookie secret",
+    modify: (env) => {
+      const rest = { ...env };
+      delete rest.JEEVES_COOKIE_SECRET;
+      return rest;
+    },
+    expectText: "JEEVES_COOKIE_SECRET is required",
+  },
+  {
+    name: "demo mode on a production-stamped database",
+    modify: (env) => ({ ...env, JEEVES_MODE: "demo" }),
+    expectText: 'stamped "production"',
+  },
+  {
+    name: "mock data provider",
+    modify: (env) => ({ ...env, DATA_PROVIDER: "mock" }),
+    expectText: "DATA_PROVIDER=mock is not allowed",
+  },
+  {
+    name: "plain http base URL",
+    modify: (env) => ({ ...env, APP_BASE_URL: "http://jeeves.example.com" }),
+    expectText: "APP_BASE_URL must be an absolute https URL",
+  },
+];
+
+// ---------------------------------------------------------------------------
+// Output hygiene
+// ---------------------------------------------------------------------------
+
+/** Replaces each secret URL, and the password inside it, with [redacted]. */
+export function redact(text: string, secrets: string[]): string {
+  let out = text;
+  for (const secret of secrets) {
+    const pieces = [secret];
+    try {
+      const password = decodeURIComponent(new URL(secret).password);
+      if (password) pieces.push(password);
+      const raw = new URL(secret).password;
+      if (raw && raw !== password) pieces.push(raw);
+    } catch {
+      // Not a URL: redact it verbatim.
+    }
+    for (const piece of pieces) if (piece) out = out.split(piece).join("[redacted]");
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Runner
+// ---------------------------------------------------------------------------
+
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+interface ServerCommand {
+  label: string;
+  args: string[];
+  cwd: string;
+}
+
+export function serverCommand(port: number, force: string | undefined): ServerCommand {
+  const standalone = path.join(REPO_ROOT, ".next/standalone/server.js");
+  const useStandalone = force === "standalone" || (force !== "next-start" && existsSync(standalone));
+  if (useStandalone) {
+    if (!existsSync(standalone)) throw new Error(".next/standalone/server.js is missing; SMOKE_SERVER=next-start can run without it");
+    // What deploy/podman/Containerfile runs (it chdirs to its own directory itself).
+    return { label: "standalone (node .next/standalone/server.js)", args: [standalone], cwd: REPO_ROOT };
+  }
+  return {
+    label: "next-start (node node_modules/next/dist/bin/next start)",
+    args: [path.join(REPO_ROOT, "node_modules/next/dist/bin/next"), "start", "-p", String(port), "-H", "127.0.0.1"],
+    cwd: REPO_ROOT,
+  };
+}
+
+function spawnServer(cmd: ServerCommand, env: Record<string, string>): { child: ChildProcess; output: () => string } {
+  // The node binary is spawned directly (never through npm/npx), so signalling
+  // the child stops the server itself.
+  const child = spawn(process.execPath, cmd.args, { cwd: cmd.cwd, env: env as NodeJS.ProcessEnv, stdio: ["ignore", "pipe", "pipe"] });
+  let out = "";
+  child.stdout?.on("data", (d: Buffer) => (out += d.toString()));
+  child.stderr?.on("data", (d: Buffer) => (out += d.toString()));
+  return { child, output: () => out };
+}
+
+async function stopChild(child: ChildProcess): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
+  child.kill("SIGTERM");
+  const timer = setTimeout(() => child.kill("SIGKILL"), 5_000);
+  await exited;
+  clearTimeout(timer);
+}
+
+function request(port: number, check: Pick<SmokeCheck, "method" | "path" | "headers" | "body">): Promise<Observed> {
+  return new Promise((resolve, reject) => {
+    const req = http.request(
+      { host: "127.0.0.1", port, method: check.method, path: check.path, headers: check.headers, timeout: 15_000 },
+      (res) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (c: Buffer) => chunks.push(c));
+        res.on("end", () => {
+          const headers: Record<string, string> = {};
+          for (const [k, v] of Object.entries(res.headers)) if (v !== undefined) headers[k] = Array.isArray(v) ? v.join(", ") : v;
+          resolve({ status: res.statusCode ?? 0, headers, body: Buffer.concat(chunks).toString("utf8") });
+        });
+      },
+    );
+    req.on("timeout", () => req.destroy(new Error("request timed out after 15 s")));
+    req.on("error", reject);
+    if (check.body !== undefined) req.write(check.body);
+    req.end();
+  });
+}
+
+function runToCompletion(args: string[], env: Record<string, string>): Promise<{ code: number | null; output: string }> {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, args, { cwd: REPO_ROOT, env: env as NodeJS.ProcessEnv, stdio: ["ignore", "pipe", "pipe"] });
+    let output = "";
+    child.stdout.on("data", (d: Buffer) => (output += d.toString()));
+    child.stderr.on("data", (d: Buffer) => (output += d.toString()));
+    child.on("exit", (code) => resolve({ code, output }));
+  });
+}
+
+function baseEnv(): Record<string, string> {
+  const env: Record<string, string> = { PATH: process.env.PATH ?? "" };
+  if (process.env.HOME) env.HOME = process.env.HOME;
+  return env;
+}
+
+async function migrateAndStamp(databaseUrl: string): Promise<void> {
+  const tsx = path.join(REPO_ROOT, "node_modules/tsx/dist/cli.mjs");
+  const migrate = await runToCompletion([tsx, "scripts/migrate.ts"], { ...baseEnv(), DATABASE_URL: databaseUrl });
+  if (migrate.code !== 0) throw new Error(`migration failed:\n${redact(migrate.output, [databaseUrl])}`);
+
+  const { Client } = await import("pg");
+  const client = new Client({ connectionString: databaseUrl });
+  await client.connect();
+  try {
+    await client.query("INSERT INTO installation (deploy_mode, install_id) VALUES ('production', $1) ON CONFLICT (id) DO NOTHING", [
+      `smoke-${randomBytes(4).toString("hex")}`,
+    ]);
+    const { rows } = await client.query<{ deploy_mode: string }>("SELECT deploy_mode FROM installation");
+    if (rows.length !== 1 || rows[0].deploy_mode !== "production") {
+      throw new Error("this database is stamped demo; use a fresh jeeves_smoke_* database");
+    }
+  } finally {
+    await client.end();
+  }
+}
+
+async function runBootRefusal(c: BootRefusalCase, cmd: ServerCommand, good: Record<string, string>, secrets: string[]): Promise<string[]> {
+  const { child, output } = spawnServer(cmd, c.modify(good));
+  const exit = await new Promise<number | null | "timeout">((resolve) => {
+    child.once("exit", (code) => resolve(code));
+    setTimeout(() => resolve("timeout"), 30_000).unref();
+  });
+  const text = output();
+  const problems: string[] = [];
+  if (exit === "timeout") {
+    problems.push("still running after 30 s (did not refuse to boot)");
+    await stopChild(child);
+  } else if (exit !== 1) problems.push(`exit code ${exit}, expected 1`);
+  if (!text.includes(c.expectText)) problems.push(`output lacks ${JSON.stringify(c.expectText)}`);
+  for (const secret of secrets) if (text.includes(secret)) problems.push("output contains a database credential");
+  if (problems.length) problems.push(`output was: ${redact(text, secrets).trim().slice(0, 600)}`);
+  return problems;
+}
+
+async function waitForHealth(port: number, child: ChildProcess): Promise<boolean> {
+  const deadline = Date.now() + 60_000;
+  while (Date.now() < deadline) {
+    if (child.exitCode !== null || child.signalCode !== null) return false;
+    try {
+      if ((await request(port, { method: "GET", path: "/api/health" })).status === 200) return true;
+    } catch {
+      // Not listening yet.
+    }
+    await sleep(250);
+  }
+  return false;
+}
+
+async function main(): Promise<void> {
+  let databaseUrl: string;
+  try {
+    databaseUrl = assertDisposableDatabaseUrl(process.env.SMOKE_DATABASE_URL);
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : "invalid SMOKE_DATABASE_URL");
+    process.exitCode = 2;
+    return;
+  }
+  const port = Number(process.env.SMOKE_PORT ?? 3217);
+  if (!existsSync(path.join(REPO_ROOT, ".next/BUILD_ID"))) {
+    console.error("No production build found. Run: DATA_PROVIDER=mock JEEVES_MODE=demo npm run build");
+    process.exitCode = 2;
+    return;
+  }
+
+  const secrets = [databaseUrl];
+  const cmd = serverCommand(port, process.env.SMOKE_SERVER);
+  console.log(`Server: ${cmd.label}, port ${port}`);
+
+  console.log("Migrating and stamping the smoke database...");
+  await migrateAndStamp(databaseUrl);
+
+  const good = buildServerEnv({ databaseUrl, port, cookieSecret: randomBytes(32).toString("hex") });
+  let failed = 0;
+  let passed = 0;
+  const record = (ok: boolean, name: string, detail: string[] = []): void => {
+    if (ok) passed++;
+    else failed++;
+    console.log(`${ok ? "PASS" : "FAIL"}  ${name}`);
+    for (const line of detail) console.log(`      ${line}`);
+  };
+
+  for (const c of bootRefusalCases) {
+    const problems = await runBootRefusal(c, cmd, good, secrets);
+    record(problems.length === 0, `boot refusal: ${c.name}`, problems);
+  }
+
+  const { child, output } = spawnServer(cmd, good);
+  try {
+    if (!(await waitForHealth(port, child))) {
+      console.error(`Server did not become healthy. Output:\n${redact(output(), secrets)}`);
+      process.exitCode = 1;
+      return;
+    }
+    for (const check of buildSmokeChecks()) {
+      try {
+        const observed = await request(port, check);
+        // status -1 means "do not assert a status".
+        const problems = evaluateCheck(check.expect.status === -1 ? { ...check, expect: { ...check.expect, status: observed.status } } : check, observed);
+        record(problems.length === 0, check.name, problems.length ? [...problems, `observed status ${observed.status}, location ${observed.headers.location ?? "none"}`] : []);
+      } catch (err) {
+        record(false, check.name, [`request failed: ${err instanceof Error ? err.message : "unknown error"}`]);
+      }
+    }
+  } finally {
+    await stopChild(child);
+  }
+
+  console.log(`${passed} passed, ${failed} failed`);
+  if (failed > 0) process.exitCode = 1;
+}
+
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main().catch((err) => {
+    console.error(`Smoke test failed: ${err instanceof Error ? err.message : "unknown error"}`);
+    process.exitCode = 1;
+  });
+}
