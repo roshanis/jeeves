@@ -102,6 +102,20 @@ describe("lib/services/initiative-service", () => {
     await closeTestDb(db);
   });
 
+  describe("legacy flat intake records", () => {
+    it("submitIntake, startQc and triage reject a flat stored intake with a ValidationError, not a TypeError", async () => {
+      const draft = await svc.createDraft(db, {
+        payload: CHAMPION_PREFILL_PAYLOAD, requesterActor: REQUESTER, requesterName: "Priya Raman",
+      });
+      await db.update(intakeVersions)
+        .set({ fields: { "overlay.phi": true, "overlay.memberFacing": true } as never })
+        .where(eq(intakeVersions.initiativeId, draft.initiativeId));
+      await expect(svc.submitIntake(db, draft.initiativeId, REQUESTER)).rejects.toBeInstanceOf(ValidationError);
+      await expect(svc.startQc(db, draft.initiativeId, PROGRAM)).rejects.toBeInstanceOf(ValidationError);
+      await expect(svc.triage(db, draft.initiativeId)).rejects.toBeInstanceOf(ValidationError);
+    });
+  });
+
   describe("review integrity regression", () => {
     async function reviewFixture(workspaceId?: string) {
       const draft = await svc.createDraft(db, {

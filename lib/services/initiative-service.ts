@@ -52,6 +52,7 @@ import { runSingleDomainDraft, type RunSingleDomainOptions } from "../workflow/r
 import type { AgentPort } from "../agents/ports";
 import { evaluateCompleteness } from "../intake/completeness";
 import type { IntakePayload } from "../intake/types";
+import { intakePayloadSchema } from "../intake/schema";
 import { normalizeAdditionalAnswers } from "../intake/additional-questions";
 import { deriveTier } from "../triage/rules";
 import { requiredDomains } from "../triage/routing";
@@ -82,6 +83,14 @@ export class ValidationError extends Error {
     this.name = "ValidationError";
     this.issues = issues;
   }
+}
+
+/** Stored intake fields as a payload; a legacy flat record is a typed error, not a TypeError. */
+function storedPayloadOrThrow(fields: unknown): IntakePayload {
+  if (!intakePayloadSchema.safeParse(fields).success) {
+    throw new ValidationError("stored intake is not in the current format");
+  }
+  return fields as IntakePayload;
 }
 
 /**
@@ -526,11 +535,11 @@ export async function submitIntake(
     }
 
     if (initiative.state === "submitted" && intake.submitted) {
-      const completeness = evaluateCompleteness(intake.fields as unknown as IntakePayload);
+      const completeness = evaluateCompleteness(storedPayloadOrThrow(intake.fields));
       return { submitted: true, completenessPct: completeness.completenessPct };
     }
 
-    const payload = intake.fields as unknown as IntakePayload;
+    const payload = storedPayloadOrThrow(intake.fields);
     const completeness = evaluateCompleteness(payload);
 
     if (!completeness.canSubmit) {
@@ -638,7 +647,7 @@ export async function startQc(
     if (!intake) {
       throw new ValidationError("initiative has no intake version to QC");
     }
-    const completeness = evaluateCompleteness(intake.fields as unknown as IntakePayload);
+    const completeness = evaluateCompleteness(storedPayloadOrThrow(intake.fields));
 
     const result = transition(initiative.state as LifecycleState, "start_qc", actor, {
       ts: nowTs(),
@@ -731,7 +740,7 @@ export async function triage(
     if (!intake) {
       throw new ValidationError("initiative has no intake version to triage");
     }
-    const payload = intake.fields as unknown as IntakePayload;
+    const payload = storedPayloadOrThrow(intake.fields);
     const flags = overlayFromStoredIntake(payload);
     const tier = deriveTier(flags);
     const domains = [...requiredDomains(tier, flags)].sort() as Domain[];
