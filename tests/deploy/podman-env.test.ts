@@ -29,4 +29,9 @@ describe("Podman stack configuration", () => {
     expect(guide).toContain("podman_jeeves-pgdata");
     expect(guide).not.toMatch(/podman volume export jeeves-pgdata/);
   });
+
+  it("tells Quadlet operators to define DATABASE_URL in jeeves.env", () => {
+    const quadlet = guide.slice(guide.indexOf("## 3."), guide.indexOf("## 4."));
+    expect(quadlet).toContain("DATABASE_URL=postgres://jeeves:");
+  });
 });

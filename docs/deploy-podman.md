@@ -114,6 +114,11 @@ cp deploy/podman/quadlet/* ~/.config/containers/systemd/
 cp deploy/podman/env.example ~/.config/containers/systemd/jeeves.env
 chmod 600 ~/.config/containers/systemd/jeeves.env    # it holds the database password and the cookie key
 $EDITOR ~/.config/containers/systemd/jeeves.env
+# env.example has no DATABASE_URL (compose builds it inline; Quadlet cannot), so add
+# this line to jeeves.env yourself, with the same password as POSTGRES_PASSWORD:
+#   DATABASE_URL=postgres://jeeves:PASSWORD@jeeves-db:5432/jeeves
+# Without it the app falls back to a local PGlite store, which the read-only
+# root filesystem refuses, and the unit restarts in a loop.
 
 systemctl --user daemon-reload
 systemctl --user start jeeves-db
