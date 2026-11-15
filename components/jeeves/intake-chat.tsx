@@ -140,6 +140,18 @@ export function IntakeChat({ payload, payloadRevision, onPayloadChange, onReview
     );
   }
 
+  if (session.role === "public") {
+    return (
+      <Alert data-slot="intake-chat">
+        <AlertTitle>The assistant is available in the demo only</AlertTitle>
+        <AlertDescription>
+          Use the structured form to send your request to the Meridian team.
+          {onReview ? <> <Button type="button" variant="outline" onClick={onReview}>Open the structured form</Button></> : null}
+        </AlertDescription>
+      </Alert>
+    );
+  }
+
   if (!isRequester) {
     return (
       <Alert data-slot="intake-chat">
