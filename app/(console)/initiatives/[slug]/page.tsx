@@ -256,7 +256,7 @@ export default async function InitiativeDetailPage({
             <OverviewTab detail={detail} />
           </TabsContent>
           <TabsContent value="intake">
-            <IntakeTab intake={detail.intake} summary={summary} />
+            <IntakeTab intake={detail.intake} summary={summary} events={detail.events} />
           </TabsContent>
           <TabsContent value="evidence" keepMounted><EvidenceTab slug={summary.slug} /></TabsContent>
           <TabsContent value="reviews">

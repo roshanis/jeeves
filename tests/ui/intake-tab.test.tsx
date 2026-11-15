@@ -26,4 +26,15 @@ describe("IntakeTab — champion initiative (#1 prior-auth-summarizer)", () => {
     expect(screen.getByText(/data\.retentionIntent/)).toBeDefined();
     expect(screen.getByText("Missing")).toBeDefined();
   });
+
+  it("shows why a QC-returned intake came back instead of the generic draft text", async () => {
+    const detail = await new MockDataProvider().getInitiativeDetail("prior-auth-summarizer");
+    const events = [
+      { ts: "2026-09-07T12:00:00Z", actor: "maya-ortiz", actorRole: "program", action: "return_to_requester", detail: "Returned from QC to the requester: Data sources list is empty" },
+    ];
+    renderWithProviders(<IntakeTab intake={detail!.intake} events={events} />);
+    expect(screen.getByText(/Returned from QC/)).toBeDefined();
+    expect(screen.getByText(/Data sources list is empty/)).toBeDefined();
+    expect(screen.getByText(/maya-ortiz/)).toBeDefined();
+  });
 });

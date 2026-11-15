@@ -9,6 +9,7 @@ import type { ControlRow, InitiativeDetail } from "@/lib/data/dto";
 import type { LifecycleState } from "@/lib/domain/types";
 import { AlertOctagon, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { latestQcReturn } from "@/lib/data/qc-return";
 import { DOMAIN_LABEL } from "./domain-labels";
 
 interface Blocker {
@@ -77,6 +78,8 @@ export function summarizeBlockers(detail: InitiativeDetail): BlockerSummary {
 function noBlockersMessage(detail: InitiativeDetail): string {
   switch (detail.summary.state) {
     case "intake_draft": {
+      const returned = latestQcReturn(detail.events);
+      if (returned) return `Returned from QC by ${returned.actor}: \u201c${returned.reason}\u201d. Fix this and resubmit.`;
       const gaps = detail.intake?.missing.length ?? 0;
       const gapText =
         gaps > 0

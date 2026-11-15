@@ -1,7 +1,8 @@
 "use client";
 // Intake tab (ui-spec §3.2): read-only rendering of the submitted
 // IntakeVersion, or the "Draft — not yet submitted" state for the champion.
-import type { InitiativeDetail } from "@/lib/data/dto";
+import type { AuditEventRow, InitiativeDetail } from "@/lib/data/dto";
+import { latestQcReturn } from "@/lib/data/qc-return";
 import { ADDITIONAL_INTAKE_QUESTIONS } from "@/lib/intake/additional-questions";
 import { AlertTriangle } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -105,8 +106,9 @@ function renderValue(value: string | boolean | null, optional: boolean): React.R
   return value;
 }
 
-export function IntakeTab({ intake, summary }: {
+export function IntakeTab({ intake, summary, events }: {
   intake: InitiativeDetail["intake"];
+  events?: AuditEventRow[];
   summary?: InitiativeDetail["summary"] & { isSeeded?: boolean };
 }) {
   const session = useLiveSessionOptional()?.session;
@@ -114,9 +116,19 @@ export function IntakeTab({ intake, summary }: {
     return <p className="text-sm text-muted-foreground">No intake record.</p>;
   }
 
+  const returned = intake.submitted ? undefined : latestQcReturn(events);
   return (
     <div className="space-y-4" data-slot="intake-tab">
-      {!intake.submitted ? (
+      {returned ? (
+        <Alert className="border-status-warning-fg/20 bg-status-warning-bg">
+          <AlertTriangle className="size-4 text-status-warning-fg" aria-hidden />
+          <AlertTitle className="text-status-warning-fg">Returned from QC — not yet resubmitted</AlertTitle>
+          <AlertDescription>
+            Returned by {returned.actor}: {returned.reason}
+            {intake.missing.length > 0 ? <> Completeness check: missing {intake.missing.join(", ")}.</> : null}
+          </AlertDescription>
+        </Alert>
+      ) : !intake.submitted ? (
         <Alert className="border-status-warning-fg/20 bg-status-warning-bg">
           <AlertTriangle className="size-4 text-status-warning-fg" aria-hidden />
           <AlertTitle className="text-status-warning-fg">Draft — not yet submitted</AlertTitle>
