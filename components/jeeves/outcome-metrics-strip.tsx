@@ -26,7 +26,8 @@ function OutcomeMetricCard({
         <Tooltip>
           <TooltipTrigger
             render={
-              <button type="button" aria-label={`About ${label}`}>
+              // touch-target: the 14px icon gets a 44px hit area on touch screens.
+              <button type="button" aria-label={`About ${label}`} className="touch-target">
                 <Info className="size-3.5 text-muted-foreground" />
               </button>
             }

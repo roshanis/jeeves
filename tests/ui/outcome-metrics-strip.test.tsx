@@ -48,4 +48,14 @@ describe("OutcomeMetricsStrip", () => {
     expect(container.textContent).not.toMatch(/pipeline board/i);
     expect(screen.getByRole("button", { name: "About Overdue controls" })).toBeDefined();
   });
+
+  it("gives every info button the shared 44px touch hit area", async () => {
+    // The icon is 14px. As buttons these count as controls, and the phone
+    // check in tests/e2e/mobile-responsive.spec.ts measured each at 14x14.
+    const metrics = await new MockDataProvider().outcomeMetrics();
+    renderWithProviders(<OutcomeMetricsStrip metrics={metrics} />);
+    const infos = screen.getAllByRole("button", { name: /^About / });
+    expect(infos).toHaveLength(5);
+    for (const button of infos) expect(button.classList.contains("touch-target")).toBe(true);
+  });
 });
