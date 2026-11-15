@@ -304,7 +304,26 @@ export async function runMonitor(
       sustainedWindow: def.sustainedWindow,
     };
 
-    const evalResult = evaluateControl(control, series, nowTs);
+    // The first sustained run is reported (and stays alreadyKnown) until it is
+    // a recorded incident; then look past the end of that run so a LATER breach
+    // (e.g. after a resume) is detected instead of the old one found again.
+    let evalResult = evaluateControl(control, series, nowTs);
+    if (evalResult.identityKey) {
+      const known = await db.select().from(incidents).where(eq(incidents.deploymentId, deployment.id));
+      const sorted = series.slice().sort((a, b) => a.ts - b.ts);
+      let since: number | undefined;
+      for (const inc of known) {
+        const startIdx = sorted.findIndex((o) => o.ts >= inc.windowStart.getTime());
+        if (startIdx === -1) continue;
+        let end = startIdx;
+        while (end + 1 < sorted.length && sorted[end + 1]!.value > threshold) end += 1;
+        if (since === undefined || sorted[end]!.ts > since) since = sorted[end]!.ts;
+      }
+      if (since !== undefined && known.some((k) => k.identityKey === evalResult.identityKey)) {
+        const later = evaluateControl(control, series, nowTs, since);
+        if (later.breached) evalResult = later;
+      }
+    }
     if (!evalResult.breached || !evalResult.identityKey || evalResult.windowStartTs === null) {
       continue;
     }
