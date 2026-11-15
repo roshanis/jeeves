@@ -138,7 +138,7 @@ export default function RootLayout({
             on every console page. Visually hidden until focused; targets
             the id="main-content" <main> of each route group: app/(console),
             app/(marketing) (landing, frameworks, pilot, legal), plus
-            app/operator, app/not-found and app/sign-in. */}
+            app/operator and app/not-found. */}
         <a
           href="#main-content"
           className="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:m-2 focus:rounded-md focus:bg-card focus:px-3 focus:py-2 focus:text-sm focus:text-card-foreground focus:ring-2 focus:ring-ring"

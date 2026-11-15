@@ -25,14 +25,12 @@ const fieldClass =
   "h-8 rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50";
 
 function ThresholdForm({
-  currentThreshold,
   initiativeOptions,
   pending,
   error,
   onCancel,
   onConfirm,
 }: {
-  currentThreshold: number | null;
   initiativeOptions: ThresholdInitiativeOption[];
   pending: boolean;
   error: string | null;
@@ -43,7 +41,7 @@ function ThresholdForm({
     initiativeOptions[0]?.initiativeId ?? "",
   );
   const currentFor = (id: string): number | null =>
-    initiativeOptions.find((option) => option.initiativeId === id)?.currentThreshold ?? currentThreshold;
+    initiativeOptions.find((option) => option.initiativeId === id)?.currentThreshold ?? null;
   const [valueText, setValueText] = React.useState<string>(() => {
     const initial = currentFor(initiativeId);
     return initial !== null ? String(initial) : "";
@@ -69,25 +67,25 @@ function ThresholdForm({
         Shared defaults are read-only. This change applies only to an initiative in your workspace.
       </p>
       {initiativeOptions.length === 0 ? <p className="text-sm">Create and deploy an initiative to try a threshold override.</p> : null}
-        <label className="flex flex-col gap-1 text-sm">
-          <span className="font-medium">Initiative</span>
-          <select
-            value={initiativeId}
-            onChange={(e) => {
-              setInitiativeId(e.target.value);
-              const next = currentFor(e.target.value);
-              setValueText(next !== null ? String(next) : "");
-            }}
-            data-slot="threshold-initiative"
-            className={fieldClass}
-          >
-            {initiativeOptions.map((option) => (
-              <option key={option.initiativeId} value={option.initiativeId}>
-                {option.title} ({option.slug})
-              </option>
-            ))}
-          </select>
-        </label>
+      <label className="flex flex-col gap-1 text-sm">
+        <span className="font-medium">Initiative</span>
+        <select
+          value={initiativeId}
+          onChange={(e) => {
+            setInitiativeId(e.target.value);
+            const next = currentFor(e.target.value);
+            setValueText(next !== null ? String(next) : "");
+          }}
+          data-slot="threshold-initiative"
+          className={fieldClass}
+        >
+          {initiativeOptions.map((option) => (
+            <option key={option.initiativeId} value={option.initiativeId}>
+              {option.title} ({option.slug})
+            </option>
+          ))}
+        </select>
+      </label>
       {shownCurrent !== null ? (
         <p className="text-sm text-muted-foreground" data-slot="threshold-current">
           Current threshold: {shownCurrent}
@@ -145,7 +143,6 @@ function ThresholdForm({
 export function ThresholdEditDialog({
   open,
   onOpenChange,
-  currentThreshold,
   initiativeOptions,
   pending,
   error = null,
@@ -153,7 +150,6 @@ export function ThresholdEditDialog({
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  currentThreshold: number | null;
   initiativeOptions: ThresholdInitiativeOption[];
   pending: boolean;
   error?: string | null;
@@ -172,7 +168,6 @@ export function ThresholdEditDialog({
         </DialogHeader>
         {open ? (
           <ThresholdForm
-            currentThreshold={currentThreshold}
             initiativeOptions={initiativeOptions}
             pending={pending}
             error={error}

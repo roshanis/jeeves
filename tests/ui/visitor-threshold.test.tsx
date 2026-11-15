@@ -6,20 +6,32 @@ import { ThresholdEditDialog } from "@/components/jeeves/threshold-edit-dialog";
 describe("visitor threshold editor", () => {
   it("edits only a workspace initiative and offers no global-default mutation", () => {
     const confirm = vi.fn();
-    renderWithProviders(<ThresholdEditDialog open onOpenChange={vi.fn()} currentThreshold={0.08} initiativeOptions={[{ initiativeId: "visitor-initiative", title: "My demo", slug: "my-demo" }]} pending={false} onConfirm={confirm} />);
+    renderWithProviders(<ThresholdEditDialog open onOpenChange={vi.fn()} initiativeOptions={[{ initiativeId: "visitor-initiative", title: "My demo", slug: "my-demo", currentThreshold: 0.08 }]} pending={false} onConfirm={confirm} />);
     expect(screen.queryByRole("radio", { name: /tier default/i })).toBeNull();
     fireEvent.change(screen.getByRole("textbox", { name: /reason/i }), { target: { value: "Try a stricter check on my example." } });
     fireEvent.click(screen.getByRole("button", { name: "Save threshold" }));
     expect(confirm).toHaveBeenCalledWith({ initiativeId: "visitor-initiative", value: 0.08, reason: "Try a stricter check on my example." });
   });
+  it("shows no current value and an empty field for an initiative with no threshold of its own (own-F12)", () => {
+    const confirm = vi.fn();
+    renderWithProviders(<ThresholdEditDialog open onOpenChange={vi.fn()} initiativeOptions={[{ initiativeId: "draft", title: "Draft one", slug: "draft-one" }]} pending={false} onConfirm={confirm} />);
+    expect(document.querySelector("[data-slot='threshold-current']")).toBeNull();
+    expect((screen.getByRole("spinbutton") as HTMLInputElement).value).toBe("");
+    fireEvent.change(screen.getByRole("textbox", { name: /reason/i }), { target: { value: "Try this." } });
+    expect(screen.getByRole("button", { name: "Save threshold" })).toHaveProperty("disabled", true);
+    fireEvent.change(screen.getByRole("spinbutton"), { target: { value: "0.05" } });
+    expect(screen.getByRole("button", { name: "Save threshold" })).toHaveProperty("disabled", false);
+    fireEvent.click(screen.getByRole("button", { name: "Save threshold" }));
+    expect(confirm).toHaveBeenCalledWith({ initiativeId: "draft", value: 0.05, reason: "Try this." });
+  });
   it("cannot save an override before a visitor initiative exists", () => {
-    renderWithProviders(<ThresholdEditDialog open onOpenChange={vi.fn()} currentThreshold={0.08} initiativeOptions={[]} pending={false} onConfirm={vi.fn()} />);
+    renderWithProviders(<ThresholdEditDialog open onOpenChange={vi.fn()} initiativeOptions={[]} pending={false} onConfirm={vi.fn()} />);
     fireEvent.change(screen.getByRole("textbox", { name: /reason/i }), { target: { value: "Try this." } });
     expect(screen.getByRole("button", { name: "Save threshold" })).toHaveProperty("disabled", true);
   });
   it("pre-fills and shows each initiative's own current threshold, resetting on change (ui-shell-F3)", () => {
     const confirm = vi.fn();
-    renderWithProviders(<ThresholdEditDialog open onOpenChange={vi.fn()} currentThreshold={0.08} initiativeOptions={[
+    renderWithProviders(<ThresholdEditDialog open onOpenChange={vi.fn()} initiativeOptions={[
       { initiativeId: "crit", title: "Critical one", slug: "crit-one", currentThreshold: 0.05 },
       { initiativeId: "high", title: "High one", slug: "high-one", currentThreshold: 0.08 },
     ]} pending={false} onConfirm={confirm} />);
@@ -31,7 +43,7 @@ describe("visitor threshold editor", () => {
     expect(screen.getByText(/current threshold: 0\.08/i)).toBeTruthy();
   });
   it("cannot save a value outside 0 to 1", () => {
-    renderWithProviders(<ThresholdEditDialog open onOpenChange={vi.fn()} currentThreshold={0.08} initiativeOptions={[{ initiativeId: "i", title: "T", slug: "t", currentThreshold: 0.08 }]} pending={false} onConfirm={vi.fn()} />);
+    renderWithProviders(<ThresholdEditDialog open onOpenChange={vi.fn()} initiativeOptions={[{ initiativeId: "i", title: "T", slug: "t", currentThreshold: 0.08 }]} pending={false} onConfirm={vi.fn()} />);
     fireEvent.change(screen.getByRole("textbox", { name: /reason/i }), { target: { value: "Try this." } });
     for (const bad of ["999", "-0.1"]) {
       fireEvent.change(screen.getByRole("spinbutton"), { target: { value: bad } });

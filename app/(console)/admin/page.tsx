@@ -143,7 +143,6 @@ export default async function AdminPage() {
                 Every edit requires a reason. Recorded changes appear in the control-change audit log below.
               </p>
               <ThresholdEditAction
-                currentThreshold={q01?.threshold ?? null}
                 initiativeOptions={initiativeOptions}
               />
             </div>
