@@ -208,6 +208,27 @@ describe("runBootChecks", () => {
         expect(d.exit).toHaveBeenCalledWith(1);
       });
 
+      it("names the driver code from the cause of a wrapped query error, never the URL", async () => {
+        const d = deps(COMPLETE_PRODUCTION);
+        const wrapped = Object.assign(new Error("Failed query: SELECT to_regclass('public.installation')::text AS relation\nparams: "), {
+          cause: Object.assign(new Error(`password authentication failed for ${COMPLETE_PRODUCTION.DATABASE_URL}`), { code: "28P01" }),
+        });
+        d.getDb.mockRejectedValue(wrapped);
+        await runBootChecks(d);
+
+        expect(bootFailure()).toContain("28P01");
+        const logged = [...d.log.mock.calls.flat(), bootFailure()].join(" ");
+        expect(logged).not.toContain("s3cr3t-db-pw");
+      });
+
+      it("finds the code inside an AggregateError cause", async () => {
+        const d = deps(COMPLETE_PRODUCTION);
+        const inner = Object.assign(new Error("connect ECONNREFUSED 10.0.0.1:5432"), { code: "ECONNREFUSED" });
+        d.getDb.mockRejectedValue(Object.assign(new Error("Failed query: x"), { cause: new AggregateError([inner]) }));
+        await runBootChecks(d);
+        expect(bootFailure()).toContain("ECONNREFUSED");
+      });
+
       it("fails closed on a database that has not run migration 0015", async () => {
         const d = deps(COMPLETE_PRODUCTION);
         d.getDb.mockResolvedValue(lagging);
