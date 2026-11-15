@@ -665,6 +665,7 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
                               phiCategories: e.target.checked
                                 ? [...p.data.phiCategories, category]
                                 : p.data.phiCategories.filter((c) => c !== category),
+                              ...(category === "Other" && !e.target.checked ? { phiCategoriesOtherText: null } : {}),
                             },
                           }));
                         }}
