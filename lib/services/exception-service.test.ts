@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { PgSelectBase } from "drizzle-orm/pg-core";
 import { createTestDb, closeTestDb, type TestDb } from "../db/test-client";
+import { recordLocks } from "../db/test-lock-recorder";
 import { seedDatabase } from "../../scripts/seed";
 import { auditEvents, controlDefinitions, controlExceptions, deploymentVersions, effectiveControls } from "../db/schema";
 import * as svc from "./exception-service";
@@ -346,6 +347,26 @@ describe("exception-service", () => {
       await expect(svc.requestException(db, ecId, REQUESTER, "ws-B", "reason")).rejects.toThrow(
         `effectiveControl not found: ${ecId}`,
       );
+    });
+
+    it("requestException: a foreign workspace is refused without FOR UPDATE on the control; the owner still locks it", async () => {
+      const { ecId } = await anEffectiveControlInWorkspace("ws-A");
+      const foreign = recordLocks(db);
+      try {
+        await expect(svc.requestException(db, ecId, REQUESTER, "ws-B", "reason")).rejects.toThrow(NotFoundError);
+      } finally {
+        foreign.spy.mockRestore();
+      }
+      expect(foreign.events).toContain("from:effective_controls");
+      expect(foreign.events).not.toContain("lock:effective_controls");
+
+      const owner = recordLocks(db);
+      try {
+        await svc.requestException(db, ecId, REQUESTER, "ws-A", "reason");
+      } finally {
+        owner.spy.mockRestore();
+      }
+      expect(owner.events).toContain("lock:effective_controls");
     });
 
     it("requestException: the owning workspace session succeeds", async () => {

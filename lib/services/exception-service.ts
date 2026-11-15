@@ -236,6 +236,19 @@ export async function requestException(
     throw new ValidationError("exception request requires a non-empty reason");
   }
   return db.transaction(async (tx) => {
+    // Authorize on an unlocked read first, so a foreign caller never takes a lock on a shared row.
+    const [visible] = await tx.select().from(effectiveControls).where(eq(effectiveControls.id, effectiveControlId));
+    if (!visible) throw new NotFoundError("effectiveControl", effectiveControlId);
+
+    const initiativeIdForCheck = await initiativeIdForEffectiveControl(tx, visible.deploymentId);
+    await assertExceptionWorkspaceAccess(
+      tx,
+      initiativeIdForCheck,
+      sessionWorkspaceId,
+      "effectiveControl",
+      effectiveControlId,
+    );
+
     // FOR UPDATE serializes concurrent requests on this control, so the
     // active-exception check below cannot race into the unique index.
     const [ec] = await tx
@@ -244,15 +257,6 @@ export async function requestException(
       .where(eq(effectiveControls.id, effectiveControlId))
       .for("update");
     if (!ec) throw new NotFoundError("effectiveControl", effectiveControlId);
-
-    const initiativeIdForCheck = await initiativeIdForEffectiveControl(tx, ec.deploymentId);
-    await assertExceptionWorkspaceAccess(
-      tx,
-      initiativeIdForCheck,
-      sessionWorkspaceId,
-      "effectiveControl",
-      effectiveControlId,
-    );
 
     if (!ELIGIBLE_EXCEPTION_REQUEST_STATUSES.has(ec.status)) {
       throw new ValidationError(

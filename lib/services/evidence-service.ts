@@ -25,9 +25,13 @@ const documentDto=(d:typeof evidenceDocuments.$inferSelect | Omit<typeof evidenc
 const sameEntry=(a:EvidenceEntry|undefined,b:EvidenceEntry|undefined)=>JSON.stringify(a??null)===JSON.stringify(b??null);
 async function initiativeFor(db:Reader, ref:string, viewer:EvidenceViewer, lock=false) {
   const query=db.select().from(initiatives).where(or(eq(initiatives.id,ref),eq(initiatives.slug,ref))).limit(1);
-  const [row]=await (lock?query.for('update'):query);
+  const [row]=await query;
   if(!row || !viewer.workspaceId || row.workspaceId!==viewer.workspaceId) throw new EvidenceError(404,'Evidence workspace not found.');
-  return row;
+  if(!lock) return row;
+  // Authorized on the unlocked read above, so a foreign caller never locks a shared row.
+  const [locked]=await query.for('update');
+  if(!locked) throw new EvidenceError(404,'Evidence workspace not found.');
+  return locked;
 }
 function requireOwner(row:typeof initiatives.$inferSelect, viewer:EvidenceViewer, checkState=true) {
   if(viewer.actor.role!=='requester'||row.requester!==actorName(viewer.actor.id)) throw new EvidenceError(403,'Only the initiative requester may submit evidence.');

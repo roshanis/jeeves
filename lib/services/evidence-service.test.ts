@@ -4,6 +4,7 @@ import { eq } from 'drizzle-orm';
 import { createTestDb, closeTestDb, type TestDb } from '../db/test-client';
 import { initiatives, controlDefinitions, intakeVersions, riskAssessments, reviewCycles, reviewDecisions, auditEvents, evidenceDocuments, evidencePackets } from '../db/schema';
 import { getEvidence, uploadEvidence, saveEvidenceDraft, submitEvidence, assessEvidence, downloadEvidence } from './evidence-service';
+import { recordLocks } from '../db/test-lock-recorder';
 import { signReview, abstainReview, resumeReview } from './initiative-service';
 const owner = { actor: { id: 'priya-raman', role: 'requester' as const }, workspaceId: 'workspace-a' };
 const reviewer = { actor: { id: 'marcus-webb', role: 'reviewer' as const }, workspaceId: 'workspace-a' };
@@ -35,6 +36,17 @@ async function signLoadedEvidenceReview() {
   });
 }
 describe('versioned evidence workflow',()=>{
+  it('refuses a viewer from another workspace without locking the initiative row, and locks for the owner',async()=>{
+    const foreign=recordLocks(db);
+    try {
+      await expect(uploadEvidence(db,'i',{...owner,workspaceId:'workspace-b'},{requestId:'foreign-lock-000001',fileName:'retention.pdf',mediaType:'application/pdf',contentBase64:bytes.toString('base64')})).rejects.toMatchObject({status:404});
+    } finally { foreign.spy.mockRestore(); }
+    expect(foreign.events).toContain('from:initiatives');
+    expect(foreign.events).not.toContain('lock:initiatives');
+    const own=recordLocks(db);
+    try { await upload('owner-lock-0000001'); } finally { own.spy.mockRestore(); }
+    expect(own.events).toContain('lock:initiatives');
+  });
   it('replays a retried upload after the initiative left the editable states',async()=>{
     const first=await upload('lost-response-000001');
     await db.update(initiatives).set({state:'approved'}).where(eq(initiatives.id,'i'));

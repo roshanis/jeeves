@@ -8,8 +8,9 @@
  */
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { eq, getTableName } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { createTestDb, closeTestDb, type TestDb } from "../db/test-client";
+import { recordLocks as recordLocksOn } from "../db/test-lock-recorder";
 import { seedDatabase, BASE_DATE_MS } from "../../scripts/seed";
 import { auditEvents, controlDefinitions, deploymentVersions, effectiveControls, incidents, initiativeDecisions, initiatives, reviewCycles, reviewDecisions } from "../db/schema";
 import {
@@ -58,42 +59,7 @@ describe("lib/services/admin-service", () => {
   });
 
   describe("setEvalThreshold — row locks", () => {
-    // PGlite cannot interleave two transactions, so assert the lock itself:
-    // record every table a select reads and every FOR UPDATE inside the tx.
-    /* eslint-disable @typescript-eslint/no-explicit-any */
-    function recordLocks() {
-      const events: string[] = [];
-      const dbAny = db as any;
-      const realTransaction = dbAny.transaction.bind(dbAny);
-      const spy = vi.spyOn(dbAny, "transaction").mockImplementation((cb: any) =>
-        realTransaction(async (tx: any) => {
-          const realSelect = tx.select.bind(tx);
-          tx.select = (...a: unknown[]) => {
-            const wrap = (b: any, table: string | null): any =>
-              new Proxy(b, {
-                get(t, k) {
-                  const v = t[k];
-                  if (typeof v !== "function") return v;
-                  return (...args: unknown[]) => {
-                    if (k === "from") {
-                      const name = getTableName(args[0] as any);
-                      events.push(`from:${name}`);
-                      return wrap(v.apply(t, args), name);
-                    }
-                    if (k === "for") events.push(`lock:${table}`);
-                    const r = v.apply(t, args);
-                    return r && typeof r === "object" && k !== "then" ? wrap(r, table) : r;
-                  };
-                },
-              });
-            return wrap(realSelect(...a), null);
-          };
-          return cb(tx);
-        }),
-      );
-      return { events, spy };
-    }
-    /* eslint-enable @typescript-eslint/no-explicit-any */
+    const recordLocks = () => recordLocksOn(db);
 
     it("locks the initiative row before reading the control revision on the override branch", async () => {
       const initiativeId = await memberChatCopilotId(db);
@@ -473,6 +439,32 @@ describe("lib/services/admin-service", () => {
         expect(await db.select().from(auditEvents).where(eq(auditEvents.initiativeId, initiativeId))).toEqual(beforeEvents);
       },
     );
+
+    it("pause and resume take no FOR UPDATE on a shared row for a caller from another workspace", async () => {
+      const initiativeId = await memberChatCopilotId(db); // seeded, workspace null
+      for (const fn of [pauseDeployment, resumeDeployment]) {
+        const { events, spy } = recordLocksOn(db);
+        try {
+          await expect(fn(db, RAY_CHEN, "ws-visitor", initiativeId, "Foreign lock check.")).rejects.toThrow(NotFoundError);
+        } finally {
+          spy.mockRestore();
+        }
+        expect(events).toContain("from:initiatives");
+        expect(events).not.toContain("lock:initiatives");
+      }
+    });
+
+    it("pause locks the initiative row for the owning workspace", async () => {
+      const initiativeId = await memberChatCopilotId(db);
+      await db.update(initiatives).set({ workspaceId: "ws-owner" }).where(eq(initiatives.id, initiativeId));
+      const { events, spy } = recordLocksOn(db);
+      try {
+        await pauseDeployment(db, RAY_CHEN, "ws-owner", initiativeId, "Owner lock check.");
+      } finally {
+        spy.mockRestore();
+      }
+      expect(events).toContain("lock:initiatives");
+    });
 
     it("pauseDeployment requires a non-empty reason (rejects empty string)", async () => {
       const initiativeId = await memberChatCopilotId(db);

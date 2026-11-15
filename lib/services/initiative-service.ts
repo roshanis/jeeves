@@ -260,6 +260,21 @@ async function loadInitiativeOrThrow(
 }
 
 /**
+ * Lock the initiative row only after the caller is authorized: an unlocked
+ * read first, so a visitor from another workspace who sends a shared seeded
+ * id gets the NotFoundError without ever holding a lock on that shared row.
+ * An initiative's workspace never changes, so the peek cannot go stale.
+ */
+async function lockAuthorizedInitiative(
+  tx: Tx,
+  initiativeId: string,
+  authorize: (resourceWorkspaceId: string | null) => void,
+): Promise<typeof initiatives.$inferSelect> {
+  authorize((await loadInitiativeOrThrow(tx, initiativeId)).workspaceId);
+  return loadInitiativeOrThrow(tx, initiativeId, true);
+}
+
+/**
  * Requester-ownership guard for requester-role-gated mutations (`submitIntake`
  * and any future one). Ownership is determined by matching the acting
  * actor's directory display name (`ACTOR_DIRECTORY[actor.id].name`) against
@@ -469,8 +484,8 @@ export async function updateIntakeDraft(
   input: { initiativeId: string; payload: IntakePayload; expectedVersion: number; actor: Actor; workspaceId: string | null },
 ): Promise<IntakeDraftResult> {
   return db.transaction(async (tx) => {
-    const initiative = await loadInitiativeOrThrow(tx, input.initiativeId, true);
-    assertEditableDraftWorkspace(initiative.workspaceId, input.workspaceId, input.initiativeId);
+    const initiative = await lockAuthorizedInitiative(tx, input.initiativeId, (ws) =>
+      assertEditableDraftWorkspace(ws, input.workspaceId, input.initiativeId));
     requireRequesterOwnership(input.actor, initiative);
     if (initiative.state !== "intake_draft") throw new ConflictError("intake is no longer editable", "INTAKE_NOT_EDITABLE");
     const current = await latestIntakeVersion(tx, input.initiativeId);
@@ -526,8 +541,8 @@ export async function submitIntake(
   sessionWorkspaceId: string | null = null,
 ): Promise<SubmitIntakeResult | SubmitIntakeBlockedResult> {
   return db.transaction(async (tx) => {
-    const initiative = await loadInitiativeOrThrow(tx, initiativeId, true);
-    assertWorkspaceAccess(initiative.workspaceId, sessionWorkspaceId, "initiative", initiativeId);
+    const initiative = await lockAuthorizedInitiative(tx, initiativeId, (ws) =>
+      assertWorkspaceAccess(ws, sessionWorkspaceId, "initiative", initiativeId));
     requireRequesterOwnership(actor, initiative);
     const intake = await latestIntakeVersion(tx, initiativeId);
     if (!intake) {
@@ -640,8 +655,8 @@ export async function startQc(
   sessionWorkspaceId: string | null = null,
 ): Promise<StartQcResult> {
   return db.transaction(async (tx) => {
-    const initiative = await loadInitiativeOrThrow(tx, initiativeId, true);
-    assertWorkspaceAccess(initiative.workspaceId, sessionWorkspaceId, "initiative", initiativeId);
+    const initiative = await lockAuthorizedInitiative(tx, initiativeId, (ws) =>
+      assertWorkspaceAccess(ws, sessionWorkspaceId, "initiative", initiativeId));
 
     const intake = await latestIntakeVersion(tx, initiativeId);
     if (!intake) {
@@ -695,8 +710,8 @@ export async function returnFromQc(
   }
 
   return db.transaction(async (tx) => {
-    const initiative = await loadInitiativeOrThrow(tx, initiativeId, true);
-    assertWorkspaceAccess(initiative.workspaceId, sessionWorkspaceId, "initiative", initiativeId);
+    const initiative = await lockAuthorizedInitiative(tx, initiativeId, (ws) =>
+      assertWorkspaceAccess(ws, sessionWorkspaceId, "initiative", initiativeId));
 
     const result = transition(initiative.state as LifecycleState, "return_to_requester", actor, {
       ts: nowTs(),
@@ -734,8 +749,8 @@ export async function triage(
   passedBy?: Actor,
 ): Promise<TriageFastLaneResult | TriageReviewResult> {
   return db.transaction(async (tx) => {
-    const initiative = await loadInitiativeOrThrow(tx, initiativeId, true);
-    assertWorkspaceAccess(initiative.workspaceId, sessionWorkspaceId, "initiative", initiativeId);
+    const initiative = await lockAuthorizedInitiative(tx, initiativeId, (ws) =>
+      assertWorkspaceAccess(ws, sessionWorkspaceId, "initiative", initiativeId));
     const intake = await latestIntakeVersion(tx, initiativeId);
     if (!intake) {
       throw new ValidationError("initiative has no intake version to triage");
@@ -1308,8 +1323,8 @@ export async function decide(
   }
 
   return db.transaction(async (tx) => {
-    const initiative = await loadInitiativeOrThrow(tx, initiativeId, true);
-    assertWorkspaceAccess(initiative.workspaceId, sessionWorkspaceId, "initiative", initiativeId);
+    const initiative = await lockAuthorizedInitiative(tx, initiativeId, (ws) =>
+      assertWorkspaceAccess(ws, sessionWorkspaceId, "initiative", initiativeId));
     const cycle = await latestReviewCycle(tx, initiativeId);
     if (!cycle) {
       throw new ValidationError("initiative has no review cycle to decide on");

@@ -308,13 +308,15 @@ async function loadInitiativeAndDeploymentOrThrow(
   initiative: typeof initiatives.$inferSelect;
   deployment: typeof deploymentVersions.$inferSelect;
 }> {
+  // Authorize on an unlocked read first, so a foreign caller never takes a lock on a shared row.
+  const [visible] = await tx.select().from(initiatives).where(eq(initiatives.id, initiativeId));
+  if (!visible || mutationWorkspaceMismatch(visible.workspaceId, sessionWorkspaceId)) {
+    throw new NotFoundError("initiative", initiativeId);
+  }
   // Match review/approval lock order: parent first, then deployment and cycle.
   const initiativeRows = await tx.select().from(initiatives).where(eq(initiatives.id, initiativeId)).for("update");
   const initiative = initiativeRows[0];
   if (!initiative) throw new NotFoundError("initiative", initiativeId);
-  if (mutationWorkspaceMismatch(initiative.workspaceId, sessionWorkspaceId)) {
-    throw new NotFoundError("initiative", initiativeId);
-  }
 
   const depRows = await tx.select().from(deploymentVersions).where(eq(deploymentVersions.initiativeId, initiativeId));
   const deployment = operationalDeployment(depRows);
