@@ -73,8 +73,12 @@ export async function generateMetadata({
   try {
     detail = await getInitiativeDetailCoherent(slug);
   } catch (error) {
-    // A data failure is not "not found": log it, keep the title neutral.
-    console.error("initiative metadata load failed", error instanceof Error ? error.message : "unknown error");
+    // A data failure is not "not found": log it, keep the title neutral. Log a
+    // code or name only; driver messages can carry host, port and user.
+    const code = error && typeof error === "object" && typeof (error as { code?: unknown }).code === "string"
+      ? (error as { code: string }).code
+      : error instanceof Error ? error.name : "UNKNOWN";
+    console.error("initiative metadata load failed", { causeCode: code });
     return { title: "Initiative", description: "Initiative details could not be loaded." };
   }
   if (!detail) {

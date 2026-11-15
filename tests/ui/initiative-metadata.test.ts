@@ -28,4 +28,16 @@ describe("initiative generateMetadata", () => {
     expect(md.title).not.toBe("Initiative not found");
     expect(err).toHaveBeenCalled();
   });
+
+  it("logs only a code or name, never the driver message (host, port, user)", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    data.impl = async () => {
+      throw Object.assign(new Error("connect ECONNREFUSED 10.0.0.5:5432 user=app"), { code: "ECONNREFUSED" });
+    };
+    await generateMetadata({ params });
+    const logged = JSON.stringify(err.mock.calls);
+    expect(logged).toContain("ECONNREFUSED");
+    expect(logged).not.toContain("10.0.0.5");
+    expect(logged).not.toContain("user=app");
+  });
 });
