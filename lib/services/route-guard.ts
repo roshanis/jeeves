@@ -220,7 +220,9 @@ export function isOperatorAuthorized(authorization: string | null, expected: str
 }
 
 /** Failed-attempt ceiling for the operator queue — cheap insurance on top of
- *  a >= 32-character secret, and it keeps probing from loading the DB. */
+ *  a >= 32-character secret. Wrong tokens spend the bucket and a locked-out
+ *  client is refused before the compare; it does not spare the database, since
+ *  every request still costs one read (and a failure one write). */
 const operatorAttemptLimiter = new DbTokenBucketRateLimiter(
   { capacity: 10, refillPerSecond: 1 / 30 },
   getDb,
