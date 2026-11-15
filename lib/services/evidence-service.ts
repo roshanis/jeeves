@@ -84,7 +84,7 @@ export async function uploadEvidence(db:Db, ref:string, viewer:EvidenceViewer, i
     const docs=await tx.select(documentColumns).from(evidenceDocuments).where(eq(evidenceDocuments.initiativeId,initiative.id));
     const [existing]=await tx.select(documentColumns).from(evidenceDocuments).where(and(eq(evidenceDocuments.initiativeId,initiative.id),eq(evidenceDocuments.requestId,input.requestId)));
     if(existing) {
-      if(existing.sha256!==validated.sha256||existing.fileName!==input.fileName||existing.supersedesId!==(input.supersedesId??null)) throw new EvidenceError(409,'Upload retry differs from the original request.');
+      if(existing.sha256!==validated.sha256||existing.fileName!==validated.fileName||existing.supersedesId!==(input.supersedesId??null)) throw new EvidenceError(409,'Upload retry differs from the original request.');
       return documentDto(existing);
     }
     if(docs.length>=40||docs.reduce((n,d)=>n+d.byteSize,0)+bytes.length>MAX_INITIATIVE_BYTES) throw new EvidenceError(413,'This initiative has reached its evidence storage limit (20 MiB or 40 versions).');

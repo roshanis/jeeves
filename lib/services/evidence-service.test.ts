@@ -35,6 +35,12 @@ async function signLoadedEvidenceReview() {
   });
 }
 describe('versioned evidence workflow',()=>{
+  it('replays a retried upload whose name is not in NFC form',async()=>{
+    const input={requestId:'nfc-request-0000001',fileName:'cafe\u0301.pdf',mediaType:'application/pdf',contentBase64:bytes.toString('base64')};
+    const first=await uploadEvidence(db,'i',owner,input);
+    expect(first.fileName).toBe('caf\u00e9.pdf');
+    await expect(uploadEvidence(db,'i',owner,input)).resolves.toMatchObject({id:first.id});
+  });
   it('uploads, submits, returns, revises, accepts and preserves both histories',async()=>{
     const first=await upload();
     expect((await upload()).id).toBe(first.id);
