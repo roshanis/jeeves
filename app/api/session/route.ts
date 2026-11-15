@@ -11,8 +11,11 @@ import {
 } from "@/lib/security/workspace-cookie";
 
 // Per-browser workspace cookie (M2.5 inc.2b). Read-scoping ONLY — it is not
-// an auth credential (mutations still require the Bearer token), so it opens
-// no CSRF surface. Set on first login and REUSED on later logins so every
+// an auth credential (mutations still require the Bearer token, which a
+// browser never attaches on its own), so a forged cross-site request cannot
+// mutate anything. The cookie is SameSite=Lax, so it IS sent on top-level
+// cross-site GET navigations: keep every GET that reads it side-effect free,
+// and keep SameSite/HttpOnly as they are. Set on first login and REUSED on later logins so every
 // persona acting in one browser shares the same demo workspace (the champion
 // loop spans requester -> reviewer -> approver logins).
 //
