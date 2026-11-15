@@ -149,4 +149,14 @@ describe("AuditorChat — live session", () => {
       (document.querySelector('[data-slot="auditor-answer"]') as HTMLElement).textContent,
     ).toBe("");
   });
+
+  it("does not submit when Enter confirms an IME composition", async () => {
+    await renderLoggedIn();
+    const input = document.querySelector('[data-slot="auditor-question-input"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "ご質問" } });
+    fetchMock.mockClear();
+    fireEvent.keyDown(input, { key: "Enter", isComposing: true });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(document.querySelector('[data-slot="auditor-transcript"]')).toBeNull();
+  });
 });

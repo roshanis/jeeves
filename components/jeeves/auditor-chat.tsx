@@ -148,7 +148,7 @@ export function AuditorChat() {
               value={question}
               onChange={(e) => setQuestion(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && !pending) {
+                if (e.key === "Enter" && !pending && !e.nativeEvent.isComposing) {
                   e.preventDefault();
                   void handleSubmit();
                 }
