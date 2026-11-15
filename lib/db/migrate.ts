@@ -9,7 +9,7 @@ import type { Db } from "./client";
 import { createNeonPool, getDbDriverForHandle } from "./client";
 import * as schema from "./schema";
 import { selectDriver, type DbDriver } from "./driver-select";
-import { migrationDatabaseUrl, postgresPoolConfig } from "./connection-config";
+import { migrationDatabaseUrl, migrationPoolConfig } from "./connection-config";
 import { runtimeDatabaseUrl } from "./runtime-config";
 
 export const MIGRATIONS_FOLDER = "./drizzle";
@@ -69,7 +69,7 @@ export async function runMigrations(): Promise<void> {
       await pool.end();
     }
   } else {
-    pool = new Pool({ ...postgresPoolConfig(url!, process.env.DATABASE_SSL_CA), max: 1 });
+    pool = new Pool(migrationPoolConfig(url!, process.env.DATABASE_SSL_CA));
     pool.on("error", () => console.error("PostgreSQL migration connection error."));
     try {
       await applyMigrations(drizzleNodePg({ client: pool as Pool, schema }), "pg", url);

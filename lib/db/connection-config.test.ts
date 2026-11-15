@@ -1,6 +1,6 @@
 import { createRequire } from "node:module";
 import { describe, expect, it } from "vitest";
-import { migrationDatabaseUrl, postgresPoolConfig } from "./connection-config";
+import { migrationDatabaseUrl, migrationPoolConfig, postgresPoolConfig } from "./connection-config";
 
 const pooled = "postgresql://user:example@aws-0-example.pooler.supabase.com:6543/postgres";
 const direct = "postgresql://user:example@db.example.supabase.co:5432/postgres";
@@ -97,5 +97,37 @@ describe("DATABASE_SSL_CA on non-Supabase hosts", () => {
     const params = new ConnectionParameters(postgresPoolConfig(`${rds}?sslmode=require`, ca));
     expect(params.ssl.ca).toBe(ca);
     expect(params.ssl.rejectUnauthorized).toBe(true);
+  });
+});
+
+describe("runtime and migration pool limits", () => {
+  const generic = "postgresql://user:example@db.internal.example:5432/jeeves";
+
+  it("sets statement and idle-in-transaction timeouts and an application name", () => {
+    const config = postgresPoolConfig(generic, undefined, {});
+    expect(config.statement_timeout).toBe(60_000);
+    expect(config.idle_in_transaction_session_timeout).toBe(60_000);
+    expect(config.application_name).toBeTruthy();
+    expect(config.keepAlive).toBe(true);
+    expect(config.max).toBeUndefined();
+  });
+
+  it("takes a valid DATABASE_POOL_MAX and ignores an invalid one", () => {
+    expect(postgresPoolConfig(generic, undefined, { DATABASE_POOL_MAX: "4" }).max).toBe(4);
+    expect(postgresPoolConfig(generic, undefined, { DATABASE_POOL_MAX: "0" }).max).toBeUndefined();
+    expect(postgresPoolConfig(generic, undefined, { DATABASE_POOL_MAX: "abc" }).max).toBeUndefined();
+  });
+
+  it("keeps the Supabase pool at one connection whatever DATABASE_POOL_MAX says", () => {
+    expect(postgresPoolConfig(pooled, undefined, { DATABASE_POOL_MAX: "8" }).max).toBe(1);
+  });
+
+  it("gives the migration connection a lock_timeout and no statement_timeout", () => {
+    const config = migrationPoolConfig(generic, undefined, {});
+    expect(config.options).toBe("-c lock_timeout=10000");
+    expect(config.statement_timeout).toBeUndefined();
+    expect(config.max).toBe(1);
+    expect(migrationPoolConfig(generic, undefined, { DATABASE_MIGRATION_LOCK_TIMEOUT_MS: "2500" }).options)
+      .toBe("-c lock_timeout=2500");
   });
 });

@@ -43,11 +43,37 @@ function genericConfig(base: PoolConfig, databaseUrl: string, url: URL, sslCa?: 
   return { ...base, connectionString: url.toString(), ssl: { rejectUnauthorized: true, ca: sslCa } };
 }
 
-/** Bounded node-postgres pool; Supabase endpoints always use verifying TLS. */
-export function postgresPoolConfig(databaseUrl: string, sslCa?: string): PoolConfig {
+/** A positive integer from an environment value, else the fallback. */
+function positiveInt(value: string | undefined, fallback: number | undefined): number | undefined {
+  const n = Number(value?.trim());
+  return value?.trim() && Number.isSafeInteger(n) && n > 0 ? n : fallback;
+}
+
+/**
+ * Bounded node-postgres pool; Supabase endpoints always use verifying TLS.
+ * Generic hosts also get server-side statement and idle-in-transaction
+ * timeouts (generous defaults, env-overridable) so a stuck statement cannot
+ * hold a pooled connection forever. Supabase keeps its pool of one and its
+ * startup parameters unchanged: its poolers may reject unknown ones.
+ */
+export function postgresPoolConfig(
+  databaseUrl: string,
+  sslCa?: string,
+  env: Record<string, string | undefined> = process.env,
+): PoolConfig {
   const url = parsePostgresUrl(databaseUrl);
   const base = { connectionTimeoutMillis: 10_000, idleTimeoutMillis: 10_000 };
-  if (!isSupabase(url)) return genericConfig(base, databaseUrl, url, sslCa);
+  if (!isSupabase(url)) {
+    const max = positiveInt(env.DATABASE_POOL_MAX, undefined);
+    return genericConfig({
+      ...base,
+      ...(max ? { max } : {}),
+      keepAlive: true,
+      application_name: "jeeves",
+      statement_timeout: positiveInt(env.DATABASE_STATEMENT_TIMEOUT_MS, 60_000),
+      idle_in_transaction_session_timeout: positiveInt(env.DATABASE_IDLE_IN_TRANSACTION_TIMEOUT_MS, 60_000),
+    }, databaseUrl, url, sslCa);
+  }
 
   const modes = url.searchParams.getAll("sslmode");
   if (modes.some((mode) => !["require", "verify-ca", "verify-full"].includes(mode)) ||
@@ -62,6 +88,23 @@ export function postgresPoolConfig(databaseUrl: string, sslCa?: string): PoolCon
     max: 1,
     ssl: { rejectUnauthorized: true, ...(sslCa?.trim() ? { ca: sslCa } : {}) },
   };
+}
+
+/**
+ * One connection for migrations. No statement_timeout (a migration may run
+ * long), but a lock_timeout so a migration queued behind an open transaction
+ * fails fast and can be retried instead of waiting while holding locks.
+ */
+export function migrationPoolConfig(
+  databaseUrl: string,
+  sslCa?: string,
+  env: Record<string, string | undefined> = process.env,
+): PoolConfig {
+  const config = { ...postgresPoolConfig(databaseUrl, sslCa, env) };
+  delete config.statement_timeout;
+  delete config.idle_in_transaction_session_timeout;
+  const lockMs = positiveInt(env.DATABASE_MIGRATION_LOCK_TIMEOUT_MS, 10_000);
+  return { ...config, max: 1, options: `-c lock_timeout=${lockMs}` };
 }
 
 /** Transaction pooling is unsuitable for migrations that need session state. */
