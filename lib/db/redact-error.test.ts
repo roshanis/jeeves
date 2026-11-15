@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { redactDbError, redactTransactionErrors } from "./redact-error";
-import { createTestDb, closeTestDb } from "./test-client";
+import { createTestDb, closeTestDb, type TestDb } from "./test-client";
 import { sql } from "drizzle-orm";
 
 const SECRET = "SECRET-TOKEN-abc123";
@@ -68,8 +68,15 @@ describe("redactDbError", () => {
 });
 
 describe("redactTransactionErrors", () => {
+  // Created in a hook, which has the longer timeout: the first database of a
+  // file also builds the snapshot that the later ones start from.
+  let fresh: TestDb;
+  beforeEach(async () => {
+    fresh = await createTestDb();
+  });
+
   it("rewrites a failed statement inside a transaction, keeping SQLSTATE and the statement placeholders only", async () => {
-    const db = redactTransactionErrors(await createTestDb());
+    const db = redactTransactionErrors(fresh);
     try {
       const err = (await db
         .transaction(async (tx) => {
@@ -90,7 +97,7 @@ describe("redactTransactionErrors", () => {
   });
 
   it("rethrows an application error as the very same object and returns a resolved value", async () => {
-    const db = redactTransactionErrors(await createTestDb());
+    const db = redactTransactionErrors(fresh);
     try {
       const mine = new Error("conflict");
       await expect(db.transaction(async () => { throw mine; })).rejects.toBe(mine);
@@ -101,7 +108,7 @@ describe("redactTransactionErrors", () => {
   });
 
   it("is idempotent", async () => {
-    const db = await createTestDb();
+    const db = fresh;
     try {
       redactTransactionErrors(db);
       const once = db.transaction;

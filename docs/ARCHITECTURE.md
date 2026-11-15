@@ -632,12 +632,15 @@ switches within one browser:
 
 - **Hermetic in-memory PGlite** — every Vitest run against the DB layer uses
   [`lib/db/test-client.ts`](../lib/db/test-client.ts)`#createTestDb()`,
-  which spins up a brand-new in-memory `PGlite()` instance (no `dataDir`,
-  never touches the persistent `./.pglite/` dev store or `DATABASE_URL`) and
-  runs **every** migration under `drizzle/` — including the hand-written
-  registry-view and append-only-trigger migrations — via
-  `migrate(db, { migrationsFolder: "./drizzle" })`. Each test file/case gets
-  a fresh, fully-migrated schema; nothing is shared between tests.
+  which hands out a brand-new in-memory `PGlite` instance (no `dataDir`,
+  never touches the persistent `./.pglite/` dev store or `DATABASE_URL`)
+  holding **every** migration under `drizzle/` — including the hand-written
+  registry-view and append-only-trigger migrations. The migrations run once
+  per test file, via `migrate(db, { migrationsFolder: "./drizzle" })`, into
+  a snapshot (`dumpDataDir`); each call then boots its own copy of that
+  snapshot, which is several times cheaper than a cold boot plus the
+  migrations. Each call still returns a fresh, fully-migrated database;
+  nothing is shared between tests.
 - **Route tests mock `getDb()`**, not the route logic: `vi.mock("@/lib/db/client",
   () => ({ getDb: () => testDb }))` with `testDb` created fresh per test via
   `createTestDb()` — the routes' real Drizzle queries execute end-to-end
