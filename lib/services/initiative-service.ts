@@ -56,6 +56,7 @@ import { normalizeAdditionalAnswers } from "../intake/additional-questions";
 import { deriveTier } from "../triage/rules";
 import { requiredDomains } from "../triage/routing";
 import { fastLaneEligibility } from "../approval/eligibility";
+import { latestDeployment, operationalDeployment } from "../deployments/selection";
 import { reviewDecisionReadiness } from "../approval/review-readiness";
 import { applicabilityApplies } from "./applicability";
 import { enqueueReviewRequests } from "./notification-service";
@@ -1465,7 +1466,10 @@ async function generateEffectiveControlsInTx(
     .select()
     .from(deploymentVersions)
     .where(eq(deploymentVersions.initiativeId, initiativeId));
-  let deployment = deploymentRows.slice().sort((a, b) => b.deployedAt.getTime() - a.deployedAt.getTime())[0];
+  // Operational version first (pending promotion candidates are never
+  // operational); with none, the newest row of any status — a first-approval
+  // placeholder is itself awaiting promotion and must keep being reused.
+  let deployment = operationalDeployment(deploymentRows) ?? latestDeployment(deploymentRows) ?? undefined;
   if (!deployment) {
     const deploymentId = `dep-${randomUUID()}`;
     const ts = new Date(nowTs());

@@ -1036,6 +1036,23 @@ describe("lib/services/initiative-service", () => {
       expect(events.some((e) => e.action === "effective_controls_generated")).toBe(false);
     });
 
+    it("attaches effective controls to the operational deployment, not a newer unpromoted candidate", async () => {
+      const { initiativeId } = await setUpSignedInReview();
+      const dep = (id: string, version: string, status: string, deployedAt: string) => ({
+        id, initiativeId, version, status, modelVersion: null, selfHosted: false,
+        feedbackProvenanceSignedOff: false, deployedAt: new Date(deployedAt), pausedAt: null, retiredAt: null,
+      });
+      await db.insert(deploymentVersions).values(dep("dep-operational", "v2.0", "deployed", "2026-04-22T00:00:00Z"));
+      await db.insert(deploymentVersions).values(dep("dep-candidate", "v2.1", "awaiting_promotion_signoff", "2026-06-26T00:00:00Z"));
+
+      const res = await svc.decide(db, initiativeId, APPROVER, null, { decision: "approved" });
+      expect(res.controlsGenerated!.deploymentId).toBe("dep-operational");
+      const onCandidate = await db.select().from(effectiveControls).where(eq(effectiveControls.deploymentId, "dep-candidate"));
+      expect(onCandidate).toHaveLength(0);
+      const onOperational = await db.select().from(effectiveControls).where(eq(effectiveControls.deploymentId, "dep-operational"));
+      expect(onOperational.length).toBeGreaterThan(0);
+    });
+
     it("a second decide() on a later reassessment cycle increments effective_controls versions on the SAME deployment", async () => {
       const { initiativeId } = await setUpSignedInReview();
       const first = await svc.decide(db, initiativeId, APPROVER, null, { decision: "approved" });
