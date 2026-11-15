@@ -124,3 +124,9 @@ services:
 
 volumes:
   jeeves-pgdata:
+    # Pinned: without `name:` compose prefixes the project (podman_jeeves-pgdata)
+    # and `podman volume export jeeves-pgdata` finds nothing. The Quadlet unit
+    # uses the same name. An install that already has podman_jeeves-pgdata keeps
+    # its data there: export it, then import into jeeves-pgdata (see
+    # docs/deploy-podman.md, Backups).
+    name: jeeves-pgdata

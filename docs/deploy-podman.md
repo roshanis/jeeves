@@ -184,12 +184,34 @@ podman volume export jeeves-pgdata --output jeeves-pgdata.tar    # back up
 podman volume import jeeves-pgdata jeeves-pgdata.tar             # restore
 ```
 
+The volume is named `jeeves-pgdata` on both install paths (`compose.yaml` and
+the Quadlet unit pin it). A compose install created before the name was pinned
+holds its data in `podman_jeeves-pgdata` (the project name is the prefix): run
+`podman volume ls` to see which one you have, export that one, and import the
+tar into `jeeves-pgdata` before starting the new stack.
+
 Stop the stack first — exporting a volume under a running Postgres captures a
 torn snapshot. For a consistent online backup use `pg_dump` instead:
 
 ```bash
-podman compose exec db pg_dump -U jeeves jeeves > jeeves-$(date +%F).sql
+podman compose exec db pg_dump -U jeeves jeeves > jeeves-$(date +%F).sql   # compose
+podman exec jeeves-db pg_dump -U jeeves jeeves > jeeves-$(date +%F).sql    # Quadlet
 ```
+
+**Restore from a `pg_dump` file.** Stop the app (`podman compose stop app`, or
+`systemctl --user stop jeeves-app`), restore into a fresh database, start the
+app, then check it:
+
+```bash
+podman exec jeeves-db dropdb -U jeeves --if-exists jeeves   # compose: podman compose exec db ...
+podman exec jeeves-db createdb -U jeeves jeeves
+podman exec -i jeeves-db psql -U jeeves jeeves < jeeves-2026-01-01.sql
+# start the app again, then:
+curl -s localhost:3000/api/health      # {"status":"ok","database":"ok"}
+podman exec jeeves-db psql -U jeeves jeeves -c 'select count(*) from initiatives'
+```
+
+`dropdb` destroys the current database: only run it once you hold the dump.
 
 The same caveat as `deploy.md` §4 applies: nobody has restored from one of
 these. A backup you have not restored from is a hypothesis.
