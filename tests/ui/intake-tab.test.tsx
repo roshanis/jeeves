@@ -44,6 +44,18 @@ describe("IntakeTab — champion initiative (#1 prior-auth-summarizer)", () => {
 });
 
 describe("IntakeTab draft banner and answers", () => {
+  it("labels each row of a non-empty evidence attachment list (ui-intake-F25)", () => {
+    const withFiles = { ...EMPTY_INTAKE_PAYLOAD, evidenceAttachments: [
+      { controlId: "H-01", fileName: "dpia.pdf", uploadedAt: "2026-07-01" },
+      { controlId: "P-01", fileName: "vra.pdf", uploadedAt: "2026-07-02" },
+    ] };
+    renderWithProviders(<IntakeTab intake={draft(withFiles, [])} />);
+    const labels = Array.from(document.querySelectorAll("tbody tr td:first-child")).map((c) => c.textContent ?? "");
+    expect(labels.some((l) => l.includes("evidenceAttachments."))).toBe(false);
+    expect(labels).toContain("Evidence attachment 2: file name");
+    expect(labels).toContain("Evidence attachment 1: control");
+  });
+
   it("does not say the intake cannot be submitted when only advisory gaps remain (ui-intake-F12)", () => {
     renderWithProviders(<IntakeTab intake={draft(CHAMPION_PREFILL_PAYLOAD, ["evidenceAttachments"])} summary={{ isSeeded: false } as never} />);
     expect(screen.queryByText(/cannot be submitted/)).toBeNull();

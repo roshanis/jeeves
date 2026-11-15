@@ -3,7 +3,7 @@
 // IntakeVersion, or the "Draft — not yet submitted" state for the champion.
 import type { AuditEventRow, InitiativeDetail } from "@/lib/data/dto";
 import { latestQcReturn } from "@/lib/data/qc-return";
-import { ADDITIONAL_INTAKE_QUESTIONS } from "@/lib/intake/additional-questions";
+import { ADDITIONAL_FIELD_LABELS, fieldLabel } from "@/lib/intake/field-labels";
 import { EMPTY_INTAKE_PAYLOAD } from "@/lib/intake/defaults";
 import { splitMissing } from "@/lib/intake/split-missing";
 import { AlertTriangle } from "lucide-react";
@@ -21,60 +21,6 @@ import { GatedActionButton } from "./role-gate";
 import Link from "next/link";
 import { buttonVariants } from "@/components/ui/button";
 import { useLiveSessionOptional } from "@/lib/client/session-context";
-
-const FIELD_LABEL: Record<string, string> = {
-  title: "Title",
-  description: "Description",
-  phi: "1. Does it access PHI?",
-  memberFacing: "2. Do members interact with or receive its output directly?",
-  careCoverageInfluence: "3. Does it influence care or coverage decisions?",
-  vendorHosted: "4. Is the model vendor-hosted?",
-  humanInLoop: "5. Does a qualified human review each output before it takes effect?",
-  individualImpact: "6. Does it affect individuals' opportunities, rights, or services?",
-  "data.retentionIntent": "Data retention",
-  "data.sourceSystems": "Data sources",
-  evidenceAttachments: "Evidence attached at intake",
-  "basics.title": "Title",
-  "basics.sponsorOrg": "Sponsor organization",
-  "basics.requesterName": "Requester name",
-  "basics.requesterEmail": "Requester email",
-  "basics.businessProblem": "Business problem",
-  "useCase.primaryUsers": "Who uses it",
-  "useCase.decisionInformed": "Decision it informs",
-  "useCase.expectedVolume": "Expected volume",
-  "data.dataSources": "Data sources",
-  "data.phiCategories": "PHI categories touched",
-  "data.phiCategoriesOtherText": "Other PHI category",
-  "data.retentionIntentNote": "Retention note",
-  "data.trainingVsInference": "Training vs. inference use",
-  "modelVendor.buildOrBuy": "Build or buy",
-  "modelVendor.vendorName": "Vendor name",
-  "modelVendor.hosting": "Hosting",
-  "modelVendor.modelType": "Model type",
-  "populationImpact.affectedPopulations": "Affected populations",
-  "populationImpact.expectedBenefits": "Expected benefits",
-  "populationImpact.expectedHarms": "Expected harms / risks",
-  "deployment.integrationPoints": "Integration points",
-  "deployment.rolloutPlan": "Rollout plan",
-  "overlay.touchesPHI": "1. Does it access PHI?",
-  "overlay.memberFacing": "2. Do members interact with or receive its output directly?",
-  "overlay.careCoverageInfluence": "3. Does it influence care or coverage decisions?",
-  "overlay.vendorHosted": "4. Is the model vendor-hosted?",
-  "overlay.phi": "1. Does it access PHI?",
-  "overlay.humanInLoop": "5. Does a qualified human review each output before it takes effect?",
-  "overlay.humanInTheLoop": "5. Does a qualified human review each output before it takes effect?",
-  "overlay.individualImpact": "6. Does it affect individuals' opportunities, rights, or services (members, providers, or employees)?",
-};
-
-const ADDITIONAL_FIELD_LABELS = Object.fromEntries(
-  Object.entries(ADDITIONAL_INTAKE_QUESTIONS).flatMap(([section, questions]) =>
-    questions.map(({ key, question }) => [`${section}.${key}`, question]),
-  ),
-);
-
-function fieldLabel(key: string): string {
-  return ADDITIONAL_FIELD_LABELS[key] ?? FIELD_LABEL[key] ?? key;
-}
 
 const labelList = (keys: string[]) => keys.map(fieldLabel).join(", ");
 
