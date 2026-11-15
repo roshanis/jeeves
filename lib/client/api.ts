@@ -180,6 +180,9 @@ export interface DecideInput {
   decision: DecisionType;
   conditions?: { text: string; controlId: string }[];
   citations?: string[];
+  /** The cycle and review revisions the approver was looking at (server answers 409 when they moved). */
+  expectedCycleId?: string;
+  expectedReviewRevisions?: Record<string, number>;
 }
 
 export interface DecideResult {

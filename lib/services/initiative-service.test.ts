@@ -800,6 +800,29 @@ describe("lib/services/initiative-service", () => {
       expect(res.type).toBe("conditionally_approved");
     });
 
+    it("rejects a decision carrying a stale review revision or another cycle id with ConflictError and records nothing (api-initiatives-F17)", async () => {
+      const { initiativeId, cycleId } = await setUpInReview();
+      await draftAll(cycleId);
+      const rds = await db.select().from(reviewDecisions).where(eq(reviewDecisions.cycleId, cycleId));
+      const seen = Object.fromEntries(rds.map((r) => [r.domain, r.revision]));
+      // A reviewer re-runs one agent after the approver rendered the page.
+      await db.update(reviewDecisions).set({ revision: rds[0]!.revision + 1 }).where(eq(reviewDecisions.id, rds[0]!.id));
+      const input = { decision: "conditionally_approved" as const, conditions: [{ text: "100% human review.", controlId: "C-01" }] };
+
+      await expect(
+        svc.decide(db, initiativeId, APPROVER, null, { ...input, expectedCycleId: cycleId, expectedReviewRevisions: seen }),
+      ).rejects.toThrow(ConflictError);
+      await expect(
+        svc.decide(db, initiativeId, APPROVER, null, { ...input, expectedCycleId: "cycle-other", expectedReviewRevisions: { ...seen, [rds[0]!.domain]: rds[0]!.revision + 1 } }),
+      ).rejects.toThrow(ConflictError);
+      expect(await db.select().from(initiativeDecisions).where(eq(initiativeDecisions.initiativeId, initiativeId))).toHaveLength(0);
+
+      // The current values, and a request without the fields, still succeed.
+      const current = Object.fromEntries(rds.map((r, i) => [r.domain, i === 0 ? r.revision + 1 : r.revision]));
+      const res = await svc.decide(db, initiativeId, APPROVER, null, { ...input, expectedCycleId: cycleId, expectedReviewRevisions: current });
+      expect(res.type).toBe("conditionally_approved");
+    });
+
     it("allows `approved` once all 8 domain reviewers have signed (full completeness)", async () => {
       const { initiativeId, cycleId } = await setUpInReview();
       const domains = await draftAll(cycleId);

@@ -220,7 +220,7 @@ export default async function InitiativeDetailPage({
         </div>
       ) : null}
 
-      <LiveActionsBar initiativeId={summary.initiativeId} isSeeded={summary.isSeeded} state={summary.state} decisionReadiness={summary.decisionReadiness} />
+      <LiveActionsBar initiativeId={summary.initiativeId} isSeeded={summary.isSeeded} state={summary.state} decisionReadiness={summary.decisionReadiness} reviews={detail.reviews} />
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_18rem]">
         <InitiativeTabs initialTab={tab}>

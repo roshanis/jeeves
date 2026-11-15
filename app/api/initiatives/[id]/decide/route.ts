@@ -29,6 +29,8 @@ const bodySchema = z.object({
   decision: z.enum(["approved", "conditionally_approved", "rejected"]),
   conditions: z.array(z.object({ text: z.string().max(1000), controlId: z.string().max(50) })).max(20).optional(),
   citations: z.array(z.string().max(200)).max(20).optional(),
+  expectedCycleId: z.string().max(100).optional(),
+  expectedReviewRevisions: z.record(z.string().max(50), z.number().int().min(0)).refine((m) => Object.keys(m).length <= 20).optional(),
 });
 
 export async function POST(

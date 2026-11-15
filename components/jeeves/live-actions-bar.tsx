@@ -21,6 +21,7 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import type { LifecycleState } from "@/lib/domain/types";
 import type { ReviewDecisionReadiness } from "@/lib/approval/review-readiness";
+import type { ReviewRow } from "@/lib/data/dto";
 import {
   apiErrorToMessage,
   decide,
@@ -48,11 +49,13 @@ import { ReasonDialog } from "./reason-dialog";
 import { TierBadge } from "./tier-badge";
 import { DOMAIN_LABEL } from "./domain-labels";
 
-export function LiveActionsBar({ initiativeId, isSeeded, state, decisionReadiness }: {
+export function LiveActionsBar({ initiativeId, isSeeded, state, decisionReadiness, reviews }: {
   initiativeId?: string;
   isSeeded?: boolean;
   state: LifecycleState;
   decisionReadiness?: ReviewDecisionReadiness;
+  /** The reviews this page rendered; a decision is only recorded against these exact revisions. */
+  reviews?: Pick<ReviewRow, "cycleId" | "domain" | "revision">[];
 }) {
   const router = useRouter();
   const live = useLiveSessionOptional();
@@ -268,6 +271,7 @@ export function LiveActionsBar({ initiativeId, isSeeded, state, decisionReadines
               initiativeId={initiativeId}
               reassessment={state === "re_review"}
               readiness={decisionReadiness}
+              reviews={reviews}
               onCancel={() => setDecideOpen(false)}
               onDecided={() => {
                 setDecideOpen(false);
@@ -298,12 +302,14 @@ function DecideForm({
   initiativeId,
   reassessment,
   readiness,
+  reviews,
   onCancel,
   onDecided,
 }: {
   initiativeId: string;
   reassessment: boolean;
   readiness: ReviewDecisionReadiness;
+  reviews?: Pick<ReviewRow, "cycleId" | "domain" | "revision">[];
   onCancel: () => void;
   onDecided: () => void;
 }) {
@@ -344,6 +350,12 @@ function DecideForm({
         decision,
         conditions: cleanConditions.length > 0 ? cleanConditions : undefined,
         citations: citations.length > 0 ? citations : undefined,
+        ...(reviews && reviews.length > 0 && reviews.every((r) => r.cycleId && r.revision !== undefined)
+          ? {
+              expectedCycleId: reviews[0]!.cycleId,
+              expectedReviewRevisions: Object.fromEntries(reviews.map((r) => [r.domain, r.revision as number])),
+            }
+          : {}),
       });
       toast.success(`Decision recorded: ${result.type} — initiative is now ${result.after}.`);
       onDecided();

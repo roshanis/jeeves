@@ -1238,6 +1238,12 @@ export interface DecideInput {
   decision: DecisionType;
   conditions?: { text: string; controlId: string }[];
   citations?: string[];
+  /**
+   * What the approver's page rendered. Optional: when present the decision is
+   * only recorded if the cycle and every review revision are still these.
+   */
+  expectedCycleId?: string;
+  expectedReviewRevisions?: Record<string, number>;
 }
 
 export interface DecideResult {
@@ -1303,6 +1309,14 @@ export async function decide(
       .from(riskAssessments)
       .where(and(eq(riskAssessments.id, cycle.riskAssessmentId), eq(riskAssessments.initiativeId, initiativeId)));
     const decisions = await tx.select().from(reviewDecisions).where(eq(reviewDecisions.cycleId, cycle.id));
+    if (input.expectedCycleId !== undefined && input.expectedCycleId !== cycle.id) {
+      throw new ConflictError(`the review cycle changed since this case was loaded (now ${cycle.id}); review the latest reviews`);
+    }
+    if (input.expectedReviewRevisions !== undefined) {
+      const seen = input.expectedReviewRevisions;
+      const stale = decisions.length !== Object.keys(seen).length || decisions.some((row) => seen[row.domain] !== row.revision);
+      if (stale) throw new ConflictError("the reviews changed since this case was loaded; review the latest reviews");
+    }
     const abstentionEvents = decisions.some(row => row.status === "abstained")
       ? await tx.select().from(auditEvents).where(and(eq(auditEvents.initiativeId, initiativeId), eq(auditEvents.action, "review_abstained")))
       : [];

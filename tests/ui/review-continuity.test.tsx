@@ -4,13 +4,14 @@ import { renderWithProviders } from "./helpers";
 import type { ReviewRow } from "@/lib/data/dto";
 import { reviewDecisionReadiness } from "@/lib/approval/review-readiness";
 
-const mocks = vi.hoisted(() => ({ session: vi.fn(), draft: vi.fn(), triage: vi.fn(), refresh: vi.fn() }));
+const mocks = vi.hoisted(() => ({ session: vi.fn(), draft: vi.fn(), triage: vi.fn(), decide: vi.fn(), refresh: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: mocks.refresh }) }));
 vi.mock("@/lib/client/session-context", () => ({ useLiveSessionOptional: mocks.session }));
 vi.mock("@/lib/client/api", async (original) => ({
   ...await original<typeof import("@/lib/client/api")>(),
   startDraftRun: mocks.draft,
   runTriage: mocks.triage,
+  decide: mocks.decide,
 }));
 import { ReviewsTab } from "@/components/jeeves/reviews-tab";
 import { LiveActionsBar } from "@/components/jeeves/live-actions-bar";
@@ -84,6 +85,24 @@ describe("case review continuity", () => {
     expect((screen.getByRole("option", { name: "Approved" }) as HTMLOptionElement).disabled).toBe(true);
     expect((screen.getByRole("combobox") as HTMLSelectElement).value).toBe("conditionally_approved");
     expect((screen.getByRole("option", { name: "Rejected" }) as HTMLOptionElement).disabled).toBe(false);
+  });
+
+  it("sends the rendered cycle and review revisions with the decision (api-initiatives-F17)", async () => {
+    mocks.session.mockReturnValue({ session: { ...requester, role: "approver" } });
+    mocks.decide.mockResolvedValue({ type: "conditionally_approved", after: "conditionally_approved" });
+    const rendered = [{ ...review, cycleId: "cycle-7", revision: 3 }];
+    renderWithProviders(<LiveActionsBar initiativeId="server-id" isSeeded={false} state="in_review" decisionReadiness={readiness("drafted")} reviews={rendered} />);
+    fireEvent.click(screen.getByRole("button", { name: "Record decision" }));
+    fireEvent.click(document.querySelector('[data-slot="add-condition"]')!);
+    fireEvent.change(document.querySelector('[data-slot="condition-text"]')!, { target: { value: "Keep human review" } });
+    fireEvent.change(document.querySelector('[data-slot="condition-control-id"]')!, { target: { value: "C-01" } });
+    fireEvent.click(document.querySelector('[data-slot="decide-confirm"]')!);
+    await waitFor(() => expect(mocks.decide).toHaveBeenCalled());
+    expect(mocks.decide.mock.calls[0]![2]).toMatchObject({
+      decision: "conditionally_approved",
+      expectedCycleId: "cycle-7",
+      expectedReviewRevisions: { "privacy-hipaa": 3 },
+    });
   });
 
   it("keeps rejection independent when reviews are pending", () => {
