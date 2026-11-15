@@ -90,6 +90,7 @@ export function AuditorChat() {
           the same queryable evidence as the canned queries above.
         </p>
 
+        <div role="log" aria-live="polite" aria-relevant="additions">
         {transcript.length > 0 ? (
           <div className="flex flex-col gap-3" data-slot="auditor-transcript">
             {transcript.map((turn, i) =>
@@ -125,6 +126,7 @@ export function AuditorChat() {
             )}
           </div>
         ) : null}
+        </div>
 
         {disabled ? (
           <Tooltip>
@@ -133,6 +135,7 @@ export function AuditorChat() {
                 <div className="flex items-center gap-2" tabIndex={0}>
                   <input
                     disabled
+                    aria-label="Audit question"
                     placeholder="Ask a question about audit history…"
                     data-slot="auditor-question-input"
                     className="h-8 flex-1 rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none disabled:cursor-not-allowed disabled:opacity-60"
@@ -156,6 +159,7 @@ export function AuditorChat() {
                   void handleSubmit();
                 }
               }}
+              aria-label="Audit question"
               placeholder="Ask a question about audit history…"
               maxLength={2000}
               data-slot="auditor-question-input"

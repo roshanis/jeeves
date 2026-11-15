@@ -4,7 +4,7 @@
 // HTML/markdown — this suite's core assertion is that an HTML-shaped answer
 // never produces a real DOM element.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { renderWithProviders } from "./helpers";
 import {
   LiveSessionProvider,
@@ -173,5 +173,18 @@ describe("AuditorChat — live session", () => {
     });
     expect((document.querySelector('[data-slot="auditor-question-input"]') as HTMLInputElement).value).toBe("who touches PHI?");
     expect(document.querySelector('[data-slot="auditor-transcript"]')).toBeNull();
+  });
+
+  it("names the question input and announces appended answers through a polite log", async () => {
+    await renderLoggedIn();
+    expect(screen.getByRole("textbox", { name: /audit question/i })).toBeTruthy();
+    const log = screen.getByRole("log");
+    expect(log.getAttribute("aria-live")).toBe("polite");
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(200, { answerMd: "Answer text", citedEvents: [], queryUsed: "q", rows: [] }),
+    );
+    fireEvent.change(screen.getByRole("textbox", { name: /audit question/i }), { target: { value: "hi" } });
+    fireEvent.click(document.querySelector('[data-slot="auditor-submit"]') as HTMLButtonElement);
+    await waitFor(() => expect(within(screen.getByRole("log")).getByText("Answer text")).toBeTruthy());
   });
 });
