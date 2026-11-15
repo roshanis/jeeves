@@ -92,7 +92,7 @@ describe("RunMonitorPanel — no live session", () => {
   it("renders the disabled Run monitor button with no result summary", () => {
     renderWithProviders(<RunMonitorPanel />);
     const button = document.querySelector('[data-slot="run-monitor"]') as HTMLButtonElement;
-    expect(button.disabled).toBe(true);
+    expect(button.getAttribute("aria-disabled")).toBe("true");
     expect(document.querySelector('[data-slot="monitor-result"]')).toBeNull();
     expect(document.querySelector('[data-slot="monitor-errors"]')).toBeNull();
   });

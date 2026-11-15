@@ -83,6 +83,7 @@ export function DisableWithTooltip({
 }: GatedActionProps) {
   const live = useLiveSessionOptional();
   const session = live?.session ?? null;
+  const reasonId = React.useId();
 
   // A public (real request) session satisfies no live action.
   const roleSatisfied = session?.role !== "public" && (!requiresRole || session?.role === requiresRole);
@@ -111,25 +112,29 @@ export function DisableWithTooltip({
       ? `Requires the ${requiresRole} role — choose a persona in the header`
       : DEMO_SESSION_TOOLTIP;
 
+  // aria-disabled (not disabled) keeps the button focusable and named; the reason is
+  // linked with aria-describedby so screen readers and touch users get it, not just hover.
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <span className={cn("inline-flex", className)} tabIndex={0}>
+    <span className={cn("inline-flex", className)}>
+      <Tooltip>
+        <TooltipTrigger
+          render={
             <Button
               type="button"
-              disabled
+              aria-disabled="true"
+              aria-describedby={reasonId}
               variant={variant}
-              className="pointer-events-none w-full"
+              className="w-full cursor-not-allowed opacity-50"
               data-slot={dataSlot ?? "button"}
             >
               {label}
             </Button>
-          </span>
-        }
-      />
-      <TooltipContent>{tooltip}</TooltipContent>
-    </Tooltip>
+          }
+        />
+        <TooltipContent>{tooltip}</TooltipContent>
+      </Tooltip>
+      <span id={reasonId} className="sr-only">{tooltip}</span>
+    </span>
   );
 }
 
