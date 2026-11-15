@@ -159,4 +159,19 @@ describe("AuditorChat — live session", () => {
     expect(fetchMock).not.toHaveBeenCalled();
     expect(document.querySelector('[data-slot="auditor-transcript"]')).toBeNull();
   });
+
+  it("restores the question and drops the orphan turn when the request fails", async () => {
+    await renderLoggedIn();
+    fetchMock.mockResolvedValueOnce(jsonResponse(429, { error: "rate_limited" }));
+    const input = document.querySelector('[data-slot="auditor-question-input"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "who touches PHI?" } });
+    fireEvent.click(document.querySelector('[data-slot="auditor-submit"]') as HTMLButtonElement);
+    await waitFor(() => {
+      expect(
+        (document.querySelector('[data-slot="auditor-submit"]') as HTMLButtonElement).textContent,
+      ).toBe("Ask");
+    });
+    expect((document.querySelector('[data-slot="auditor-question-input"]') as HTMLInputElement).value).toBe("who touches PHI?");
+    expect(document.querySelector('[data-slot="auditor-transcript"]')).toBeNull();
+  });
 });
