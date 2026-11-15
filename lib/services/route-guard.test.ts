@@ -12,6 +12,7 @@ import {
   issueDemoSession,
   issuePublicSession,
   pruneStaleState,
+  resetHousekeepingCounterForTests,
   resolveSession,
   resolveSessionActor,
   runMutationGuard,
@@ -368,20 +369,46 @@ describe("client addresses in rate-limit buckets", () => {
     expect((await testDb.select().from(sessions)).map((row) => row.token)).toEqual(["live-token"]);
   });
 
-  it("runs the pruning opportunistically from the request path", async () => {
+  it("prunes on the first guarded call of a process and then on every 100th", async () => {
+    resetHousekeepingCounterForTests();
     const now = Date.now();
-    await testDb.insert(rateLimitBuckets).values({ key: "session:10.0.0.11", tokens: 5, lastRefillMs: now - 86_400_000, lastTouchedMs: now - 86_400_000 });
-    vi.spyOn(Math, "random").mockReturnValue(0);
-    await checkSessionAttempt("10.0.0.12");
-    expect((await testDb.select().from(rateLimitBuckets)).map((row) => row.key)).not.toContain("session:10.0.0.11");
+    const insertStale = (key: string) =>
+      testDb.insert(rateLimitBuckets).values({ key, tokens: 5, lastRefillMs: now - 86_400_000, lastTouchedMs: now - 86_400_000 });
+    const has = async (key: string) => (await testDb.select().from(rateLimitBuckets)).map((row) => row.key).includes(key);
+    await insertStale("session:10.0.0.11");
+    await checkSessionAttempt("10.2.2.2");
+    expect(await has("session:10.0.0.11")).toBe(false);
+    await insertStale("session:10.0.0.12");
+    for (let i = 0; i < 99; i++) await checkSessionAttempt(`10.2.0.${i}`);
+    expect(await has("session:10.0.0.12")).toBe(true);
+    await checkSessionAttempt("10.2.1.1");
+    expect(await has("session:10.0.0.12")).toBe(false);
   });
 
-  it("does not prune on most requests", async () => {
+  it("does not fail the request when housekeeping fails, and logs once", async () => {
+    resetHousekeepingCounterForTests();
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(testDb, "execute").mockRejectedValueOnce(new Error("boom"));
+    await expect(checkSessionAttempt("10.3.1.1")).resolves.toMatchObject({ allowed: true });
+    expect(log.mock.calls.filter((call) => call[0] === "Housekeeping failed")).toHaveLength(1);
+  });
+
+  it("a test can park the counter mid-cycle", async () => {
+    resetHousekeepingCounterForTests(1);
     const now = Date.now();
     await testDb.insert(rateLimitBuckets).values({ key: "session:10.0.0.13", tokens: 5, lastRefillMs: now - 86_400_000, lastTouchedMs: now - 86_400_000 });
-    vi.spyOn(Math, "random").mockReturnValue(0.5);
-    await checkSessionAttempt("10.0.0.14");
+    await checkSessionAttempt("10.5.0.1");
     expect((await testDb.select().from(rateLimitBuckets)).map((row) => row.key)).toContain("session:10.0.0.13");
+  });
+
+  it("never calls Math.random on the request path", async () => {
+    const random = vi.spyOn(Math, "random");
+    const session = (await issueDemoSession("priya-raman"))!;
+    random.mockClear();
+    await runMutationGuard(reqWithBearer(session.token, "10.4.0.1"), undefined);
+    await checkSessionAttempt("10.4.0.2");
+    await issuePublicSession("10.4.0.3");
+    expect(random).not.toHaveBeenCalled();
   });
 });
 

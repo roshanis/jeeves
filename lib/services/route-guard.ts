@@ -57,7 +57,13 @@ function bucketKey(policy: string, clientKey: string): string {
 /** Longer than any policy needs to refill from empty (slowest: 10 tokens at 1/min), so a bucket untouched this long is full. */
 const STALE_BUCKET_MS = 60 * 60 * 1000;
 const HOUSEKEEPING_BATCH = 500;
-const HOUSEKEEPING_ODDS = 0.01;
+const HOUSEKEEPING_EVERY = 100;
+let housekeepingCalls = 0;
+
+/** Test hook: set how many guarded calls this process has already counted (0 = the next call prunes). */
+export function resetHousekeepingCounterForTests(calls = 0): void {
+  housekeepingCalls = calls;
+}
 
 /** Delete stale rate-limit buckets and expired sessions, a bounded batch of each. */
 export async function pruneStaleState(): Promise<void> {
@@ -69,9 +75,14 @@ export async function pruneStaleState(): Promise<void> {
   `);
 }
 
-/** Roughly one request in a hundred pays for housekeeping; it never fails the request. */
+/**
+ * The first guarded call of a process and every 100th after it pay for
+ * housekeeping: a short-lived serverless instance still prunes once, a
+ * long-lived one prunes in proportion to traffic. Deterministic (no
+ * randomness); it never fails the request.
+ */
 async function maybePruneStaleState(): Promise<void> {
-  if (Math.random() >= HOUSEKEEPING_ODDS) return;
+  if (housekeepingCalls++ % HOUSEKEEPING_EVERY !== 0) return;
   try {
     await pruneStaleState();
   } catch (err) {
