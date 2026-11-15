@@ -69,7 +69,14 @@ export async function generateMetadata({
   params: Promise<{ slug: string }>;
 }): Promise<Metadata> {
   const { slug } = await params;
-  const detail = await getInitiativeDetailCoherent(slug).catch(() => null);
+  let detail;
+  try {
+    detail = await getInitiativeDetailCoherent(slug);
+  } catch (error) {
+    // A data failure is not "not found": log it, keep the title neutral.
+    console.error("initiative metadata load failed", error instanceof Error ? error.message : "unknown error");
+    return { title: "Initiative", description: "Initiative details could not be loaded." };
+  }
   if (!detail) {
     return { title: "Initiative not found", description: "No such initiative." };
   }
