@@ -805,9 +805,10 @@ describe("exception-service", () => {
       // A viewer's own workspace row is theirs to act on.
       expect(asWsA.find((r) => r.reason === "ws-A reason")!.isShared).toBe(false);
 
-      // Single-tenant: neither the viewer nor the row has a workspace.
+      // A viewer with no workspace (a first visit, before any session) can
+      // change nothing: every mutation needs a session workspace.
       const anonymous = await svc.listExceptions(db, undefined, { viewerWorkspaceId: null });
-      expect(anonymous.find((r) => r.id === "exc-seed-hr-r01")!.isShared).toBe(false);
+      expect(anonymous.find((r) => r.id === "exc-seed-hr-r01")!.isShared).toBe(true);
 
       // Unfiltered internal read: nothing is labelled shared.
       const all = await svc.listExceptions(db);

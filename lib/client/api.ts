@@ -764,7 +764,7 @@ export interface ExceptionRow {
   decisionReason: string | null;
   expiresAt: number | null;
   supersedesId: string | null;
-  /** True when this viewer cannot act on the row (its workspace differs from the viewer's). */
+  /** True when this viewer cannot act on the row (the viewer has no workspace, or it differs from the row's). */
   isShared?: boolean;
 }
 

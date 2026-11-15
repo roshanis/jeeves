@@ -93,11 +93,12 @@ function boundGroundingRows(
   });
 }
 
-/** Kebab-case tokens in the question that might name an initiative slug (live slugs carry a hex suffix). */
+/** Three or more segments: an ordinary hyphenated word ("re-review") is not reported as an unknown initiative. */
 function isSlugLike(token: string): boolean {
   return token.split("-").length >= 3;
 }
 
+/** Kebab-case tokens in the question that might name an initiative slug (live slugs carry a hex suffix). */
 function slugCandidates(question: string): string[] {
   const matches = question.toLowerCase().match(/\b[a-z0-9]+(?:-[a-z0-9]+){1,8}\b/g) ?? [];
   return [...new Set(matches)].slice(0, MAX_SLUG_CANDIDATES);

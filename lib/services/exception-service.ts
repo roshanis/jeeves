@@ -51,7 +51,7 @@ import type * as schema from "../db/schema";
 import { auditEvents, controlExceptions, deploymentVersions, effectiveControls, initiatives } from "../db/schema";
 import type { Actor } from "../domain/types";
 import { ConflictError, NotFoundError, ValidationError, IllegalTransitionError } from "./initiative-service";
-import { workspaceMismatch, mutationWorkspaceMismatch } from "./workspace-guard";
+import { workspaceMismatch, mutationWorkspaceMismatch, viewerCannotMutate } from "./workspace-guard";
 
 type Tx = PgDatabase<PgQueryResultHKT, typeof schema>;
 
@@ -633,7 +633,7 @@ export interface ExceptionRow {
   decisionReason: string | null;
   expiresAt: number | null;
   supersedesId: string | null;
-  /** True when this viewer cannot act on the row (its workspace differs from the viewer's); always false when `listExceptions` is called without `opts`. */
+  /** True when this viewer cannot act on the row (the viewer has no workspace, or it differs from the row's); always false when `listExceptions` is called without `opts`. */
   isShared: boolean;
 }
 
@@ -699,7 +699,7 @@ export async function listExceptions(
       expiresAt: r.expiresAt,
       supersedesId: r.supersedesId,
       isShared: opts
-        ? mutationWorkspaceMismatch(
+        ? viewerCannotMutate(
             r.initiativeId ? (workspaceIds.get(r.initiativeId) ?? null) : null,
             opts.viewerWorkspaceId ?? null,
           )
