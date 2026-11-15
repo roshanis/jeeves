@@ -44,6 +44,15 @@ describe("IntakeTab — champion initiative (#1 prior-auth-summarizer)", () => {
 });
 
 describe("IntakeTab draft banner and answers", () => {
+  it("renders answers in form order, not stored key order (ui-intake-F13)", () => {
+    const shuffled = { data: EMPTY_INTAKE_PAYLOAD.data, overlay: { individualImpact: true, careCoverageInfluence: false, vendorHosted: true, touchesPHI: true, memberFacing: false, humanInTheLoop: true }, basics: EMPTY_INTAKE_PAYLOAD.basics };
+    renderWithProviders(<IntakeTab intake={draft(shuffled, [])} />);
+    const labels = Array.from(document.querySelectorAll("tbody tr td:first-child")).map((c) => c.textContent ?? "");
+    expect(labels[0]).toBe("Title");
+    const nums = labels.filter((l) => /^\d\. /.test(l)).map((l) => l[0]);
+    expect(nums).toEqual(["1", "2", "3", "4", "5", "6"]);
+  });
+
   it("shows muted Not provided, not a red Missing badge, for a null field that is not a gap (ui-intake-F14)", () => {
     renderWithProviders(<IntakeTab intake={draft(CHAMPION_PREFILL_PAYLOAD, [])} />);
     expect(screen.queryByText("Missing")).toBeNull();

@@ -4,6 +4,7 @@
 import type { AuditEventRow, InitiativeDetail } from "@/lib/data/dto";
 import { latestQcReturn } from "@/lib/data/qc-return";
 import { ADDITIONAL_INTAKE_QUESTIONS } from "@/lib/intake/additional-questions";
+import { EMPTY_INTAKE_PAYLOAD } from "@/lib/intake/defaults";
 import { AlertTriangle } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -70,20 +71,29 @@ const ADDITIONAL_FIELD_LABELS = Object.fromEntries(
   ),
 );
 
+/** Entries in form order (the order of EMPTY_INTAKE_PAYLOAD); jsonb storage does not keep key order. Unknown keys go last. */
+function orderedEntries(value: object, template: unknown): [string, unknown][] {
+  const order = template && typeof template === "object" ? Object.keys(template) : [];
+  const rank = (key: string) => (order.includes(key) ? order.indexOf(key) : order.length);
+  return Object.entries(value).sort(([a], [b]) => rank(a) - rank(b));
+}
+
 /** Live drafts use nested sections; older seeded examples use flat fields. */
 function answerRows(fields: Record<string, unknown>): [string, string | boolean | null][] {
   const rows: [string, string | boolean | null][] = [];
-  function visit(key: string, value: unknown) {
+  function visit(key: string, value: unknown, template?: unknown) {
     if (Array.isArray(value)) {
       if (value.every((entry) => typeof entry === "string")) rows.push([key, value.join("\n")]);
       else value.forEach((entry, index) => visit(`${key}.${index + 1}`, entry));
     } else if (value && typeof value === "object") {
-      Object.entries(value).forEach(([child, answer]) => visit(`${key}.${child}`, answer));
+      orderedEntries(value, template).forEach(([child, answer]) =>
+        visit(`${key}.${child}`, answer, (template as Record<string, unknown> | undefined)?.[child]));
     } else {
       rows.push([key, typeof value === "boolean" || typeof value === "string" ? value : value == null ? null : String(value)]);
     }
   }
-  Object.entries(fields).forEach(([key, value]) => visit(key, value));
+  orderedEntries(fields, EMPTY_INTAKE_PAYLOAD).forEach(([key, value]) =>
+    visit(key, value, (EMPTY_INTAKE_PAYLOAD as unknown as Record<string, unknown>)[key]));
   if (fields.basics && typeof fields.basics === "object") {
     const present = new Set(rows.map(([key]) => key));
     for (const key of Object.keys(ADDITIONAL_FIELD_LABELS)) {
