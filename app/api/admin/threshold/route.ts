@@ -34,7 +34,7 @@ const bodySchema = z.object({
   controlId: z.string().min(1).max(50),
   initiativeId: z.string().min(1).max(200).nullable().optional(),
   tier: z.enum(["low", "medium", "high", "critical"]).optional(),
-  value: z.number(),
+  value: z.number().min(0).max(1),
   reason: z.string().min(1).max(2000),
 });
 

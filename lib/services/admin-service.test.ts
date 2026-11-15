@@ -181,6 +181,18 @@ describe("lib/services/admin-service", () => {
       ).rejects.toThrow(ForbiddenError);
     });
 
+    it("rejects a threshold outside the [0,1] rate range (ui-shell-F3)", async () => {
+      const initiativeId = await memberChatCopilotId(db);
+      for (const newValue of [1.5, -0.1]) {
+        await expect(
+          setEvalThreshold(db, RAY_CHEN, null, { controlId: "Q-01", initiativeId, newValue, reason: "Out of range." }),
+        ).rejects.toThrow(ValidationError);
+      }
+      await expect(
+        setEvalThreshold(db, RAY_CHEN, null, { controlId: "Q-01", initiativeId: null, tier: "high", newValue: 999, reason: "Out of range." }),
+      ).rejects.toThrow(ValidationError);
+    });
+
     it("requires a non-empty reason", async () => {
       const initiativeId = await memberChatCopilotId(db);
       await expect(

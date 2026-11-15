@@ -17,6 +17,8 @@ export interface ThresholdInitiativeOption {
   initiativeId: string;
   title: string;
   slug: string;
+  /** The initiative's current Q-01 threshold: its override, else its tier default. */
+  currentThreshold?: number | null;
 }
 
 const fieldClass =
@@ -40,13 +42,18 @@ function ThresholdForm({
   const [initiativeId, setInitiativeId] = React.useState<string>(
     initiativeOptions[0]?.initiativeId ?? "",
   );
-  const [valueText, setValueText] = React.useState<string>(
-    currentThreshold !== null ? String(currentThreshold) : "",
-  );
+  const currentFor = (id: string): number | null =>
+    initiativeOptions.find((option) => option.initiativeId === id)?.currentThreshold ?? currentThreshold;
+  const [valueText, setValueText] = React.useState<string>(() => {
+    const initial = currentFor(initiativeId);
+    return initial !== null ? String(initial) : "";
+  });
   const [reason, setReason] = React.useState("");
 
   const value = Number.parseFloat(valueText);
-  const valueValid = valueText.trim().length > 0 && Number.isFinite(value);
+  // Q-01 thresholds are hallucination rates, so only [0, 1] is meaningful.
+  const valueValid = valueText.trim().length > 0 && Number.isFinite(value) && value >= 0 && value <= 1;
+  const shownCurrent = currentFor(initiativeId);
   const reasonValid = reason.trim().length > 0;
   const scopeValid = initiativeOptions.some((option) => option.initiativeId === initiativeId);
   const submittable = valueValid && reasonValid && scopeValid && !pending;
@@ -66,7 +73,11 @@ function ThresholdForm({
           <span className="font-medium">Initiative</span>
           <select
             value={initiativeId}
-            onChange={(e) => setInitiativeId(e.target.value)}
+            onChange={(e) => {
+              setInitiativeId(e.target.value);
+              const next = currentFor(e.target.value);
+              setValueText(next !== null ? String(next) : "");
+            }}
             data-slot="threshold-initiative"
             className={fieldClass}
           >
@@ -77,12 +88,19 @@ function ThresholdForm({
             ))}
           </select>
         </label>
+      {shownCurrent !== null ? (
+        <p className="text-sm text-muted-foreground" data-slot="threshold-current">
+          Current threshold: {shownCurrent}
+        </p>
+      ) : null}
 
       <label className="flex flex-col gap-1 text-sm">
         <span className="font-medium">New threshold value (required)</span>
         <input
           type="number"
           step="0.01"
+          min={0}
+          max={1}
           value={valueText}
           onChange={(e) => setValueText(e.target.value)}
           data-slot="threshold-value"
