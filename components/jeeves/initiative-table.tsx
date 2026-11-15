@@ -9,6 +9,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { TierBadge } from "./tier-badge";
 import { LifecycleBadge } from "./lifecycle-badge";
 import { InitiativeAgeCell, useClientNow } from "./queue-age";
+import { PRE_REVIEW_STATES } from "./initiative-blockers-rail";
 
 const TIER_RANK: Record<Tier, number> = { critical: 0, high: 1, medium: 2, low: 3 };
 const STATE_RANK: Record<LifecycleState, number> = {
@@ -51,6 +52,7 @@ function ageValue(i: InitiativeSummary): number {
 }
 
 function reviewsFraction(i: InitiativeSummary) {
+  if (PRE_REVIEW_STATES.has(i.state)) return Infinity;
   return i.domainsRequired === 0 ? 1 : (i.domainsSigned + (i.domainsAbstained ?? 0)) / i.domainsRequired;
 }
 
@@ -272,7 +274,7 @@ export function InitiativeTable({
                   )}
                 </td>
                 <td className="hidden px-2 py-1.5 text-right font-mono tabular-nums text-muted-foreground @2xl:table-cell">
-                  {i.domainsSigned}/{i.domainsRequired} signed
+                  {PRE_REVIEW_STATES.has(i.state) ? "Not triaged yet" : `${i.domainsSigned}/${i.domainsRequired} signed`}
                   {(i.domainsAbstained ?? 0) > 0 ? <span className="block">{i.domainsAbstained} abstained</span> : null}
                 </td>
                 <td className="hidden px-2 py-1.5 text-xs text-muted-foreground @4xl:table-cell">

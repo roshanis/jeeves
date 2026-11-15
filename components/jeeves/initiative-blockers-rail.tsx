@@ -33,7 +33,7 @@ interface Blocker {
 // state, not just the arrays.
 
 /** States that precede triage — no review row or control can exist yet. */
-const PRE_REVIEW_STATES: ReadonlySet<LifecycleState> = new Set([
+export const PRE_REVIEW_STATES: ReadonlySet<LifecycleState> = new Set([
   "intake_draft",
   "submitted",
   "in_qc",
