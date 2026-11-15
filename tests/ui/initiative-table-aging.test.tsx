@@ -45,12 +45,12 @@ describe("InitiativeTable time-in-state aging", () => {
     expect(screen.getByText("Age")).toBeDefined();
 
     // Active (in_review) state: colored by bucket — old -> overdue (destructive).
-    const activeCell = screen.getByTitle(/In "In Review" since/);
+    const activeCell = screen.getByTitle(/^In Review since/);
     expect(activeCell.textContent).toMatch(/\d+d/);
     expect(activeCell.className).toContain("text-destructive");
 
     // Settled (deployed) state: muted, never the overdue color.
-    const settledCell = screen.getByTitle(/In "Deployed" since/);
+    const settledCell = screen.getByTitle(/^Deployed since/);
     expect(settledCell.textContent).toMatch(/\d+d/);
     expect(settledCell.className).toContain("text-muted-foreground");
     expect(settledCell.className).not.toContain("text-destructive");

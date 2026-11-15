@@ -74,7 +74,7 @@ function onVisibility() {
   if (document.visibilityState === "visible") refreshClock();
 }
 function subscribeClock(listener: () => void): () => void {
-  if (cachedClientNow !== null) cachedClientNow = Date.now();
+  if (cachedClientNow !== null) refreshClock();
   clockListeners.add(listener);
   if (clockListeners.size === 1) {
     clockTimer = setInterval(refreshClock, CLOCK_REFRESH_MS);
@@ -163,7 +163,7 @@ export function InitiativeAgeCell({
   return (
     <span
       className={`inline-flex items-center gap-1.5 rounded-md px-1.5 py-0.5 font-mono text-xs font-medium tabular-nums ${cls}`}
-      title={`In "${LIFECYCLE_LABEL[state]}" since ${formatUtcTimestamp(updatedAt)}`}
+      title={`${LIFECYCLE_LABEL[state]} since ${formatUtcTimestamp(updatedAt)}`}
     >
       {settled ? (
         <span className="size-1.5 shrink-0 rounded-full bg-muted-foreground/50" aria-hidden />
@@ -199,7 +199,7 @@ export function QueueAgeCell({
   return (
     <span
       className={`inline-flex items-center gap-1.5 rounded-md px-1.5 py-0.5 font-mono text-xs font-medium tabular-nums ${AGE_BUCKET_CLASSES[bucket]}`}
-      title={`In queue since ${createdAt.slice(0, 10)}`}
+      title={`In queue since ${formatUtcTimestamp(createdAt)}`}
     >
       <AgeDot bucket={bucket} />
       {formatAge(ageMs)}
