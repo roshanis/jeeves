@@ -27,11 +27,27 @@ function assertNoEndpointOverrides(url: URL): void {
   }
 }
 
+/** The URL parser's TLS settings override explicit ones, so a CA needs a URL with no TLS options. */
+function genericConfig(base: PoolConfig, databaseUrl: string, url: URL, sslCa?: string): PoolConfig {
+  if (!sslCa?.trim()) return { ...base, connectionString: databaseUrl };
+  const params = url.searchParams;
+  if (params.getAll("sslmode").some((mode) => !["prefer", "require", "verify-ca", "verify-full"].includes(mode)) ||
+      ["disable", "no-verify", "false", "0"].includes(params.get("ssl") ?? "")) {
+    throw new Error("DATABASE_SSL_CA is set but the database URL turns TLS or certificate verification off. Remove one of the two.");
+  }
+  if (["ssl", "sslcert", "sslkey", "sslrootcert", "sslnegotiation", "uselibpqcompat"].some((key) => params.has(key))) {
+    throw new Error("DATABASE_SSL_CA cannot be combined with ssl, sslcert, sslkey, sslrootcert, sslnegotiation or uselibpqcompat in the database URL; use one source of TLS settings.");
+  }
+  params.delete("sslmode");
+  // Hostname verification stays on, which is stricter than libpq's verify-ca.
+  return { ...base, connectionString: url.toString(), ssl: { rejectUnauthorized: true, ca: sslCa } };
+}
+
 /** Bounded node-postgres pool; Supabase endpoints always use verifying TLS. */
 export function postgresPoolConfig(databaseUrl: string, sslCa?: string): PoolConfig {
   const url = parsePostgresUrl(databaseUrl);
   const base = { connectionTimeoutMillis: 10_000, idleTimeoutMillis: 10_000 };
-  if (!isSupabase(url)) return { ...base, connectionString: databaseUrl };
+  if (!isSupabase(url)) return genericConfig(base, databaseUrl, url, sslCa);
 
   const modes = url.searchParams.getAll("sslmode");
   if (modes.some((mode) => !["require", "verify-ca", "verify-full"].includes(mode)) ||

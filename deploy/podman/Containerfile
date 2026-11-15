@@ -46,6 +46,9 @@ ENV DATA_PROVIDER=mock
 # into separate demo and production targets; until then this image is the demo.
 ENV JEEVES_MODE=demo
 RUN npm run build
+# The runner stage ships .next/standalone as is. Fail here if a tracing
+# regression put the source tree (tests, scripts, planning notes) into it.
+RUN node scripts/check-standalone-output.cjs
 
 # ------------------------------------------------------------- migrator -----
 # One-shot jobs (`npm run db:migrate`, `npm run db:seed`) run from their own

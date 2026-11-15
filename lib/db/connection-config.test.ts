@@ -1,3 +1,4 @@
+import { createRequire } from "node:module";
 import { describe, expect, it } from "vitest";
 import { migrationDatabaseUrl, postgresPoolConfig } from "./connection-config";
 
@@ -38,5 +39,63 @@ describe("PostgreSQL connection configuration", () => {
     const neon = "postgres://u:p@ep-x.us-east-1.aws.neon.tech/db";
     expect(migrationDatabaseUrl(neon)).toBe(neon);
     expect(migrationDatabaseUrl(undefined)).toBeUndefined();
+  });
+});
+
+describe("DATABASE_SSL_CA on non-Supabase hosts", () => {
+  const rds = "postgresql://user:example@jeeves.cluster-abc.us-east-1.rds.amazonaws.com:5432/jeeves";
+  const ca = "test-ca";
+  const verified = { rejectUnauthorized: true, ca };
+
+  it("applies the CA when the URL has no sslmode", () => {
+    const config = postgresPoolConfig(rds, ca);
+    expect(config.ssl).toEqual(verified);
+    expect(config.connectionString).toBe(rds);
+    expect(config.max).toBeUndefined();
+  });
+
+  it.each(["prefer", "require", "verify-ca", "verify-full"])("applies the CA and strips sslmode=%s", (mode) => {
+    const config = postgresPoolConfig(`${rds}?sslmode=${mode}&application_name=jeeves`, ca);
+    expect(config.ssl).toEqual(verified);
+    expect(config.connectionString).toBe(`${rds}?application_name=jeeves`);
+    expect(config.max).toBeUndefined();
+  });
+
+  it.each(["sslmode=disable", "sslmode=no-verify", "ssl=false", "ssl=0", "ssl=no-verify"])
+  ("rejects a CA combined with TLS-off URL option: %s", (query) => {
+    let message = "";
+    try { postgresPoolConfig(`${rds}?${query}`, ca); } catch (error) { message = (error as Error).message; }
+    expect(message).toMatch(/DATABASE_SSL_CA/);
+    expect(message).not.toContain("example");
+    expect(message).not.toContain("rds.amazonaws.com");
+  });
+
+  it.each(["sslrootcert=/x.pem", "sslcert=/c.pem", "sslkey=/k.pem", "sslnegotiation=direct", "uselibpqcompat=true"])
+  ("rejects a CA combined with URL TLS source: %s", (query) => {
+    let message = "";
+    try { postgresPoolConfig(`${rds}?${query}`, ca); } catch (error) { message = (error as Error).message; }
+    expect(message).toMatch(/DATABASE_SSL_CA/);
+    expect(message).not.toContain("example");
+    expect(message).not.toContain("rds.amazonaws.com");
+  });
+
+  it("treats a whitespace-only CA as unset", () => {
+    const config = postgresPoolConfig(rds, "  \n");
+    expect(config).not.toHaveProperty("ssl");
+    expect(config.connectionString).toBe(rds);
+  });
+
+  it("passes the URL through untouched without a CA", () => {
+    const url = `${rds}?sslmode=require`;
+    const config = postgresPoolConfig(url);
+    expect(config.connectionString).toBe(url);
+    expect(config.ssl).toBeUndefined();
+  });
+
+  it("keeps the explicit CA through node-postgres's own option merge", () => {
+    const ConnectionParameters = createRequire(import.meta.url)("pg/lib/connection-parameters");
+    const params = new ConnectionParameters(postgresPoolConfig(`${rds}?sslmode=require`, ca));
+    expect(params.ssl.ca).toBe(ca);
+    expect(params.ssl.rejectUnauthorized).toBe(true);
   });
 });
