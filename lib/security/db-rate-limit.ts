@@ -48,7 +48,7 @@ export class DbTokenBucketRateLimiter {
     const refilled = sql`least(
       ${capacity}::double precision,
       "rate_limit_buckets"."tokens"
-        + ((${nowMs}::bigint - "rate_limit_buckets"."last_refill_ms")::double precision / 1000.0)
+        + (greatest(${nowMs}::bigint - "rate_limit_buckets"."last_refill_ms", 0)::double precision / 1000.0)
           * ${refillPerSecond}::double precision
     )`;
 
@@ -57,8 +57,8 @@ export class DbTokenBucketRateLimiter {
       values (${key}, ${capacity - 1}::double precision, ${nowMs}::bigint, ${nowMs}::bigint)
       on conflict ("key") do update set
         "tokens" = ${refilled} - 1,
-        "last_refill_ms" = ${nowMs}::bigint,
-        "last_touched_ms" = ${nowMs}::bigint
+        "last_refill_ms" = greatest("rate_limit_buckets"."last_refill_ms", ${nowMs}::bigint),
+        "last_touched_ms" = greatest("rate_limit_buckets"."last_touched_ms", ${nowMs}::bigint)
       where ${refilled} >= 1
       returning "tokens"
     `);
@@ -87,7 +87,7 @@ export class DbTokenBucketRateLimiter {
     const rows = await db.execute(sql`
       delete from "rate_limit_buckets" where "key" in (
         select "key" from "rate_limit_buckets"
-        where ${nowMs}::bigint - "last_touched_ms" >= ${staleAfterMs}::bigint
+        where "last_touched_ms" <= ${nowMs - staleAfterMs}::bigint
           and least(
             ${capacity}::double precision,
             "tokens" + ((${nowMs}::bigint - "last_refill_ms")::double precision / 1000.0)

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { sql } from "drizzle-orm";
 import { createTestDb, closeTestDb, type TestDb } from "@/lib/db/test-client";
 import { DbTokenBucketRateLimiter } from "./db-rate-limit";
 
@@ -105,6 +106,16 @@ describe("DbTokenBucketRateLimiter", () => {
     // had driven the balance negative this would still be refused.
     clock += 1000;
     expect((await rl.checkAndConsume("d")).allowed).toBe(true);
+  });
+
+  it("a clock that steps backwards neither denies a funded bucket nor rewinds the refill stamp", async () => {
+    const rl = limiter(3, 1 / 30);
+    await rl.checkAndConsume("skew"); // 2 left, stamped at 1_000_000
+    clock -= 30_000; // another instance's clock runs 30s behind
+    expect((await rl.checkAndConsume("skew")).allowed).toBe(true);
+    const rows = (await db.execute(sql`select "last_refill_ms" as t from "rate_limit_buckets" where "key" = 'skew'`)) as unknown as { rows?: { t: string | number }[] } | { t: string | number }[];
+    const list = Array.isArray(rows) ? rows : (rows.rows ?? []);
+    expect(Number(list[0].t)).toBeGreaterThanOrEqual(1_000_000);
   });
 
   it("prunes only buckets that are full AND idle", async () => {
