@@ -310,7 +310,7 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
   realRequestsEnabled?: boolean;
 } = {}) {
   const router = useRouter();
-  const { session, logout, startDemo, startPublicSession, pending } = useLiveSession();
+  const { session, logout, expired, startDemo, startPublicSession, pending } = useLiveSession();
 
   const [internalPayload, setInternalPayload] = React.useState<IntakePayload>(initialPayload ?? EMPTY_PAYLOAD);
   const payload = initialPayload ?? internalPayload;
@@ -483,6 +483,16 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
       data-slot="intake-form"
     >
       <div className="flex flex-col gap-4">
+        {!session && expired ? (
+          <Alert variant="destructive" role="status">
+            <AlertTitle>Your session expired</AlertTitle>
+            <AlertDescription>
+              What you typed is still on this page. Use{" "}
+              {expired.kind === "public" && realRequestsEnabled ? "“Send a real request”" : "“Start the demo”"}{" "}
+              below to start a new session, then submit again.
+            </AlertDescription>
+          </Alert>
+        ) : null}
         {!session ? (
           <Alert>
             <AlertTitle>{realRequestsEnabled ? "Try it, or send a real request" : "Try the demo"}</AlertTitle>
