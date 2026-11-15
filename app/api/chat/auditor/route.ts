@@ -32,15 +32,19 @@ import type { AgentPort, PortFailure } from "@/lib/agents/ports";
 import { agentInitializationResponse } from "@/lib/services/agent-error-response";
 import { getProvider } from "@/lib/data";
 import type { AuditQueryRow, CannedAuditQueryId } from "@/lib/data/dto";
-import { runMutationGuard } from "@/lib/services/route-guard";
+import { reserveDailyBudget, runMutationGuard } from "@/lib/services/route-guard";
 
 const bodySchema = z.object({
   question: z.string().min(1).max(2000),
 });
 
 const QUESTION_MAX_CHARS = 2000;
-/** Rough token estimate for one auditor turn — sizes the budget reservation only. */
-const ESTIMATED_TOKENS = 800;
+/** Headroom for the system prompt and completion; the grounding text is added on top when reserving. */
+const BASE_ESTIMATED_TOKENS = 600;
+/** Grounding sent to the model is bounded so a caller cannot inflate real spend past the reservation. */
+const MAX_GROUNDING_ROWS = 50;
+const MAX_GROUNDING_FIELD_CHARS = 500;
+const MAX_SLUG_CANDIDATES = 5;
 const AGENT_TIMEOUT_MS = 10_000;
 
 /**
@@ -68,17 +72,34 @@ function scoreQuery(question: string, keywords: string[]): number {
 }
 
 /**
- * Picks a canned query id and a short slug (when the question names one) for
- * the structured-read fallback. Returns `{ kind: "canned", id }` when a
- * canned query scores above zero, else `{ kind: "slug", slug }` when the
- * question contains what looks like a kebab-case initiative slug (so the
- * route can fall back to `getProvider().getInitiativeDetail(slug)` and use
- * its `events` as grounding), else `{ kind: "canned", id: "member-facing-phi" }`
- * as the documented default.
+ * Caps the grounding set by row count and per-field size (long strings and
+ * serialized nested values are truncated) before it reaches the model.
  */
-function pickGroundingStrategy(
-  question: string,
-): { kind: "canned"; id: CannedAuditQueryId } | { kind: "slug"; slug: string } {
+function boundGroundingRows(
+  rows: readonly Readonly<Record<string, unknown>>[],
+): Readonly<Record<string, unknown>>[] {
+  return rows.slice(0, MAX_GROUNDING_ROWS).map((row) => {
+    const bounded: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(row)) {
+      const text = typeof value === "string" ? value : value !== null && typeof value === "object" ? JSON.stringify(value) : null;
+      bounded[key] =
+        text !== null && text.length > MAX_GROUNDING_FIELD_CHARS ? text.slice(0, MAX_GROUNDING_FIELD_CHARS) : value;
+    }
+    return bounded;
+  });
+}
+
+/** Kebab-case tokens in the question that might name an initiative slug (live slugs carry a hex suffix). */
+function slugCandidates(question: string): string[] {
+  const matches = question.toLowerCase().match(/\b[a-z0-9]+(?:-[a-z0-9]+){1,8}\b/g) ?? [];
+  return [...new Set(matches)].slice(0, MAX_SLUG_CANDIDATES);
+}
+
+/**
+ * Picks the canned query id the keyword heuristic prefers, or the documented
+ * default. Initiative references are resolved before this (see POST).
+ */
+function pickCannedQuery(question: string): CannedAuditQueryId {
   let bestId: CannedAuditQueryId | null = null;
   let bestScore = 0;
   for (const candidate of QUERY_KEYWORDS) {
@@ -88,14 +109,7 @@ function pickGroundingStrategy(
       bestId = candidate.id;
     }
   }
-  if (bestId) return { kind: "canned", id: bestId };
-
-  // No canned query matched — look for a kebab-case slug-shaped token (e.g.
-  // "member-chat-copilot") the question might be naming directly.
-  const slugMatch = question.match(/\b[a-z]+(?:-[a-z]+){1,5}\b/);
-  if (slugMatch) return { kind: "slug", slug: slugMatch[0] };
-
-  return { kind: "canned", id: "member-facing-phi" };
+  return bestId ?? "member-facing-phi";
 }
 
 function statusForFailure(error: PortFailure): number {
@@ -138,8 +152,6 @@ export async function POST(req: Request): Promise<Response> {
   const guard = await runMutationGuard(req, bodyText, {
     inputLimits: [{ field: "question", maxChars: QUESTION_MAX_CHARS }],
     inputTotalCap: QUESTION_MAX_CHARS,
-    requiresBudget: true,
-    estimatedTokens: ESTIMATED_TOKENS,
   });
   if (!guard.ok) {
     return Response.json({ error: guard.failure.message }, { status: guard.failure.status });
@@ -151,7 +163,6 @@ export async function POST(req: Request): Promise<Response> {
   }
 
   const provider = getProvider();
-  const strategy = pickGroundingStrategy(parsed.data.question);
 
   let rows: readonly Readonly<Record<string, unknown>>[];
   let queryUsed: string;
@@ -161,27 +172,41 @@ export async function POST(req: Request): Promise<Response> {
   // the whole portfolio.
   const scope = { viewerWorkspaceId: guard.workspaceId };
 
-  if (strategy.kind === "canned") {
-    const auditRows: AuditQueryRow[] = await provider.auditQuery(strategy.id, scope);
-    rows = auditRows as unknown as Readonly<Record<string, unknown>>[];
-    queryUsed = strategy.id;
+  // A question that names one of the viewer's initiatives is grounded on that
+  // initiative's own audit history, ahead of the keyword heuristic.
+  const candidates = slugCandidates(parsed.data.question);
+  let detail: Awaited<ReturnType<typeof provider.getInitiativeDetail>> = null;
+  for (const candidate of candidates) {
+    detail = await provider.getInitiativeDetail(candidate, scope);
+    if (detail) break;
+  }
+
+  if (detail) {
+    rows = detail.events as unknown as Readonly<Record<string, unknown>>[];
+    queryUsed = `initiative-events:${detail.summary.slug}`;
   } else {
-    // Structured-read fallback: the question appears to name a specific
-    // initiative not necessarily covered well by a canned query — ground on
-    // that initiative's own audit event history instead.
-    const detail = await provider.getInitiativeDetail(strategy.slug, scope);
-    if (detail) {
-      rows = detail.events as unknown as Readonly<Record<string, unknown>>[];
-      queryUsed = `initiative-events:${strategy.slug}`;
+    const normalized = parsed.data.question.toLowerCase();
+    const canned = QUERY_KEYWORDS.some((q) => scoreQuery(normalized, q.keywords) > 0);
+    if (!canned && candidates.length > 0) {
+      // The question names something slug-shaped that is not a visible
+      // initiative: say so rather than grounding on an unrelated query.
+      rows = [];
+      queryUsed = `initiative-not-found:${candidates[0]}`;
     } else {
-      // The "slug" we matched wasn't a real initiative — fall back to the
-      // documented default canned query rather than returning an empty
-      // grounding set for a plausible-looking but wrong guess.
-      const auditRows: AuditQueryRow[] = await provider.auditQuery("member-facing-phi", scope);
+      const id = pickCannedQuery(parsed.data.question);
+      const auditRows: AuditQueryRow[] = await provider.auditQuery(id, scope);
       rows = auditRows as unknown as Readonly<Record<string, unknown>>[];
-      queryUsed = "member-facing-phi";
+      queryUsed = id;
     }
   }
+
+  rows = boundGroundingRows(rows);
+
+  // Reserve from what is actually sent to the model, after grounding.
+  const budget = await reserveDailyBudget(
+    BASE_ESTIMATED_TOKENS + Math.ceil((parsed.data.question.length + JSON.stringify(rows).length) / 4),
+  );
+  if (budget) return Response.json({ error: budget.message }, { status: budget.status });
 
   let port: AgentPort;
   try {

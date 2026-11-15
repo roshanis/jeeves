@@ -1527,3 +1527,20 @@ describe("triage route: QC pass role gate and error mapping", () => {
     expect((await again.json()).error).toBeTruthy();
   });
 });
+
+describe("decide route input caps (api-initiatives-F7)", () => {
+  it.each(["citations", "conditions"] as const)("400s a decision with more than 20 %s", async (field) => {
+    const token = await issueSessionFor("angela-torres");
+    const { POST } = await import("../initiatives/[id]/decide/route");
+    const items = Array.from({ length: 21 }, (_, i) => (field === "citations" ? `cite-${i}` : { text: `c${i}`, controlId: "q-01" }));
+    const res = await POST(
+      new Request("http://localhost/api/initiatives/init-any/decide", {
+        method: "POST",
+        headers: bearer(token, "50.9.0.1"),
+        body: JSON.stringify({ decision: "conditionally_approved", conditions: [{ text: "c", controlId: "q-01" }], citations: [], [field]: items }),
+      }),
+      { params: Promise.resolve({ id: "init-any" }) },
+    );
+    expect(res.status).toBe(400);
+  });
+});
