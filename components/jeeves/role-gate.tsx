@@ -58,8 +58,8 @@ export interface GatedActionProps {
    * `requiresRole` matches). Omitted = always disabled (original behavior).
    */
   onAction?: () => void | Promise<void>;
-  /** Only enable when the live session's ActorRole equals this role. */
-  requiresRole?: LivePersona["role"];
+  /** Only enable when the live session's ActorRole equals this role (or one of these roles). */
+  requiresRole?: LivePersona["role"] | LivePersona["role"][];
   /** Why the action is unavailable to a signed-in persona (shown instead of the "start the demo" prompt). */
   disabledReason?: string;
   /** Externally-managed in-flight state; disables the enabled button. */
@@ -89,7 +89,8 @@ export function DisableWithTooltip({
   const reasonId = React.useId();
 
   // A public (real request) session satisfies no live action.
-  const roleSatisfied = session?.role !== "public" && (!requiresRole || session?.role === requiresRole);
+  const allowedRoles = requiresRole === undefined ? [] : Array.isArray(requiresRole) ? requiresRole : [requiresRole];
+  const roleSatisfied = session?.role !== "public" && (allowedRoles.length === 0 || (session !== null && allowedRoles.includes(session.role)));
   const enabled = Boolean(session && onAction && roleSatisfied);
 
   if (enabled) {
@@ -111,8 +112,8 @@ export function DisableWithTooltip({
   const tooltip =
     session?.role === "public"
       ? "Not available for a real request"
-      : session && requiresRole && !roleSatisfied
-      ? `Requires the ${requiresRole} role — choose a persona in the header`
+      : session && allowedRoles.length > 0 && !roleSatisfied
+      ? `Requires the ${allowedRoles.join(" or ")} role — choose a persona in the header`
       : session && disabledReason
       ? disabledReason
       : DEMO_SESSION_TOOLTIP;

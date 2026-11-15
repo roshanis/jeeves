@@ -154,7 +154,7 @@ export function LiveActionsBar({ initiativeId, isSeeded, state, decisionReadines
           <div className="flex items-center gap-3">
             <DisableWithTooltip
               label="Open QC"
-              requiresRole="program"
+              requiresRole={["program", "admin"]}
               onAction={() => void handleStartQc()}
               pending={qcPending}
               pendingLabel="Opening QC…"
@@ -180,7 +180,7 @@ export function LiveActionsBar({ initiativeId, isSeeded, state, decisionReadines
             />
             <DisableWithTooltip
               label="Return to requester"
-              requiresRole="program"
+              requiresRole={["program", "admin"]}
               onAction={() => setReturnOpen(true)}
               pending={returnPending}
               pendingLabel="Returning…"
