@@ -26,6 +26,7 @@ function stubProductionBootEnv(): void {
   vi.stubEnv("APP_BASE_URL", "");
   vi.stubEnv("JEEVES_TENANT_ID", "");
   vi.stubEnv("DATA_PROVIDER", "mock");
+  for (const key of ["JEEVES_DB_ALLOW_UNVERIFIED", "PGSSLMODE", "PGSSLNEGOTIATION", "NODE_TLS_REJECT_UNAUTHORIZED"]) vi.stubEnv(key, "");
 }
 
 let exit: Mock<(code: number) => void>;
@@ -80,7 +81,7 @@ describe("instrumentation register()", () => {
 
   it("lets a valid production configuration start on a production-stamped database", async () => {
     stubProductionBootEnv();
-    vi.stubEnv("DATABASE_URL", "postgres://jeeves_app:pw@db.internal:5432/jeeves");
+    vi.stubEnv("DATABASE_URL", "postgres://jeeves_app:pw@db.internal:5432/jeeves?sslmode=verify-full");
     vi.stubEnv("JEEVES_COOKIE_SECRET", "0123456789abcdef0123456789abcdef");
     vi.stubEnv("APP_BASE_URL", "https://jeeves.example.com");
     vi.stubEnv("JEEVES_TENANT_ID", "tenant-acme");
@@ -94,7 +95,7 @@ describe("instrumentation register()", () => {
 
   it("marks the boot failed and exits when a valid production configuration meets an unstamped database", async () => {
     stubProductionBootEnv();
-    vi.stubEnv("DATABASE_URL", "postgres://jeeves_app:pw@db.internal:5432/jeeves");
+    vi.stubEnv("DATABASE_URL", "postgres://jeeves_app:pw@db.internal:5432/jeeves?sslmode=verify-full");
     vi.stubEnv("JEEVES_COOKIE_SECRET", "0123456789abcdef0123456789abcdef");
     vi.stubEnv("APP_BASE_URL", "https://jeeves.example.com");
     vi.stubEnv("JEEVES_TENANT_ID", "tenant-acme");

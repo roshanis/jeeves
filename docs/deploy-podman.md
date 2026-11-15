@@ -45,7 +45,10 @@ visitor's own initiatives are missing.
 The stack runs the demo: `compose.yaml` and the Quadlet unit set
 `JEEVES_MODE=demo`. The deployment mode defaults to **production** when unset,
 which refuses to boot without `APP_BASE_URL`, `JEEVES_TENANT_ID` and a 32+
-character `JEEVES_COOKIE_SECRET`, so do not remove the variable.
+character `JEEVES_COOKIE_SECRET`, so do not remove the variable. Production also
+refuses a database it cannot reach with verified TLS unless
+`JEEVES_DB_ALLOW_UNVERIFIED=same-host` is set (the stack's database container is
+reached without TLS on its private network).
 `JEEVES_COOKIE_SECRET` (`openssl rand -hex 32`) is required in `.env`: compose
 stops with a clear error while it is blank.
 
@@ -189,6 +192,13 @@ which is a genuinely confusing thing to debug. Any container deploy with a
 
 `JEEVES_DB_DRIVER=neon|pg` forces the choice if you need to (a Neon proxy on a
 custom domain, say).
+
+**TLS to the database.** In production mode a URL to another host needs verified
+TLS. This stack's `db` / `jeeves-db` container is on the same host's private
+network without TLS, so a production-mode Podman install sets
+`JEEVES_DB_ALLOW_UNVERIFIED=same-host` (compose: app environment; Quadlet:
+`jeeves.env`) and removes it if `DATABASE_URL` ever points at another machine.
+Demo mode ignores the variable.
 
 ---
 

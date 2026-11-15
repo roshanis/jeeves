@@ -76,7 +76,7 @@ const SECRET = "0123456789abcdef0123456789abcdef"; // 32 chars
 function completeConfig(): Record<string, string> {
   return {
     JEEVES_MODE: "production",
-    DATABASE_URL: "postgres://jeeves_app:s3cr3t-db-pw@db.internal:5432/jeeves",
+    DATABASE_URL: "postgres://jeeves_app:s3cr3t-db-pw@db.internal:5432/jeeves?sslmode=verify-full",
     JEEVES_COOKIE_SECRET: SECRET,
     APP_BASE_URL: "https://jeeves.example.com",
     JEEVES_TENANT_ID: "tenant-acme",
@@ -126,6 +126,72 @@ describe("assertProductionConfig", () => {
     for (const name of ["DATABASE_URL", "JEEVES_COOKIE_SECRET", "APP_BASE_URL", "JEEVES_TENANT_ID", "JEEVES_TRUSTED_PROXY_HOPS"]) {
       expect(error.message).toContain(name);
     }
+  });
+
+  describe("database TLS", () => {
+    const PLAIN = "postgres://jeeves_app:s3cr3t-db-pw@db.internal:5432/jeeves";
+    const withUrl = (databaseUrl: string, extra: Record<string, string> = {}) => ({ ...completeConfig(), DATABASE_URL: databaseUrl, ...extra });
+
+    it("refuses a database on another host without TLS", () => {
+      const problems = problemsFor(withUrl(PLAIN));
+      expect(problems).toHaveLength(1);
+      expect(problems[0]).toMatch(/not verified TLS/);
+      for (const way of ["sslmode=verify-full", "DATABASE_SSL_CA", "JEEVES_DB_ALLOW_UNVERIFIED=same-host"]) expect(problems[0]).toContain(way);
+    });
+
+    it("refuses verification switched off by URL or environment", () => {
+      for (const env of [
+        withUrl(`${PLAIN}?sslmode=no-verify`), withUrl(`${PLAIN}?sslmode=require&uselibpqcompat=true`),
+        withUrl(`${PLAIN}?sslmode=verify-full`, { NODE_TLS_REJECT_UNAUTHORIZED: "0" }), withUrl(PLAIN, { PGSSLMODE: "no-verify" }),
+      ]) {
+        const problems = problemsFor(env);
+        expect(problems).toHaveLength(1);
+        expect(problems[0]).toMatch(/not verified TLS/);
+      }
+    });
+
+    it("accepts verified TLS and a loopback database", () => {
+      for (const env of [
+        withUrl(`${PLAIN}?sslmode=verify-full`), withUrl(`${PLAIN}?sslmode=require`), withUrl(PLAIN, { DATABASE_SSL_CA: "PEM" }),
+        withUrl("postgresql://u:p@aws-0-x.pooler.supabase.com:6543/postgres"), withUrl("postgres://u:p@ep-x.us-east-1.aws.neon.tech/db"),
+        withUrl("postgres://u:p@127.0.0.1:5432/jeeves_smoke_ci"), withUrl("postgres://u:p@localhost:5432/jeeves_smoke_ci"),
+        withUrl("postgres://u:p@[::1]:5432/jeeves_smoke_ci"),
+        withUrl("postgres://jeeves:jeeves-ci-only@localhost:5432/jeeves_smoke_ci"),
+      ]) expect(problemsFor(env)).toEqual([]);
+    });
+
+    it("JEEVES_DB_ALLOW_UNVERIFIED=same-host allows an unverified database, any other value fails boot", () => {
+      for (const value of ["same-host", " same-host "]) expect(problemsFor(withUrl(PLAIN, { JEEVES_DB_ALLOW_UNVERIFIED: value }))).toEqual([]);
+      for (const value of ["1", "true", "yes", "on", "Same-Host", "same_host", "off", "0", "localhost"]) {
+        const verified = problemsFor(withUrl(`${PLAIN}?sslmode=verify-full`, { JEEVES_DB_ALLOW_UNVERIFIED: value }));
+        expect(verified, value).toHaveLength(1);
+        expect(verified[0]).toContain("JEEVES_DB_ALLOW_UNVERIFIED must be same-host or unset");
+        expect(problemsFor(withUrl(PLAIN, { JEEVES_DB_ALLOW_UNVERIFIED: value })), value).toHaveLength(2);
+      }
+      for (const value of ["", "   "]) {
+        const problems = problemsFor(withUrl(PLAIN, { JEEVES_DB_ALLOW_UNVERIFIED: value }));
+        expect(problems).toHaveLength(1);
+        expect(problems[0]).toMatch(/not verified TLS/);
+      }
+      const refused = problemsFor(withUrl(`${PLAIN}?sslmode=no-verify`, { JEEVES_DB_ALLOW_UNVERIFIED: "same-host", DATABASE_SSL_CA: "PEM" }));
+      expect(refused.join("\n")).toMatch(/connection settings are refused/);
+    });
+
+    it("never prints the URL, host, user or password in the refusal", () => {
+      const base = "postgres://jeeves_app:s3cr3t-db-pw@db.secret-host.example:5432/jeeves_prod";
+      for (const databaseUrl of [base, `${base}?sslmode=no-verify`, `${base}?sslnegotiation=s3cr3t-opt`]) {
+        let message = "";
+        try {
+          assertProductionConfig(withUrl(databaseUrl));
+        } catch (err) {
+          message = (err as Error).message;
+        }
+        expect(message).not.toBe("");
+        for (const secret of ["s3cr3t-db-pw", "db.secret-host.example", "jeeves_app", "jeeves_prod", "s3cr3t-opt", ":5432"]) {
+          expect(message).not.toContain(secret);
+        }
+      }
+    });
   });
 
   describe("database", () => {
@@ -289,6 +355,7 @@ describe("assertProductionConfig", () => {
 
   it("reads process.env by default", () => {
     for (const [key, value] of Object.entries(completeConfig())) vi.stubEnv(key, value);
+    for (const key of ["PGSSLMODE", "PGSSLNEGOTIATION", "NODE_TLS_REJECT_UNAUTHORIZED", "JEEVES_DB_ALLOW_UNVERIFIED"]) vi.stubEnv(key, "");
     expect(() => assertProductionConfig()).not.toThrow();
     vi.stubEnv("JEEVES_TENANT_ID", "");
     expect(() => assertProductionConfig()).toThrow(ProductionConfigError);

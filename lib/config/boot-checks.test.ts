@@ -11,7 +11,7 @@ const SECRET = "0123456789abcdef0123456789abcdef";
 
 const COMPLETE_PRODUCTION: Record<string, string> = {
   JEEVES_MODE: "production",
-  DATABASE_URL: "postgres://jeeves_app:s3cr3t-db-pw@db.internal:5432/jeeves",
+  DATABASE_URL: "postgres://jeeves_app:s3cr3t-db-pw@db.internal:5432/jeeves?sslmode=verify-full",
   JEEVES_COOKIE_SECRET: SECRET,
   APP_BASE_URL: "https://jeeves.example.com",
   JEEVES_TENANT_ID: "tenant-acme",
@@ -71,6 +71,26 @@ describe("runBootChecks", () => {
       expect(d.exit).not.toHaveBeenCalled();
       expect(d.log).not.toHaveBeenCalled();
       expect(bootFailure()).toBeNull();
+    });
+
+    it("refuses to boot when the database on another host is reached without verified TLS, before opening it", async () => {
+      const plain = "postgres://jeeves_app:s3cr3t-db-pw@db.internal:5432/jeeves";
+      const d = deps({ ...COMPLETE_PRODUCTION, DATABASE_URL: plain });
+      await runBootChecks(d);
+      expect(d.exit).toHaveBeenCalledWith(1);
+      expect(bootFailure()).toMatch(/not verified TLS/);
+      expect(bootFailure()).toContain("JEEVES_DB_ALLOW_UNVERIFIED");
+      expect(d.getDb).not.toHaveBeenCalled();
+      const text = [...d.log.mock.calls.flat(), bootFailure()].join(" ");
+      expect(text).not.toContain("s3cr3t-db-pw");
+      expect(text).not.toContain("db.internal");
+    });
+
+    it("boots a plaintext database on this host when the same-host opt-out is set", async () => {
+      const d = deps({ ...COMPLETE_PRODUCTION, DATABASE_URL: "postgres://jeeves_app:s3cr3t-db-pw@db.internal:5432/jeeves", JEEVES_DB_ALLOW_UNVERIFIED: "same-host" });
+      d.getDb.mockResolvedValue(await database("production"));
+      await runBootChecks(d);
+      expect(d.exit).not.toHaveBeenCalled();
     });
 
     it("logs one line, without the value, when JEEVES_MODE is set but not exactly demo", async () => {
