@@ -210,6 +210,14 @@ describe("exception-service", () => {
     expect(renewal.status).toBe("requested");
   });
 
+  it("a requester (neither approver nor admin) can renew an approved exception", async () => {
+    const { ecId } = await anEffectiveControl();
+    const req = await svc.requestException(db, ecId, REQUESTER, null, "reason");
+    await svc.decideException(db, req.id, APPROVER, null, true, "granted");
+    const renewal = await svc.renewException(db, req.id, { id: "priya-raman", role: "requester" }, null, "Requester asks to extend.");
+    expect(renewal.status).toBe("requested");
+  });
+
   it("renewing an approved exception opens a new 'requested' one that supersedes it", async () => {
     const { ecId } = await anEffectiveControl();
     const req = await svc.requestException(db, ecId, REQUESTER, null, "reason");

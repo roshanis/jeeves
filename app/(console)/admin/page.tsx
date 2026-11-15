@@ -23,7 +23,7 @@ import type { Metadata } from "next";
 export const metadata: Metadata = {
   title: "Administration",
   description:
-    "Threshold edits and deployment pause/resume for Meridian Health's AI governance demo — both logged, and deliberately narrow: Admin never approves, signs, or returns.",
+    "Threshold edits and deployment pause/resume for Meridian Health's AI governance demo — both logged, and deliberately narrow: Admin never approves or rejects, and never signs or returns a review.",
 };
 
 // The Admin console (ui-spec §7) is the narrowest screen by design: exactly
@@ -77,8 +77,7 @@ export default async function AdminPage() {
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Admin console</h1>
         <p className="text-sm text-muted-foreground">
-          Narrow by design: threshold edits, pause/resume, rollback and exception revoke, all logged, plus filing requests like any other role.
-          Admin never approves, signs, or returns — anywhere.
+          Narrow by design: threshold edits, pause/resume, rollback and exception revoke, all logged. Admin can also run the intake quality check and file exception requests, as the other roles that hold those rights can. Admin never approves or rejects, and never signs or returns a review.
         </p>
       </div>
 
