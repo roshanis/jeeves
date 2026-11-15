@@ -172,7 +172,7 @@ const JSON_POST = { "content-type": "application/json" };
 const DEMO_DOORS = ["/api/session", "/api/public-session", "/api/public-intake", "/api/cron/monitor", "/api/monitor/run"];
 
 /** Built from the real route constants, so a page added later is covered automatically. */
-export function buildSmokeChecks(): SmokeCheck[] {
+export function buildSmokeChecks(canary?: string): SmokeCheck[] {
   const checks: SmokeCheck[] = [];
 
   // A. Redirects. The raw Location must be relative: Next rewrites a same-host
@@ -191,9 +191,10 @@ export function buildSmokeChecks(): SmokeCheck[] {
     path: "/inbox",
     headers: { cookie: `${SESSION_COOKIE_NAME}=garbage` },
     // The proxy only checks that a credential is PRESENT, so this request reaches
-    // the page, which today answers with a streamed redirect inside a 200. The
-    // status is therefore not pinned; what must hold is that no data comes back.
-    expect: { bodyExcludes: ["Meridian", "Synthetic data"] },
+    // the page, which today answers with a streamed redirect inside a 200. Pin that
+    // (it couples to Next's redirect digest format): a 5xx or a rendered console
+    // must fail. The canary row seeded by migrateAndStamp must never show.
+    expect: { status: 200, bodyIncludes: ["NEXT_REDIRECT;replace;/sign-in"], bodyExcludes: ["Meridian", "Synthetic data", ...(canary ? [canary] : [])] },
   });
 
   // B. Marketing pages do not exist in production.
@@ -209,7 +210,7 @@ export function buildSmokeChecks(): SmokeCheck[] {
     expect: {
       status: 200,
       bodyIncludes: ["Single sign-on is not yet configured"],
-      bodyExcludes: ["Meridian", "Synthetic", "persona", "playground"],
+      bodyExcludes: ["Meridian", "Synthetic", "persona", "playground", ...(canary ? [canary] : [])],
       headers: {
         "content-security-policy": /frame-ancestors 'none'/,
         "x-frame-options": "DENY",
@@ -459,7 +460,7 @@ function baseEnv(): Record<string, string> {
   return env;
 }
 
-async function migrateAndStamp(databaseUrl: string): Promise<void> {
+async function migrateAndStamp(databaseUrl: string, canary: string): Promise<void> {
   const tsx = path.join(REPO_ROOT, "node_modules/tsx/dist/cli.mjs");
   const migrate = await runToCompletion([tsx, "scripts/migrate.ts"], { ...baseEnv(), DATABASE_URL: databaseUrl });
   if (migrate.code !== 0) throw new Error(`migration failed:\n${redact(migrate.output, [databaseUrl])}`);
@@ -471,6 +472,11 @@ async function migrateAndStamp(databaseUrl: string): Promise<void> {
     await client.query("INSERT INTO installation (deploy_mode, install_id) VALUES ('production', $1) ON CONFLICT (id) DO NOTHING", [
       `smoke-${randomBytes(4).toString("hex")}`,
     ]);
+    // A canary row so "no data leaked" checks can actually fail on a gated read.
+    await client.query(
+      "INSERT INTO initiatives (id, slug, title, requester, state, created_at, updated_at) VALUES ($1, $1, $1, 'smoke', 'intake_draft', now(), now()) ON CONFLICT (id) DO NOTHING",
+      [canary],
+    );
     const { rows } = await client.query<{ deploy_mode: string }>("SELECT deploy_mode FROM installation");
     if (rows.length !== 1 || rows[0].deploy_mode !== "production") {
       throw new Error("this database is stamped demo; use a fresh jeeves_smoke_* database");
@@ -546,7 +552,8 @@ async function main(): Promise<void> {
   );
 
   console.log("Migrating and stamping the smoke database...");
-  await migrateAndStamp(databaseUrl);
+  const canary = `smoke-canary-${randomBytes(4).toString("hex")}`;
+  await migrateAndStamp(databaseUrl, canary);
 
   const good = buildServerEnv({ databaseUrl, port, cookieSecret: randomBytes(32).toString("hex") });
   let failed = 0;
@@ -572,7 +579,7 @@ async function main(): Promise<void> {
       process.exitCode = 1;
       return;
     }
-    for (const check of buildSmokeChecks()) {
+    for (const check of buildSmokeChecks(canary)) {
       try {
         const observed = await request(port, check);
         const problems = evaluateCheck(check, observed);

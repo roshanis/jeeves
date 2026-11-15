@@ -144,8 +144,15 @@ describe("buildSmokeChecks", () => {
     const garbage = checks.find((c) => /garbage cookie leaks no data/.test(c.name));
     // The real cookie name, so the request reaches the page the way a stale session would.
     expect(garbage?.headers?.cookie).toBe(`${SESSION_COOKIE_NAME}=garbage`);
-    // Present-but-invalid credentials currently render a streamed redirect (200), so no status is pinned.
-    expect(garbage?.expect.status).toBeUndefined();
+    // Present-but-invalid credentials currently render a streamed redirect inside a 200: pin it, so a 5xx or a rendered console fails.
+    expect(garbage?.expect.status).toBe(200);
+    expect(evaluateCheck(garbage!, { status: 500, headers: {}, body: "" }).length).toBeGreaterThan(0);
+    expect(evaluateCheck(garbage!, { status: 200, headers: {}, body: "<html>" }).length).toBeGreaterThan(0);
+    expect(evaluateCheck(garbage!, { status: 200, headers: {}, body: "x NEXT_REDIRECT;replace;/sign-in;307 x" })).toEqual([]);
+    // The seeded canary must never appear.
+    const canaryChecks = buildSmokeChecks("smoke-canary-abc");
+    const withCanary = canaryChecks.find((c) => /garbage cookie leaks no data/.test(c.name))!;
+    expect(evaluateCheck(withCanary, { status: 200, headers: {}, body: "NEXT_REDIRECT;replace;/sign-in smoke-canary-abc" }).join(" ")).toMatch(/smoke-canary-abc/);
   });
 });
 
