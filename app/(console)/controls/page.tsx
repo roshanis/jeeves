@@ -1,6 +1,9 @@
 import Link from "next/link";
 import { getAppProvider, getCurrentWorkspaceId } from "@/app/_lib/data-provider";
 import { getDb } from "@/lib/db/client";
+import { runtimeDatabaseUrl } from "@/lib/db/runtime-config";
+import { resolveDataProviderMode } from "@/lib/data/provider-mode";
+import { logUnexpectedError } from "@/lib/http/log-error";
 import { listExceptions, type ExceptionRow } from "@/lib/services/exception-service";
 import { ControlCatalog } from "@/components/jeeves/control-catalog";
 import { ExceptionsPanel } from "@/components/jeeves/exceptions-panel";
@@ -31,15 +34,20 @@ export default async function ControlsPage() {
   ).size;
 
   // Exceptions live in the real DB (not the read-model provider). Guard the
-  // read so a fresh/unseeded dev database never crashes the catalog page.
+  // read so a fresh/unseeded dev database never crashes the catalog page, and
+  // skip it in the read-only preview, which has no database to fail: there the
+  // panel keeps its empty state instead of reporting a failed load.
   let exceptions: ExceptionRow[] = [];
   let exceptionsLoadFailed = false;
-  try {
-    exceptions = await listExceptions(getDb(), undefined, { viewerWorkspaceId });
-  } catch (err) {
-    console.error("controls: could not load control exceptions", err);
-    exceptions = [];
-    exceptionsLoadFailed = true;
+  const dbMode = resolveDataProviderMode(process.env.DATA_PROVIDER, !!runtimeDatabaseUrl()) === "db";
+  if (dbMode) {
+    try {
+      exceptions = await listExceptions(getDb(), undefined, { viewerWorkspaceId });
+    } catch (err) {
+      logUnexpectedError("controls: could not load control exceptions", err);
+      exceptions = [];
+      exceptionsLoadFailed = true;
+    }
   }
 
   return (
