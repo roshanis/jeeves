@@ -236,10 +236,19 @@ these. A backup you have not restored from is a hypothesis.
 
 ```bash
 git pull
-podman compose build
-podman compose run --rm migrate     # only if drizzle/ changed
+podman compose exec db pg_dump -U jeeves jeeves > jeeves-$(date +%F).sql   # back up first
+podman compose --profile tools build    # also rebuilds the migrator image
+podman compose run --rm migrate         # always run it: idempotent
 podman compose up -d
 ```
+
+Plain `podman compose build` skips the `tools` profile, so `migrate` would run
+from a stale migrator image that still carries the old `drizzle/` directory and
+report nothing to apply.
+
+For the Quadlet units (§3): `git pull`, repeat the two `podman build` commands
+there (both images), re-run the one-off `podman run ... npm run db:migrate`
+against the new migrator image, then `systemctl --user restart jeeves-app`.
 
 ---
 
