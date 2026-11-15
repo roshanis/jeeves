@@ -173,18 +173,25 @@ describe("chat routes abort and citation handling", () => {
     } finally { spy.mockRestore(); }
   });
 
-  it("keeps a genuine citation spelled as the same instant and caps the list (api-initiatives-F29)", async () => {
+  it("keeps a genuine citation spelled as the same instant, once and in the row's own spelling (api-initiatives-F29)", async () => {
     const token = await issueSessionFor("priya-raman", "42.0.0.4");
     const { POST } = await import("../auditor/route");
     let real = "";
+    let respelled = "";
+    let offset = "";
     const spy = vi.spyOn(agentsModule, "getAgentPort").mockImplementation(() => ({
       auditorAnswer: async (input: { groundingRows: readonly Record<string, unknown>[]; queryUsed: string }) => {
         real = input.groundingRows.map((r) => r["eventTs"]).find((v): v is string => typeof v === "string") ?? "";
-        const respelled = new Date(real).toISOString().replace(".000Z", "Z");
-        const offset = respelled.replace("Z", "+00:00");
+        respelled = new Date(real).toISOString().replace(".000Z", "Z");
+        offset = respelled.replace("Z", "+00:00");
         return { ok: true, value: {
           answerMd: "answer", queryUsed: input.queryUsed,
-          citedEvents: [real, respelled, offset, "2099-01-01T00:00:00Z", ...Array.from({ length: 80 }, (_, i) => `row-${i}`)],
+          citedEvents: [
+            respelled, offset, real, "2099-01-01T00:00:00Z",
+            // Date.parse reads a bare date, a year and a number as dates.
+            real.slice(0, 10), real.slice(0, 4), "42",
+            ...Array.from({ length: 80 }, (_, i) => `row-${i}`),
+          ],
         } };
       },
     }) as unknown as ReturnType<typeof agentsModule.getAgentPort>);
@@ -193,12 +200,15 @@ describe("chat routes abort and citation handling", () => {
         method: "POST", headers: bearer(token, "42.0.0.4"),
         body: JSON.stringify({ question: "Which decisions were approved by Torres?" }),
       }));
-      const json = await res.json();
+      const json = (await res.json()) as { citedEvents: string[] };
       expect(real).not.toBe("");
-      expect(json.citedEvents).toContain(real);
-      expect(json.citedEvents).toContain(new Date(real).toISOString().replace(".000Z", "Z"));
-      expect(json.citedEvents).toContain(new Date(real).toISOString().replace(".000Z", "Z").replace("Z", "+00:00"));
+      expect(respelled).not.toBe(real);
+      // The three spellings of one instant come back as one citation: the row's own.
+      expect(json.citedEvents.filter((c) => c === real)).toHaveLength(1);
+      expect(json.citedEvents).not.toContain(respelled);
+      expect(json.citedEvents).not.toContain(offset);
       expect(json.citedEvents).not.toContain("2099-01-01T00:00:00Z");
+      expect(json.citedEvents.every((c) => c === real || /^row-\d+$/.test(c))).toBe(true);
       expect(json.citedEvents.length).toBeLessThanOrEqual(50);
     } finally { spy.mockRestore(); }
   });

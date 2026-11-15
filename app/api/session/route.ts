@@ -15,9 +15,10 @@ import {
 // browser never attaches on its own), so a forged cross-site request cannot
 // mutate anything. The cookie is SameSite=Lax, so it IS sent on top-level
 // cross-site GET navigations: keep every GET that reads it side-effect free,
-// and keep SameSite/HttpOnly as they are. Set on first login and REUSED on later logins so every
-// persona acting in one browser shares the same demo workspace (the champion
-// loop spans requester -> reviewer -> approver logins).
+// and keep SameSite/HttpOnly as they are. Set on first login and REUSED on
+// later logins so every persona acting in one browser shares the same demo
+// workspace (the champion loop spans requester -> reviewer -> approver
+// logins).
 //
 // Security-hardening pass (external-review finding #1 continuation): the
 // value is now SIGNED (lib/security/workspace-cookie.ts) — `issueDemoSession`
