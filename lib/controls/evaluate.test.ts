@@ -148,3 +148,17 @@ describe("resolveThreshold — project override vs tier default precedence", () 
     );
   });
 });
+
+describe("evaluateControl — since cut-off", () => {
+  it("ignores observations at or before `since` and returns the later sustained run", () => {
+    const observations = [
+      dayObs(11, 0.5), dayObs(12, 0.5), dayObs(13, 0.5), dayObs(14, 0.01),
+      dayObs(30, 0.6), dayObs(31, 0.6), dayObs(32, 0.6),
+    ];
+    const nowTs = dayObs(40).ts;
+    expect(evaluateControl(q01, observations, nowTs).windowStartTs).toBe(dayObs(11).ts);
+    const later = evaluateControl(q01, observations, nowTs, dayObs(14).ts);
+    expect(later.breached).toBe(true);
+    expect(later.windowStartTs).toBe(dayObs(30).ts);
+  });
+});

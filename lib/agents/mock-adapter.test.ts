@@ -509,6 +509,26 @@ describe("createMockAgentPort — intakeInterview", () => {
     }
   });
 
+  it.each([
+    ["I don't know", null],
+    ["no idea", null],
+    ["not sure", null],
+    ["I don't know whether it touches PHI", null],
+    ["We don't have a vendor yet; it summarizes claims", null],
+    ["No", false],
+    ["No, it doesn't.", false],
+    ["nope", false],
+    ["Yes", true],
+  ])("overlay answer %j sets touchesPHI to %s", async (content, expected) => {
+    const result = await port.intakeInterview(
+      intakeInput({ conversation: [{ role: "user", content }], partialPayload: { overlay: emptyOverlay() } }),
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect((result.value.payload.overlay as Record<string, unknown>).touchesPHI ?? null).toBe(expected);
+    }
+  });
+
   it("leaves the field null (never coerced to false) when the last user message is ambiguous", async () => {
     const result = await port.intakeInterview(
       intakeInput({

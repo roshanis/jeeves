@@ -5,7 +5,9 @@ demo locally, deploying it to Vercel with Neon Postgres, the known gaps you
 should be honest about if you show this to anyone, and a demo-day checklist.
 
 Jeeves is a **fictional demo**: "Meridian Health" is not a real organization,
-all data is synthetic, and no LLM call ever touches real PHI. See the top of
+seeded and playground data is synthetic, and no LLM call touches real PHI.
+The separate real-request door is the exception: it stores submitter contact
+data (see "Personal data" in section 5). See the top of
 [`README.md`](../README.md) for the full disclaimer.
 
 Deploy itself is **not executed by any agent** in this repo — this document
@@ -317,8 +319,20 @@ The cheap version, if a pilot happens:
    bill.
 
 Note that a Neon branch shares the parent's data at the moment of branching,
-including anything sensitive. In this demo everything is synthetic, so it is
-moot — but that stops being true the moment it is not a demo.
+including anything sensitive. Seeded and playground data is synthetic, but the
+real-request door is not: `initiatives.requester` and the intake version's
+`basics` (`requesterEmail`, `businessProblem` and other free text) for
+`public-` workspaces hold real names, e-mail addresses and whatever
+strangers typed, and a branch copies them. Delete or exclude the `public-`
+workspace rows from a staging branch, and do not reseed over a live database
+just because "it is all synthetic".
+
+**Personal data.** Who can read it: operators holding `OPERATOR_TOKEN`
+through `/operator` and `GET /api/public-intake`. `audit_events` is
+append-only, so the application cannot delete the audit rows that refer to
+those initiatives. There is no retention or deletion procedure for these
+rows yet; defining one (and whether audit rows may be purged) is an open
+product decision.
 
 ---
 
@@ -326,16 +340,18 @@ moot — but that stops being true the moment it is not a demo.
 
 Run through this the morning of a demo, in order:
 
-1. **Seed fresh.**
+1. **Do not reseed the hosted database.** Seed exactly once, when the
+   database is provisioned:
    ```bash
    JEEVES_MODE=demo DATABASE_URL="<Neon pooled connection string>" npm run db:seed
    ```
-   Confirms a clean, deterministic 12-initiative dataset. Do this only on a
-   fresh or disposable database: a seed wipes every initiative and the audit
-   log. It refuses when the database holds evidence, and when it holds real
-   inbound requests (public- workspaces) unless
-   `ALLOW_DISCARD_PUBLIC_REQUESTS=<count>` names how many to discard. A live
-   demo is not reseeded; use a new database.
+   Re-running it against a database that visitors have used deletes every
+   visitor workspace and the whole audit log. It refuses outright once evidence
+   exists, and when the database holds real inbound requests (public-
+   workspaces, including submitters' contact details) unless
+   `ALLOW_DISCARD_PUBLIC_REQUESTS=<count>` names how many to discard. If you
+   need a clean stage, use a disposable database (local PGlite, a Neon branch
+   or a second project) behind a preview deployment.
 
 2. **Verify `/audit` queries.** Visit `/audit` and run all four canned
    queries (`lib/data/dto.ts` → `CannedAuditQueryId`):
@@ -350,7 +366,7 @@ Run through this the morning of a demo, in order:
 
 3. **Run the champion loop once on the mock adapter.** With
    `OPENAI_API_KEY` unset, walk the champion storyline end-to-end
-   (intake → triage → 4 drafted reviews → sign-off → conditional approval
+   (intake → QC (Program Office) → triage → 8 drafted reviews → sign-off → conditional approval
    → effective controls) to confirm the live loop works without any
    external LLM dependency. This is also what CI/Playwright exercises.
 
@@ -362,5 +378,7 @@ Run through this the morning of a demo, in order:
    15-minute stakeholder talk track, screen-by-screen, including
    anticipated questions and answers — use it as the actual run-of-show.
 
-6. **Reset before the next audience** if you mutated anything live: re-seed
-   (step 1) to restore the deterministic baseline.
+6. **Starting over for the next audience.** Do not re-seed the live
+   database. Each visitor works in an isolated workspace: use **Exit demo** in
+   the demo-mode chip to start a new browser workspace, or point the next
+   audience at a disposable database seeded for the occasion.

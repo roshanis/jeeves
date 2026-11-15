@@ -25,6 +25,7 @@ import {
   UNSCOPED_WORKSPACE,
 } from "./monitor-service";
 import { SYSTEM_ACTOR } from "./actors";
+import { resumeDeployment } from "./admin-service";
 import { createDraft } from "./initiative-service";
 import { CHAMPION_PREFILL_PAYLOAD } from "../intake/champion-prefill";
 
@@ -270,6 +271,53 @@ describe("lib/services/monitor-service", () => {
    * deployment. Now isolated per-candidate: recorded in `result.errors`,
    * the run completes, and other candidates are unaffected.
    * -------------------------------------------------------------------- */
+  describe("runMonitor — wall-clock stamps", () => {
+    it("stamps audit events and incident rows with the wall clock and keeps nowTs as metadata.evaluatedAt", async () => {
+      const { init, dep } = await memberChatCopilot(db);
+      const before = Date.now();
+      // Replay point far in the future: observations all precede it.
+      const nowTs = Date.parse("9999-01-01T00:00:00Z");
+      const result = await runMonitor(db, SYSTEM_ACTOR, nowTs, UNSCOPED_WORKSPACE);
+      expect(result.incidentsCreated).toBe(1);
+      const after = Date.now() + 1000;
+      const [inc] = await db.select().from(incidents).where(eq(incidents.deploymentId, dep.id));
+      expect(inc!.detectedAt.getTime()).toBeGreaterThanOrEqual(before);
+      expect(inc!.detectedAt.getTime()).toBeLessThanOrEqual(after);
+      const events = (await db.select().from(auditEvents).where(eq(auditEvents.initiativeId, init.id)))
+        .filter((e) => e.action === "pause");
+      expect(events.length).toBeGreaterThan(0);
+      for (const e of events) {
+        expect(e.ts.getTime()).toBeGreaterThanOrEqual(before);
+        expect(e.ts.getTime()).toBeLessThanOrEqual(after);
+        expect(e.metadata).toMatchObject({ evaluatedAt: new Date(nowTs).toISOString() });
+      }
+    });
+  });
+
+  describe("runMonitor — repeat breach after resume", () => {
+    it("creates a second incident and pauses again when a new sustained breach follows a resume", async () => {
+      const { init, dep } = await memberChatCopilot(db);
+      const first = await runMonitor(db, SYSTEM_ACTOR, PLUS_14D, UNSCOPED_WORKSPACE);
+      expect(first.incidentsCreated).toBe(1);
+      await resumeDeployment(db, RAY_CHEN, null, init.id, "Reassessed; resume.");
+      for (const [d, value] of [[20, 0.01], [30, 0.99], [31, 0.99], [32, 0.99], [33, 0.99]] as const) {
+        await db.insert(observations).values({
+          id: `obs-rebreach-${d}`, deploymentId: dep.id, kind: "eval_hallucination",
+          ts: new Date(BASE_DATE_MS + d * DAY_MS), value,
+        });
+      }
+      const second = await runMonitor(db, SYSTEM_ACTOR, BASE_DATE_MS + 40 * DAY_MS, UNSCOPED_WORKSPACE);
+      expect(second).toMatchObject({ evaluated: 1, errors: [], alreadyKnown: 0 });
+      expect(second.incidentsCreated).toBe(1);
+      expect(second.alreadyKnown).toBe(0);
+      const [after] = await db.select().from(initiatives).where(eq(initiatives.id, init.id));
+      expect(after!.state).not.toBe("deployed");
+      expect(await db.select().from(incidents).where(eq(incidents.deploymentId, dep.id))).toHaveLength(2);
+      const again = await runMonitor(db, SYSTEM_ACTOR, BASE_DATE_MS + 40 * DAY_MS, UNSCOPED_WORKSPACE);
+      expect(again.incidentsCreated).toBe(0);
+    });
+  });
+
   describe("runMonitor — per-candidate error isolation (external-review P2-5b/P2-7)", () => {
     it("a concurrent write that changes the initiative's state before the breach-pause CAS update is recorded in result.errors and does not abort the run (no partial write for that candidate)", async () => {
       const { init, dep } = await memberChatCopilot(db);

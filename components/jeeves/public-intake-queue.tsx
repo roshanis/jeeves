@@ -24,6 +24,8 @@ import { Button } from "@/components/ui/button";
 import { LIFECYCLE_LABEL } from "./lifecycle-badge";
 
 const STORAGE_KEY = "jeeves_operator_token";
+// Mirrors PUBLIC_QUEUE_LIMIT in lib/services/public-intake-service.ts (server-only module).
+const QUEUE_LIMIT = 200;
 
 function readStoredToken(): string {
   try {
@@ -160,6 +162,12 @@ export function PublicIntakeQueue() {
           request&rdquo; appear here; playground role-play never does.
         </p>
       ) : (
+        <>
+        {state.rows.length >= QUEUE_LIMIT ? (
+          <p className="border-b px-4 py-2 text-xs text-muted-foreground" role="status">
+            Showing the newest {QUEUE_LIMIT} requests; older ones are not listed.
+          </p>
+        ) : null}
         <ul className="divide-y">
           {state.rows.map((row) => (
             <li key={row.initiativeId} className="flex flex-col gap-1.5 px-4 py-3">
@@ -192,6 +200,7 @@ export function PublicIntakeQueue() {
             </li>
           ))}
         </ul>
+        </>
       )}
     </div>
   );

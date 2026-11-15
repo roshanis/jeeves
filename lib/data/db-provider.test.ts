@@ -88,6 +88,19 @@ describe("lib/data/db-provider", () => {
     });
   });
 
+  describe("untriaged initiatives", () => {
+    it("reports tier null (not 'low') for an initiative that has not been triaged", async () => {
+      await db.update(initiatives).set({ tier: null }).where(eq(initiatives.slug, "prior-auth-summarizer"));
+      try {
+        const row = (await provider.listInitiatives()).find((r) => r.slug === "prior-auth-summarizer");
+        expect(row!.tier).toBeNull();
+        expect((await provider.getInitiativeDetail("prior-auth-summarizer"))!.summary.tier).toBeNull();
+      } finally {
+        await db.update(initiatives).set({ tier: "critical" }).where(eq(initiatives.slug, "prior-auth-summarizer"));
+      }
+    });
+  });
+
   describe("listInitiativeDetails", () => {
     it("loads every visible detail with one fixed-size aggregate snapshot", async () => {
       const select = vi.spyOn(db, "select");

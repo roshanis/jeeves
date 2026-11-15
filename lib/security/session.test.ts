@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { issueSession, validateSession, deriveWorkspaceId } from "./session";
+import { issueSession, validateSession } from "./session";
 
 function fakeClock(startMs: number) {
   let t = startMs;
@@ -75,23 +75,18 @@ describe("validateSession — expiry with injected clock", () => {
   });
 });
 
-describe("deriveWorkspaceId — data namespacing", () => {
-  it("derives the same workspace id from the same session token deterministically", () => {
+describe("workspace id — data namespacing", () => {
+  it("is independent of the bearer token (the token must never be copied into business data)", () => {
     const clock = fakeClock(0);
     const session = issueSession({ ttlMs: 60_000 }, clock.now);
-    expect(deriveWorkspaceId(session.token)).toBe(deriveWorkspaceId(session.token));
+    expect(session.workspaceId).toMatch(/^ws_[0-9a-f]{64}$/);
+    expect(session.workspaceId).not.toContain(session.token);
   });
 
-  it("derives different workspace ids for different session tokens", () => {
+  it("differs between sessions", () => {
     const clock = fakeClock(0);
     const a = issueSession({ ttlMs: 60_000 }, clock.now);
     const b = issueSession({ ttlMs: 60_000 }, clock.now);
-    expect(deriveWorkspaceId(a.token)).not.toBe(deriveWorkspaceId(b.token));
-  });
-
-  it("matches the workspaceId assigned at issuance", () => {
-    const clock = fakeClock(0);
-    const session = issueSession({ ttlMs: 60_000 }, clock.now);
-    expect(deriveWorkspaceId(session.token)).toBe(session.workspaceId);
+    expect(a.workspaceId).not.toBe(b.workspaceId);
   });
 });

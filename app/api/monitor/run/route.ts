@@ -12,11 +12,10 @@
  *        champion breach scenario (seed-spec §4: #4 member-chat-copilot's
  *        sustained days-11-13 breach) is reachable with no body at all.
  * 200:   { evaluated, breaches, incidentsCreated, alreadyKnown }
- * 401/429/400: as other mutating routes. Budget-reserved because this run
- *        invokes the ops-monitor incident-summary agent call for any new
- *        breach (mock adapter costs 0 tokens for real; the reservation
- *        still exercises the budget gate per the established draft-run
- *        route pattern).
+ * 401/429/400: as other mutating routes. NOT budget-reserved: the incident
+ *        summary is formatted deterministically (monitor-service.ts), so a
+ *        run makes no model call and must not drain the shared daily LLM
+ *        budget. The per-IP rate limit still applies.
  * 404:   production mode. The monitor replays synthetic telemetry and takes
  *        an arbitrary `nowTs` from the caller, so a production install has no
  *        use for it; it answers before the body is parsed.
@@ -46,9 +45,6 @@ const BASE_DATE_MS = Date.parse("2026-07-01T00:00:00Z");
  */
 const DEFAULT_MONITOR_NOW_TS = BASE_DATE_MS + 14 * 24 * 60 * 60 * 1000;
 
-/** Rough token estimate for the budget reserve — sized generously since a run can summarize multiple breaches. */
-const ESTIMATED_TOKENS_PER_RUN = 800;
-
 const bodySchema = z.object({
   nowTs: z.string().datetime().optional(),
 });
@@ -67,10 +63,7 @@ export async function POST(req: Request): Promise<Response> {
   }
   const parsed = bodySchema.safeParse(json ?? {});
 
-  const guard = await runMutationGuard(req, undefined, {
-    requiresBudget: true,
-    estimatedTokens: ESTIMATED_TOKENS_PER_RUN,
-  });
+  const guard = await runMutationGuard(req, undefined);
   if (!guard.ok) {
     return Response.json({ error: guard.failure.message }, { status: guard.failure.status });
   }

@@ -50,6 +50,9 @@ const GAP_LEVEL_CLASS: Record<CompletenessGap["level"], string> = {
   ADVISORY: "text-muted-foreground",
 };
 
+/** The route rejects conversations over 50 messages; send only the most recent turns (the payload carries the state). */
+const MAX_SENT_TURNS = 40;
+
 export function IntakeChat({ payload, payloadRevision, onPayloadChange, onReview }: {
   payload?: IntakePayload;
   payloadRevision?: number;
@@ -89,16 +92,20 @@ export function IntakeChat({ payload, payloadRevision, onPayloadChange, onReview
     const trimmed = message.trim();
     if (trimmed.length === 0) return;
 
-    const nextConversation: ConversationTurn[] = [
-      ...conversation,
-      { role: "user", content: trimmed },
-    ];
+    const userTurn: ConversationTurn = { role: "user", content: trimmed };
+    const nextConversation: ConversationTurn[] = [...conversation, userTurn];
+    // The next send must fail neither the server's 50-turn cap nor leave a
+    // turn behind: undo the optimistic turn and give the text back.
+    const rollback = () => {
+      setConversation((prev) => prev.filter((turn) => turn !== userTurn));
+      setMessage((current) => (current.length === 0 ? trimmed : current));
+    };
     setConversation(nextConversation);
     setMessage("");
     setPending(true);
     try {
       const result = await intakeChat(session.token, {
-        conversation: nextConversation,
+        conversation: nextConversation.slice(-MAX_SENT_TURNS),
         partialPayload: (payload as unknown as Record<string, unknown>) ?? partialPayload,
       });
       if (onPayloadChange?.(result.updatedPayload, payloadRevision ?? 0) === false) {
@@ -114,6 +121,7 @@ export function IntakeChat({ payload, payloadRevision, onPayloadChange, onReview
         done: result.done,
       });
     } catch (err) {
+      rollback();
       if (isApiError(err)) {
         toast.error(apiErrorToMessage(err));
         if (err.status === 401) {
@@ -135,6 +143,18 @@ export function IntakeChat({ payload, payloadRevision, onPayloadChange, onReview
           Start demo to chat with the intake assistant — this mode is
           only available with a live demo session active (use the chip in the
           header).
+        </AlertDescription>
+      </Alert>
+    );
+  }
+
+  if (session.role === "public") {
+    return (
+      <Alert data-slot="intake-chat">
+        <AlertTitle>The assistant is available in the demo only</AlertTitle>
+        <AlertDescription>
+          Use the structured form to send your request to the Meridian team.
+          {onReview ? <> <Button type="button" variant="outline" onClick={onReview}>Open the structured form</Button></> : null}
         </AlertDescription>
       </Alert>
     );

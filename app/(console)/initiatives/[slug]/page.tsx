@@ -4,7 +4,7 @@ import { EvidenceTab } from "@/components/jeeves/evidence-tab";
 import { notFound } from "next/navigation";
 import { getInitiativeDetailCoherent } from "@/app/_lib/data-provider";
 import { TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { InitiativeTabs } from "@/components/jeeves/initiative-tabs";
+import { InitiativeTabs, KeptTabsContent } from "@/components/jeeves/initiative-tabs";
 // MinusCircle: the neutral "nothing is being counted here" blockers chip.
 import { AlertOctagon, AlertTriangle, CheckCircle2, MinusCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -24,15 +24,16 @@ import { DeploymentRecovery } from "@/components/jeeves/deployment-recovery";
 import { DEPLOYMENT_STATUS_LABEL } from "@/components/jeeves/deployments-tab";
 import {
   InitiativeBlockersRail,
+  PRE_REVIEW_STATES,
   summarizeBlockers,
 } from "@/components/jeeves/initiative-blockers-rail";
 import { AuditTab } from "@/components/jeeves/audit-tab";
 
 /** Segmented review-progress gauge — one filled tick per signed review, with
  * a mono "0/8 signed" readout so the instrument reads at a glance. */
-function ReviewProgressBar({ signed, abstained, total }: { signed: number; abstained: number; total: number }) {
+function ReviewProgressBar({ signed, abstained, total, preReview }: { signed: number; abstained: number; total: number; preReview: boolean }) {
   if (total === 0) {
-    return <span className="text-sm text-muted-foreground">No required domains</span>;
+    return <span className="text-sm text-muted-foreground">{preReview ? "Not triaged yet" : "No required domains"}</span>;
   }
   return (
     <div className="flex items-center gap-2">
@@ -76,7 +77,7 @@ export async function generateMetadata({
   const { title, tier, state } = detail.summary;
   return {
     title,
-    description: `${title} — ${TIER_LABEL[tier] ?? tier} tier, ${LIFECYCLE_LABEL[state] ?? state}. Risk tiering, domain reviews, decisions, controls and audit trail for this AI initiative.${isProductionMode() ? "" : " Synthetic demo data."}`,
+    description: `${title} — ${tier ? `${TIER_LABEL[tier] ?? tier} tier` : "Not triaged"}, ${LIFECYCLE_LABEL[state] ?? state}. Risk tiering, domain reviews, decisions, controls and audit trail for this AI initiative.${isProductionMode() ? "" : " Synthetic demo data."}`,
   };
 }
 
@@ -159,7 +160,7 @@ export default async function InitiativeDetailPage({
 
           <div className="flex flex-col gap-1.5">
             <span className="kicker">Reviews</span>
-            <ReviewProgressBar signed={signedReviews} abstained={summary.domainsAbstained ?? 0} total={detail.reviews.length} />
+            <ReviewProgressBar signed={signedReviews} abstained={summary.domainsAbstained ?? 0} total={detail.reviews.length} preReview={PRE_REVIEW_STATES.has(summary.state)} />
           </div>
 
           <div className="flex flex-col gap-1.5">
@@ -256,9 +257,9 @@ export default async function InitiativeDetailPage({
             <OverviewTab detail={detail} />
           </TabsContent>
           <TabsContent value="intake">
-            <IntakeTab intake={detail.intake} summary={summary} />
+            <IntakeTab intake={detail.intake} summary={summary} events={detail.events} />
           </TabsContent>
-          <TabsContent value="evidence"><EvidenceTab slug={summary.slug} /></TabsContent>
+          <KeptTabsContent value="evidence"><EvidenceTab slug={summary.slug} /></KeptTabsContent>
           <TabsContent value="reviews">
             <ReviewsTab reviews={detail.reviews} slug={summary.slug} initiativeId={summary.initiativeId} isSeeded={summary.isSeeded} />
           </TabsContent>

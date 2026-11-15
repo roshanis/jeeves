@@ -355,8 +355,11 @@ function matchYesNo(content: string): boolean | null {
   const normalized = content.trim().toLowerCase();
   if (normalized.length === 0) return null;
 
+  // Unknown/decline phrases stay null even when they contain "no" or "don't".
+  if (/\b(?:don'?t|do not) know\b|\bno idea\b|\bnot sure\b|\bunsure\b|\bunknown\b|\bmaybe\b|\bskip\b|\bprefer not\b/.test(normalized)) return null;
+
   const hasYes = /\byes\b|\byeah\b|\byep\b/.test(normalized);
-  const hasNo = /\bno\b|\bnope\b|\bnot really\b|\bdoesn't\b|\bdon't\b/.test(normalized);
+  const hasNo = /\bno\b|\bnope\b|\bnot really\b/.test(normalized);
 
   if (hasYes && !hasNo) return true;
   if (hasNo && !hasYes) return false;

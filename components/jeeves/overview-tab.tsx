@@ -20,6 +20,7 @@ import { cn } from "@/lib/utils";
 import { TierBadge } from "./tier-badge";
 import { EvidenceLink } from "./evidence-link";
 import { DOMAIN_LABEL } from "./domain-labels";
+import { PRE_REVIEW_STATES } from "./initiative-blockers-rail";
 
 /**
  * Human-readable explanation of which triage rule matched — mirrors
@@ -141,7 +142,7 @@ export function OverviewTab({ detail }: { detail: InitiativeDetail }) {
           <div className="flex items-center justify-between gap-2 border-b border-border px-4 py-2.5">
             <span className="kicker">Required domains</span>
             <span className="stat-value text-xs text-foreground">
-              {summary.domainsSigned}/{summary.domainsRequired} signed
+              {PRE_REVIEW_STATES.has(summary.state) ? "Not triaged yet" : `${summary.domainsSigned}/${summary.domainsRequired} signed`}
               {(summary.domainsAbstained ?? 0) > 0 ? ` · ${summary.domainsAbstained} abstained` : ""}
             </span>
           </div>

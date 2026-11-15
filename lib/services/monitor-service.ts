@@ -304,7 +304,26 @@ export async function runMonitor(
       sustainedWindow: def.sustainedWindow,
     };
 
-    const evalResult = evaluateControl(control, series, nowTs);
+    // The first sustained run is reported (and stays alreadyKnown) until it is
+    // a recorded incident; then look past the end of that run so a LATER breach
+    // (e.g. after a resume) is detected instead of the old one found again.
+    let evalResult = evaluateControl(control, series, nowTs);
+    if (evalResult.identityKey) {
+      const known = await db.select().from(incidents).where(eq(incidents.deploymentId, deployment.id));
+      const sorted = series.slice().sort((a, b) => a.ts - b.ts);
+      let since: number | undefined;
+      for (const inc of known) {
+        const startIdx = sorted.findIndex((o) => o.ts >= inc.windowStart.getTime());
+        if (startIdx === -1) continue;
+        let end = startIdx;
+        while (end + 1 < sorted.length && sorted[end + 1]!.value > threshold) end += 1;
+        if (since === undefined || sorted[end]!.ts > since) since = sorted[end]!.ts;
+      }
+      if (since !== undefined && known.some((k) => k.identityKey === evalResult.identityKey)) {
+        const later = evaluateControl(control, series, nowTs, since);
+        if (later.breached) evalResult = later;
+      }
+    }
     if (!evalResult.breached || !evalResult.identityKey || evalResult.windowStartTs === null) {
       continue;
     }
@@ -353,7 +372,10 @@ export async function runMonitor(
           );
         }
 
-        const detectedAt = new Date(nowTs);
+        // Wall clock for stored timestamps; nowTs is only the observation cut-off.
+        const wallTs = Date.now();
+        const evaluatedAt = new Date(nowTs).toISOString();
+        const detectedAt = new Date(wallTs);
         const windowStart = new Date(evalResult.windowStartTs!);
 
         // 1. Pause the deployment + initiative. `transition()` only permits
@@ -372,7 +394,7 @@ export async function runMonitor(
           initiative.state as LifecycleState,
           "pause",
           SYSTEM_ACTOR,
-          { ts: nowTs, reason },
+          { ts: wallTs, reason },
         );
         // Compare-and-set (external-review finding P2-5b): only advance the
         // initiative's state if it is STILL the state this candidate's scan
@@ -383,7 +405,7 @@ export async function runMonitor(
         // recorded in `errors`) rather than corrupting/aborting the run.
         const pausedInitiative = await tx
           .update(initiatives)
-          .set({ state: depPauseResult.after, updatedAt: new Date(nowTs) })
+          .set({ state: depPauseResult.after, updatedAt: new Date(wallTs) })
           .where(and(eq(initiatives.id, initiative.id), eq(initiatives.state, initiative.state)))
           .returning();
         if (pausedInitiative.length === 0) {
@@ -400,12 +422,13 @@ export async function runMonitor(
             deploymentId: deployment.id,
             controlId: RUNTIME_CONTROL_ID,
             identityKey: evalResult.identityKey,
+            evaluatedAt,
             triggeredBy: { id: actor.id, role: actor.role },
           },
         );
         await tx
           .update(deploymentVersions)
-          .set({ status: "paused", pausedAt: new Date(nowTs) })
+          .set({ status: "paused", pausedAt: new Date(wallTs) })
           .where(eq(deploymentVersions.id, deployment.id));
 
         // 2. Open reassessment review cycle (paused -> re_review).
@@ -413,11 +436,11 @@ export async function runMonitor(
           depPauseResult.after,
           "open_reassessment",
           SYSTEM_ACTOR,
-          { ts: nowTs },
+          { ts: wallTs },
         );
         await tx
           .update(initiatives)
-          .set({ state: reassessResult.after, updatedAt: new Date(nowTs) })
+          .set({ state: reassessResult.after, updatedAt: new Date(wallTs) })
           .where(eq(initiatives.id, initiative.id));
 
         const raRows = await tx
@@ -445,7 +468,7 @@ export async function runMonitor(
           initiativeId: initiative.id,
           kind: "reassessment",
           riskAssessmentId: latestRa.id,
-          openedAt: new Date(nowTs),
+          openedAt: new Date(wallTs),
           closedAt: null,
           incidentId: null, // set below once the incident id is known
         });
@@ -458,7 +481,7 @@ export async function runMonitor(
             cycleId: reviewCycleId,
             domain,
             status: "pending",
-            createdAt: new Date(nowTs),
+            createdAt: new Date(wallTs),
           })));
         }
         await insertAuditEvent(
@@ -466,7 +489,7 @@ export async function runMonitor(
           initiative.id,
           reassessResult.auditEvent,
           `Reassessment review cycle ${reviewCycleId} opened for control ${RUNTIME_CONTROL_ID} breach.`,
-          { reviewCycleId, controlId: RUNTIME_CONTROL_ID },
+          { reviewCycleId, controlId: RUNTIME_CONTROL_ID, evaluatedAt },
         );
 
         // 3. Narrate the already-detected breach without initializing an AI runtime.
