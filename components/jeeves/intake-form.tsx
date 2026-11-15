@@ -187,6 +187,43 @@ function TextAreaField({
   );
 }
 
+function splitLines(text: string): string[] {
+  return text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+}
+
+// One-per-line list field. The raw text lives here so spaces and line breaks
+// survive while typing; the parent only ever sees the trimmed entries. When
+// the entries change from outside (a sample prefill) the text is resynced.
+function LinesField({
+  label,
+  values,
+  onChange,
+}: {
+  label: string;
+  values: string[];
+  onChange: (entries: string[]) => void;
+}) {
+  const [text, setText] = React.useState(values.join("\n"));
+  const [seen, setSeen] = React.useState(values);
+  if (seen !== values) {
+    setSeen(values);
+    if (splitLines(text).join("\n") !== values.join("\n")) setText(values.join("\n"));
+  }
+  return (
+    <TextAreaField
+      label={label}
+      value={text}
+      onChange={(v) => {
+        setText(v);
+        onChange(splitLines(v));
+      }}
+    />
+  );
+}
+
 function AdditionalQuestions<K extends string>({ questions, values, onChange }: {
   questions: readonly { key: K; question: string; hint: string }[];
   values: Partial<Record<K, string | null>>;
@@ -303,13 +340,6 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
   // is supplied and this is false from the start, which is right: a loaded
   // draft is not a pristine blank form.
   const pristine = payload === EMPTY_PAYLOAD;
-
-  function splitLines(text: string): string[] {
-    return text
-      .split("\n")
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0);
-  }
 
   function loadChampion() {
     if (onPayloadChange) onPayloadChange(SAMPLE_INITIATIVE_PAYLOAD);
@@ -587,11 +617,10 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
               <CardTitle className="text-sm">Data</CardTitle>
             </CardHeader>
             <CardContent className="grid grid-cols-1 gap-3">
-              <TextAreaField
+              <LinesField
                 label="Data source(s) — one per line"
-                value={payload.data.dataSources.join("\n")}
-                onChange={(v) => {
-                  const entries = splitLines(v);
+                values={payload.data.dataSources}
+                onChange={(entries) => {
                   patch((p) => ({ ...p, data: { ...p.data, dataSources: entries } }));
                 }}
               />
@@ -715,11 +744,10 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
               <CardTitle className="text-sm">Population &amp; impact</CardTitle>
             </CardHeader>
             <CardContent className="grid grid-cols-1 gap-3">
-              <TextAreaField
+              <LinesField
                 label="Affected populations — one per line"
-                value={payload.populationImpact.affectedPopulations.join("\n")}
-                onChange={(v) => {
-                  const entries = splitLines(v);
+                values={payload.populationImpact.affectedPopulations}
+                onChange={(entries) => {
                   patch((p) => ({
                     ...p,
                     populationImpact: { ...p.populationImpact, affectedPopulations: entries },
@@ -766,11 +794,10 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
               <CardTitle className="text-sm">Deployment</CardTitle>
             </CardHeader>
             <CardContent className="grid grid-cols-1 gap-3">
-              <TextAreaField
+              <LinesField
                 label="Integration points — one per line"
-                value={payload.deployment.integrationPoints.join("\n")}
-                onChange={(v) => {
-                  const entries = splitLines(v);
+                values={payload.deployment.integrationPoints}
+                onChange={(entries) => {
                   patch((p) => ({
                     ...p,
                     deployment: { ...p.deployment, integrationPoints: entries },
