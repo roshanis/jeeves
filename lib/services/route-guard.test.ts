@@ -10,6 +10,7 @@ import {
   extractSessionToken,
   getBudgetStoreForTests,
   issueDemoSession,
+  resolveSession,
   resolveSessionActor,
   runMutationGuard,
 } from "./route-guard";
@@ -158,6 +159,21 @@ describe("lib/services/route-guard", () => {
         headers: { authorization: "bearer tok" },
       });
       expect(extractSessionToken(req)).toBe("tok");
+    });
+  });
+
+  describe("resolveSession database failure", () => {
+    it("rethrows an error that does not carry the presented token or bound parameters", async () => {
+      await testDb.execute(sql`drop table sessions cascade`);
+      const token = "SECRET-TOKEN-abc123";
+      const err = await resolveSession(token).then(
+        () => null,
+        (e: unknown) => e as Error & { code?: string },
+      );
+      expect(err).toBeInstanceOf(Error);
+      expect(err!.message).not.toContain(token);
+      expect(JSON.stringify(err, Object.getOwnPropertyNames(err))).not.toContain(token);
+      expect(err!.code).toBe("42P01");
     });
   });
 

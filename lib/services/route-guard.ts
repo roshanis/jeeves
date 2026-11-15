@@ -20,6 +20,7 @@ import type { Actor } from "../domain/types";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { getDb } from "../db/client";
+import { redactDbError } from "../db/redact-error";
 import { sessions } from "../db/schema";
 import { READ_ONLY_PREVIEW_MESSAGE, resolveDataProviderMode } from "../data/provider-mode";
 
@@ -260,11 +261,20 @@ export async function resolveSession(token: string | null): Promise<ResolvedSess
     })
     .from(sessions)
     .where(eq(sessions.token, token))
-    .limit(1);
+    .limit(1)
+    // The driver error embeds the bound token; never let it reach the log.
+    .catch((err: unknown) => {
+      throw redactDbError(err);
+    });
   if (!session) return { actor: null, workspaceId: null };
 
   if (session.expiresAt <= Date.now()) {
-    await getDb().delete(sessions).where(eq(sessions.token, token));
+    await getDb()
+      .delete(sessions)
+      .where(eq(sessions.token, token))
+      .catch((err: unknown) => {
+        throw redactDbError(err);
+      });
     return { actor: null, workspaceId: null };
   }
   return { actor: resolveActor(session.personaKey), workspaceId: session.workspaceId ?? null };
