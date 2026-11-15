@@ -107,6 +107,12 @@ export async function runBootChecks(deps: BootCheckDeps = {}): Promise<void> {
   };
 
   if (mode === "production") {
+    // Only an exact "demo" (in a build that has demo) opens the demo doors; anything
+    // else is the safe default, which is easy to hit by a typo such as "Demo".
+    const requested = env.JEEVES_MODE?.trim();
+    if (requested && requested.toLowerCase() !== "production") {
+      log("[boot] JEEVES_MODE is set but ignored: this server runs in production mode (demo needs exactly JEEVES_MODE=demo and a demo build).");
+    }
     try {
       assertProductionConfig(env);
     } catch (err) {
