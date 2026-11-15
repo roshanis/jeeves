@@ -4,7 +4,7 @@ import { CHAMPION_PREFILL_PAYLOAD } from "../intake/champion-prefill";
 import { createMockAgentPort } from "../agents/mock-adapter";
 import type { AgentPort, DraftReviewInput, PortResult, DraftReviewOutput } from "../agents/ports";
 import { reviewDecisions } from "../db/schema";
-import { and, eq } from "drizzle-orm";
+import { and, eq, ne } from "drizzle-orm";
 import * as svc from "../services/initiative-service";
 import { getRunProgress, runSingleDomainDraft, startDraftRun } from "./review-run";
 
@@ -623,6 +623,14 @@ describe("lib/workflow/review-run", () => {
       const legal = progress.rows.find((r) => r.domain === "legal")!;
       expect(legal.status).toBe("drafted");
       expect(progress.complete).toBe(false); // not all 8 domains drafted yet
+    });
+
+    it("treats an abstained review as terminal when judging completion", async () => {
+      const { initiativeId, cycleId } = await setUpChampionInReview(db);
+      await startDraftRun(db, initiativeId, ["legal"]);
+      await db.update(reviewDecisions).set({ status: "abstained" }).where(and(eq(reviewDecisions.cycleId, cycleId), ne(reviewDecisions.domain, "legal")));
+
+      expect((await getRunProgress(db, cycleId)).complete).toBe(true);
     });
   });
 });

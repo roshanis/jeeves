@@ -267,5 +267,5 @@ export async function getRunProgress(db:Db,cycleId:string):Promise<DraftRunProgr
   const rows=await db.select().from(reviewDecisions).where(eq(reviewDecisions.cycleId,cycleId));
   const progressRows:DraftRunProgressRow[]=rows.sort((a,b)=>a.domain.localeCompare(b.domain)).map(r=>({domain:r.domain as Domain,status:r.status as DraftRunDomainStatus,
     ...(r.returnReason&&r.status==="pending"?{lastError:r.returnReason}:{})}));
-  return {cycleId,rows:progressRows,complete:progressRows.length>0&&progressRows.every(r=>["drafted","signed","returned"].includes(r.status))};
+  return {cycleId,rows:progressRows,complete:progressRows.length>0&&progressRows.every(r=>["drafted","signed","returned","abstained"].includes(r.status))};
 }
