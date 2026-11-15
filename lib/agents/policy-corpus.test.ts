@@ -288,4 +288,17 @@ describe("policy-corpus - symlinked directories and truncation", () => {
       vi.restoreAllMocks();
     }
   });
+
+  it("backs off to a character boundary when the cap falls inside a multi-byte character", () => {
+    const root = corpusWithEscapingLink();
+    writeFileSync(path.join(root, "docs", "policies", "odd.md"), "a" + "é".repeat(40_000));
+    try {
+      const out = readPolicyFileSafe("docs/policies/odd.md");
+      const body = out.slice(0, out.indexOf("\n\n[... truncated"));
+      expect(Buffer.byteLength(body, "utf-8")).toBeLessThanOrEqual(64 * 1024);
+      expect(body).not.toContain("\uFFFD");
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
 });
