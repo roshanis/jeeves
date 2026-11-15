@@ -1,4 +1,5 @@
 import { runtimeDatabaseUrl } from "../db/runtime-config";
+import { bootFailure } from "../config/boot-state";
 import { assertDemoMode } from "../config/demo-doors";
 import { isProductionMode } from "../config/deployment-mode";
 /**
@@ -140,7 +141,7 @@ export async function issuePublicSession(
   | { readOnly: GuardFailure }
 > {
   assertDemoMode("public sessions");
-  const readOnly = checkReadOnlyMode();
+  const readOnly = checkBootFailure() ?? checkReadOnlyMode();
   if (readOnly) return { readOnly };
 
   // Namespaced like every other limiter here: the buckets share one table, and
@@ -254,11 +255,11 @@ export async function operatorAttemptStatus(
   return operatorAttemptLimiter.peek(bucketKey("operator", clientKey));
 }
 
-export type GuardFailureKind = "unauthorized" | "rate_limited" | "invalid_input" | "budget_exhausted" | "read_only" | "payload_too_large";
+export type GuardFailureKind = "unauthorized" | "rate_limited" | "invalid_input" | "budget_exhausted" | "read_only" | "payload_too_large" | "unavailable";
 
 export interface GuardFailure {
   kind: GuardFailureKind;
-  status: 401 | 403 | 429 | 400 | 413;
+  status: 401 | 403 | 429 | 400 | 413 | 503;
   message: string;
   gaps?: InputGap[];
   retryAfterSeconds?: number;
@@ -278,6 +279,15 @@ export function guardFailureResponse(failure: GuardFailure, headers: Record<stri
 }
 
 /** Static preview reads cannot reflect writes, so reject before any DB access. */
+/**
+ * Fail-closed backstop for a process whose boot checks failed but which the
+ * host did not stop (see lib/config/boot-state.ts). A bare status: the reason
+ * is for the server log only.
+ */
+function checkBootFailure(): GuardFailure | null {
+  return bootFailure() === null ? null : { kind: "unavailable", status: 503, message: "service unavailable" };
+}
+
 export function checkReadOnlyMode(): GuardFailure | null {
   return resolveDataProviderMode(process.env.DATA_PROVIDER, !!runtimeDatabaseUrl()) === "mock"
     ? { kind: "read_only", status: 403, message: READ_ONLY_PREVIEW_MESSAGE }
@@ -318,7 +328,7 @@ export async function issueDemoSession(
   existingWorkspaceId?: string | null,
 ): Promise<IssueSessionResult | null> {
   assertDemoMode("persona sessions");
-  if (checkReadOnlyMode()) return null;
+  if (checkBootFailure() || checkReadOnlyMode()) return null;
   // Demo personas only — never a `public:` key (see app/api/session/route.ts).
   if (!isPersonaKey(personaKey) || !resolveActor(personaKey)) return null;
   // Invariant, held here rather than trusted to every caller: no persona
@@ -562,7 +572,7 @@ export async function runMutationGuard(
   body: Record<string, string> | BodyExtractor | undefined,
   options: MutationGuardOptions = {},
 ): Promise<MutationGuardResult> {
-  const readOnlyFailure = checkReadOnlyMode();
+  const readOnlyFailure = checkBootFailure() ?? checkReadOnlyMode();
   if (readOnlyFailure) return { ok: false, failure: readOnlyFailure };
 
   const token = extractSessionToken(req);

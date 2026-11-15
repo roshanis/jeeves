@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq, sql } from "drizzle-orm";
+import { markBootFailed, resetBootStateForTests } from "../config/boot-state";
 import { closeTestDb, createTestDb, type TestDb } from "../db/test-client";
 import { rateLimitBuckets, runBudget, sessions } from "../db/schema";
 import { reserve } from "../security/budget";
@@ -550,5 +551,29 @@ describe("public role is denied by default", () => {
     expect(denied.failure.status).toBe(403);
     const allowed = await runMutationGuard(reqWithBearer(issued.token, "10.1.0.3"), undefined, { allowPublic: true });
     expect(allowed).toMatchObject({ ok: true, actor: { role: "public" } });
+  });
+});
+
+describe("a server that failed its boot checks", () => {
+  beforeEach(async () => {
+    testDb = await createTestDb();
+  });
+
+  afterEach(async () => {
+    resetBootStateForTests();
+    await closeTestDb(testDb);
+  });
+
+  it("refuses mutations and session minting with a bare 503, before any session lookup", async () => {
+    const session = (await issueDemoSession("priya-raman"))!;
+    const pub = await issuePublicSession("10.2.0.1");
+    markBootFailed("database is stamped production");
+
+    const denied = await runMutationGuard(reqWithBearer(session.token, "10.2.0.2"), undefined);
+    expect(denied).toMatchObject({ ok: false, failure: { status: 503 } });
+    expect(JSON.stringify(denied)).not.toContain("stamped");
+    expect(await issueDemoSession("priya-raman")).toBeNull();
+    expect(await issuePublicSession("10.2.0.3")).toHaveProperty("readOnly");
+    expect("token" in pub).toBe(true);
   });
 });

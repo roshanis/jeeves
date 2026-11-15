@@ -1,8 +1,10 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { markBootFailed, resetBootStateForTests } from "./boot-state";
 import { DemoOnlyError, assertDemoMode, demoDoorClosed, demoDoorFallbacks } from "./demo-doors";
 
 afterEach(() => {
+  resetBootStateForTests();
   vi.unstubAllEnvs();
 });
 
@@ -18,6 +20,16 @@ describe("demoDoorClosed", () => {
     expect(res.status).toBe(404);
     expect(await res.text()).toBe("");
     expect(res.headers.get("cache-control")).toBe("no-store");
+  });
+});
+
+describe("demoDoorClosed after a failed boot", () => {
+  it("is a bare 404 even in demo", async () => {
+    vi.stubEnv("JEEVES_MODE", "demo");
+    markBootFailed("database is stamped production");
+    const res = demoDoorClosed()!;
+    expect(res.status).toBe(404);
+    expect(await res.text()).toBe("");
   });
 });
 

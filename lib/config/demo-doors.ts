@@ -9,6 +9,7 @@
 //    route that was never built;
 //  - code reached some other way refuses (assertDemoMode), as defence in depth
 //    for a caller that skips the route.
+import { bootFailure } from "./boot-state";
 import { isProductionMode } from "./deployment-mode";
 
 /**
@@ -38,7 +39,8 @@ export function assertDemoMode(door: string): void {
  * no-store, so a CDN never keeps a 404 it learned while the mode was wrong.
  */
 export function demoDoorClosed(): Response | null {
-  return isProductionMode()
+  // A server whose boot checks failed serves no demo door either, whatever mode it is in.
+  return isProductionMode() || bootFailure() !== null
     ? new Response(null, { status: 404, headers: { "Cache-Control": "no-store" } })
     : null;
 }
