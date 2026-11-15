@@ -9,6 +9,7 @@ import type {
 } from "@/lib/data/dto";
 import type { LifecycleState } from "@/lib/domain/types";
 import { renderWithProviders } from "./helpers";
+import { CHAMPION_PREFILL_PAYLOAD } from "@/lib/intake/champion-prefill";
 
 /**
  * Lifecycle-awareness tests for the blockers rail.
@@ -115,6 +116,16 @@ describe("InitiativeBlockersRail — never claims all-clear before anything is r
     expect(screen.queryByText(ALL_CLEAR)).toBeNull();
     expect(screen.queryByText(EVIDENCE_ALL_CLEAR)).toBeNull();
     expect(screen.getByText(/not yet submitted/i)).toBeDefined();
+  });
+
+  it("counts only blocking intake gaps, not advisory ones (ui-intake-F12)", () => {
+    const advisory = detailFor("intake_draft", { intake: { version: 1, submitted: false, fields: CHAMPION_PREFILL_PAYLOAD as never, missing: ["evidenceAttachments"] } });
+    const { unmount } = renderWithProviders(<InitiativeBlockersRail detail={advisory} />);
+    expect(screen.queryByText(/completeness gap/i)).toBeNull();
+    unmount();
+    const blocking = detailFor("intake_draft", { intake: { version: 1, submitted: false, fields: { ...CHAMPION_PREFILL_PAYLOAD, basics: { ...CHAMPION_PREFILL_PAYLOAD.basics, title: "" } } as never, missing: ["basics.title"] } });
+    renderWithProviders(<InitiativeBlockersRail detail={blocking} />);
+    expect(screen.getByText(/1 completeness gap to resolve first/i)).toBeDefined();
   });
 
   it("says a submitted initiative is awaiting QC rather than clear", () => {

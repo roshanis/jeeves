@@ -5,6 +5,7 @@ import type { AuditEventRow, InitiativeDetail } from "@/lib/data/dto";
 import { latestQcReturn } from "@/lib/data/qc-return";
 import { ADDITIONAL_INTAKE_QUESTIONS } from "@/lib/intake/additional-questions";
 import { EMPTY_INTAKE_PAYLOAD } from "@/lib/intake/defaults";
+import { splitMissing } from "@/lib/intake/split-missing";
 import { AlertTriangle } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -71,6 +72,12 @@ const ADDITIONAL_FIELD_LABELS = Object.fromEntries(
   ),
 );
 
+function fieldLabel(key: string): string {
+  return ADDITIONAL_FIELD_LABELS[key] ?? FIELD_LABEL[key] ?? key;
+}
+
+const labelList = (keys: string[]) => keys.map(fieldLabel).join(", ");
+
 /** Entries in form order (the order of EMPTY_INTAKE_PAYLOAD); jsonb storage does not keep key order. Unknown keys go last. */
 function orderedEntries(value: object, template: unknown): [string, unknown][] {
   const order = template && typeof template === "object" ? Object.keys(template) : [];
@@ -131,6 +138,7 @@ export function IntakeTab({ intake, summary, events }: {
     return <p className="text-sm text-muted-foreground">No intake record.</p>;
   }
 
+  const { blocking, optional } = splitMissing(intake);
   const returned = intake.submitted ? undefined : latestQcReturn(events);
   return (
     <div className="space-y-4" data-slot="intake-tab">
@@ -140,7 +148,7 @@ export function IntakeTab({ intake, summary, events }: {
           <AlertTitle className="text-status-warning-fg">Returned from QC — not yet resubmitted</AlertTitle>
           <AlertDescription>
             Returned by {returned.actor}: {returned.reason}
-            {intake.missing.length > 0 ? <> Completeness check: missing {intake.missing.join(", ")}.</> : null}
+            {intake.missing.length > 0 ? <> Completeness check: missing {labelList(intake.missing)}.</> : null}
           </AlertDescription>
         </Alert>
       ) : !intake.submitted ? (
@@ -148,13 +156,19 @@ export function IntakeTab({ intake, summary, events }: {
           <AlertTriangle className="size-4 text-status-warning-fg" aria-hidden />
           <AlertTitle className="text-status-warning-fg">Draft — not yet submitted</AlertTitle>
           <AlertDescription>
-            This intake is still in draft. It is created live during the demo
-            (champion storyline).
-            {intake.missing.length > 0 ? (
+            This intake is still in draft.
+            {summary?.isSeeded ? " It is created live during the demo (champion storyline)." : null}
+            {blocking.length > 0 ? (
               <>
                 {" "}
-                Completeness check: missing {intake.missing.join(", ")} —
+                Completeness check: missing {labelList(blocking)} —
                 intake cannot be submitted until complete.
+              </>
+            ) : null}
+            {optional.length > 0 ? (
+              <>
+                {" "}
+                Optional improvements ({labelList(optional)}) — this does not block submitting.
               </>
             ) : null}
           </AlertDescription>
@@ -173,7 +187,7 @@ export function IntakeTab({ intake, summary, events }: {
             {answerRows(intake.fields).map(([key, value]) => (
               <TableRow key={key}>
                 <TableCell className="whitespace-normal font-medium">
-                  {ADDITIONAL_FIELD_LABELS[key] ?? FIELD_LABEL[key] ?? key}
+                  {fieldLabel(key)}
                 </TableCell>
                 <TableCell className="whitespace-pre-wrap">{key === "evidenceAttachments" && value === "" ? <span className="text-muted-foreground">None</span> : renderValue(value, key in ADDITIONAL_FIELD_LABELS, intake.missing.includes(key))}</TableCell>
               </TableRow>

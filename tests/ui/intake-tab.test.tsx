@@ -27,7 +27,7 @@ describe("IntakeTab — champion initiative (#1 prior-auth-summarizer)", () => {
     renderWithProviders(<IntakeTab intake={detail!.intake} />);
 
     expect(detail!.intake?.missing).toContain("data.retentionIntent");
-    expect(screen.getByText(/data\.retentionIntent/)).toBeDefined();
+    expect(screen.getAllByText(/Data retention/).length).toBeGreaterThan(0);
     expect(screen.getByText("Missing")).toBeDefined();
   });
 
@@ -44,6 +44,18 @@ describe("IntakeTab — champion initiative (#1 prior-auth-summarizer)", () => {
 });
 
 describe("IntakeTab draft banner and answers", () => {
+  it("does not say the intake cannot be submitted when only advisory gaps remain (ui-intake-F12)", () => {
+    renderWithProviders(<IntakeTab intake={draft(CHAMPION_PREFILL_PAYLOAD, ["evidenceAttachments"])} summary={{ isSeeded: false } as never} />);
+    expect(screen.queryByText(/cannot be submitted/)).toBeNull();
+    expect(screen.queryByText(/champion storyline/)).toBeNull();
+    expect(screen.getByText(/does not block submitting/)).toBeDefined();
+  });
+
+  it("says it cannot be submitted for a blocking gap, using labels (ui-intake-F12)", () => {
+    renderWithProviders(<IntakeTab intake={draft(EMPTY_INTAKE_PAYLOAD, ["basics.title"])} />);
+    expect(screen.getByText(/missing Title .*cannot be submitted/)).toBeDefined();
+  });
+
   it("renders answers in form order, not stored key order (ui-intake-F13)", () => {
     const shuffled = { data: EMPTY_INTAKE_PAYLOAD.data, overlay: { individualImpact: true, careCoverageInfluence: false, vendorHosted: true, touchesPHI: true, memberFacing: false, humanInTheLoop: true }, basics: EMPTY_INTAKE_PAYLOAD.basics };
     renderWithProviders(<IntakeTab intake={draft(shuffled, [])} />);
