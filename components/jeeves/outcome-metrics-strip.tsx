@@ -4,8 +4,6 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { Info } from "lucide-react";
 import type { OutcomeMetrics } from "@/lib/data/dto";
 
-const TOOLTIP_TEXT = "Computed from seeded/live data — see Audit tab for source events.";
-
 // Instrument-deck segment (2026-08-02 pass): the strip is one hairline-
 // divided panel, not five separate floating cards — matches the status band
 // on the Inbox so every "readout row" in the console reads as one
@@ -14,12 +12,12 @@ function OutcomeMetricCard({
   label,
   value,
   subtext,
-  tooltip = TOOLTIP_TEXT,
+  tooltip,
 }: {
   label: string;
   value: string;
   subtext?: string;
-  tooltip?: string;
+  tooltip: string;
 }) {
   return (
     <div data-slot="outcome-metric-card" className="flex min-w-0 flex-col gap-1.5 px-4 py-3.5">
@@ -86,7 +84,7 @@ export function OutcomeMetricsStrip({ metrics }: { metrics: OutcomeMetrics }) {
         label="Overdue controls"
         value={`${metrics.overdueControls}`}
         subtext='see the "Breached / paused" view'
-        tooltip="Controls past cadence or with a pending exception, plus returned reviews. Open the Breached / paused saved view to list them."
+        tooltip="Controls past cadence or with a pending exception, plus returned reviews. The Breached / paused saved view shows the related initiatives, and also includes paused and re-review ones."
       />
     </div>
   );
