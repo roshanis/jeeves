@@ -287,6 +287,29 @@ before the bad write and repoint `DATABASE_URL` at the new branch. There is
 no application-level undo, and there deliberately is no "delete audit events"
 path to undo *with* — the trigger rejects `DELETE` from the app entirely.
 
+### Upgrades and rollback
+
+Order for every release that adds a migration (see `drizzle/meta/_journal.json`
+for what a release contains): **back up, migrate, deploy the app, verify.**
+
+1. **Back up.** Take the Neon branch from "Take a branch before any
+   migration" above, or your platform's snapshot.
+2. **Migrate** with `npm run db:migrate` as in section 2 step 4, using
+   `DATABASE_MIGRATION_URL` when the runtime role is not the schema owner.
+   The app never migrates itself on boot.
+3. **Deploy the app**, then check `/api/health` and that your own rows are
+   still there.
+
+Migrate before deploying: new code can expect tables or columns that the old
+schema lacks, while the previous release has not been tested against a newer
+schema. Do not deploy first and migrate afterwards.
+
+There are no down migrations. To roll back, redeploy the previous app version
+only if the release notes say the migration was additive; otherwise restore
+the pre-migration backup as described under Restore and redeploy the previous
+version against it. A restore brings back the database as it was, including
+its append-only triggers; it is not a way to edit or delete `audit_events`.
+
 ### Not covered
 
 No automated backup verification, and no drill. A backup nobody has restored
