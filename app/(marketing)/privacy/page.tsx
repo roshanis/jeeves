@@ -55,7 +55,8 @@ export default function PrivacyPage() {
             (<code className="font-mono text-xs">jeeves_live_session</code>, and{" "}
             <code className="font-mono text-xs">jeeves_live_registry</code> for the
             actions you have run). A real request sets no cookie; it keeps only
-            this token and the preferences below. It is cleared when you close the tab.
+            this token and the preferences below. The token is cleared when you
+            close the tab.
           </li>
           <li>
             <span className="font-medium">Two local preferences</span> in your

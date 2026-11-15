@@ -84,7 +84,7 @@ export function OutcomeMetricsStrip({ metrics }: { metrics: OutcomeMetrics }) {
         label="Overdue controls"
         value={`${metrics.overdueControls}`}
         subtext='see the "Breached / paused" view'
-        tooltip="Controls past cadence or with a pending exception, plus returned reviews. The Breached / paused saved view shows the related initiatives, and also includes paused and re-review ones."
+        tooltip="Controls past cadence or with a pending exception, plus returned reviews. The Breached / paused saved view lists initiatives with overdue controls, plus paused and re-review ones."
       />
     </div>
   );
