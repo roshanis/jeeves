@@ -176,7 +176,7 @@ function flatCostSeries(slug: string, low: number, high: number): ObservationSee
  * AuditEvents so no state is orphaned (seed-spec §5).
  * ---------------------------------------------------------------------- */
 
-type SeedDb = Pick<Db, "select" | "insert" | "update" | "delete" | "execute">;
+export type SeedDb = Pick<Db, "select" | "insert" | "update" | "delete" | "execute">;
 
 interface SeedContext {
   db: SeedDb;
@@ -278,8 +278,19 @@ async function insertRiskAssessment(
  * Main seed function
  * ---------------------------------------------------------------------- */
 
-export async function seedDatabase(db: Db): Promise<RowCounts> {
-  return db.transaction((tx) => seedInTransaction(tx));
+export async function seedDatabase(
+  db: Db,
+  /** Runs in the seed's own transaction after the seed, so a failure rolls the seed back too. */
+  afterSeed?: (tx: SeedDb) => Promise<void>,
+): Promise<RowCounts> {
+  return db.transaction(async (tx) => {
+    // Fail fast rather than stall live requests (or deadlock with them) while
+    // the wipe waits on locks they hold.
+    await tx.execute(`SET LOCAL lock_timeout = '10s';`);
+    const counts = await seedInTransaction(tx);
+    if (afterSeed) await afterSeed(tx);
+    return counts;
+  });
 }
 
 async function seedInTransaction(db: SeedDb): Promise<RowCounts> {

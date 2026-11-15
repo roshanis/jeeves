@@ -19,8 +19,8 @@
  */
 import { resolveWorkspaceCookieSecret } from "../lib/security/workspace-cookie";
 import { execSync } from "node:child_process";
-import { getDb, closeDb } from "../lib/db/client";
-import { initiatives, runBudget, sessions } from "../lib/db/schema";
+import { getDb, closeDb, type Db } from "../lib/db/client";
+import { initiatives, rateLimitBuckets, runBudget, sessions } from "../lib/db/schema";
 import { seedDatabase } from "./seed";
 import { agentRuntimeStatus } from "../lib/agents/registry";
 import { telemetryConnectorStatus } from "../lib/telemetry/connector";
@@ -42,20 +42,22 @@ function buildSha(): string {
   }
 }
 
-async function resetDemo(): Promise<void> {
-  const db = getDb();
-
+export async function resetDemo(db: Db = getDb()): Promise<void> {
   console.log("Jeeves — demo reset ritual\n");
 
   // 1. Re-seed to canonical state.
   console.log("Re-seeding database…");
-  const counts = await seedDatabase(db);
+  // Live state is cleared in the seed's own transaction: a failure leaves the
+  // old sessions AND the old seed intact instead of old sessions on new data.
+  const counts = await seedDatabase(db, async (tx) => {
+    await tx.delete(sessions);
+    await tx.delete(runBudget);
+    await tx.delete(rateLimitBuckets);
+  });
   ok("Seed", `${counts.initiatives} initiatives, ${counts.effectiveControls} effective controls`);
 
-  // 2. Clear live session + budget state (outside the seed's reset scope).
-  await db.delete(sessions);
-  await db.delete(runBudget);
-  ok("Live state", "sessions cleared, daily token budget reset");
+  // 2. Live session, budget and rate-limit state was cleared in that transaction.
+  ok("Live state", "sessions cleared, daily token budget and rate limits reset");
 
   // 3. Readiness checklist.
   console.log("\nPre-flight checklist:");
