@@ -63,3 +63,17 @@ describe("InitiativeTable time-in-state aging", () => {
     expect(screen.queryByTitle(/ since /)).toBeNull();
   });
 });
+
+describe("InitiativeTable next action and owner", () => {
+  it("names promotion, not automatic steps, for approved states", () => {
+    const rows = [
+      summary({ slug: "a", state: "approved" }),
+      summary({ slug: "f", state: "fast_lane_approved" }),
+      summary({ slug: "c", state: "conditionally_approved" }),
+    ];
+    renderWithProviders(<InitiativeTable initiatives={rows} caption="test" />);
+    expect(screen.queryByText("Generate controls")).toBeNull();
+    expect(screen.getAllByText("Promote / deploy")).toHaveLength(2);
+    expect(screen.getByText("Meet conditions, then promote")).toBeDefined();
+  });
+});
