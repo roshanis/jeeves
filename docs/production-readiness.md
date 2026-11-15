@@ -195,6 +195,11 @@ TRIGGER` and rewrite history (`scripts/seed.ts` does exactly that for the
 reseed). **Production prerequisite:** a separate owner/migrator role, and a
 runtime role without ownership that holds only INSERT and SELECT on
 `audit_events`, the evidence tables and any other append-only table. Not built.
+When it is, the runtime role also needs to read the migration history, which
+the production boot check compares with the build:
+`GRANT USAGE ON SCHEMA drizzle TO <role>; GRANT SELECT ON drizzle.__drizzle_migrations TO <role>;`
+(the boot refuses with `migrations_unreadable` and names these grants when
+they are missing).
 
 ### 2.1 No backup or restore procedure — DOCUMENTED 2026-09-12, not yet exercised
 

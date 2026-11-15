@@ -124,7 +124,7 @@ podman run --rm --network jeeves \
 # see §2): without it the app boots against an empty database
 podman run --rm --network jeeves \
   -e DATABASE_URL='postgres://jeeves:PASSWORD@jeeves-db:5432/jeeves' \
-  localhost/jeeves-migrator:latest npm run db:seed
+  -e JEEVES_MODE=demo localhost/jeeves-migrator:latest npm run db:seed
 systemctl --user start jeeves-app
 ```
 
