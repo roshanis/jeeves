@@ -487,7 +487,7 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
           <Alert variant="destructive" role="status">
             <AlertTitle>Your session expired</AlertTitle>
             <AlertDescription>
-              What you typed is still on this page. Use{" "}
+              {pristine ? null : "What you typed is still on this page. "}Use{" "}
               {expired.kind === "public" && realRequestsEnabled ? "“Send a real request”" : "“Start the demo”"}{" "}
               below to start a new session, then submit again.
             </AlertDescription>

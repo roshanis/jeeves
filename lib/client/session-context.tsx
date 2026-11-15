@@ -220,6 +220,7 @@ export function LiveSessionProvider({ children, liveModeAvailable = true }: {
         const next: LiveSession = {
           ...result, personaKey, personaLabel: persona.label, role: persona.role,
         };
+        setExpiredKind(null);
         setStoredSession(next);
         setPersonaKey(personaKey);
         return next;
@@ -272,6 +273,7 @@ export function LiveSessionProvider({ children, liveModeAvailable = true }: {
           personaLabel: "Public visitor",
           role: "public",
         };
+        setExpiredKind(null);
         setStoredSession(next);
         return next;
       } catch (err) {
