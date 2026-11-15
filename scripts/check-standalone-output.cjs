@@ -29,6 +29,42 @@ function findUnexpectedEntries(relativePaths) {
   return bad;
 }
 
+/** Returns the required paths that are absent from the standalone entry list. */
+function findMissingRequired(relativePaths, required) {
+  const present = new Set(relativePaths.map((raw) => raw.split(path.sep).join("/").replace(/^\.\//, "")));
+  return required.filter((rel) => !present.has(rel));
+}
+
+/**
+ * The files the app reads at run time (lib/agents/adapter-shared.ts and
+ * policy-corpus.ts), derived from the source tree: every .md under
+ * agents/<agent>/ (instructions, reviewer schema and tracks; not
+ * agents/README.md) and every docs/policies/*.md.
+ */
+function deriveRequired(repoRoot) {
+  const out = [];
+  const addMd = (rel, recurse) => {
+    const abs = path.join(repoRoot, rel);
+    if (!fs.existsSync(abs)) return;
+    for (const entry of fs.readdirSync(abs, { withFileTypes: true })) {
+      const child = `${rel}/${entry.name}`;
+      if (entry.isDirectory()) {
+        if (recurse) addMd(child, true);
+      } else if (entry.name.endsWith(".md")) {
+        out.push(child);
+      }
+    }
+  };
+  const agentsDir = path.join(repoRoot, "agents");
+  if (fs.existsSync(agentsDir)) {
+    for (const entry of fs.readdirSync(agentsDir, { withFileTypes: true })) {
+      if (entry.isDirectory()) addMd(`agents/${entry.name}`, true);
+    }
+  }
+  addMd("docs/policies", false);
+  return out.sort();
+}
+
 function walk(dir, base, out) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const abs = path.join(dir, entry.name);
@@ -64,8 +100,16 @@ function main() {
     console.error("Only .next, node_modules, package.json, server.js, agents/**/*.md and docs/policies/**/*.md may ship.");
     process.exit(1);
   }
-  console.log(`check-standalone-output: OK (${entries.length} entries, allowlist respected)`);
+  const missing = findMissingRequired(entries, deriveRequired(path.resolve(__dirname, "..")));
+  if (missing.length > 0) {
+    console.error(`check-standalone-output: ${missing.length} run-time file(s) missing from ${dir}:`);
+    for (const p of missing.slice(0, 30)) console.error(`  ${p}`);
+    if (missing.length > 30) console.error(`  ... and ${missing.length - 30} more`);
+    console.error("The agents read these at run time; check that lib/agents still joins process.cwd() with literal path segments.");
+    process.exit(1);
+  }
+  console.log(`check-standalone-output: OK (${entries.length} entries, allowlist respected, run-time files present)`);
 }
 
-module.exports = { findUnexpectedEntries };
+module.exports = { findUnexpectedEntries, findMissingRequired, deriveRequired };
 if (require.main === module) main();
