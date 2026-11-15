@@ -122,7 +122,8 @@ export function EvalComparison({
             compared: the initiative&apos;s live eval series (not a
             per-checkpoint series — the candidate checkpoint has not yet run
             its own separate eval telemetry) against the runtime threshold
-            this deployment is gated on.
+            this deployment is gated on. A separate, labelled offline v2.0 vs
+            v2.1 comparison is on the initiative&apos;s Evals tab.
           </p>
           <div className="flex flex-wrap items-center gap-3">
             <span className="stat-value text-2xl" data-slot="eval-comparison-latest">

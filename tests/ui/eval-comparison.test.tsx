@@ -70,4 +70,19 @@ describe("EvalComparison", () => {
     );
     expect(screen.getByText(/live eval series/)).toBeDefined();
   });
+
+  it("points to the labelled offline v2.0 vs v2.1 comparison on the Evals tab", () => {
+    renderWithProviders(
+      <EvalComparison
+        candidateVersion="v2.1"
+        currentVersion="v2.0"
+        evalSeries={{
+          kind: "eval_hallucination",
+          points: [{ ts: "2026-06-01T00:00:00.000Z", value: 0.04 }],
+          threshold: 0.08,
+        }}
+      />,
+    );
+    expect(screen.getByText(/offline v2\.0 vs v2\.1 comparison is on the initiative's Evals tab/)).toBeDefined();
+  });
 });
