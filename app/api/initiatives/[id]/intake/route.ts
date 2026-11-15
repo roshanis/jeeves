@@ -2,6 +2,7 @@ import { getDb } from "@/lib/db/client";
 import { intakePayloadSchema } from "@/lib/services/intake-payload-schema";
 import { ConflictError, IllegalTransitionError, NotFoundError, getIntakeDraft, updateIntakeDraft } from "@/lib/services/initiative-service";
 import { extractSessionToken, resolveSession, runMutationGuard } from "@/lib/services/route-guard";
+import { BodyReadError, readBodyText } from "@/lib/http/read-json-body";
 import { INTAKE_AUTHOR_ROLES } from "@/lib/services/intake-author-roles";
 
 function failure(error: unknown): Response {
@@ -25,10 +26,10 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
   if (!INTAKE_AUTHOR_ROLES.has(guard.actor.role)) return Response.json({ error: "only requesters may edit an intake draft" }, { status: 403 });
   let body: unknown;
   try {
-    const raw = await req.text();
-    if (new TextEncoder().encode(raw).byteLength > 64_000) return Response.json({ error: "request body exceeds 64000 bytes" }, { status: 413 });
-    body = JSON.parse(raw);
-  } catch { return Response.json({ error: "invalid JSON body" }, { status: 400 }); }
+    body = JSON.parse(await readBodyText(req, 64_000));
+  } catch (error) {
+    if (error instanceof BodyReadError) return Response.json({ error: "request body exceeds 64000 bytes" }, { status: 413 });
+    return Response.json({ error: "invalid JSON body" }, { status: 400 }); }
   if (!body || typeof body !== "object" || Array.isArray(body)) return Response.json({ error: "invalid request body" }, { status: 400 });
   const candidate = body as { payload?: unknown; expectedVersion?: unknown };
   const parsed = intakePayloadSchema.safeParse(candidate.payload);

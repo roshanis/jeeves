@@ -15,6 +15,7 @@ import { getDb } from "@/lib/db/client";
 import { ConflictError, createDraft } from "@/lib/services/initiative-service";
 import { intakePayloadSchema } from "@/lib/services/intake-payload-schema";
 import { runMutationGuard } from "@/lib/services/route-guard";
+import { BodyReadError, readBodyText } from "@/lib/http/read-json-body";
 import { ACTOR_DIRECTORY, isPersonaKey } from "@/lib/services/actors";
 import { INTAKE_AUTHOR_ROLES } from "@/lib/services/intake-author-roles";
 import type { PersonaKey } from "@/lib/services/actors";
@@ -31,12 +32,10 @@ export async function POST(req: Request): Promise<Response> {
 
   let json: unknown;
   try {
-    const raw = await req.text();
-    if (new TextEncoder().encode(raw).byteLength > 64_000) {
-      return Response.json({ error: "request body exceeds 64000 bytes" }, { status: 413 });
-    }
+    const raw = await readBodyText(req, 64_000);
     json = JSON.parse(raw);
-  } catch {
+  } catch (error) {
+    if (error instanceof BodyReadError) return Response.json({ error: "request body exceeds 64000 bytes" }, { status: 413 });
     return Response.json({ error: "invalid JSON body" }, { status: 400 });
   }
 

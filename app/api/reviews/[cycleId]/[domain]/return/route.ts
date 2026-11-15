@@ -34,22 +34,19 @@ export async function POST(
   req: Request,
   context: { params: Promise<{ cycleId: string; domain: string }> },
 ): Promise<Response> {
-  let json: unknown;
-  try {
-    json = await req.json();
-  } catch {
-    json = {};
-  }
-  const reasonText: Record<string, string> =
-    typeof (json as { reason?: unknown })?.reason === "string" ? { reason: (json as { reason: string }).reason } : {};
-
-  const guard = await runMutationGuard(req, reasonText, {
+  const guard = await runMutationGuard(req, (json) => {
+    const reasonText: Record<string, string> =
+      typeof (json as { reason?: unknown })?.reason === "string" ? { reason: (json as { reason: string }).reason } : {};
+    return reasonText;
+  }, {
+    bodyOptional: true,
     inputLimits: [{ field: "reason", maxChars: 2000 }],
     inputTotalCap: 2000,
   });
   if (!guard.ok) {
     return Response.json({ error: guard.failure.message }, { status: guard.failure.status });
   }
+  const json = guard.json;
 
   const parsed = bodySchema.safeParse(json);
   if (!parsed.success) {

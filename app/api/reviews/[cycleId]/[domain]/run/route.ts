@@ -13,6 +13,7 @@ import {
   runReviewAgent,
 } from "@/lib/services/initiative-service";
 import { runMutationGuard } from "@/lib/services/route-guard";
+import { BodyReadError, DEFAULT_BODY_MAX_BYTES, readBodyText } from "@/lib/http/read-json-body";
 import type { Domain } from "@/lib/domain/types";
 import { agentInitializationResponse } from "@/lib/services/agent-error-response";
 
@@ -45,8 +46,11 @@ export async function POST(
 
   // Older clients send no body; any provided revision is still checked atomically.
   let json: unknown;
-  try { const text = await req.text(); json = text ? JSON.parse(text) : {}; }
-  catch { return Response.json({ error: "invalid draft request" }, { status: 400 }); }
+  try { const text = await readBodyText(req, DEFAULT_BODY_MAX_BYTES); json = text ? JSON.parse(text) : {}; }
+  catch (error) {
+    if (error instanceof BodyReadError) return Response.json({ error: error.message }, { status: error.status });
+    return Response.json({ error: "invalid draft request" }, { status: 400 });
+  }
   const parsed = bodySchema.safeParse(json);
   if (!parsed.success) return Response.json({ error: "invalid draft request" }, { status: 400 });
   const db = getDb();

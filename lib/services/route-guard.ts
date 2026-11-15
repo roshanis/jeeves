@@ -20,6 +20,7 @@ import type { Actor } from "../domain/types";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { getDb } from "../db/client";
+import { BodyReadError, DEFAULT_BODY_MAX_BYTES, readJsonBody } from "../http/read-json-body";
 import { redactDbError } from "../db/redact-error";
 import { sessions } from "../db/schema";
 import { READ_ONLY_PREVIEW_MESSAGE, resolveDataProviderMode } from "../data/provider-mode";
@@ -182,11 +183,11 @@ export async function checkOperatorAttempt(
   return operatorAttemptLimiter.checkAndConsume(`operator:${clientKey}`);
 }
 
-export type GuardFailureKind = "unauthorized" | "rate_limited" | "invalid_input" | "budget_exhausted" | "read_only";
+export type GuardFailureKind = "unauthorized" | "rate_limited" | "invalid_input" | "budget_exhausted" | "read_only" | "payload_too_large";
 
 export interface GuardFailure {
   kind: GuardFailureKind;
-  status: 401 | 403 | 429 | 400;
+  status: 401 | 403 | 429 | 400 | 413;
   message: string;
   gaps?: InputGap[];
   retryAfterSeconds?: number;
@@ -365,6 +366,10 @@ export interface MutationGuardOptions {
    * submit intake.
    */
   allowPublic?: boolean;
+  /** Byte cap for the JSON body the guard reads (default 1 MiB). */
+  maxBodyBytes?: number;
+  /** An empty or malformed body reads as `{}` instead of failing 400. */
+  bodyOptional?: boolean;
   /** Field-level input caps to validate `body` against (skipped if omitted). */
   inputLimits?: FieldLimit[];
   inputTotalCap?: number;
@@ -379,7 +384,12 @@ export interface MutationGuardSuccess {
   actor: Actor;
   /** The session's bound workspace (M2.5 inc.2a). Null if somehow absent. */
   workspaceId: string | null;
+  /** The parsed JSON body, read only after the session, rate limit and cap passed. Undefined when the route gave no extractor. */
+  json?: unknown;
 }
+
+/** Maps the parsed JSON body to the flat string fields that `inputLimits` check. */
+export type BodyExtractor = (json: unknown) => Record<string, string> | undefined;
 
 export type MutationGuardResult = MutationGuardSuccess | { ok: false; failure: GuardFailure };
 
@@ -388,14 +398,14 @@ function todayUtc(): string {
 }
 
 /**
- * Rejects static preview mode, then runs session -> rate-limit ->
- * input-validation -> (optional) budget in order, short-circuiting on the first failure — matching the task brief's
+ * Rejects static preview mode, then runs session -> rate-limit -> (when `body`
+ * is an extractor) capped body read -> input-validation -> (optional) budget in order, short-circuiting on the first failure — matching the task brief's
  * required precedence ("401 with no side effects" happens before rate
  * limiting/budget can be consumed by an unauthenticated caller).
  */
 export async function runMutationGuard(
   req: Request,
-  body: Record<string, string> | undefined,
+  body: Record<string, string> | BodyExtractor | undefined,
   options: MutationGuardOptions = {},
 ): Promise<MutationGuardResult> {
   const readOnlyFailure = checkReadOnlyMode();
@@ -436,8 +446,24 @@ export async function runMutationGuard(
     };
   }
 
-  if (options.inputLimits && body) {
-    const validation = validateInputSize(body, options.inputLimits, options.inputTotalCap ?? 100_000);
+  let json: unknown;
+  let fields: Record<string, string> | undefined;
+  if (typeof body === "function") {
+    try {
+      json = await readJsonBody(req, options.maxBodyBytes ?? DEFAULT_BODY_MAX_BYTES, { optional: options.bodyOptional });
+    } catch (err) {
+      if (!(err instanceof BodyReadError)) throw err;
+      return err.status === 413
+        ? { ok: false, failure: { kind: "payload_too_large", status: 413, message: err.message } }
+        : { ok: false, failure: { kind: "invalid_input", status: 400, message: err.message } };
+    }
+    fields = body(json);
+  } else {
+    fields = body;
+  }
+
+  if (options.inputLimits && fields) {
+    const validation = validateInputSize(fields, options.inputLimits, options.inputTotalCap ?? 100_000);
     if (!validation.ok) {
       return {
         ok: false,
@@ -457,7 +483,7 @@ export async function runMutationGuard(
     }
   }
 
-  return { ok: true, actor, workspaceId };
+  return { ok: true, actor, workspaceId, json };
 }
 
 /**

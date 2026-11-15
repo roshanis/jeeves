@@ -17,24 +17,21 @@ export async function POST(
   req: Request,
   context: { params: Promise<{ id: string }> },
 ): Promise<Response> {
-  let json: unknown;
-  try {
-    json = await req.json();
-  } catch {
-    json = {};
-  }
-  const bodyText: Record<string, string> =
-    typeof (json as { reason?: unknown })?.reason === "string"
-      ? { reason: (json as { reason: string }).reason }
-      : {};
-
-  const guard = await runMutationGuard(req, bodyText, {
+  const guard = await runMutationGuard(req, (json) => {
+    const bodyText: Record<string, string> =
+      typeof (json as { reason?: unknown })?.reason === "string"
+        ? { reason: (json as { reason: string }).reason }
+        : {};
+    return bodyText;
+  }, {
+    bodyOptional: true,
     inputLimits: [{ field: "reason", maxChars: REASON_MAX }],
     inputTotalCap: REASON_MAX,
   });
   if (!guard.ok) {
     return Response.json({ error: guard.failure.message }, { status: guard.failure.status });
   }
+  const json = guard.json;
 
   const parsed = bodySchema.safeParse(json);
   if (!parsed.success) {

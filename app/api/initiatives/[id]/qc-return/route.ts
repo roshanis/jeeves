@@ -31,25 +31,21 @@ export async function POST(
   req: Request,
   context: { params: Promise<{ id: string }> },
 ): Promise<Response> {
-  let raw: unknown;
-  try {
-    raw = await req.json();
-  } catch {
-    return Response.json({ error: "invalid JSON body" }, { status: 400 });
-  }
-
-  const parsed = bodySchema.safeParse(raw);
-  if (!parsed.success) {
-    return Response.json({ error: "a QC return requires a reason" }, { status: 400 });
-  }
-
   // Input-size caps applied through the shared guard, same as other
-  // reason-carrying mutations.
-  const guard = await runMutationGuard(req, { reason: parsed.data.reason }, {
+  // reason-carrying mutations. The body is read after the session check.
+  const guard = await runMutationGuard(req, (raw) => {
+    const reason = (raw as { reason?: unknown } | null)?.reason;
+    return typeof reason === "string" ? { reason } : undefined;
+  }, {
     inputLimits: [{ field: "reason", maxChars: 2000 }],
   });
   if (!guard.ok) {
     return Response.json({ error: guard.failure.message }, { status: guard.failure.status });
+  }
+
+  const parsed = bodySchema.safeParse(guard.json);
+  if (!parsed.success) {
+    return Response.json({ error: "a QC return requires a reason" }, { status: 400 });
   }
 
   const { id } = await context.params;

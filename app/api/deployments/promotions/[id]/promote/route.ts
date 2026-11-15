@@ -64,27 +64,21 @@ export async function POST(
   req: Request,
   context: { params: Promise<{ id: string }> },
 ): Promise<Response> {
-  let json: unknown;
-  try {
-    json = await req.json();
-  } catch {
-    return Response.json({ error: "invalid JSON body" }, { status: 400 });
-  }
+  const guard = await runMutationGuard(req, (json) => {
+    const body = json as {
+      attestation?: { feedbackDataSource?: unknown; consentBasis?: unknown; reviewedBy?: unknown };
+      reason?: unknown;
+    };
 
-  const body = json as {
-    attestation?: { feedbackDataSource?: unknown; consentBasis?: unknown; reviewedBy?: unknown };
-    reason?: unknown;
-  };
-
-  const bodyText: Record<string, string> = {
-    feedbackDataSource:
-      typeof body?.attestation?.feedbackDataSource === "string" ? body.attestation.feedbackDataSource : "",
-    consentBasis: typeof body?.attestation?.consentBasis === "string" ? body.attestation.consentBasis : "",
-    reviewedBy: typeof body?.attestation?.reviewedBy === "string" ? body.attestation.reviewedBy : "",
-    reason: typeof body?.reason === "string" ? body.reason : "",
-  };
-
-  const guard = await runMutationGuard(req, bodyText, {
+    const bodyText: Record<string, string> = {
+      feedbackDataSource:
+        typeof body?.attestation?.feedbackDataSource === "string" ? body.attestation.feedbackDataSource : "",
+      consentBasis: typeof body?.attestation?.consentBasis === "string" ? body.attestation.consentBasis : "",
+      reviewedBy: typeof body?.attestation?.reviewedBy === "string" ? body.attestation.reviewedBy : "",
+      reason: typeof body?.reason === "string" ? body.reason : "",
+    };
+    return bodyText;
+  }, {
     inputLimits: [
       { field: "feedbackDataSource", maxChars: 2000 },
       { field: "consentBasis", maxChars: 2000 },
@@ -97,6 +91,7 @@ export async function POST(
   if (!guard.ok) {
     return Response.json({ error: guard.failure.message }, { status: guard.failure.status });
   }
+  const json = guard.json;
 
   const parsed = bodySchema.safeParse(json);
   if (!parsed.success) {

@@ -46,18 +46,11 @@ const bodySchema = z.object({
 });
 
 export async function POST(req: Request): Promise<Response> {
-  let json: unknown;
-  try {
-    json = await req.json();
-  } catch {
-    json = {};
-  }
-  const parsed = bodySchema.safeParse(json ?? {});
-
-  const guard = await runMutationGuard(req, undefined);
+  const guard = await runMutationGuard(req, () => undefined, { bodyOptional: true });
   if (!guard.ok) {
     return Response.json({ error: guard.failure.message }, { status: guard.failure.status });
   }
+  const parsed = bodySchema.safeParse(guard.json ?? {});
 
   if (!parsed.success) {
     return Response.json({ error: "invalid request body" }, { status: 400 });

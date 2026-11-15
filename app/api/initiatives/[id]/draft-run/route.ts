@@ -36,18 +36,11 @@ export async function POST(
   req: Request,
   context: { params: Promise<{ id: string }> },
 ): Promise<Response> {
-  let json: unknown;
-  try {
-    json = await req.json();
-  } catch {
-    json = {};
-  }
-  const parsed = bodySchema.safeParse(json);
-
-  const guard = await runMutationGuard(req, undefined);
+  const guard = await runMutationGuard(req, () => undefined, { bodyOptional: true });
   if (!guard.ok) {
     return Response.json({ error: guard.failure.message }, { status: guard.failure.status });
   }
+  const parsed = bodySchema.safeParse(guard.json);
 
   // Finding #6 (partial): role restriction — see file-level comment for the
   // evidence behind this allowed set.

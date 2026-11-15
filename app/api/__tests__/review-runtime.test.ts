@@ -18,7 +18,7 @@ import { ReviewIntegrityError } from "@/lib/services/review-integrity";
 
 beforeEach(() => {
   vi.resetAllMocks();
-  mocks.guard.mockResolvedValue({ ok: true, actor: { role: "requester" }, workspaceId: "visitor-workspace" });
+  mocks.guard.mockImplementation(async (req: Request, body?: unknown) => ({ ok: true, actor: { role: "requester" }, workspaceId: "visitor-workspace", json: typeof body === "function" ? await req.json().catch(() => ({})) : undefined }));
   mocks.db.select.mockReturnValue({ from: () => ({ where: async () => [{ workspaceId: "visitor-workspace" }] }) });
   mocks.startDraftRun.mockResolvedValue({ outcomes: [{ domain: "legal", status: "drafted" }] });
   mocks.runReviewAgent.mockResolvedValue({ status: "drafted" });
@@ -52,7 +52,7 @@ describe("review route runtime reservations", () => {
       method: "POST", body: JSON.stringify({ domains: ["legal", "security"] }), signal: controller.signal,
     });
     expect((await fanOut(fanOutRequest, { params: Promise.resolve({ id: "i" }) })).status).toBe(200);
-    expect(mocks.guard).toHaveBeenLastCalledWith(fanOutRequest, undefined);
+    expect(mocks.guard).toHaveBeenLastCalledWith(fanOutRequest, expect.any(Function), { bodyOptional: true });
     expect(mocks.startDraftRun).toHaveBeenLastCalledWith(mocks.db, "i", ["legal", "security"], undefined, {
       actor: { role: "requester" }, sessionWorkspaceId: "visitor-workspace", signal: fanOutRequest.signal,
       budget: expect.objectContaining({ tokensPerAttempt: tokens, dailyCap: 500_000 }),
