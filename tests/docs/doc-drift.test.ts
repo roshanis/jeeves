@@ -150,6 +150,14 @@ describe("README drift (docs-F31)", () => {
     expect(lunaDuties).toContain("intake turns");
     expect(lunaDuties).not.toContain("completeness");
   });
+  it(".env.example gives Luna the same two calls as the agents-sdk adapter", () => {
+    // lib/agents/openai-agents-adapter.ts: intakeInterview and auditorAnswer use Luna; nothing else does.
+    const text = read(".env.example").replace(/\n#\s*/g, " ");
+    const comment = /Luna handles[^;]*;/.exec(text)?.[0] ?? "";
+    expect(comment).toMatch(/intake turns/);
+    expect(comment).toMatch(/audit answers/);
+    expect(comment).not.toMatch(/completeness|triage/);
+  });
   it("lists the lib directories and scripts that exist", () => {
     for (const p of ["  demo/ ", "  evidence/ ", "  reviews/ ", "  telemetry/ ", "  deployments/ ", "  format/ ", "  http/ ", "  marketing/ ", "\nagents/ ", "\ndeploy/ ", "migrate.ts", "reset-demo.ts"]) {
       expect(readme, p).toContain(p);

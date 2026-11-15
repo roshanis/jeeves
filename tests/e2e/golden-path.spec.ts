@@ -442,7 +442,10 @@ test.describe("live demo loop: create → QC → triage → draft run → sign �
     const phiRow = page.locator('[data-slot="review-row"][data-domain="privacy-hipaa"]');
     await phiRow.getByRole("link", { name: "Open Privacy/HIPAA review", exact: true }).click();
     await expect(page).toHaveURL(/\/reviews\?initiative=.+&domain=privacy-hipaa$/);
-    const assessment = page.locator('[data-slot="review-assessment"]');
+    // Visible only: after the reload below, React briefly holds the
+    // server-rendered copy of the page in a hidden container (up to about
+    // 300 ms), so for a moment the document has two assessment cards.
+    const assessment = page.locator('[data-slot="review-assessment"]').filter({ visible: true });
     await expect(assessment.getByRole("button", { name: "Sign", exact: true })).toBeEnabled({
       timeout: 15_000,
     });
