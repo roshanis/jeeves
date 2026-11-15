@@ -134,3 +134,15 @@ describe('evidence tab copy, file input and errors',()=>{
   expect((screen.getByLabelText('What this demonstrates for H-01') as HTMLTextAreaElement).value).toBe('My explanation');
  });
 });
+
+it('shows the server message for a 404 on upload instead of the shared-sample text',async()=>{
+ mocks.session.mockReturnValue({session:{token:'token'},startDemo:vi.fn()});mocks.base64.mockResolvedValue('cGRm');
+ const {ApiError}=await import('@/lib/client/api');
+ mocks.request.mockImplementation((_slug,_token,body)=>body?Promise.reject(new ApiError(404,'Previous document not found.')):Promise.resolve(evidenceState));
+ render(<EvidenceTab slug="demo"/>);
+ fireEvent.change(await screen.findByLabelText('Choose document'),{target:{files:[new File(['pdf'],'demo.pdf',{type:'application/pdf'})]}});
+ fireEvent.click(screen.getByRole('checkbox'));
+ fireEvent.click(screen.getByRole('button',{name:'Upload document'}));
+ expect(await screen.findByText('Previous document not found.')).toBeTruthy();
+ expect(screen.queryByText(/Evidence uploads are available/)).toBeNull();
+});

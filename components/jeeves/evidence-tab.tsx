@@ -11,9 +11,9 @@ import { MAX_FILE_BYTES, type EvidenceDocument, type EvidenceEntry, type Evidenc
 
 const inputClass='w-full rounded-md border bg-background px-3 py-2 text-sm disabled:opacity-60';
 const statusLabels={missing:'Missing',submitted:'Submitted',accepted:'Reviewer accepted',changes_requested:'Changes requested'};
-function message(error:unknown) {
+function message(error:unknown,initialLoad=false) {
   if(error instanceof ApiError && error.status===401)return 'Your session expired. Start the demo again.';
-  if(error instanceof ApiError && error.status===404)return 'Evidence uploads are available for initiatives created in your live demo workspace. Shared sample initiatives are read-only here.';
+  if(initialLoad && error instanceof ApiError && error.status===404)return 'Evidence uploads are available for initiatives created in your live demo workspace. Shared sample initiatives are read-only here.';
   return error instanceof Error?error.message:'Evidence could not be loaded. Please retry.';
 }
 export function EvidenceTab({slug}:{slug:string}) {
@@ -43,7 +43,7 @@ function EvidenceWorkspace({slug,token}:{slug:string;token:string}) {
   const [retry,setRetry]=useState(0);
   useEffect(()=>{
     const controller=new AbortController();
-    evidenceRequest<EvidenceState>(slug,token,undefined,controller.signal).then(next=>{setState(next);setEntries(next.draft?.entries??next.latest?.entries??[]);setPendingSubmission(null);setError(null);}).catch(e=>{if(controller.signal.aborted)return;if(e instanceof ApiError&&e.status===401)logout?.();setError(message(e));});
+    evidenceRequest<EvidenceState>(slug,token,undefined,controller.signal).then(next=>{setState(next);setEntries(next.draft?.entries??next.latest?.entries??[]);setPendingSubmission(null);setError(null);}).catch(e=>{if(controller.signal.aborted)return;if(e instanceof ApiError&&e.status===401)logout?.();setError(message(e,true));});
     return ()=>controller.abort();
   },[slug,token,retry,logout]);
   async function refresh(preserveEdits=false) {

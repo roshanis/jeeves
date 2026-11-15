@@ -343,6 +343,7 @@ export function ReviewWorkbench({ rows, selection, onSelectionChange }: {
             missingEvidence={visibleSelected.review.missingEvidence}
             evidenceRequests={visibleSelected.review.evidenceRequests}
             reviewStatus={visibleSelected.review.status}
+            isSeeded={visibleSelected.isSeeded === true}
             reviewCycleId={visibleSelected.review.cycleId}
           >
             {({ signingBlock, cycleId, cycleChanged, evidencePacketId }) => (

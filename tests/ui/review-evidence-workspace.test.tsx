@@ -45,7 +45,7 @@ describe("evidence-led review", () => {
     mocks.request.mockResolvedValue(state);
     const row: ReviewQueueRow = { slug: "sample", title: "Sample", tier: "high", isSeeded: true, review: { cycleId: "cycle", revision: 4, domain: "privacy-hipaa", status: "drafted", reviewer: null, createdAt: "2026-09-19T12:00:00Z", signedAt: null, draftMd: "Sample draft", citations: [] } };
     renderWithProviders(<ReviewWorkbench rows={[row]} selection={{ slug: "sample", domain: "privacy-hipaa" }} />);
-    await screen.findByRole("heading", { name: "retention-v2.pdf" });
+    await screen.findByText(/Shared examples do not have private evidence packets/);
     expect(screen.getByRole("button", { name: "Sign" }).getAttribute("aria-disabled")).toBe("true");
     expect(screen.getByRole("button", { name: "Return" }).getAttribute("aria-disabled")).toBe("true");
     expect((screen.getByLabelText("Assessment text") as HTMLTextAreaElement).disabled).toBe(true);
@@ -190,6 +190,56 @@ describe("evidence-led review", () => {
     expect(screen.getByText(/Evidence could not be checked/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Retry evidence" }));
     await screen.findByRole("heading", { name: "retention-v2.pdf" });
+  });
+
+  it("shows a failed download separately and leaves signing unblocked", async () => {
+    const state = fixture();
+    state.requirements[0].status = "accepted";
+    mocks.request.mockResolvedValue(state);
+    mocks.download.mockRejectedValueOnce(new ApiError(404, "Document not found."));
+    render(workspace());
+    await screen.findByRole("heading", { name: "retention-v2.pdf" });
+    expect(screen.getByText("No evidence signature block")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Download submitted document" }));
+    expect(await screen.findByText("Document not found.")).toBeTruthy();
+    expect(screen.queryByText(/Shared examples do not have private evidence/)).toBeNull();
+    expect(screen.queryByText(/Evidence could not be checked/)).toBeNull();
+    expect(screen.getByText("No evidence signature block")).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Download submitted document" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("reports a recorded assessment when only the follow-up refetch fails", async () => {
+    let posted = false;
+    mocks.request.mockImplementation((_slug, _token, body) => {
+      if (body) { posted = true; return Promise.resolve({}); }
+      return posted ? Promise.reject(new ApiError(429, "Too many requests.")) : Promise.resolve(fixture());
+    });
+    render(workspace());
+    await screen.findByRole("heading", { name: "retention-v2.pdf" });
+    fireEvent.change(screen.getByLabelText("Evidence assessment reason"), { target: { value: "Looks right" } });
+    fireEvent.click(screen.getByRole("button", { name: "Accept evidence" }));
+    expect(await screen.findByText(/Assessment recorded; refresh to load the latest evidence/)).toBeTruthy();
+    expect(screen.queryByText(/Evidence could not be checked/)).toBeNull();
+    expect(mocks.refresh).toHaveBeenCalled();
+  });
+
+  it("signs the session out when the evidence load answers 401", async () => {
+    const logout = vi.fn();
+    mocks.session.mockReturnValue({ session, logout, startDemo: vi.fn() });
+    mocks.request.mockRejectedValue(new ApiError(401, "Unauthorized"));
+    render(workspace());
+    await waitFor(() => expect(logout).toHaveBeenCalled());
+  });
+
+  it("does not fetch or alert for a shared example and shows an informational note", async () => {
+    render(<ReviewEvidenceWorkspace slug="sample" domain="privacy-hipaa" citations={[]} reviewStatus="drafted" isSeeded>
+      {({ signingBlock }) => <span>{signingBlock ?? "No evidence signature block"}</span>}
+    </ReviewEvidenceWorkspace>);
+    expect(screen.getByText(/Shared examples do not have private evidence packets/)).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Retry evidence" })).toBeNull();
+    expect(screen.getByText("No evidence signature block")).toBeTruthy();
+    expect(mocks.request).not.toHaveBeenCalled();
   });
 
   it("preserves access to the case evidence history when evidence cannot be checked for signing", async () => {

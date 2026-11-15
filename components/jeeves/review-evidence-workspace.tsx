@@ -42,6 +42,8 @@ interface Props {
   evidenceRequests?: ReviewRow["evidenceRequests"];
   reviewStatus: ReviewRow["status"];
   reviewCycleId?: string;
+  /** Shared examples have no private evidence packets: skip the fetch. */
+  isSeeded?: boolean;
   children: (context: EvidenceReviewContext) => React.ReactNode;
 }
 
@@ -75,23 +77,28 @@ function signatureBlock(state: EvidenceState, domain: Domain): string | null {
   return null;
 }
 
-function errorMessage(error: unknown): string {
-  if (isApiError(error) && error.status === 404) {
-    return "Shared examples do not have private evidence packets. Open a case in your live workspace to review submitted documents.";
+const SHARED_EXAMPLE_NOTE = "Shared examples do not have private evidence packets. Open a case in your live workspace to review submitted documents.";
+
+// The shared-example wording only fits the initial GET; a 404 from a download
+// or assessment is the server's own message.
+function errorMessage(error: unknown, initialLoad = false): string {
+  if (initialLoad && isApiError(error) && error.status === 404) {
+    return SHARED_EXAMPLE_NOTE;
   }
   if (isApiError(error) && error.status === 401) return "Your session expired. Start the demo again.";
   return error instanceof Error ? error.message : "Evidence could not be loaded.";
 }
 
-function EvidenceWorkspace({ slug, domain, citations, citationProvenance, missingEvidence = [], evidenceRequests = [], reviewStatus, reviewCycleId, session, onExpired, onUnlock, children }: Props & {
+function EvidenceWorkspace({ slug, domain, citations, citationProvenance, missingEvidence = [], evidenceRequests = [], reviewStatus, reviewCycleId, isSeeded = false, session, onExpired, onUnlock, children }: Props & {
   session: LiveSession | null;
   onExpired: () => void;
   onUnlock: () => void;
 }) {
   const router = useRouter();
   const [state, setState] = React.useState<EvidenceState | null>(null);
-  const [loading, setLoading] = React.useState(Boolean(session));
+  const [loading, setLoading] = React.useState(Boolean(session) && !isSeeded);
   const [error, setError] = React.useState("");
+  const [downloadError, setDownloadError] = React.useState("");
   const [retry, setRetry] = React.useState(0);
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
   const [pending, setPending] = React.useState(false);
@@ -101,15 +108,21 @@ function EvidenceWorkspace({ slug, domain, citations, citationProvenance, missin
   // The wrapper remounts on slug/domain/token/status changes, including a
   // logout. Abort + active protect against clients that resolve after abort.
   React.useEffect(() => {
-    if (!session) return;
+    if (!session || isSeeded) return;
     const controller = new AbortController();
     let active = true;
     evidenceRequest(slug, session.token, undefined, controller.signal)
       .then((next) => { if (active) setState(next); })
-      .catch((err: unknown) => { if (active) setError(errorMessage(err)); })
+      .catch((err: unknown) => {
+        if (!active) return;
+        setError(errorMessage(err, true));
+        if (isApiError(err) && err.status === 401) onExpired();
+      })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; controller.abort(); };
-  }, [slug, session, retry]);
+  // onExpired is a fresh closure each render; it must not retrigger the fetch.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slug, session, retry, isSeeded]);
 
   const cycleChanged = Boolean(reviewCycleId && state && state.cycleId !== reviewCycleId);
   const requirements = cycleChanged ? [] : state?.requirements.filter((r) => r.domain === domain) ?? [];
@@ -130,6 +143,7 @@ function EvidenceWorkspace({ slug, domain, citations, citationProvenance, missin
   function refresh() {
     setLoading(true);
     setError("");
+    setDownloadError("");
     setNotice("");
     setRetry((value) => value + 1);
     router.refresh();
@@ -139,12 +153,19 @@ function EvidenceWorkspace({ slug, domain, citations, citationProvenance, missin
     if (!session || !state?.latest || pending || cycleChanged) return;
     setPending(true);
     setError("");
+    setDownloadError("");
     setNotice("");
     try {
       await evidenceRequest(slug, session.token, { action: "assess", packetId: state.latest.id, controlId: requirement.id, decision, reason: reason.trim() });
-      const next = await evidenceRequest(slug, session.token);
-      setState(next);
-      setNotice("Evidence assessment recorded. Domain sign-off is a separate step.");
+      try {
+        const next = await evidenceRequest(slug, session.token);
+        setState(next);
+        setNotice("Evidence assessment recorded. Domain sign-off is a separate step.");
+      } catch (refetchErr) {
+        // The POST succeeded: say so, and leave the old state to keep signing conservative.
+        setNotice("Assessment recorded; refresh to load the latest evidence.");
+        if (isApiError(refetchErr) && refetchErr.status === 401) onExpired();
+      }
       router.refresh();
     } catch (err) {
       setError(errorMessage(err));
@@ -157,10 +178,11 @@ function EvidenceWorkspace({ slug, domain, citations, citationProvenance, missin
   async function download(documentId: string, fileName: string) {
     if (!session || pending) return;
     setPending(true);
+    setDownloadError("");
     try {
       await downloadEvidenceFile(slug, session.token, documentId, fileName);
     } catch (err) {
-      setError(errorMessage(err));
+      setDownloadError(errorMessage(err));
       if (isApiError(err) && err.status === 401) onExpired();
     } finally {
       setPending(false);
@@ -176,13 +198,15 @@ function EvidenceWorkspace({ slug, domain, citations, citationProvenance, missin
       </div>
       <div className="flex items-center gap-3 text-xs">
         <Link href={evidenceHref} className="font-medium text-primary underline-offset-4 hover:underline">Manage evidence &amp; history</Link>
-        {session ? <Button variant="ghost" size="sm" onClick={refresh} disabled={loading || pending} aria-label="Refresh evidence"><RefreshCw className="size-3.5" aria-hidden />Refresh</Button> : null}
+        {session && !isSeeded ? <Button variant="ghost" size="sm" onClick={refresh} disabled={loading || pending} aria-label="Refresh evidence"><RefreshCw className="size-3.5" aria-hidden />Refresh</Button> : null}
       </div>
     </div>
     {!session ? <div className="flex flex-wrap items-center gap-3 rounded-lg border bg-muted/30 px-4 py-3 text-sm">
       <p>Start the demo to view private submitted evidence. Draft references remain read-only.</p>
       <Button variant="outline" size="sm" onClick={onUnlock}>Start demo</Button>
     </div> : null}
+    {isSeeded ? <p role="status" className="rounded-lg border bg-muted/30 px-4 py-3 text-sm text-muted-foreground">{SHARED_EXAMPLE_NOTE}</p> : null}
+    {downloadError ? <p role="alert" className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">{downloadError}</p> : null}
     {error ? <div role="alert" className="space-y-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
       <div className="flex flex-wrap items-center gap-3"><AlertCircle className="size-4 shrink-0" aria-hidden /><p className="min-w-0 flex-1">{error}</p><Button variant="outline" size="sm" onClick={refresh} disabled={loading || pending}>Retry evidence</Button></div>
       <p className="text-xs leading-relaxed"><Link href={evidenceHref} className="font-medium underline underline-offset-4">Open initiative evidence</Link> to inspect submitted packets and history. Retry evidence here before signing.</p>
