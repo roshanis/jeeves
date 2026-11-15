@@ -33,6 +33,33 @@ describe("describeMigrationFailure", () => {
     },
   );
 
+  it("redacts a password that the URL carries percent-encoded, in both spellings", () => {
+    vi.stubEnv("DATABASE_URL", "postgres://jeeves:p%40ss%2Fw0rd@db.example.com:5432/jeeves");
+    const text = describeMigrationFailure(
+      new Error('password authentication failed: tried "p@ss/w0rd" (sent as p%40ss%2Fw0rd)'),
+    );
+    expect(text).not.toContain("p@ss/w0rd");
+    expect(text).not.toContain("p%40ss%2Fw0rd");
+    expect(text).toContain("password authentication failed");
+  });
+
+  it("leaves a single-label host alone, so a compose service name does not blank ordinary words", () => {
+    vi.stubEnv("DATABASE_URL", "postgres://jeeves:s3cret-long-value@postgres:5432/jeeves");
+    const text = describeMigrationFailure(
+      Object.assign(new Error('role "postgres" does not exist'), { code: "28000" }),
+    );
+    expect(text).toContain('role "postgres" does not exist');
+    vi.stubEnv("DATABASE_URL", "postgres://jeeves:s3cret-long-value@localhost:5432/jeeves");
+    expect(describeMigrationFailure(new Error("connect ECONNREFUSED localhost:5432"))).toContain("localhost:5432");
+  });
+
+  it("still redacts an IP-address host", () => {
+    vi.stubEnv("DATABASE_URL", "postgres://jeeves:s3cret-long-value@10.20.30.40:5432/jeeves");
+    const text = describeMigrationFailure(new Error("connect ETIMEDOUT 10.20.30.40:5432"));
+    expect(text).toContain("ETIMEDOUT");
+    expect(text).not.toContain("10.20.30.40");
+  });
+
   it("still reports an error without a code", () => {
     expect(describeMigrationFailure(new Error("ENOENT: no such file ./drizzle/meta/_journal.json"))).toContain("_journal.json");
   });

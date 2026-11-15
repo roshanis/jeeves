@@ -27,8 +27,9 @@ async function main() {
 /**
  * What an operator needs to act on a failed upgrade: SQLSTATE, the driver's
  * message, constraint and table. Not Postgres's `detail`, which echoes row
- * values. Connection strings are removed, and so are the host and password of
- * each configured URL wherever they appear on their own.
+ * values. Connection strings are removed, and so are the password and the
+ * fully qualified host or IP address of each configured URL wherever they
+ * appear on their own.
  */
 export function describeMigrationFailure(err: unknown): string {
   let root: unknown = err;
@@ -49,9 +50,13 @@ export function describeMigrationFailure(err: unknown): string {
     text = text.split(secret.trim()).join("[redacted]");
     try {
       const url = new URL(secret.trim());
-      let password = url.password;
-      try { password = decodeURIComponent(password); } catch { /* keep the raw form */ }
-      for (const part of [url.hostname, password]) if (part) text = text.split(part).join("[redacted]");
+      // A single-label host (localhost, a compose service name) is no secret,
+      // and blanking it would blank ordinary words in the message.
+      const host = /[.:]/.test(url.hostname) ? url.hostname : "";
+      // The password as the URL spells it and as the server sees it.
+      let decoded = url.password;
+      try { decoded = decodeURIComponent(url.password); } catch { /* keep the raw form */ }
+      for (const part of [host, url.password, decoded]) if (part) text = text.split(part).join("[redacted]");
     } catch { /* not a parsable URL: the whole-string redaction above is all we can do */ }
   }
   return text.replace(/[a-z][a-z0-9+.-]*:\/\/\S+/gi, "[redacted]");

@@ -191,10 +191,11 @@ export function readPolicyFileSafe(relPath: string): string {
   const { rootIndex, rest } = resolveCorpusPath(relPath);
   const content = readInRoot(rootIndex, rest);
   if (Buffer.byteLength(content, "utf-8") > MAX_READ_BYTES) {
-    // Slice by UTF-8 bytes (a split trailing character decodes to U+FFFD).
+    // Slice by UTF-8 bytes, backing off to a character boundary so the cut
+    // never decodes to U+FFFD.
     const bytes = Buffer.from(content, "utf-8");
     let end = MAX_READ_BYTES;
-    while (end > 0 && (bytes[end] & 0xc0) === 0x80) end--; // back off to a character boundary
+    while (end > 0 && (bytes[end] & 0xc0) === 0x80) end--;
     return bytes.subarray(0, end).toString("utf-8") + TRUNCATION_MARKER;
   }
   return content;

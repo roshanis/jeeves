@@ -5,8 +5,9 @@ import { runtimeDatabaseUrl } from "./lib/db/runtime-config";
 // same resolution as the runtime) is required at drizzle-kit invocation time
 // (migrations generation/push), not at Next.js build/runtime — see
 // .env.example and plan.md §4 (Neon Postgres + Drizzle). Note that
-// scripts/migrate.ts prefers DATABASE_MIGRATION_URL; this file does not. Fail fast with a clear message
-// rather than letting drizzle-kit produce an opaque error.
+// scripts/migrate.ts prefers DATABASE_MIGRATION_URL; this file does not.
+// Fail fast with a clear message rather than letting drizzle-kit produce an
+// opaque error.
 const databaseUrl = runtimeDatabaseUrl();
 if (!databaseUrl) {
   throw new Error(
