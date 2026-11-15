@@ -57,8 +57,8 @@ export function DecisionsTab({
               <div className="space-y-1.5">
                 <p className="kicker">Conditions</p>
                 <ul className="space-y-1">
-                  {decision.conditions.map((c) => (
-                    <li key={c.controlId} className="flex items-baseline gap-2 text-sm">
+                  {decision.conditions.map((c, ci) => (
+                    <li key={`${ci}-${c.controlId}`} className="flex items-baseline gap-2 text-sm">
                       <span>{c.text}</span>
                       <EvidenceLink slug={slug} tab="controls" className="text-xs">
                         → control {c.controlId}

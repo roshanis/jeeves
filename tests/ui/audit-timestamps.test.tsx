@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { AuditTab } from "@/components/jeeves/audit-tab";
 import { DecisionsTab } from "@/components/jeeves/decisions-tab";
 import { AuditConsole } from "@/components/jeeves/audit-console";
@@ -25,5 +25,20 @@ describe("audit timestamps", () => {
       <DecisionsTab slug="x" decisions={[{ type: "approved", approver: "A B", at: "2026-09-07T19:05:00.000Z", conditions: [], citations: [] }]} />,
     );
     expect(container.querySelector("time")?.textContent).toBe("2026-09-07 19:05 UTC");
+  });
+});
+
+describe("decisions tab keys", () => {
+  it("renders two conditions on the same control without a duplicate key warning", () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    renderWithProviders(
+      <DecisionsTab
+        slug="x"
+        decisions={[{ type: "conditionally_approved", approver: "A B", at: "2026-09-07T19:05:00.000Z", conditions: [{ text: "one", controlId: "Q-01" }, { text: "two", controlId: "Q-01" }], citations: [] }]}
+      />,
+    );
+    const dup = err.mock.calls.some((c) => String(c[0]).includes("same key"));
+    err.mockRestore();
+    expect(dup).toBe(false);
   });
 });
