@@ -78,3 +78,59 @@ it('does not rebind a signed domain to a new document version on upload',async()
  expect(saved.find((e:{controlId:string})=>e.controlId==='H-01').documentId).toBe('A');
  expect(saved.find((e:{controlId:string})=>e.controlId==='S-01').documentId).toBe('B');
 });
+
+describe('evidence tab copy, file input and errors',()=>{
+ it('says notes, page references and file names are included in AI review drafts',()=>{
+  mocks.session.mockReturnValue(null);render(<EvidenceTab slug="demo"/>);
+  expect(screen.queryByText(/send them to AI/i)).toBeNull();
+  expect(screen.getByText(/page references and file names/i)).toBeTruthy();
+ });
+ it('replaces the file input after an upload and clears the selection after an oversize pick',async()=>{
+  mocks.session.mockReturnValue({session:{token:'token'},startDemo:vi.fn()});mocks.base64.mockResolvedValue('cGRm');
+  mocks.request.mockImplementation((_s,_t,body)=>body?.action==='upload'?Promise.resolve({id:'B',fileName:'a.pdf',version:1,supersedesId:null,byteSize:3,createdAt:'2026-01-01T00:00:00Z',sha256:'x'}):Promise.resolve(evidenceState));
+  render(<EvidenceTab slug="demo"/>);
+  const first=await screen.findByLabelText('Choose document');
+  fireEvent.change(first,{target:{files:[new File(['pdf'],'a.pdf',{type:'application/pdf'})]}});
+  fireEvent.click(screen.getByRole('checkbox'));
+  fireEvent.click(screen.getByRole('button',{name:'Upload document'}));
+  await screen.findByText(/Document saved privately/);
+  expect(screen.getByLabelText('Choose document')).not.toBe(first);
+  const second=screen.getByLabelText('Choose document');
+  fireEvent.change(second,{target:{files:[new File(['pdf'],'b.pdf',{type:'application/pdf'})]}});
+  expect(screen.getByText(/Selected: b.pdf/)).toBeTruthy();
+  fireEvent.change(second,{target:{files:[new File([new Uint8Array(2*1024*1024+1)],'big.pdf',{type:'application/pdf'})]}});
+  expect(screen.queryByText(/Selected:/)).toBeNull();
+  expect(screen.getByLabelText('Choose document')).not.toBe(second);
+ });
+ it('signs the visitor out when the evidence API answers 401',async()=>{
+  const logout=vi.fn();mocks.session.mockReturnValue({session:{token:'token'},startDemo:vi.fn(),logout});
+  const {ApiError}=await import('@/lib/client/api');
+  mocks.request.mockRejectedValue(new ApiError(401,'expired'));
+  render(<EvidenceTab slug="demo"/>);
+  await waitFor(()=>expect(logout).toHaveBeenCalled());
+ });
+ it('lifts the pending-submission lock when a submit is rejected with a 4xx',async()=>{
+  mocks.session.mockReturnValue({session:{token:'token'},startDemo:vi.fn()});
+  const {ApiError}=await import('@/lib/client/api');
+  const entry={controlId:'H-01',documentId:'doc',pageReference:'',note:'n'};
+  const draft={id:'packet',revision:1,entries:[entry]};
+  const initial={...evidenceState,draft,requirements:[{id:'H-01',name:'Retention',domain:'privacy-hipaa',description:'Policy',policySource:null,status:'missing',entry:null,assessment:null,signed:false}]};
+  mocks.request.mockImplementation((_s,_t,body)=>body?.action==='submit'?Promise.reject(new ApiError(409,'Evidence changed.')):Promise.resolve(initial));
+  render(<EvidenceTab slug="demo"/>);
+  fireEvent.click(await screen.findByRole('button',{name:'Submit evidence for review'}));
+  await screen.findByText('Evidence changed.');
+  expect(screen.queryByText(/Submission confirmation pending/)).toBeNull();
+ });
+ it('keeps the page reference and note when the document choice is cleared and chosen again',async()=>{
+  mocks.session.mockReturnValue({session:{token:'token'},startDemo:vi.fn()});
+  const doc={id:'A',fileName:'a.pdf',version:1,supersedesId:null,byteSize:1024,createdAt:'2026-01-01T00:00:00Z',sha256:'x'};
+  mocks.request.mockResolvedValue({...evidenceState,documents:[doc],draft:{id:'d',revision:1,entries:[{controlId:'H-01',documentId:'A',pageReference:'',note:'My explanation'}]},requirements:[{id:'H-01',name:'Retention',domain:'privacy-hipaa',description:'Policy',policySource:null,status:'missing',entry:null,assessment:null,signed:false}]});
+  render(<EvidenceTab slug="demo"/>);
+  const select=await screen.findByLabelText('Document for H-01');
+  fireEvent.change(select,{target:{value:''}});
+  expect(screen.queryByLabelText('What this demonstrates for H-01')).toBeNull();
+  expect((screen.getByRole('button',{name:'Submit evidence for review'}) as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.change(screen.getByLabelText('Document for H-01'),{target:{value:'A'}});
+  expect((screen.getByLabelText('What this demonstrates for H-01') as HTMLTextAreaElement).value).toBe('My explanation');
+ });
+});

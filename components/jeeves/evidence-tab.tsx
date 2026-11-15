@@ -20,12 +20,13 @@ export function EvidenceTab({slug}:{slug:string}) {
   const live=useLiveSessionOptional();
   return <section className="space-y-5" aria-label="Evidence" data-slot="evidence-tab">
     <div><h2 className="text-lg font-semibold">Evidence</h2><p className="mt-1 text-sm text-muted-foreground">Attach documents to the requirements they support. Reviewers assess each requirement separately.</p></div>
-    <div className="rounded-lg border bg-muted/40 p-3 text-sm"><strong>Fictional documents only.</strong> PDF or DOCX, up to 2 MiB each. Files are <strong>not malware scanned</strong>. Upload only synthetic Meridian Health material. Documents are downloaded as attachments; Jeeves does not parse them or send them to AI.</div>
+    <div className="rounded-lg border bg-muted/40 p-3 text-sm"><strong>Fictional documents only.</strong> PDF or DOCX, up to 2 MiB each. Files are <strong>not malware scanned</strong>. Upload only synthetic Meridian Health material. Documents are downloaded as attachments; Jeeves does not parse them. Requester notes, page references and file names (not document contents) are included in AI review drafts.</div>
     {!live?.session?<div className="rounded-lg border p-5"><p className="text-sm">Start the demo to work with private evidence in your workspace.</p><Button className="mt-3" onClick={()=>live?.startDemo()}>Start demo</Button></div>:<EvidenceWorkspace key={`${slug}:${live.session.token}`} slug={slug} token={live.session.token}/>}
   </section>;
 }
 function EvidenceWorkspace({slug,token}:{slug:string;token:string}) {
   const router=useRouter();
+  const live=useLiveSessionOptional();
   const [state,setState]=useState<EvidenceState|null>(null);
   const [entries,setEntries]=useState<EvidenceEntry[]>([]);
   const [error,setError]=useState<string|null>(null);
@@ -33,6 +34,7 @@ function EvidenceWorkspace({slug,token}:{slug:string;token:string}) {
   const [busy,setBusy]=useState(false);
   const [pendingSubmission,setPendingSubmission]=useState<{id:string;revision:number}|null>(null);
   const [file,setFile]=useState<File|null>(null);
+  const [fileInputKey,setFileInputKey]=useState(0);
   const [uploadRequestId,setUploadRequestId]=useState('');
   const [supersedesId,setSupersedesId]=useState('');
   const [fictional,setFictional]=useState(false);
@@ -40,7 +42,7 @@ function EvidenceWorkspace({slug,token}:{slug:string;token:string}) {
   const [retry,setRetry]=useState(0);
   useEffect(()=>{
     const controller=new AbortController();
-    evidenceRequest<EvidenceState>(slug,token,undefined,controller.signal).then(next=>{setState(next);setEntries(next.draft?.entries??next.latest?.entries??[]);setPendingSubmission(null);setError(null);}).catch(e=>{if(!controller.signal.aborted)setError(message(e));});
+    evidenceRequest<EvidenceState>(slug,token,undefined,controller.signal).then(next=>{setState(next);setEntries(next.draft?.entries??next.latest?.entries??[]);setPendingSubmission(null);setError(null);}).catch(e=>{if(controller.signal.aborted)return;if(e instanceof ApiError&&e.status===401)live?.logout?.();setError(message(e));});
     return ()=>controller.abort();
   },[slug,token,retry]);
   async function refresh(preserveEdits=false) {
@@ -48,26 +50,28 @@ function EvidenceWorkspace({slug,token}:{slug:string;token:string}) {
     if(!preserveEdits)setEntries(next.draft?.entries??next.latest?.entries??[]);
     router.refresh();
   }
-  async function perform(action:()=>Promise<void>) {setBusy(true);setError(null);setNotice('');try{await action();}catch(e){setError(message(e));}finally{setBusy(false);}}
+  async function perform(action:()=>Promise<void>) {setBusy(true);setError(null);setNotice('');try{await action();}catch(e){if(e instanceof ApiError&&e.status===401)live?.logout?.();setError(message(e));}finally{setBusy(false);}}
+  const boundEntries=entries.filter(e=>e.documentId);
   function chooseFile(selected:File|undefined) {
     if(!selected)return;
-    if(selected.size>MAX_FILE_BYTES){setError('Choose a document of 2 MiB or less.');return;}
+    if(selected.size>MAX_FILE_BYTES){setFile(null);setFileInputKey(k=>k+1);setError('Choose a document of 2 MiB or less.');return;}
     setFile(selected);setUploadRequestId(crypto.randomUUID());setError(null);
   }
   function bind(controlId:string,changes:Partial<EvidenceEntry>) {
-    setEntries(previous=>{const existing=previous.find(e=>e.controlId===controlId)??{controlId,documentId:'',pageReference:'',note:''};const next={...existing,...changes};return [...previous.filter(e=>e.controlId!==controlId),...(next.documentId?[next]:[])];});
+    setEntries(previous=>{const existing=previous.find(e=>e.controlId===controlId)??{controlId,documentId:'',pageReference:'',note:''};const next={...existing,...changes};return [...previous.filter(e=>e.controlId!==controlId),next];});
   }
   async function save(submit:boolean) {
     if(!state?.cycleId)return;
     let packet=pendingSubmission;
     if(!packet){
-      const draft=await evidenceRequest<EvidencePacket>(slug,token,{action:'save_draft',cycleId:state.cycleId,expectedRevision:state.draft?.revision??0,entries});
+      const draft=await evidenceRequest<EvidencePacket>(slug,token,{action:'save_draft',cycleId:state.cycleId,expectedRevision:state.draft?.revision??0,entries:boundEntries});
       setState({...state,draft});packet={id:draft.id,revision:draft.revision};
     }
     if(submit){
       // Retry this exact packet if submission or the following read loses its response.
       setPendingSubmission(packet);
-      await evidenceRequest(slug,token,{action:'submit',packetId:packet.id,expectedRevision:packet.revision});
+      try{await evidenceRequest(slug,token,{action:'submit',packetId:packet.id,expectedRevision:packet.revision});}
+      catch(e){if(e instanceof ApiError&&e.status>=400&&e.status<500)setPendingSubmission(null);throw e;}
     }
     await refresh();setPendingSubmission(null);setNotice(submit?'Evidence submitted. Assigned reviewers can now assess it.':'Draft saved. It has not been submitted for review.');
   }
@@ -75,7 +79,7 @@ function EvidenceWorkspace({slug,token}:{slug:string;token:string}) {
     if(!file)return;
     const doc=await evidenceRequest<EvidenceDocument>(slug,token,{action:'upload',requestId:uploadRequestId,fileName:file.name,mediaType:file.type||(file.name.toLowerCase().endsWith('.pdf')?'application/pdf':'application/vnd.openxmlformats-officedocument.wordprocessingml.document'),contentBase64:await fileBase64(file),...(supersedesId?{supersedesId}:{})});
     if(supersedesId){const signedIds=new Set(state?.requirements.filter(r=>r.signed).map(r=>r.id));setEntries(previous=>previous.map(e=>e.documentId===supersedesId&&!signedIds.has(e.controlId)?{...e,documentId:doc.id}:e));}
-    await refresh(true);setFile(null);setUploadRequestId('');setSupersedesId('');setFictional(false);setNotice('Document saved privately. Link it to a requirement and submit it for review.');
+    await refresh(true);setFile(null);setFileInputKey(k=>k+1);setUploadRequestId('');setSupersedesId('');setFictional(false);setNotice('Document saved privately. Link it to a requirement and submit it for review.');
   }
   return <div className="space-y-5">
     {error?<div role="alert" className="rounded-lg border border-destructive/40 p-3 text-sm"><p>{error}</p><Button variant="outline" className="mt-2" disabled={busy} onClick={()=>{setError(null);setRetry(n=>n+1);}}>Reload evidence</Button></div>:null}
@@ -86,7 +90,7 @@ function EvidenceWorkspace({slug,token}:{slug:string;token:string}) {
       {state.canEdit?<fieldset disabled={busy||!!pendingSubmission} className="min-w-0 space-y-3 rounded-lg border p-4" onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();if(!busy&&!pendingSubmission)chooseFile(e.dataTransfer.files[0]);}}>
         <h3 className="font-medium flex items-center gap-2"><Upload className="size-4"/>Add a document</h3>
         <p className="text-sm text-muted-foreground">Drop a file here or choose one. Reuse it for several requirements below.</p>
-        <label className="block text-sm" htmlFor="evidence-file">Choose document</label><input id="evidence-file" className={inputClass} type="file" accept=".pdf,.docx" disabled={busy} onChange={e=>chooseFile(e.target.files?.[0])}/>
+        <label className="block text-sm" htmlFor="evidence-file">Choose document</label><input key={fileInputKey} id="evidence-file" className={inputClass} type="file" accept=".pdf,.docx" disabled={busy} onChange={e=>chooseFile(e.target.files?.[0])}/>
         {file?<p className="text-sm">Selected: {file.name} ({Math.ceil(file.size/1024)} KiB)</p>:null}
         <label className="block text-sm" htmlFor="evidence-replaces">Document version</label><select id="evidence-replaces" className={inputClass} disabled={busy} value={supersedesId} onChange={e=>{setSupersedesId(e.target.value);setUploadRequestId(crypto.randomUUID());}}><option value="">New document</option>{state.documents.filter(d=>!state.documents.some(next=>next.supersedesId===d.id)).map(d=><option value={d.id} key={d.id}>New version of {d.fileName} (v{d.version})</option>)}</select>
         <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={fictional} onChange={e=>setFictional(e.target.checked)} disabled={busy}/>This document is fictional and contains no real personal, health, or company data.</label>
@@ -96,8 +100,8 @@ function EvidenceWorkspace({slug,token}:{slug:string;token:string}) {
         <div><h3 className="font-medium">Required evidence</h3><p className="text-sm text-muted-foreground">Submitted files await reviewer assessment. Acceptance confirms evidence sufficiency; it does not approve the initiative.</p></div>
         {state.requirements.length===0?<p className="text-sm">No document requirements apply to this review cycle.</p>:null}
         {state.requirements.map(r=>{
-          const entry=entries.find(e=>e.controlId===r.id);
-          const draftDiffers=(entry?.documentId??'')!==(r.entry?.documentId??'')||(entry?.pageReference??'')!==(r.entry?.pageReference??'')||(entry?.note??'')!==(r.entry?.note??'');
+          const entry=entries.find(e=>e.controlId===r.id);const boundEntry=entry?.documentId?entry:undefined;
+          const draftDiffers=(boundEntry?.documentId??'')!==(r.entry?.documentId??'')||(boundEntry?.pageReference??'')!==(r.entry?.pageReference??'')||(boundEntry?.note??'')!==(r.entry?.note??'');
           const submittedDoc=state.documents.find(d=>d.id===r.entry?.documentId);
           const canAssess=state.reviewerDomain===r.domain&&state.latest&&!r.signed&&r.assessment?.packetId!==state.latest.id;
           return <article key={r.id} className="space-y-3 rounded-lg border p-4" aria-label={`${r.id} ${r.name}`}>
@@ -109,12 +113,12 @@ function EvidenceWorkspace({slug,token}:{slug:string;token:string}) {
             {r.signed?<p className="text-xs text-muted-foreground">This domain is signed. Its evidence is preserved for this review cycle.</p>:null}
             {state.canEdit&&!r.signed?<fieldset disabled={busy||!!pendingSubmission} className="grid min-w-0 gap-3">
               <label className="text-sm">Document for {r.id}<select className={`${inputClass} mt-1`} value={entry?.documentId??''} disabled={busy} onChange={e=>bind(r.id,{documentId:e.target.value})}><option value="">Choose an uploaded document</option>{state.documents.map(d=><option value={d.id} key={d.id}>{d.fileName} · v{d.version}</option>)}</select></label>
-              {entry?<><label className="text-sm">Relevant pages for {r.id} (optional)<input className={`${inputClass} mt-1`} maxLength={120} value={entry.pageReference} disabled={busy} onChange={e=>bind(r.id,{pageReference:e.target.value})}/></label><label className="text-sm">What this demonstrates for {r.id}<textarea className={`${inputClass} mt-1`} maxLength={2000} value={entry.note} disabled={busy} onChange={e=>bind(r.id,{note:e.target.value})}/></label></>:null}
+              {boundEntry?<><label className="text-sm">Relevant pages for {r.id} (optional)<input className={`${inputClass} mt-1`} maxLength={120} value={boundEntry.pageReference} disabled={busy} onChange={e=>bind(r.id,{pageReference:e.target.value})}/></label><label className="text-sm">What this demonstrates for {r.id}<textarea className={`${inputClass} mt-1`} maxLength={2000} value={boundEntry.note} disabled={busy} onChange={e=>bind(r.id,{note:e.target.value})}/></label></>:null}
             </fieldset>:null}
             {canAssess?<div className="space-y-2 border-t pt-3"><label className="text-sm">Reviewer reason for {r.id}<textarea className={`${inputClass} mt-1`} maxLength={2000} value={reasons[r.id]??''} disabled={busy} onChange={e=>setReasons({...reasons,[r.id]:e.target.value})}/></label><div className="flex flex-wrap gap-2">{(['accepted','changes_requested'] as const).map(decision=><Button key={decision} variant={decision==='accepted'?'default':'outline'} disabled={busy||!reasons[r.id]?.trim()||(decision==='accepted'&&!r.entry)} onClick={()=>void perform(async()=>{await evidenceRequest(slug,token,{action:'assess',packetId:state.latest!.id,controlId:r.id,decision,reason:reasons[r.id]});await refresh();setNotice('Reviewer assessment recorded.');})}>{decision==='accepted'?'Accept evidence':'Request changes'}</Button>)}</div></div>:null}
           </article>;
         })}
-        {state.canEdit&&state.requirements.some(r=>!r.signed)?<div className="flex flex-wrap items-center gap-3"><Button variant="outline" disabled={busy||!!pendingSubmission} onClick={()=>void perform(()=>save(false))}>Save evidence draft</Button><Button disabled={busy||entries.length===0} onClick={()=>void perform(()=>save(true))}>{pendingSubmission?'Retry submission':state.latest?'Submit revised evidence':'Submit evidence for review'}</Button><span className="text-xs text-muted-foreground">{entries.length} requirement(s) linked. {state.draft?'Saved draft available.':'Submission preserves an exact snapshot.'}</span></div>:null}
+        {state.canEdit&&state.requirements.some(r=>!r.signed)?<div className="flex flex-wrap items-center gap-3"><Button variant="outline" disabled={busy||!!pendingSubmission} onClick={()=>void perform(()=>save(false))}>Save evidence draft</Button><Button disabled={busy||boundEntries.length===0} onClick={()=>void perform(()=>save(true))}>{pendingSubmission?'Retry submission':state.latest?'Submit revised evidence':'Submit evidence for review'}</Button><span className="text-xs text-muted-foreground">{boundEntries.length} requirement(s) linked. {state.draft?'Saved draft available.':'Submission preserves an exact snapshot.'}</span></div>:null}
       </>}
       <details className="rounded-lg border p-4"><summary className="cursor-pointer font-medium">Document library and version history ({state.documents.length})</summary><div className="mt-3 space-y-3">{state.documents.map(d=><div key={d.id} className="flex flex-wrap items-center justify-between gap-2 border-t pt-3"><div className="text-sm"><p className="flex items-center gap-2"><FileText className="size-4"/>{d.fileName} · v{d.version}</p><p className="text-xs text-muted-foreground">{Math.ceil(d.byteSize/1024)} KiB · {new Date(d.createdAt).toLocaleDateString()} · Not malware scanned</p><p className="max-w-lg break-all font-mono text-xs text-muted-foreground">SHA-256: {d.sha256}</p></div><Button variant="outline" size="sm" disabled={busy} onClick={()=>void perform(()=>downloadEvidenceFile(slug,token,d.id,d.fileName))}>Download {d.fileName} v{d.version}</Button></div>)}</div></details>
       <details className="rounded-lg border p-4"><summary className="cursor-pointer font-medium">Submission history ({state.history.length})</summary><div className="mt-3 space-y-3">{state.history.map(p=><div key={p.id} className="border-t pt-3 text-sm"><p>Submission v{p.version} · {p.submittedAt?new Date(p.submittedAt).toLocaleString():''}</p>{p.entries.map(e=><p key={e.controlId}>{e.controlId}: {state.documents.find(d=>d.id===e.documentId)?.fileName} · document v{state.documents.find(d=>d.id===e.documentId)?.version}{e.pageReference?` · Pages ${e.pageReference}`:''}</p>)}{p.assessments.map(a=><p key={a.id} className="text-muted-foreground">{a.controlId}: {statusLabels[a.decision]} — {a.reason}</p>)}</div>)}</div></details>
