@@ -121,6 +121,15 @@ export function LandingPage() {
                 aria-hidden
               />
               <GovernanceLoopDiagram />
+              <ol className="sr-only" aria-label="Governance loop steps">
+                <li>Intake</li>
+                <li>Triage</li>
+                <li>Eight domain reviews: Legal, Tech, Security, Clinical, Procurement, Responsible AI, Privacy, Data Governance</li>
+                <li>Decision by a named approver</li>
+                <li>Effective controls</li>
+                <li>Monitor</li>
+                <li>On a threshold breach, reassess, then return to the decision</li>
+              </ol>
             </div>
           </div>
         </div>

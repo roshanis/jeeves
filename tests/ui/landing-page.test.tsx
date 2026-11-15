@@ -34,6 +34,14 @@ describe("LandingPage", () => {
     expect(container.textContent).toContain("kept in your own isolated workspace");
   });
 
+  it("gives the governance-loop diagram a text alternative listing its steps", () => {
+    const { getByRole } = render(<LandingPage />);
+    const steps = getByRole("list", { name: "Governance loop steps", hidden: true });
+    expect(steps.textContent).toContain("Triage");
+    expect(steps.textContent).toContain("named approver");
+    expect(steps.textContent).toContain("reassess");
+  });
+
   it("renders the hero headline", () => {
     const { getByRole } = render(<LandingPage />);
     const heading = getByRole("heading", {
