@@ -41,14 +41,25 @@ export default function PrivacyPage() {
         <p>If you start a session — either by starting the demo or by sending a real request — we store:</p>
         <ul className="ml-5 list-disc space-y-1.5">
           <li>
-            <span className="font-medium">A session cookie</span> (<code className="font-mono text-xs">jeeves_workspace</code>),
+            <span className="font-medium">A session cookie in the demo</span> (<code className="font-mono text-xs">jeeves_workspace</code>),
             which identifies your isolated demo workspace so your records stay
             separate from other visitors&rsquo;. It is HttpOnly, signed, lasts
             seven days, and contains no personal information.
           </li>
           <li>
             <span className="font-medium">A session token</span> held in your
-            browser&rsquo;s sessionStorage. It is cleared when you close the tab.
+            browser&rsquo;s sessionStorage
+            (<code className="font-mono text-xs">jeeves_live_session</code>, and{" "}
+            <code className="font-mono text-xs">jeeves_live_registry</code> for the
+            actions you have run). A real request sets no cookie; this token is
+            all it keeps. It is cleared when you close the tab.
+          </li>
+          <li>
+            <span className="font-medium">Two local preferences</span> in your
+            browser&rsquo;s localStorage:{" "}
+            <code className="font-mono text-xs">jeeves-theme</code> (light or dark)
+            and <code className="font-mono text-xs">jeeves_cookie_notice_ack</code>{" "}
+            (that you dismissed the cookie notice). They never leave your browser.
           </li>
           <li>
             <span className="font-medium">Whatever you type into the intake

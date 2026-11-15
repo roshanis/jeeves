@@ -85,6 +85,15 @@ describe("legal pages", () => {
     expect(screen.getAllByText(/do not enter real/i).length).toBeGreaterThan(0);
   });
 
+  it("privacy lists every browser storage key the app writes and scopes the cookie to the demo", () => {
+    const { container } = renderWithProviders(<PrivacyPage />);
+    const text = container.textContent ?? "";
+    for (const key of ["jeeves_live_session", "jeeves_live_registry", "jeeves-theme", "jeeves_cookie_notice_ack", "localStorage"]) {
+      expect(text, key).toContain(key);
+    }
+    expect(text).toContain("A real request sets no cookie");
+  });
+
   it("privacy is honest that AI processing sends data to OpenAI", () => {
     renderWithProviders(<PrivacyPage />);
     expect(screen.getByText(/OpenAI/)).toBeDefined();
