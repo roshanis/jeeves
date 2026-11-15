@@ -31,7 +31,7 @@ import {
 } from "@/lib/services/monitor-service";
 import { expireDueExceptions } from "@/lib/services/exception-service";
 import { SYSTEM_ACTOR } from "@/lib/services/actors";
-import { checkOperatorAttempt, checkReadOnlyMode, clientKeyFor } from "@/lib/services/route-guard";
+import { checkOperatorAttempt, checkReadOnlyMode, clientKeyFor, operatorAttemptStatus } from "@/lib/services/route-guard";
 
 // Kept in sync with app/api/monitor/run/route.ts#DEFAULT_MONITOR_NOW_TS (a
 // literal here rather than a cross-route import — same rationale as that file).
@@ -55,6 +55,16 @@ function authorizeCron(req: Request): { ok: true } | { ok: false; status: 401 | 
 }
 
 export async function GET(req: Request): Promise<Response> {
+  // A locked-out client is refused before the compare, right or wrong.
+  if (process.env.CRON_SECRET) {
+    const status = await operatorAttemptStatus(clientKeyFor(req));
+    if (!status.allowed) {
+      return Response.json(
+        { error: "too many attempts — try again later" },
+        { status: 429, headers: { "Retry-After": String(status.retryAfterSeconds) } },
+      );
+    }
+  }
   const auth = authorizeCron(req);
   if (!auth.ok) {
     if (auth.status === 401) {

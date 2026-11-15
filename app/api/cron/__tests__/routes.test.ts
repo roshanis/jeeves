@@ -113,4 +113,27 @@ describe("GET /api/cron/monitor", () => {
     expect(statuses[0]).toBe(401);
     expect(statuses).toContain(429);
   });
+
+  it("refuses the correct bearer from a client that has used up its failed attempts", async () => {
+    const { GET } = await import("../monitor/route");
+    const req = (secret: string, ip: string) => new Request("http://localhost/api/cron/monitor", {
+      method: "GET",
+      headers: { authorization: `Bearer ${secret}`, "x-forwarded-for": ip },
+    });
+    for (let n = 0; n < 12; n++) await GET(req("wrong-secret", "30.0.0.2"));
+    const locked = await GET(req(CRON_SECRET, "30.0.0.2"));
+    expect(locked.status).toBe(429);
+    expect(locked.headers.get("Retry-After")).toBeTruthy();
+    expect((await GET(req(CRON_SECRET, "30.0.0.3"))).status).toBe(200);
+  });
+
+  it("never spends a token for correct calls", async () => {
+    const { GET } = await import("../monitor/route");
+    const req = (secret: string) => new Request("http://localhost/api/cron/monitor", {
+      method: "GET",
+      headers: { authorization: `Bearer ${secret}`, "x-forwarded-for": "30.0.0.4" },
+    });
+    for (let n = 0; n < 11; n++) expect((await GET(req(CRON_SECRET))).status).toBe(200);
+    expect((await GET(req("wrong-secret"))).status).toBe(401);
+  });
 });

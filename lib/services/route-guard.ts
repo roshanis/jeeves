@@ -233,6 +233,19 @@ export async function checkOperatorAttempt(
   return operatorAttemptLimiter.checkAndConsume(bucketKey("operator", clientKey));
 }
 
+/**
+ * Read-only: is this client already locked out? The operator and cron doors
+ * call it BEFORE comparing the secret, so a locked-out client cannot confirm a
+ * correct guess. Requests in flight together can each pass this read before
+ * one of them spends a token, so the bound is the capacity plus the
+ * concurrency; the length of the secret remains the first protection.
+ */
+export async function operatorAttemptStatus(
+  clientKey: string,
+): Promise<{ allowed: boolean; retryAfterSeconds: number }> {
+  return operatorAttemptLimiter.peek(bucketKey("operator", clientKey));
+}
+
 export type GuardFailureKind = "unauthorized" | "rate_limited" | "invalid_input" | "budget_exhausted" | "read_only" | "payload_too_large";
 
 export interface GuardFailure {

@@ -477,6 +477,23 @@ describe("the operator's inbound request queue", () => {
     expect(limited).toBe(true);
   });
 
+  it("refuses the correct token from a client that has used up its failed attempts", async () => {
+    process.env.OPERATOR_TOKEN = OPERATOR_TOKEN;
+    for (let i = 0; i < 12; i += 1) await readQueue("Bearer wrong-token-attempt", "80.5.3.7");
+    const locked = await readQueue(`Bearer ${OPERATOR_TOKEN}`, "80.5.3.7");
+    expect(locked.status).toBe(429);
+    expect(locked.headers.get("Retry-After")).toBeTruthy();
+    expect((await readQueue(`Bearer ${OPERATOR_TOKEN}`, "80.5.3.8")).status).toBe(200);
+  });
+
+  it("never spends a token for correct calls", async () => {
+    process.env.OPERATOR_TOKEN = OPERATOR_TOKEN;
+    for (let i = 0; i < 12; i += 1) {
+      expect((await readQueue(`Bearer ${OPERATOR_TOKEN}`, "80.5.3.9")).status).toBe(200);
+    }
+    expect((await readQueue("Bearer wrong-token-attempt", "80.5.3.9")).status).toBe(401);
+  });
+
   it("lists only real requests, not playground role-play", async () => {
     process.env.OPERATOR_TOKEN = OPERATOR_TOKEN;
     const requesterToken = await demoSession("priya-raman", "80.5.4.1");

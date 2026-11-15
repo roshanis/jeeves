@@ -52,6 +52,10 @@ export class DbTokenBucketRateLimiter {
           * ${refillPerSecond}::double precision
     )`;
 
+    // The refill stamp only moves forward (greatest below). If an instance
+    // whose clock runs ahead wrote it, the bucket keeps its tokens and does not
+    // refill until real time catches up; before 7ef6f2a the negative elapsed
+    // time denied every request outright.
     const rows = await db.execute(sql`
       insert into "rate_limit_buckets" ("key", "tokens", "last_refill_ms", "last_touched_ms")
       values (${key}, ${capacity - 1}::double precision, ${nowMs}::bigint, ${nowMs}::bigint)
@@ -70,6 +74,27 @@ export class DbTokenBucketRateLimiter {
     }
 
     return { allowed: false, retryAfterSeconds: await this.retryAfter(key, nowMs) };
+  }
+
+  /**
+   * Read-only: would `checkAndConsume(key)` be allowed now? Writes nothing.
+   * A key with no row is allowed.
+   */
+  async peek(key: string): Promise<RateLimitResult> {
+    const nowMs = this.now();
+    const { capacity, refillPerSecond } = this.config;
+    const rows = await this.getDb().execute(sql`
+      select least(
+        ${capacity}::double precision,
+        "tokens" + (greatest(${nowMs}::bigint - "last_refill_ms", 0)::double precision / 1000.0)
+          * ${refillPerSecond}::double precision
+      ) as "balance"
+      from "rate_limit_buckets" where "key" = ${key}
+    `);
+    const row = this.firstRow(rows);
+    if (!row || Number(row.balance) >= 1) return { allowed: true, retryAfterSeconds: 0 };
+    if (refillPerSecond <= 0) return { allowed: false, retryAfterSeconds: Number.POSITIVE_INFINITY };
+    return { allowed: false, retryAfterSeconds: Math.max(0, (1 - Number(row.balance)) / refillPerSecond) };
   }
 
   /**

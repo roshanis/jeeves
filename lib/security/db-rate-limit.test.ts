@@ -55,6 +55,28 @@ describe("DbTokenBucketRateLimiter", () => {
     expect((await instanceB.checkAndConsume("shared")).allowed).toBe(false);
   });
 
+  it("peek reports the balance without writing", async () => {
+    const rl = limiter(2, 0);
+    expect(await rl.peek("p")).toEqual({ allowed: true, retryAfterSeconds: 0 });
+    expect((await db.execute(sql`select 1 from "rate_limit_buckets" where "key" = 'p'`)).rows).toHaveLength(0);
+
+    await rl.checkAndConsume("p");
+    await rl.checkAndConsume("p");
+    const before = (await db.execute(sql`select "tokens", "last_refill_ms" from "rate_limit_buckets" where "key" = 'p'`)).rows;
+    expect((await rl.peek("p")).allowed).toBe(false);
+    expect((await rl.peek("p")).allowed).toBe(false);
+    const after = (await db.execute(sql`select "tokens", "last_refill_ms" from "rate_limit_buckets" where "key" = 'p'`)).rows;
+    expect(after).toEqual(before);
+
+    const refilling = limiter(1, 1 / 30);
+    await refilling.checkAndConsume("q");
+    const denied = await refilling.peek("q");
+    expect(denied.allowed).toBe(false);
+    expect(denied.retryAfterSeconds).toBeGreaterThan(0);
+    clock += 31_000;
+    expect((await refilling.peek("q")).allowed).toBe(true);
+  });
+
   it("keys are independent of one another", async () => {
     const rl = limiter(1, 0);
 
