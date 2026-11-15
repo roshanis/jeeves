@@ -21,6 +21,8 @@
  *
  * 200: { ranAt, nowTs, ...RunMonitorResult }
  * 401: missing/invalid bearer.  503: CRON_SECRET not configured.
+ * 403: read-only preview (answered before the bearer is looked at).
+ * 429: too many failed attempts from this client.
  * 400: nowTs not a valid ISO-8601 timestamp, or outside [base date, now + 1 day].
  */
 import { createHash, timingSafeEqual } from "node:crypto";
@@ -55,8 +57,15 @@ function authorizeCron(req: Request): { ok: true } | { ok: false; status: 401 | 
 }
 
 export async function GET(req: Request): Promise<Response> {
-  // A locked-out client is refused before the compare, right or wrong.
   if (process.env.CRON_SECRET) {
+    // The read-only preview has nothing to run and may have no database for
+    // the limiter to read, so it answers first. The mode is no secret: every
+    // mutation route gives anyone the same answer.
+    const readOnlyFailure = checkReadOnlyMode();
+    if (readOnlyFailure) {
+      return Response.json({ error: readOnlyFailure.message }, { status: readOnlyFailure.status });
+    }
+    // A locked-out client is refused before the compare, right or wrong.
     const status = await operatorAttemptStatus(clientKeyFor(req));
     if (!status.allowed) {
       return Response.json(
@@ -80,11 +89,6 @@ export async function GET(req: Request): Promise<Response> {
     const message =
       auth.status === 503 ? "scheduled monitoring not configured (CRON_SECRET unset)" : "unauthorized";
     return Response.json({ error: message }, { status: auth.status });
-  }
-
-  const readOnlyFailure = checkReadOnlyMode();
-  if (readOnlyFailure) {
-    return Response.json({ error: readOnlyFailure.message }, { status: readOnlyFailure.status });
   }
 
   const nowParam = new URL(req.url).searchParams.get("nowTs");
