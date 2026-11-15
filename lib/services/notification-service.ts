@@ -23,7 +23,7 @@
  *    keeping the review, which is the failure mode that makes a governance
  *    queue quietly stall.
  */
-import { and, asc, eq, isNull, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, isNull, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import type { Db } from "../db/client";
 import { initiatives, reviewNotifications } from "../db/schema";
@@ -136,7 +136,7 @@ export async function pendingNotificationsForDomain(
  * Unscoped on purpose, so it must never feed a page or route a viewer can
  * reach: each subject and body embeds the initiative's title, and playground
  * visitors each own a workspace. Anything shown to a viewer goes through
- * undeliveredNotificationsForViewer.
+ * recentUndeliveredNotifications.
  */
 export async function undeliveredNotifications(db: Db): Promise<ReviewNotificationRow[]> {
   return db
@@ -147,28 +147,47 @@ export async function undeliveredNotifications(db: Db): Promise<ReviewNotificati
 }
 
 /**
- * The undelivered queue as one viewer may see it: the asks for initiatives in
- * the viewer's own workspace plus those for shared (null-workspace) examples,
- * the same visibility rule as every other read (lib/services/workspace-guard.ts
- * workspaceMismatch). A viewer with no workspace sees the shared examples only.
- * Visibility is resolved through the notification's initiative, which is
- * where the workspace lives.
+ * The undelivered queue as one viewer may see it: the newest `limit` requests
+ * (newest first) plus the total, for the /reviews page. Nothing is ever marked
+ * delivered while no transport is configured, so the unbounded list above only
+ * grows.
+ *
+ * Scoped to the viewer's workspace, because subject and body embed the
+ * initiative title: the asks for initiatives in the viewer's own workspace plus
+ * those for shared (null-workspace) examples, and a viewer with no workspace
+ * sees the shared examples only. The same visibility rule as every other read
+ * (lib/services/workspace-guard.ts workspaceMismatch), resolved through the
+ * notification's initiative, which is where the workspace lives. Rows and
+ * total use the same filter, so the count never reveals how many requests
+ * other workspaces hold.
  */
-export async function undeliveredNotificationsForViewer(
+export async function recentUndeliveredNotifications(
   db: Db,
   viewerWorkspaceId: string | null,
-): Promise<ReviewNotificationRow[]> {
-  const visible =
+  limit = 50,
+): Promise<{ rows: ReviewNotificationRow[]; total: number }> {
+  const visible = and(
+    isNull(reviewNotifications.deliveredAt),
     viewerWorkspaceId === null
       ? isNull(initiatives.workspaceId)
-      : or(isNull(initiatives.workspaceId), eq(initiatives.workspaceId, viewerWorkspaceId));
-  const rows = await db
-    .select({ notification: reviewNotifications })
-    .from(reviewNotifications)
-    .innerJoin(initiatives, eq(reviewNotifications.initiativeId, initiatives.id))
-    .where(and(isNull(reviewNotifications.deliveredAt), visible))
-    .orderBy(asc(reviewNotifications.createdAt));
-  return rows.map((row) => row.notification) as ReviewNotificationRow[];
+      : or(isNull(initiatives.workspaceId), eq(initiatives.workspaceId, viewerWorkspaceId)),
+  );
+  const [rows, counted] = await Promise.all([
+    db
+      .select({ n: reviewNotifications })
+      .from(reviewNotifications)
+      .innerJoin(initiatives, eq(initiatives.id, reviewNotifications.initiativeId))
+      .where(visible)
+      .orderBy(desc(reviewNotifications.createdAt))
+      .limit(limit)
+      .then((r) => r.map((x) => x.n as ReviewNotificationRow)),
+    db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(reviewNotifications)
+      .innerJoin(initiatives, eq(initiatives.id, reviewNotifications.initiativeId))
+      .where(visible),
+  ]);
+  return { rows, total: counted[0]?.n ?? rows.length };
 }
 
 export interface TransportStatus {
