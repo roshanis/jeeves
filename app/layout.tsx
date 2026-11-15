@@ -70,7 +70,6 @@ export const metadata: Metadata = {
     title: "Jeeves — AI Governance Gateway",
     description:
       "Intake, risk tiering, domain review, approval and continuous monitoring for AI initiatives — demonstrated end to end on a fictional healthcare payer.",
-    url: SITE_URL,
   },
   twitter: {
     card: "summary_large_image",
