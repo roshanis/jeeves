@@ -557,7 +557,10 @@ test.describe("live demo loop: create → QC → triage → draft run → sign �
 // A real browser -> authenticated API -> private DB document loop; no LLM calls.
 test('requester evidence: upload, return, revision, acceptance and download history', async ({page}) => {
   test.setTimeout(120_000);
-  await page.setExtraHTTPHeaders({'x-forwarded-for':'evidence-browser-test'});
+  // Own rate-limit bucket, and a fresh one per attempt: a run that gets most of
+  // the way through spends the bucket, so a retry (or --repeat-each) from the
+  // same address stops at "rate limit exceeded" instead of testing anything.
+  await page.setExtraHTTPHeaders({'x-forwarded-for':`evidence-browser-test-${test.info().repeatEachIndex}-${test.info().retry}`});
   async function login(persona: string) {
     const start = page.getByRole("button", { name: "Start demo", exact: true });
     if (await start.isVisible()) {
@@ -585,7 +588,10 @@ test('requester evidence: upload, return, revision, acceptance and download hist
   await page.locator('[data-slot="run-triage"]').click();
   await expect(page.locator('[data-slot="triage-result"]')).toBeVisible({timeout:30000});
   await page.getByRole('tab',{name:'Evidence',exact:true}).click();
-  const panel=page.locator('[data-slot="evidence-tab"]');
+  // Visible only: for a signed-in visitor a full load renders the case page in
+  // the browser while React still holds the server-rendered copy in a hidden
+  // container (up to about 300 ms), so both are in the document for a moment.
+  const panel=page.locator('[data-slot="evidence-tab"]').filter({visible:true});
   const pdf=Buffer.from('%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF\n');
   async function upload(name:string) {
     await panel.getByLabel('Choose document',{exact:true}).setInputFiles({name,mimeType:'application/pdf',buffer:pdf});
