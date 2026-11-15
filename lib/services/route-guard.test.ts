@@ -145,6 +145,20 @@ describe("lib/services/route-guard", () => {
       const req = new Request("http://localhost/api/x");
       expect(extractSessionToken(req)).toBeNull();
     });
+
+    it("treats a malformed percent-encoded session cookie as no session", () => {
+      const req = new Request("http://localhost/api/x", {
+        headers: { cookie: "jeeves_session=%E0%A4%A" },
+      });
+      expect(extractSessionToken(req)).toBeNull();
+    });
+
+    it("matches the Bearer scheme case-insensitively", () => {
+      const req = new Request("http://localhost/api/x", {
+        headers: { authorization: "bearer tok" },
+      });
+      expect(extractSessionToken(req)).toBe("tok");
+    });
   });
 
   describe("clientKeyFor", () => {

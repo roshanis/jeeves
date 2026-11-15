@@ -290,7 +290,7 @@ const SESSION_COOKIE_NAME = "jeeves_session";
 
 export function extractSessionToken(req: Request): string | null {
   const auth = req.headers.get("authorization");
-  if (auth?.startsWith("Bearer ")) {
+  if (auth && /^bearer /i.test(auth)) {
     return auth.slice("Bearer ".length).trim();
   }
   const cookieHeader = req.headers.get("cookie");
@@ -299,7 +299,14 @@ export function extractSessionToken(req: Request): string | null {
       .split(";")
       .map((p) => p.trim())
       .find((p) => p.startsWith(`${SESSION_COOKIE_NAME}=`));
-    if (match) return decodeURIComponent(match.slice(SESSION_COOKIE_NAME.length + 1));
+    if (match) {
+      // A stray "%" must read as "no session", not throw into a 500.
+      try {
+        return decodeURIComponent(match.slice(SESSION_COOKIE_NAME.length + 1));
+      } catch {
+        return null;
+      }
+    }
   }
   return null;
 }
