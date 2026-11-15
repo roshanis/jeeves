@@ -19,6 +19,24 @@ describe("next.config.ts", () => {
     }
   });
 
+  // Next applies every matching rule and a later one replaces an earlier value
+  // for the same key, so a specific rule listed after the catch-all wins.
+  async function effectiveHeader(path: string, key: string): Promise<string | undefined> {
+    const { match } = await import("next/dist/compiled/path-to-regexp");
+    let value: string | undefined;
+    for (const rule of await nextConfig.headers!()) {
+      if (!match(rule.source)(path)) continue;
+      for (const h of rule.headers) if (h.key === key) value = h.value;
+    }
+    return value;
+  }
+
+  it("marks every /api response private and uncacheable, varying on credentials", async () => {
+    expect(await effectiveHeader("/api/exceptions", "Cache-Control")).toBe("private, no-store");
+    expect(await effectiveHeader("/api/initiatives/init-1/intake", "Vary")).toBe("Authorization, Cookie");
+    expect(await effectiveHeader("/dashboard", "Cache-Control")).toBeUndefined();
+  });
+
   // lib/config/deployment-mode.ts reads process.env.JEEVES_DEMO_ENABLED, which
   // is only a build-time constant if next.config.ts inlines it through `env`.
   // The default must be "1": a plain build (Vercel, the e2e build, a local
