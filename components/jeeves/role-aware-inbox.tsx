@@ -438,7 +438,7 @@ export function RoleAwareInbox({
 }: {
   initiatives: InitiativeSummary[];
   recentDecisions: DecisionEntry[];
-  decisionCounts?: DecisionCounts;
+  decisionCounts: DecisionCounts;
   alerts: InitiativeSummary[];
   incidentCount: number | null;
   counts: { inReview: number; slaBreaches: number; reassessing: number; deployed: number };
@@ -487,7 +487,7 @@ function RoleView({
   reviewerDomain: Domain | null;
   initiatives: InitiativeSummary[];
   recentDecisions: DecisionEntry[];
-  decisionCounts?: DecisionCounts;
+  decisionCounts: DecisionCounts;
   alerts: InitiativeSummary[];
   incidentCount: number | null;
   counts: { inReview: number; slaBreaches: number; reassessing: number; deployed: number };
@@ -1079,18 +1079,13 @@ function AuditView({
 }: {
   initiatives: InitiativeSummary[];
   recentDecisions: DecisionEntry[];
-  decisionCounts?: DecisionCounts;
+  decisionCounts: DecisionCounts;
 }) {
   const awaitingDecision = initiatives.filter(
     (i) => i.decisionReadiness?.canApprove || i.decisionReadiness?.canConditionallyApprove,
   );
-  // Portfolio-wide totals from the page; the feed's own six are the fallback.
-  const totals: DecisionCounts = decisionCounts ?? {
-    approved: recentDecisions.filter((d) => d.dec.type === "approved" || d.dec.type === "fast_lane_approved").length,
-    conditional: recentDecisions.filter((d) => d.dec.type === "conditionally_approved").length,
-    rejected: recentDecisions.filter((d) => d.dec.type === "rejected").length,
-    total: recentDecisions.length,
-  };
+  // Portfolio-wide totals computed by the page (the feed holds only the newest six).
+  const totals = decisionCounts;
   const approvedCount = totals.approved;
   const conditionalCount = totals.conditional;
   const rejectedCount = totals.rejected;
