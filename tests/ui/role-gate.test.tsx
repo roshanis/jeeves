@@ -95,7 +95,7 @@ describe("RoleGate mechanisms", () => {
     expect(popup.closest(".sr-only")).toBeNull();
   });
 
-  // In a browser a mouse click or a tap focuses the action without :focus-visible, so focus does
+  // In Chromium a mouse click or a tap focuses the action without :focus-visible, so focus does
   // not open the reason there. The tooltip library treats every focus in jsdom as visible, and the
   // press focuses the action, so the test above passes on focus alone. This one takes focus away.
   it("opens the reason on a press when focus does not show it", async () => {
@@ -103,10 +103,7 @@ describe("RoleGate mechanisms", () => {
     try {
       render(<RoleProvider><TooltipProvider><GatedActionButton label="Promote" /></TooltipProvider></RoleProvider>);
       fireEvent.click(screen.getByRole("button", { name: "Promote" }));
-      await waitFor(() => {
-        const el = document.querySelector('[data-slot="tooltip-content"]');
-        expect(el?.hasAttribute("data-open")).toBe(true);
-      });
+      await waitFor(() => expect(popupOpen()).toBe(true));
     } finally {
       focus.mockRestore();
     }
@@ -127,7 +124,7 @@ describe("RoleGate mechanisms", () => {
   const leave = (el: HTMLElement) => { fireEvent.mouseOut(el); fireEvent(el, new MouseEvent("mouseleave")); };
 
   // jsdom does not reproduce the tooltip closing on a press of its trigger: that half of the
-  // behaviour is tested in a real browser (tests/e2e/disabled-actions.spec.ts). This pins the toggle.
+  // behaviour is tested in a real browser (tests/e2e/disabled-actions.spec.ts). This guards against a toggle.
   it("does not toggle the reason off when the disabled button is pressed again", async () => {
     const button = await openByTap();
     fireEvent.pointerDown(button);
@@ -183,7 +180,7 @@ describe("RoleGate mechanisms", () => {
       </TooltipProvider></RoleProvider>,
     );
     const button = screen.getByRole("button", { name: "Promote" });
-    // jsdom, like Safari, does not focus a button that is clicked.
+    // fireEvent.click sends a click and nothing else, so nothing focuses the button, as with a click in Safari.
     fireEvent.click(button);
     await waitFor(() => expect(popupOpen()).toBe(true));
     expect(document.activeElement).toBe(button);

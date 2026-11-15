@@ -16,7 +16,8 @@ import { test, expect, type Locator, type Page } from "@playwright/test";
  * The component test in jsdom reproduces only the mouse-leave half: there a
  * press on the button does not close the tooltip, with or without the fix.
  * These run in a real browser, and like the rest of the suite in Chromium
- * only: that Safari does not focus a clicked button is the component test's.
+ * only. Safari does not focus a button that is clicked: the last test takes
+ * that default away from Chromium, for the one line that exists for Safari.
  *
  * Presses go to coordinates or to the keyboard, not through locator.click()
  * or locator.tap(): Playwright waits for an element to be enabled before it
@@ -58,7 +59,8 @@ async function centreOf(action: Locator) {
  * goto() returns before React has hydrated the page, and a hover that arrives
  * before then is lost for good (seen with the CPU slowed twenty times). The
  * gesture that first shows the reason is therefore repeated until it works.
- * That a first press shows the reason at all is the component test's.
+ * That a first press shows the reason at all is pinned by the component test:
+ * here it would only show as this helper timing out.
  */
 async function showReason(page: Page, gesture: () => Promise<void>) {
   await expect(async () => {
@@ -150,6 +152,26 @@ test.describe("a disabled action with a mouse and a keyboard", () => {
     // Focus leaving the action dismisses. The next tab stop is not another disabled action.
     await page.keyboard.press("Tab");
     await expect(action).not.toBeFocused();
+    await expect(reasonOf(page)).toBeHidden();
+  });
+
+  test("Tab dismisses a clicked reason where a click does not focus the button", async ({ page }) => {
+    // Safari does not focus a button that is clicked. With no focus on the action, Tab has nothing
+    // to take focus from and the reason would stay. Cancelling the default of mousedown keeps
+    // Chromium from focusing the button too. It simulates that one difference, not Safari.
+    await page.addInitScript(() => {
+      window.addEventListener("mousedown", (event) => event.preventDefault(), true);
+    });
+    const action = await disabledAction(page);
+    await showReason(page, hoverOnto(page, action));
+
+    await page.mouse.down();
+    await page.mouse.up();
+    await elsewhere(page).hover();
+    await page.waitForTimeout(SETTLE_MS);
+    await expect(reasonOf(page)).toBeVisible();
+
+    await page.keyboard.press("Tab");
     await expect(reasonOf(page)).toBeHidden();
   });
 });
