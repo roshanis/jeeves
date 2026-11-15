@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const read = (p: string) => readFileSync(p, "utf8");
@@ -21,5 +21,23 @@ describe("docs/production-readiness.md (docs-F16)", () => {
   });
   it("does not point at a public/ directory that does not exist", () => {
     expect(doc).not.toMatch(/`public\/` still holds/);
+  });
+});
+
+describe("docs/ARCHITECTURE.md (docs-F17)", () => {
+  const doc = read("docs/ARCHITECTURE.md");
+  it("cites only lib/ and app/ paths that exist", () => {
+    const paths = [...doc.matchAll(/`((?:lib|app)\/[A-Za-z0-9_./\[\]()@-]+?)`/g)].map((m) => m[1]).filter((p) => !p.includes("*"));
+    const missing = [...new Set(paths)].filter((p) => !existsSync(p.replace(/\/$/, "")));
+    expect(missing).toEqual([]);
+  });
+  it("does not say rate limiting is in-memory or per-instance", () => {
+    expect(doc).not.toMatch(/rate limiting (remains|is) in-memory/i);
+  });
+  it("does not name symbols that no longer exist", () => {
+    expect(doc).not.toMatch(/runWithConcurrencyLimit|draftWithRetry|DEMO_PASSCODE/);
+  });
+  it("counts thirteen lifecycle states, not twelve", () => {
+    expect(doc).not.toMatch(/twelve[- ]state/i);
   });
 });

@@ -58,7 +58,7 @@ schema, plan.md §5). Migrations live in [`drizzle/`](../drizzle/).
   was corrected early — see `agents-build-log.md` 2026-07-11T03:10Z.)
 - **`ActorRole`** — `requester | reviewer | approver | admin | program |
   system`.
-- **`LifecycleState`** — the twelve-state lifecycle graph (§5.4).
+- **`LifecycleState`** — the thirteen-state lifecycle graph (§2.5).
 - **`Actor`** — `{ id, role }`, the minimal identity every service/lifecycle
   call operates on.
 
@@ -124,21 +124,35 @@ path.
 | `0002_audit_events_append_only.sql` | Hand-written append-only trigger (§2.3) |
 | `0003_sessions.sql` | M2.5 inc.1 — DB-backed `sessions` table (§6.1) |
 | `0004_initiatives_workspace.sql` | M2.5 inc.2a — nullable `workspace_id` on `initiatives`, non-breaking (§6.5) |
+| `0005_control_exceptions.sql` | Control-exception workflow table (§8.6) |
+| `0006_initiative_decisions_cycle_uq.sql` | One decision per initiative cycle |
+| `0007_control_exceptions_active_uq.sql` | At most one active exception per control |
+| `0008_control_exceptions_status_at_request.sql` | Records the control status at request time |
+| `0009_rate_limit_buckets.sql` | Shared Postgres token-bucket storage (§6.2) |
+| `0010_query_path_indexes.sql` | Indexes on the filter/join columns the read paths use |
+| `0011_evidence_submission.sql` | Evidence documents, bindings and submissions (`docs/evidence-submission.md`) |
+| `0012_review_integrity.sql` | Review revision and signer/source integrity columns |
+| `0013_review_notifications.sql` | Review-request notifications |
 
-`0001`–`0004` are hand-written rather than `drizzle-kit`-generated (the tool
-requires `DATABASE_URL` at invocation time, unavailable in the build
-environment); they are applied by the same migration runner as `0000` in
-tests and deploys.
+`drizzle/` is the source of truth: list it for the current set. `0001`–`0004`
+and most later files are hand-written rather than `drizzle-kit`-generated
+(the tool requires `DATABASE_URL` at invocation time, unavailable in the
+build environment); they are applied by the same migration runner as `0000`
+in tests and deploys.
 
 ### 2.5 Lifecycle state machine
 
 Defined in `lib/lifecycle/transitions.ts` (the single source of truth for
 legal transitions — plan.md README: "the single source of truth for legal
-state transitions"). Twelve states: `intake_draft → submitted → triaged →
+state transitions"). Thirteen states: `intake_draft → submitted → in_qc → triaged →
 (in_review | fast_lane_approved) → (approved | conditionally_approved |
 rejected) → deployed ↔ paused → re_review → (deployed | retired)`, with
-`retired` reachable from every operating state. Key authority rules baked
-into the transition table:
+`retired` reachable from every operating state. The **QC gate**:
+`submitted --start_qc--> in_qc` (Program Office or Admin only, never
+`system`), then from `in_qc` either `triage` (system-only, deterministic) or
+`return_to_requester` (Program Office/Admin, reason required, back to
+`intake_draft`). `triage` is not reachable directly from `submitted`. Key
+authority rules baked into the transition table:
 
 - Only an **approver** may `approve` / `conditionally_approve` / `reject` —
   explicitly *not* admin (separation of duties).
@@ -283,8 +297,9 @@ live-created rows.
 ### 4.1 `DbDataProvider` (`lib/data/db-provider.ts`)
 
 Backed by whichever `Db` handle `lib/db/client.ts#getDb()` returns (§4.3):
-Neon via the pooled `drizzle-orm/neon-serverless` driver when `DATABASE_URL`
-is set, otherwise a persistent local PGlite store. Loads the ~10 relevant
+the driver `lib/db/driver-select.ts` picks for the URL (Neon's serverless
+pool for `*.neon.tech` hosts, node-postgres for any other PostgreSQL host,
+overridable with `JEEVES_DB_DRIVER`), otherwise a persistent local PGlite store. Loads the ~10 relevant
 tables in parallel per call (`loadSnapshot()`) and assembles the DTOs
 in-memory — reasonable for the demo's small (12-initiative) dataset.
 Workspace filtering is applied either as a SQL predicate (list queries) or an
@@ -302,12 +317,9 @@ as `DbDataProvider` for interface parity.
 ### 4.3 `app/_lib/data-provider.ts` selector + the PGlite coherence hop
 
 `lib/data/index.ts#getProvider()` selects `DbDataProvider` vs
-`MockDataProvider` based on `DATA_PROVIDER`/`DATABASE_URL`, but does so via a
-lazy CJS `require()` that Turbopack's Next 16 dev server cannot resolve
-correctly (`"DbDataProvider is not a constructor"`). `app/_lib/data-provider.ts`
-re-implements the identical selection logic with a static ESM import as a
-workaround for UI route/page code, pending an upstream cleanup of
-`lib/data/index.ts`.
+`MockDataProvider` based on `DATA_PROVIDER`/`DATABASE_URL` using static ESM
+imports. `app/_lib/data-provider.ts` carries the selection for UI route/page
+code, where the PGlite coherence hop below lives.
 
 The same file also solves a real coherence bug specific to local PGlite dev:
 Next's dev server maintains multiple server module graphs in one process
@@ -347,18 +359,17 @@ This is the module the build log calls the hardening pass that replaced an
 earlier single-request `Promise.allSettled` fan-out. Key properties, all
 directly in the source comments:
 
-- **Bounded concurrency** — a hand-rolled worker-pool limiter
-  (`runWithConcurrencyLimit`) caps in-flight `draftReview` calls at
+- **Bounded concurrency** — a small worker pool inside `startDraftRun()`
+  caps in-flight `draftReview` calls at
   `options.concurrency` (default **3**), rather than firing up to 8
   concurrent LLM calls per HTTP request.
 - **Per-domain retry** — up to `options.maxAttempts` total attempts per
   domain (default **2**, i.e. one retry). Retries every `PortFailure` kind
   *except* `validation` (permanently invalid, will fail identically) and
   `cancelled` (a deliberate abort), and additionally skips a `provider`
-  failure whose `retryable` is explicitly `false`. No backoff sleep between
-  attempts — documented as acceptable for the deterministic mock adapter,
-  flagged as a follow-up before a real provider (`agents-build-log.md`
-  2026-07-11T15:10Z).
+  failure whose `retryable` is explicitly `false`; see `retryable()` and
+  `executeClaim()` in `lib/workflow/review-run.ts` for the current rules and
+  backoff.
 - **Idempotency / resumability** — state lives entirely in Postgres
   (`review_decisions` + an `audit_events` trail), no in-memory run registry.
   The unique `(cycleId, domain)` index means a re-invocation for the same
@@ -471,20 +482,22 @@ on the first failure:
 
 1. **Session** — `resolveSession(extractSessionToken(req))`; no actor → 401,
    no side effects.
-2. **Rate limit** — per-client token bucket (`TokenBucketRateLimiter`,
-   capacity 20, refill 0.5/s); exceeded → 429.
+2. **Rate limit** — per-client Postgres-backed token bucket
+   (`DbTokenBucketRateLimiter` in `lib/security/db-rate-limit.ts`, capacity
+   20, refill 0.5/s), shared across instances; exceeded → 429.
 3. **Input size** — `validateInputSize()` against per-field caps and a total
    payload cap (default 100 KB); fails → 400 with per-field gaps.
 4. **Budget** (opt-in via `options.requiresBudget`) — atomic daily reserve
    (§6.3); denied → 429 "demo token budget exhausted for today".
 
 On success, callers get back `{ actor, workspaceId }` — the workspace comes
-from the session row, never re-derived from anything client-supplied. A
-dedicated, separate slow bucket (`checkSessionAttempt`, 5 attempts / 30s
-refill) protects `POST /api/session` itself, which necessarily sits outside
-`runMutationGuard` (there is no session yet to check) — this was HIGH
-security-review finding #1 (brute-forceable passcode) and is fixed
-(`agents-build-log.md` 2026-07-11T09:30Z, T11:15Z).
+from the session row, never re-derived from anything client-supplied. 
+Separate, slower Postgres-backed buckets (`checkSessionAttempt`, 5 attempts /
+30s refill, and the real-request and operator buckets in the same file)
+protect `POST /api/session`, `/api/public-session` and the operator queue,
+which necessarily sit outside `runMutationGuard` (there is no session yet to
+check). The shared-passcode model that originally motivated them has been
+retired; see §6.8.
 
 ### 6.3 Atomic per-day token budget
 
@@ -572,11 +585,6 @@ switches within one browser:
   without a nonce, and there's no nonce/hash rollout in this demo, so a
   fully strict-dynamic CSP remains a follow-up — but the external-injection
   surface a missing CSP would leave open is closed.
-- **Passcode verification** (`lib/security/passcode.ts`) uses
-  `node:crypto.timingSafeEqual` over length-normalized buffers so response
-  timing doesn't leak how close a guess's length is to correct; an empty
-  expected passcode is treated as "misconfigured" distinct from "mismatch"
-  so misconfiguration fails closed without a confusing 200.
 - **Input limits** (`lib/security/input-limits.ts`) — per-field character
   caps plus a total payload cap (default 100 KB); strips C0/C1 control
   characters except tab/newline/CR. Explicitly scoped to size/shape only —
@@ -595,17 +603,14 @@ switches within one browser:
 
 ### 6.7 Documented, accepted gaps
 
-- **Rate limiting remains in-memory, per-instance** — sessions and the
-  token budget moved to Postgres in M2.5 inc.1, but
-  `TokenBucketRateLimiter` was explicitly kept process-local; the build log
-  and `lib/services/route-guard.ts`'s own comment both call this "an
-  accepted demo posture; shared limiting is a follow-up increment." Fine for
-  a single-instance deployment; a multi-instance/multi-region deployment
-  would give a visitor a fresh bucket just by landing on a different
-  instance.
+- **Rate limiting is shared, not per-instance** — it moved to Postgres
+  (`rate_limit_buckets`, `lib/security/db-rate-limit.ts`) alongside sessions
+  and the token budget, so a visitor does not get a fresh bucket by landing
+  on another instance.
 - **Neon transaction semantics** — resolved in this codebase's current
-  state: `lib/db/client.ts` uses `drizzle-orm/neon-serverless` over a
-  pooled `@neondatabase/serverless` WebSocket `Pool`, which supports real
+  state: on Neon hosts `lib/db/client.ts` uses `drizzle-orm/neon-serverless`
+  over a pooled `@neondatabase/serverless` WebSocket `Pool` (other hosts use
+  node-postgres, local development PGlite), which supports real
   interactive `BEGIN`/`COMMIT`/`ROLLBACK` transactions (Codex,
   `agents-build-log.md` 2026-07-11T14:41Z, superseding the earlier
   `neon-http` stub-transaction gap once recorded in `docs/deploy.md`).
@@ -643,9 +648,8 @@ switches within one browser:
     intake completeness gap, the Evals tab's "Synthetic data — demo" label,
     the audit console's `member-facing-phi` query returning exactly 4 rows,
     and the controls catalog reporting 17 controls.
-  - A live-loop suite, skipped unless `DEMO_PASSCODE` is set in the runner
-    environment, that drives the full mutable champion path through the
-    real `/api/**` routes across three separate persona logins sharing one
+  - A live-loop suite, which drives the full mutable champion path through
+    the real `/api/**` routes across passwordless persona switches sharing one
     browser's workspace cookie (requester creates+submits → triage lands
     Critical/8 domains → all 8 domains fan out live via the mock adapter and
     flip to Drafted → Marcus Webb signs Privacy/HIPAA, demonstrating
@@ -660,9 +664,9 @@ switches within one browser:
   (`npm test`, `npm run test:e2e`, `npm run lint`), confirmed by
   `package.json`, `package-lock.json` (no `pnpm-lock.yaml` exists), and
   explicit call-outs in both `README.md` and `docs/deploy.md`
-  ("npm is the toolchain in use here... despite `AGENTS.md` mentioning
-  pnpm"). Treat any reference to `pnpm <script>` in this repo's own docs or
-  in the global CLAUDE.md as aspirational/historical, not current.
+  (`.claude/CLAUDE.md` still mentions pnpm). Treat any reference to
+  `pnpm <script>` in this repo's own docs or in CLAUDE.md as
+  aspirational/historical, not current.
 
 ---
 
@@ -671,21 +675,17 @@ switches within one browser:
 Pulled directly from `agents-build-log.md` and in-code comments — kept
 candid on purpose:
 
-1. **Rate limiting is in-memory and per-instance** (§6.7) — the one
-   explicitly-deferred piece of the M2.5 hardening gate; DB-backed sessions
-   and budget landed, rate limiting did not.
+1. **Rate limiting** is Postgres-backed and shared (§6.7); this item is
+   closed.
 2. **`dayChains` in `lib/security/budget.ts` is never pruned** — one map
    entry accumulates per distinct day key for the in-process serialization
    fallback path; negligible for a demo's lifetime, unbounded for a
    long-lived server (flagged `TODO(P4)` in the source, review finding #7).
-3. **Retry has no backoff sleep** — `lib/workflow/review-run.ts`'s
-   `draftWithRetry` retries immediately; acceptable against the
-   deterministic mock adapter, called out as needing jittered backoff
-   before pointing this at a real, rate-limited provider at scale
-   (`agents-build-log.md` 2026-07-11T15:10Z).
-4. **`lib/data/index.ts`'s lazy `require()` is Turbopack-incompatible** —
-   worked around in `app/_lib/data-provider.ts` (§4.3) rather than fixed at
-   the source; the upstream cleanup is still pending.
+3. **Retry policy** lives in `lib/workflow/review-run.ts`; check it
+   against your provider's rate limits before pointing this at a real
+   provider at scale.
+4. **`lib/data/index.ts` uses static imports** now; the former lazy
+   `require()` workaround is gone (§4.3).
 5. **CSP ships, but without a nonce/hash rollout** — a Content-Security-
    Policy has been live since 2026-07-13 (§6.6), but `script-src`/`style-src`
    still carry `'unsafe-inline'` because Next's hydration bootstrap and
@@ -714,6 +714,27 @@ candid on purpose:
 
 ---
 
+## 6.8 Two doors, QC, evidence and abstention (added 2026-11-15)
+
+- **Two doors, never mixed.** The playground gives any visitor any of the 13
+  personas passwordlessly in an isolated workspace. The real-request door
+  (`POST /api/public-session`) mints a `public`-role session in a `public-`
+  workspace; `runMutationGuard` denies `public` unless a route sets
+  `allowPublic: true` (create initiative, edit intake draft, submit intake).
+  The operator queue (`/operator`, `GET /api/public-intake`) is gated by the
+  server-side `OPERATOR_TOKEN`, never by persona role. See
+  `docs/production-readiness.md` §1.3.
+- **QC gate.** A submitted intake waits for a Program Office or Admin
+  persona to open QC (`start_qc`), then to route it (`triage`) or return it
+  with a reason (§2.5).
+- **Evidence submission.** PDF/DOCX packets bound to checklist requirements,
+  with immutable submissions and reviewer assessments; domain signature is
+  blocked until applicable requirements have accepted evidence. See
+  `docs/evidence-submission.md`.
+- **Reviewer abstention.** A reviewer may abstain from a domain
+  (`lib/reviews/abstention.ts`); the draft-run reports such a domain as
+  skipped with reason "reviewer abstained" and does not re-draft it.
+
 ## Addendum — 2026-08-01 status
 
 This section records what changed after this document's body was written,
@@ -727,8 +748,8 @@ and the current source win (per the note at the top of this doc).
   stub-transaction behavior — `docs/deploy.md` caveats (a)/(b) and the
   top-of-file comment in `lib/services/initiative-service.ts` — were both
   corrected on 2026-08-01 (deploy.md's caveat (b) also now reflects the
-  M2.5 DB-backed sessions + atomic budget; only rate limiting remains
-  per-instance, the accepted posture).
+  M2.5 DB-backed sessions + atomic budget; rate limiting was
+  later moved to Postgres too, §6.7).
 - **Content-Security-Policy shipped 2026-07-13** (`next.config.ts`) — see
   the corrected §6.6 and §8.5 above.
 - **Control-exception workflow shipped 2026-07-13**
