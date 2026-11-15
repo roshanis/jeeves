@@ -122,10 +122,10 @@ export function loadInstructions(): CachedInstructions {
  * ---------------------------------------------------------------------- */
 
 export function isAbortError(err: unknown): boolean {
-  return (
-    err instanceof Error &&
-    (err.name === "AbortError" || /aborted/i.test(err.message))
-  );
+  // Name only: a message match would turn a transient upstream "aborted"
+  // (dropped socket) into a non-retryable cancellation. The caller's own
+  // abort and the deadline are resolved in invoke.ts before this runs.
+  return err instanceof Error && err.name === "AbortError";
 }
 
 /**

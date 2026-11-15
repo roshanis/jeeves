@@ -304,6 +304,18 @@ describe("openai-adapter — cancellation", () => {
   });
 });
 
+describe("openai-adapter — upstream abort without caller cancellation", () => {
+  it("reports a dropped upstream connection as a provider failure, not cancelled", async () => {
+    const model = new MockLanguageModelV4({
+      doGenerate: async () => { throw new Error("socket aborted"); },
+    });
+    const port = createOpenAIAgentPortWithModel(model);
+    const result = await port.draftReview(draftInput());
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.kind).toBe("provider");
+  });
+});
+
 describe("openai-adapter — timeoutMs deadline (ports.ts InvokeOptions)", () => {
   it("maps a timeoutMs overrun to PortFailure{kind:timeout} even when the model never settles", async () => {
     const model = new MockLanguageModelV4({
