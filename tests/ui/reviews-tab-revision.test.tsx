@@ -105,3 +105,12 @@ it("does not retry abstained domains or claim their draft completed", async () =
   expect(mocks.success).not.toHaveBeenCalled();
   expect(screen.queryByRole("button",{name:/Retry remaining/})).toBeNull();
 });
+it("treats a skipped 'not required' domain as finished, not as unfinished work", async () => {
+  mocks.session.mockReturnValue({session:{token:"token",workspaceId:"workspace",role:"requester",personaKey:"priya-raman"}});
+  mocks.draftRun.mockResolvedValue({cycleId:"cycle",runId:"run",outcomes:[{domain:"privacy-hipaa",status:"skipped",reason:"not required"}]});
+  renderWithProviders(<ReviewsTab slug="case-one" initiativeId="initiative" isSeeded={false} reviews={[{...review,status:"pending",draftMd:null}]} />);
+  fireEvent.click(screen.getByRole("button",{name:"Start draft run (1 domains)"}));
+  await waitFor(()=>expect(mocks.success).toHaveBeenCalled());
+  expect(mocks.info).not.toHaveBeenCalledWith(expect.stringMatching(/did not complete/i));
+  expect(screen.queryByRole("button",{name:/Retry remaining/})).toBeNull();
+});

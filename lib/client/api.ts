@@ -127,7 +127,7 @@ export interface DraftRunDomainOutcome {
   domain: Domain;
   status: "drafted" | "failed" | "skipped";
   error?: unknown;
-  reason?: "already signed" | "already running" | "superseded" | "reviewer abstained";
+  reason?: "already signed" | "already running" | "superseded" | "reviewer abstained" | "not required";
 }
 
 export interface StartDraftRunResult {
@@ -159,7 +159,7 @@ export interface RunReviewAgentResult {
   /** Human-readable failure reason — present only when status === "failed". */
   error?: string;
   /** Present when a concurrent human signature wins the persistence race. */
-  reason?: "already signed" | "already running" | "superseded" | "reviewer abstained";
+  reason?: "already signed" | "already running" | "superseded" | "reviewer abstained" | "not required";
 }
 
 export interface SignReviewResult {
