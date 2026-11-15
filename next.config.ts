@@ -22,9 +22,12 @@ const nextConfig: NextConfig = {
   // endpoint is pure attack surface: it hands request-selected image bytes
   // to sharp/libvips, which currently carries unpatched HIGH CVEs
   // (GHSA-f88m-g3jw-g9cj) with no fixed version reachable through any next
-  // release. Disabling optimization removes sharp from the runtime entirely
-  // at zero visual cost. Re-evaluate if next/image is ever adopted.
+  // release. Disabling optimization means nothing calls sharp, but Next
+  // still traces it into .next/standalone (about 46 MB, LGPL libvips), so it is
+  // excluded below and scripts/check-standalone-output.cjs fails if it returns.
+  // Re-evaluate both if next/image is ever adopted.
   images: { unoptimized: true },
+  outputFileTracingExcludes: { "*": ["node_modules/sharp/**", "node_modules/@img/**"] },
 
   // The /agents/[id] detail page reads the agent instruction files (the real
   // system prompts) off disk at runtime. Force-include the whole agents/

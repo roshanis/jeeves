@@ -39,6 +39,8 @@ describe("findUnexpectedEntries", () => {
     "agents/reviewer/notes.txt",
     "lib/x.ts",
     ".env",
+    "node_modules/sharp/package.json",
+    "node_modules/@img/sharp-libvips-linux-x64/lib.so",
   ])("rejects %s", (p) => {
     expect(findUnexpectedEntries([p])).toEqual([p]);
   });

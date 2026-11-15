@@ -19,7 +19,10 @@ function findUnexpectedEntries(relativePaths) {
     const parts = rel.split("/");
     const top = parts[0];
     let ok = TOP_LEVEL.has(top);
-    if (ok && top === "agents") {
+    if (ok && top === "node_modules") {
+      // The app never calls sharp (images are unoptimized); keep its LGPL libvips binaries out of the image.
+      ok = parts[1] !== "sharp" && parts[1] !== "@img";
+    } else if (ok && top === "agents") {
       ok = parts.length === 1 || rel.endsWith(".md");
     } else if (ok && top === "docs") {
       ok = parts.length === 1 || (parts[1] === "policies" && (parts.length === 2 || rel.endsWith(".md")));
