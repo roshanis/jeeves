@@ -41,4 +41,11 @@ describe("OutcomeMetricsStrip", () => {
     expect(card.textContent).toMatch(/estimate/i);
     expect(card.textContent).not.toMatch(/Computed from/);
   });
+
+  it("does not refer to a pipeline board and exposes info triggers as buttons", async () => {
+    const metrics = await new MockDataProvider().outcomeMetrics();
+    const { container } = renderWithProviders(<OutcomeMetricsStrip metrics={metrics} />);
+    expect(container.textContent).not.toMatch(/pipeline board/i);
+    expect(screen.getByRole("button", { name: "About Overdue controls" })).toBeDefined();
+  });
 });

@@ -28,9 +28,9 @@ function OutcomeMetricCard({
         <Tooltip>
           <TooltipTrigger
             render={
-              <span tabIndex={0} aria-label={`About ${label}`}>
+              <button type="button" aria-label={`About ${label}`}>
                 <Info className="size-3.5 text-muted-foreground" />
-              </span>
+              </button>
             }
           />
           <TooltipContent>{tooltip}</TooltipContent>
@@ -62,11 +62,13 @@ export function OutcomeMetricsStrip({ metrics }: { metrics: OutcomeMetrics }) {
         label="Review cycle time"
         value={`${metrics.medianReviewCycleDays}d`}
         subtext="median, recent cycles"
+        tooltip="Median days from opening to closing a review cycle, over closed cycles."
       />
       <OutcomeMetricCard
         label="First-pass completeness"
         value={`${metrics.firstPassCompletenessPct}%`}
         subtext="intakes complete on first submit"
+        tooltip="Share of first-version intakes submitted with no missing fields."
       />
       <OutcomeMetricCard
         label="Reviewer hours saved"
@@ -78,11 +80,13 @@ export function OutcomeMetricsStrip({ metrics }: { metrics: OutcomeMetrics }) {
         label="Evidence freshness"
         value={`${metrics.evidenceFresh}/${metrics.evidenceTotal}`}
         subtext={staleCount > 0 ? `${staleCount} stale` : "all fresh"}
+        tooltip="Initiatives with no overdue control or pending exception, out of all initiatives."
       />
       <OutcomeMetricCard
         label="Overdue controls"
         value={`${metrics.overdueControls}`}
-        subtext="click pipeline board to filter"
+        subtext='see the "Breached / paused" view'
+        tooltip="Controls past cadence or with a pending exception, plus returned reviews. Open the Breached / paused saved view to list them."
       />
     </div>
   );
