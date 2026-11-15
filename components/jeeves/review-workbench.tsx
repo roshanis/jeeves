@@ -465,16 +465,19 @@ function AssessmentPane({
     row.review.revision,
   );
   const alreadySigned = row.review.status === "signed";
-  const signDisabledReason = !eligibility.isOwnDomain ? `Only the ${DOMAIN_LABEL[row.review.domain]} reviewer can sign or return this review`
-    : row.review.status === "signed" ? "Already signed"
-    : row.review.status === "abstained" ? "Resume the review before signing"
-    : row.review.status === "pending" ? "Run the agent to draft this review before signing"
-    : row.isSeeded === true ? "This is a read-only example; open a live review to sign"
-    : cycleChanged ? "Refresh to load the current review cycle"
-    : "This review is not open for signing right now";
-  const returnDisabledReason = row.review.status === "abstained" ? "Resume the review before returning it"
-    : signDisabledReason === "This review is not open for signing right now" ? "This review is not open for return right now"
-    : signDisabledReason;
+  // One list of conditions for both buttons, each worded for its own action.
+  const disabledReasonFor = (action: "sign" | "return") => {
+    const signing = action === "sign";
+    return !eligibility.isOwnDomain ? `Only the ${DOMAIN_LABEL[row.review.domain]} reviewer can sign or return this review`
+      : row.review.status === "signed" ? "Already signed"
+      : row.review.status === "abstained" ? (signing ? "Resume the review before signing" : "Resume the review before returning it")
+      : row.review.status === "pending" ? (signing ? "Run the agent to draft this review before signing" : "Run the agent to draft this review before returning it")
+      : row.isSeeded === true ? (signing ? "This is a read-only example; open a live review to sign" : "This is a read-only example; open a live review to return one")
+      : cycleChanged ? "Refresh to load the current review cycle"
+      : signing ? "This review is not open for signing right now" : "This review is not open for return right now";
+  };
+  const signDisabledReason = disabledReasonFor("sign");
+  const returnDisabledReason = disabledReasonFor("return");
   const hasDraft = Boolean(row.review.draftMd);
   const blankAssessment = editedText.trim() === "";
 

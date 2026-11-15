@@ -19,7 +19,7 @@ function describedBy(el: HTMLElement): string {
   return (el.getAttribute("aria-describedby") ?? "").split(" ").filter(Boolean).map((id) => document.getElementById(id)?.textContent ?? "").join(" ");
 }
 
-function row(over: Partial<ReviewQueueRow> & { review?: Partial<ReviewQueueRow["review"]> }): ReviewQueueRow {
+function row(over: Omit<Partial<ReviewQueueRow>, "review"> & { review?: Partial<ReviewQueueRow["review"]> }): ReviewQueueRow {
   return {
     slug: "a", title: "Initiative a", tier: "high", isSeeded: false,
     ...over,
@@ -44,9 +44,22 @@ describe("ReviewWorkbench disabled Sign/Return reasons", () => {
     resetLiveSessionForTests();
   });
 
+  it("explains a not-yet-drafted review in Return's own words, not with a sentence about signing", async () => {
+    renderRow(row({ review: { status: "pending", draftMd: null, cycleOpen: true } }));
+    const sign = screen.getByRole("button", { name: "Sign" });
+    await waitFor(() => expect(describedBy(sign)).toBe("Run the agent to draft this review before signing"));
+    const reason = describedBy(screen.getByRole("button", { name: "Return" }));
+    expect(reason).toBe("Run the agent to draft this review before returning it");
+    expect(reason).not.toMatch(/signing/);
+    resetLiveSessionForTests();
+  });
+
   it("still calls a seeded row a read-only example", async () => {
     renderRow(row({ isSeeded: true }));
     await waitFor(() => expect(describedBy(screen.getByRole("button", { name: "Sign" }))).toMatch(/read-only example/));
+    const reason = describedBy(screen.getByRole("button", { name: "Return" }));
+    expect(reason).toMatch(/read-only example/);
+    expect(reason).not.toMatch(/to sign/);
     resetLiveSessionForTests();
   });
 });
