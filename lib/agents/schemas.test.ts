@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   auditorAnswerOutputSchema,
+  dropUnsuppliedControls,
   intakeInterviewOutputSchema,
   mapReviewerDraftToPortOutput,
   reviewerDraftOutputSchema,
@@ -386,5 +387,42 @@ describe("intakeInterviewOutputSchema", () => {
       },
     });
     expect(result.success).toBe(false);
+  });
+});
+
+describe("reviewer and auditor output bounds", () => {
+  it("rejects a 200-entry citations array", () => {
+    const citations = Array.from({ length: 200 }, (_, i) => `MP-H v3 §MP-H-${i}`);
+    expect(reviewerDraftOutputSchema.safeParse(validReviewerDraft({ citations })).success).toBe(false);
+  });
+
+  it("rejects an oversized auditor answer and an oversized citedEvents list", () => {
+    const ok = { answerMd: "ok", citedEvents: [], queryUsed: "" };
+    expect(auditorAnswerOutputSchema.safeParse(ok).success).toBe(true);
+    expect(auditorAnswerOutputSchema.safeParse({ ...ok, answerMd: "x".repeat(20001) }).success).toBe(false);
+    expect(auditorAnswerOutputSchema.safeParse({ ...ok, citedEvents: Array.from({ length: 201 }, (_, i) => `row-${i}`) }).success).toBe(false);
+  });
+});
+
+describe("dropUnsuppliedControls", () => {
+  it("removes requests and conditions for unsupplied controls and notes it", () => {
+    const out = dropUnsuppliedControls(
+      validReviewerDraft({
+        evidenceRequests: [
+          { controlId: "H-01", description: "keep" },
+          { controlId: "ZZ-99", description: "drop" },
+        ],
+        suggestedConditions: [{ text: "drop me", controlId: "ZZ-98" }],
+      }),
+      ["H-01", "H-02"],
+    );
+    expect(out.evidenceRequests).toEqual([{ controlId: "H-01", description: "keep" }]);
+    expect(out.suggestedConditions).toEqual([]);
+    expect(out.confidenceNotes).toMatch(/2 evidence request/);
+  });
+
+  it("returns the draft unchanged when every control is supplied", () => {
+    const draft = validReviewerDraft({ evidenceRequests: [{ controlId: "H-01", description: "d" }] });
+    expect(dropUnsuppliedControls(draft, ["H-01"])).toBe(draft);
   });
 });

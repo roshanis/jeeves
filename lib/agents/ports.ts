@@ -118,6 +118,8 @@ export interface DraftReviewInput {
   readonly intake: IntakeSnapshot;
   /** Policy/catalog excerpts the draft must ground itself in. */
   readonly policyContext?: readonly string[];
+  /** Applicable control ids; evidence requests and conditions for any other control are dropped. */
+  readonly controlIds?: readonly string[];
 }
 
 /**

@@ -129,7 +129,7 @@ async function invoke(port: AgentPort, claim: Claim, options: StartDraftRunOptio
     options.signal?.addEventListener("abort", abort, {once:true});
     timer = setTimeout(() => { controller.abort(); resolve({ok:false,error:timeout(timeoutMs)}); }, timeoutMs);
   });
-  const call = Promise.resolve().then(() => port.draftReview({reviewCycleId:claim.row.cycleId,domain:claim.row.domain as Domain,intake:claim.context.intake,policyContext:claim.context.policyContext},
+  const call = Promise.resolve().then(() => port.draftReview({reviewCycleId:claim.row.cycleId,domain:claim.row.domain as Domain,intake:claim.context.intake,policyContext:claim.context.policyContext,controlIds:claim.context.metadata.controlIds as string[]},
     {signal:controller.signal,timeoutMs})).catch((): DraftResult => ({ok:false,error:{kind:"provider",message:"Draft generation failed. Retry this domain.",retryable:true}}));
   try { return await Promise.race([call,stopped]); }
   finally { if(timer)clearTimeout(timer); options.signal?.removeEventListener("abort",abort); }

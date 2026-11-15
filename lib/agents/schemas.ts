@@ -17,14 +17,22 @@ import type { DraftReviewOutput, GovernanceDomain } from "./ports";
  */
 const ASSESSMENT_MD_MAX_LENGTH = 6000;
 
+// Generous backstops against runaway generations, well above any real draft.
+const CONTROL_ID_MAX_LENGTH = 64;
+const REVIEWER_TEXT_MAX_LENGTH = 2000;
+const REVIEWER_LIST_MAX_ITEMS = 50;
+const CONFIDENCE_NOTES_MAX_LENGTH = 4000;
+const AUDITOR_ANSWER_MAX_LENGTH = 20000;
+const AUDITOR_CITED_EVENTS_MAX_ITEMS = 200;
+
 export const reviewerEvidenceRequestSchema = z.object({
-  controlId: z.string().min(1),
-  description: z.string().min(1),
+  controlId: z.string().min(1).max(CONTROL_ID_MAX_LENGTH),
+  description: z.string().min(1).max(REVIEWER_TEXT_MAX_LENGTH),
 });
 
 export const reviewerSuggestedConditionSchema = z.object({
-  text: z.string().min(1),
-  controlId: z.string().min(1),
+  text: z.string().min(1).max(REVIEWER_TEXT_MAX_LENGTH),
+  controlId: z.string().min(1).max(CONTROL_ID_MAX_LENGTH),
 });
 
 export const reviewerDraftOutputSchema = z.object({
@@ -34,11 +42,11 @@ export const reviewerDraftOutputSchema = z.object({
   // a machine-checkable grammar we should gate structured-output parsing on
   // (Policy IDs and anchors vary per domain/version, e.g. "MP-H v3 §MP-H-2.1"
   // vs. "FL-2026-01 v1 §FL-2.1"). We only require non-empty strings here.
-  citations: z.array(z.string().min(1)),
-  evidenceRequests: z.array(reviewerEvidenceRequestSchema),
+  citations: z.array(z.string().min(1).max(REVIEWER_TEXT_MAX_LENGTH)).max(REVIEWER_LIST_MAX_ITEMS),
+  evidenceRequests: z.array(reviewerEvidenceRequestSchema).max(REVIEWER_LIST_MAX_ITEMS),
   recommendation: z.enum(["ready-for-signature", "return-with-gaps"]),
-  suggestedConditions: z.array(reviewerSuggestedConditionSchema),
-  confidenceNotes: z.string(),
+  suggestedConditions: z.array(reviewerSuggestedConditionSchema).max(REVIEWER_LIST_MAX_ITEMS),
+  confidenceNotes: z.string().max(CONFIDENCE_NOTES_MAX_LENGTH),
 });
 
 export type ReviewerDraftOutput = z.infer<typeof reviewerDraftOutputSchema>;
@@ -62,10 +70,10 @@ export const auditorAnswerOutputSchema = z.object({
   // instructions.md: the answer, Markdown, grounded per the citation rule.
   // Even a refusal must populate this (with the refusal text), so a hard
   // min(1) is appropriate — there is no valid empty-answer case.
-  answerMd: z.string().min(1),
+  answerMd: z.string().min(1).max(AUDITOR_ANSWER_MAX_LENGTH),
   // instructions.md: every row timestamp (eventTs or ts) or row-N label relied on.
   // Empty is valid and expected on a refusal (nothing was relied upon).
-  citedEvents: z.array(z.string()),
+  citedEvents: z.array(z.string().max(CONTROL_ID_MAX_LENGTH * 4)).max(AUDITOR_CITED_EVENTS_MAX_ITEMS),
   // instructions.md: "the CannedAuditQueryId used... as supplied in the
   // input" — explicitly allowed to be an empty string per that wording, so
   // no min(1) here (unlike answerMd).
@@ -96,6 +104,31 @@ export const intakeInterviewOutputSchema = z.object({
 });
 
 export type IntakeInterviewOutput = z.infer<typeof intakeInterviewOutputSchema>;
+
+/**
+ * schema.md: every evidenceRequest/suggestedCondition `controlId` "must match a
+ * control id supplied in this call". Drop the ones that do not and say so in
+ * `confidenceNotes`, so a hallucinated control never becomes a checklist item.
+ */
+export function dropUnsuppliedControls(
+  rich: ReviewerDraftOutput,
+  controlIds: readonly string[],
+): ReviewerDraftOutput {
+  const known = new Set(controlIds);
+  const evidenceRequests = rich.evidenceRequests.filter((r) => known.has(r.controlId));
+  const suggestedConditions = rich.suggestedConditions.filter((c) => known.has(c.controlId));
+  const dropped =
+    rich.evidenceRequests.length - evidenceRequests.length +
+    (rich.suggestedConditions.length - suggestedConditions.length);
+  if (dropped === 0) return rich;
+  const note = `${dropped} evidence request(s) or condition(s) cited a control that is not applicable to this review and were removed.`;
+  return {
+    ...rich,
+    evidenceRequests,
+    suggestedConditions,
+    confidenceNotes: rich.confidenceNotes.trim() ? `${rich.confidenceNotes}\n${note}` : note,
+  };
+}
 
 /* -------------------------------------------------------------------------
  * Reviewer rich-shape -> port-shape mapping (agents/README.md)

@@ -34,6 +34,7 @@ import {
   auditorAnswerOutputSchema,
   intakeInterviewOutputSchema,
   reviewerDraftOutputSchema,
+  dropUnsuppliedControls,
   mapReviewerDraftToPortOutput,
 } from "./schemas";
 import {
@@ -174,7 +175,7 @@ export function createOpenAIAgentPortWithModel(model: LanguageModel): AgentPort 
       return {
         ok: true,
         value: {
-          ...mapReviewerDraftToPortOutput(input.domain, parsed.data),
+          ...mapReviewerDraftToPortOutput(input.domain, input.controlIds ? dropUnsuppliedControls(parsed.data, input.controlIds) : parsed.data),
           generationMetadata: {
             adapter: "vercel-ai-sdk",
             configuredModelId: typeof model === "string" ? model : model.modelId,
