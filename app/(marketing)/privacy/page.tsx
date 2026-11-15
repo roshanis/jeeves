@@ -6,6 +6,9 @@ import { LEGAL_LAST_UPDATED, PRIVACY_CONTACT } from "@/lib/marketing/site-config
 // below is checkable against a file:
 //   - jeeves_workspace cookie      -> app/api/session/route.ts
 //   - sessionStorage token         -> lib/client/session-context.tsx
+//   - jeeves_live_registry key     -> lib/client/live-registry.ts
+//   - jeeves-theme preference      -> components/jeeves/theme-toggle.tsx
+//   - cookie notice acknowledgement -> components/jeeves/cookie-notice.tsx
 //   - public submissions           -> app/api/public-session/route.ts
 //   - OpenAI calls                 -> lib/agents/openai-adapter.ts
 //   - append-only audit trail      -> lib/db/schema.ts
@@ -51,8 +54,8 @@ export default function PrivacyPage() {
             browser&rsquo;s sessionStorage
             (<code className="font-mono text-xs">jeeves_live_session</code>, and{" "}
             <code className="font-mono text-xs">jeeves_live_registry</code> for the
-            actions you have run). A real request sets no cookie; this token is
-            all it keeps. It is cleared when you close the tab.
+            actions you have run). A real request sets no cookie; it keeps only
+            this token and the preferences below. It is cleared when you close the tab.
           </li>
           <li>
             <span className="font-medium">Two local preferences</span> in your
