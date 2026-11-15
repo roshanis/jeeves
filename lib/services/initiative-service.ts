@@ -802,9 +802,16 @@ export async function triage(
     }
 
     // 4. fast-lane branch
+    // FL-2.1(2): an incomplete intake is never fast-lane eligible. `canSubmit`
+    // is BLOCKING-only, so also require no REQUIRED_FOR_TIER gap for this tier
+    // and an answered data-retention question. Anything else takes full review.
+    const intakeComplete =
+      completeness.gaps.every((g) => g.level === "ADVISORY") &&
+      payload.data.retentionIntent !== null &&
+      payload.data.retentionIntent !== undefined;
     const eligibility = fastLaneEligibility({
       tier,
-      intakeComplete: completeness.canSubmit,
+      intakeComplete,
       flags,
       policy: FAST_LANE_POLICY,
     });

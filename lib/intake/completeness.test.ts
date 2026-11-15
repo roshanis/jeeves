@@ -650,3 +650,23 @@ describe("evaluateCompleteness — gap shape", () => {
     expect(evaluateCompleteness(partial).completenessPct).toBeLessThan(100);
   });
 });
+
+describe("evaluateCompleteness — whitespace-only text is not an answer", () => {
+  it("fails the BLOCKING text rules when title, sponsor, name and problem are only spaces", () => {
+    const p: IntakePayload = {
+      ...CHAMPION_PREFILL_PAYLOAD,
+      basics: {
+        ...CHAMPION_PREFILL_PAYLOAD.basics,
+        title: "   ",
+        sponsorOrg: "   ",
+        requesterName: "   ",
+        businessProblem: " ".repeat(30),
+      },
+    };
+    const r = evaluateCompleteness(p);
+    expect(r.canSubmit).toBe(false);
+    expect(r.gaps.filter((g) => g.level === "BLOCKING").map((g) => g.ruleId)).toEqual(
+      expect.arrayContaining(["BLK-01", "BLK-02", "BLK-03", "BLK-04"]),
+    );
+  });
+});

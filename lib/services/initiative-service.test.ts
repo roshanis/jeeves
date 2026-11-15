@@ -65,7 +65,7 @@ function lowTierPayload(): IntakePayload {
       humanInTheLoop: true,
       individualImpact: false,
     },
-    data: { ...CHAMPION_PREFILL_PAYLOAD.data, phiCategories: [], retentionIntent: null },
+    data: { ...CHAMPION_PREFILL_PAYLOAD.data, phiCategories: [], retentionIntent: "<=30 days" },
     modelVendor: {
       buildOrBuy: "Buy (vendor)",
       vendorName: "Acme Marketing AI",
@@ -399,6 +399,24 @@ describe("lib/services/initiative-service", () => {
         .from(auditEvents)
         .where(eq(auditEvents.initiativeId, draft.initiativeId));
       expect(events.some((e) => e.action === "fast_lane_approve")).toBe(true);
+    });
+
+    it.each([
+      ["a REQUIRED_FOR_TIER gap (vendor name missing, RFT-03)", (p: IntakePayload): IntakePayload => ({ ...p, modelVendor: { ...p.modelVendor, vendorName: null } })],
+      ["no data-retention answer (FL-2.1(2))", (p: IntakePayload): IntakePayload => ({ ...p, data: { ...p.data, retentionIntent: null } })],
+    ])("an incomplete intake is never fast-lane eligible: %s routes to full review", async (_label, mutate) => {
+      const draft = await svc.createDraft(db, {
+        payload: mutate(lowTierPayload()),
+        requesterActor: { id: "dan-kowalski", role: "requester" },
+        requesterName: "Dan Kowalski",
+      });
+      await svc.submitIntake(db, draft.initiativeId, { id: "dan-kowalski", role: "requester" });
+      await svc.startQc(db, draft.initiativeId, PROGRAM);
+      const result = await svc.triage(db, draft.initiativeId);
+      expect(result.tier).toBe("low");
+      expect(result.branch).toBe("review");
+      const row = (await db.select().from(initiatives).where(eq(initiatives.id, draft.initiativeId)))[0]!;
+      expect(row.state).toBe("in_review");
     });
 
     it("fast-lane approval ALSO generates effective controls — live parity with seeded fast-lane initiatives (seed-spec #2 marketing-ab-tester carries effective_controls against a deployment row)", async () => {
