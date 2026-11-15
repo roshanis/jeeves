@@ -22,7 +22,7 @@ export default function SignInPage() {
   if (isDemoMode()) redirect("/");
 
   return (
-    <main id="main-content" className="mx-auto flex w-full max-w-xl flex-col gap-6 px-4 py-16">
+    <main id="main-content" tabIndex={-1} className="mx-auto flex w-full max-w-xl flex-col gap-6 px-4 py-16">
       <div className="flex flex-col gap-1.5">
         <span className="kicker">Jeeves</span>
         <h1 className="text-2xl font-semibold tracking-tight">Sign in</h1>
