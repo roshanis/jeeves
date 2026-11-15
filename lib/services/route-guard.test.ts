@@ -384,3 +384,24 @@ describe("client addresses in rate-limit buckets", () => {
     expect((await testDb.select().from(rateLimitBuckets)).map((row) => row.key)).toContain("session:10.0.0.13");
   });
 });
+
+describe("public role is denied by default", () => {
+  beforeEach(async () => {
+    testDb = await createTestDb();
+  });
+
+  afterEach(async () => {
+    await closeTestDb(testDb);
+  });
+
+  it("answers 403 to a public session without allowPublic and passes with it", async () => {
+    const issued = await issuePublicSession("10.1.0.1");
+    if (!("token" in issued)) throw new Error("expected a public session");
+    const denied = await runMutationGuard(reqWithBearer(issued.token, "10.1.0.2"), undefined);
+    expect(denied.ok).toBe(false);
+    if (denied.ok) throw new Error("unreachable");
+    expect(denied.failure.status).toBe(403);
+    const allowed = await runMutationGuard(reqWithBearer(issued.token, "10.1.0.3"), undefined, { allowPublic: true });
+    expect(allowed).toMatchObject({ ok: true, actor: { role: "public" } });
+  });
+});
