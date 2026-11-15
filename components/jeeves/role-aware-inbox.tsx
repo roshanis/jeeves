@@ -763,8 +763,10 @@ function DomainReviewQueueTable({
   }
 
   return (
+    // `relative`: keeps the Age cell's screen-reader text inside this scroller
+    // (see the same note in initiative-table.tsx).
     <div
-      className="panel card-quiet scroll-thin scroll-x-pane overflow-x-auto"
+      className="panel card-quiet scroll-thin scroll-x-pane relative overflow-x-auto"
       data-slot="initiative-table"
     >
       <table className="w-full min-w-[36rem] border-collapse text-sm">

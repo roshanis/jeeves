@@ -191,8 +191,13 @@ export function InitiativeTable({
     // 21-32% clipping (design review problem #3). Container queries hide
     // columns based on the space this table actually has, so the fix holds
     // regardless of what else is on the page.
+    //
+    // `relative` makes this scroller the containing block of the cells'
+    // screen-reader text (sr-only is position: absolute). Without it that text
+    // is positioned against the page, escapes the scroller's clipping in a
+    // column scrolled out of view, and widened the page on a phone.
     <div
-      className="panel card-quiet scroll-thin scroll-x-pane @container overflow-x-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      className="panel card-quiet scroll-thin scroll-x-pane @container relative overflow-x-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       data-slot="initiative-table"
       tabIndex={0}
       role="region"
