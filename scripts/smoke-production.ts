@@ -472,15 +472,16 @@ async function migrateAndStamp(databaseUrl: string, canary: string): Promise<voi
     await client.query("INSERT INTO installation (deploy_mode, install_id) VALUES ('production', $1) ON CONFLICT (id) DO NOTHING", [
       `smoke-${randomBytes(4).toString("hex")}`,
     ]);
-    // A canary row so "no data leaked" checks can actually fail on a gated read.
-    await client.query(
-      "INSERT INTO initiatives (id, slug, title, requester, state, created_at, updated_at) VALUES ($1, $1, $1, 'smoke', 'intake_draft', now(), now()) ON CONFLICT (id) DO NOTHING",
-      [canary],
-    );
     const { rows } = await client.query<{ deploy_mode: string }>("SELECT deploy_mode FROM installation");
     if (rows.length !== 1 || rows[0].deploy_mode !== "production") {
       throw new Error("this database is stamped demo; use a fresh jeeves_smoke_* database");
     }
+    // A canary row so "no data leaked" checks can actually fail on a gated read.
+    // Written only after the stamp check, so a database that is refused gets no canary row.
+    await client.query(
+      "INSERT INTO initiatives (id, slug, title, requester, state, created_at, updated_at) VALUES ($1, $1, $1, 'smoke', 'intake_draft', now(), now()) ON CONFLICT (id) DO NOTHING",
+      [canary],
+    );
   } finally {
     await client.end();
   }
