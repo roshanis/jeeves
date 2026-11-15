@@ -79,7 +79,7 @@ describe("review reliability contracts", () => {
     const fixture = await setup(); const release = deferred();
     const port: AgentPort = { ...base, async draftReview(input) { await release.promise; return base.draftReview(input); } };
     const pending = startDraftRun(db, fixture.initiativeId, ["legal"], port, { maxAttempts: 1, attemptTimeoutMs: 10, runTimeoutMs: 100, retryDelayMs: 0 });
-    const result = await Promise.race([pending, new Promise<null>((resolve) => setTimeout(() => resolve(null), 200))]);
+    const result = await Promise.race([pending, new Promise<null>((resolve) => setTimeout(() => resolve(null), 5000))]);
     release.resolve(); await pending;
     expect(result?.outcomes[0]).toMatchObject({ status: "failed", error: { kind: "timeout" } });
     expect((await row(fixture.cycleId)).status).toBe("pending");

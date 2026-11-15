@@ -252,6 +252,7 @@ describe("lib/services/route-guard", () => {
     });
 
     it("429s after a burst exceeds the rate-limit capacity", async () => {
+      vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-09-19T20:00:00Z"));
       const session = (await issueDemoSession("priya-raman"))!;
       const clientIp = "7.7.7.7";
       let lastResult: Awaited<ReturnType<typeof runMutationGuard>> | null = null;
