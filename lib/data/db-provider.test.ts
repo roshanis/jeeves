@@ -793,13 +793,19 @@ describe("lib/data/db-provider", () => {
     });
 
     it("q01-control-changes reuses the loaded snapshot instead of querying audit_events again", async () => {
-      const spy = vi.spyOn(db, "select");
-      try {
-        await provider.auditQuery("q01-control-changes");
-        expect(spy.mock.calls.length).toBe(11);
-      } finally {
-        spy.mockRestore();
-      }
+      // Compare with a plain snapshot load instead of pinning a table count.
+      const countSelects = async (run: () => Promise<unknown>) => {
+        const spy = vi.spyOn(db, "select");
+        try {
+          await run();
+          return spy.mock.calls.length;
+        } finally {
+          spy.mockRestore();
+        }
+      };
+      const plainLoad = await countSelects(() => new DbDataProvider(db).controlCatalog());
+      const query = await countSelects(() => new DbDataProvider(db).auditQuery("q01-control-changes"));
+      expect(query).toBe(plainLoad);
     });
 
     it("scans the audit events once per initiative, not once per review", async () => {
