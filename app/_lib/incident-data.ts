@@ -41,7 +41,12 @@ export async function loadIncidentsForViewer(
         isDeploymentVisible(workspaceByDeployment, incident.deploymentId, viewerWorkspaceId),
       ),
     };
-  } catch {
+  } catch (error) {
+    // Code only (from an allowlist-free read of `code`/`name`): the message can carry the connection string.
+    const code = error && typeof error === "object" && typeof (error as { code?: unknown }).code === "string"
+      ? (error as { code: string }).code
+      : error instanceof Error ? error.name : "UNKNOWN";
+    console.error("Incident load failed", { causeCode: code });
     return { status: "unavailable", reason: "load_failed", incidents: null };
   }
 }
