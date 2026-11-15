@@ -75,6 +75,7 @@ describe("lib/services/route-guard", () => {
       expect(result!.token).toHaveLength(64); // 32 bytes hex
       expect(result!.workspaceId).toMatch(/^ws_[0-9a-f]{64}$/);
       expect(result!.workspaceId).not.toContain(result!.token);
+      expect(result!.expiresInMs).toBe(60 * 60 * 1000);
 
       const [persisted] = await testDb.select().from(sessions).where(eq(sessions.token, result!.token));
       expect(persisted).toMatchObject({

@@ -94,7 +94,15 @@ export function apiErrorToMessage(err: ApiError): string {
 export interface SessionResult {
   token: string;
   workspaceId: string;
+  /** Local deadline: `Date.now() + expiresInMs` at receipt, so a skewed browser clock cannot drop a fresh session. */
   expiresAt: number;
+}
+
+type SessionWire = SessionResult & { expiresInMs?: number };
+
+function withLocalDeadline(wire: SessionWire): SessionResult {
+  const { expiresInMs, ...rest } = wire;
+  return typeof expiresInMs === "number" ? { ...rest, expiresAt: Date.now() + expiresInMs } : rest;
 }
 
 export interface CreateInitiativeResult {
@@ -409,11 +417,11 @@ async function request<T>(
 
 /** Start a demo or switch personas within the current workspace. */
 export function postSession(personaKey: string, token?: string): Promise<SessionResult> {
-  return request<SessionResult>("/api/session", {
+  return request<SessionWire>("/api/session", {
     method: "POST",
     token,
     body: { personaKey },
-  });
+  }).then(withLocalDeadline);
 }
 
 /**
@@ -424,7 +432,7 @@ export function postSession(personaKey: string, token?: string): Promise<Session
  * except the three intake ones (create / edit draft / submit).
  */
 export function postPublicSession(): Promise<SessionResult> {
-  return request<SessionResult>("/api/public-session", { method: "POST" });
+  return request<SessionWire>("/api/public-session", { method: "POST" }).then(withLocalDeadline);
 }
 
 export interface PublicSubmissionRow {

@@ -165,7 +165,7 @@ export async function issuePublicSession(
     .catch((err: unknown) => {
       throw redactDbError(err);
     });
-  return { token: session.token, workspaceId, expiresAt: session.expiresAt };
+  return { token: session.token, workspaceId, expiresAt: session.expiresAt, expiresInMs: PUBLIC_SESSION_TTL_MS };
 }
 
 
@@ -271,6 +271,8 @@ export interface IssueSessionResult {
   token: string;
   workspaceId: string;
   expiresAt: number;
+  /** Lifetime from issue, so a client with a skewed clock can compute its own deadline. */
+  expiresInMs: number;
 }
 
 /**
@@ -312,7 +314,7 @@ export async function issueDemoSession(
     .catch((err: unknown) => {
       throw redactDbError(err);
     });
-  return { token: session.token, workspaceId, expiresAt: session.expiresAt };
+  return { token: session.token, workspaceId, expiresAt: session.expiresAt, expiresInMs: SESSION_TTL_MS };
 }
 
 export interface ResolvedSession {
