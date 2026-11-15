@@ -9,9 +9,11 @@
  * check happening after the shared guard).
  *
  * Body:  { controlId: string, initiativeId?: string | null, tier?: Tier, value: number, reason: string }
- *        `initiativeId` set (or omitted) -> project/deployment override for
- *        that initiative; `initiativeId: null` -> tier-default change (then
- *        `tier` is required).
+ *        `initiativeId` set -> project/deployment override for that
+ *        initiative; `initiativeId: null` or omitted -> tier-default change
+ *        (then `tier` is required; 403 for any session with a workspace).
+ *        `value` is a rate in 0..1; the control must be a runtime-evaluated
+ *        one (tier defaults + sustained window), else 400.
  * 200:   SetEvalThresholdResult
  * 401/429/400: as other mutating routes.
  * 403:   { error: string }  (non-admin actor)
