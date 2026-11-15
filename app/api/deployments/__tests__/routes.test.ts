@@ -83,6 +83,7 @@ async function initiativeWithPromotableCheckpointInWorkspace(
     requesterName: "Priya Raman",
     workspaceId,
   });
+  await testDb.update(initiatives).set({ state: "deployed" }).where(eq(initiatives.id, draft.initiativeId));
   const awaitingId = `dep-awaiting-${randomUUID()}`;
   await testDb.insert(deploymentVersions).values({
     id: `dep-current-${randomUUID()}`,

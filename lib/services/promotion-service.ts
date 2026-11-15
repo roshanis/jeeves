@@ -94,6 +94,13 @@ export { ConflictError };
  * deployment-version-scoped rollback — same rationale as JUDGMENT CALL 2/3
  * above for promoteCheckpoint).
  */
+/** A paused or re_review initiative is out of service: only an admin resume brings it back. */
+function requireInServiceLifecycle(initiative: { id: string; state: string }, what: string): void {
+  if (initiative.state === "paused" || initiative.state === "re_review") {
+    throw new ConflictError(`cannot ${what}: initiative ${initiative.id} is ${initiative.state}; an admin resume is required first`);
+  }
+}
+
 function requireApproverOrAdminWithReason(actor: Actor, reason: string): void {
   if (actor.role !== "approver" && actor.role !== "admin") {
     throw new ForbiddenError(
@@ -222,7 +229,12 @@ export async function listPromotions(db: Db): Promise<PromotionListItem[]> {
 
   const initiativeById = new Map(allInitiatives.map((i) => [i.id, i]));
 
-  const awaiting = allDeployments.filter((d) => d.status === "awaiting_promotion_signoff");
+  // First-approval placeholders belong to initiatives that are not deployed
+  // yet; they are not RL checkpoints and must not be offered for promotion.
+  const awaiting = allDeployments.filter(
+    (d) =>
+      d.status === "awaiting_promotion_signoff" && initiativeById.get(d.initiativeId)?.state === "deployed",
+  );
 
   return awaiting.map((d) => {
     const initiative = initiativeById.get(d.initiativeId);
@@ -352,6 +364,13 @@ export async function promoteCheckpoint(
       throw new NotFoundError("deploymentVersion", deploymentVersionId);
     }
 
+    requireInServiceLifecycle(owningInitiative, "promote a checkpoint");
+    if (owningInitiative.state !== "deployed") {
+      throw new ValidationError(
+        `initiative ${owningInitiative.id} is '${owningInitiative.state}', not deployed; only a deployed initiative's RL checkpoint can be promoted`,
+      );
+    }
+
     if (target.status !== "awaiting_promotion_signoff") {
       throw new ValidationError(
         `deployment version ${deploymentVersionId} is not awaiting promotion sign-off (current status: '${target.status}'); it may already have been promoted`,
@@ -367,6 +386,11 @@ export async function promoteCheckpoint(
     const currentDeployed = siblingRows
       .filter((d) => d.status === "deployed")
       .sort((a, b) => b.deployedAt.getTime() - a.deployedAt.getTime())[0];
+    if (!currentDeployed) {
+      throw new ValidationError(
+        `initiative ${target.initiativeId} has no operational deployed version; checkpoint ${deploymentVersionId} is not an RL promotion candidate`,
+      );
+    }
 
     if (currentDeployed) {
       // Compare-and-set (external-review finding above): only retire if the
@@ -557,6 +581,7 @@ export async function rollbackDeployment(
     if (mutationWorkspaceMismatch(initiativeRows[0].workspaceId, sessionWorkspaceId)) {
       throw new NotFoundError("initiative", initiativeId);
     }
+    requireInServiceLifecycle(initiativeRows[0], "roll back a deployment");
 
     const siblingRows = await tx
       .select()

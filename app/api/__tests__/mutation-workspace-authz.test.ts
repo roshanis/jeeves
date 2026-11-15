@@ -275,6 +275,14 @@ describe("remaining mutation routes enforce session workspace authorization", ()
     const owner = await issueSession("angela-torres", "70.0.2.3", requester.workspaceCookie);
     const foreign = await issueSession("angela-torres", "70.0.2.4");
     const deploymentId = "dep-private-promotion";
+    await testDb.update(initiatives).set({ state: "deployed" }).where(eq(initiatives.id, initiativeId));
+    await testDb.insert(deploymentVersions).values({
+      id: "dep-private-current",
+      initiativeId,
+      version: "v-private-0",
+      status: "deployed",
+      deployedAt: new Date("2026-07-25T00:00:00.000Z"),
+    });
     await testDb.insert(deploymentVersions).values({
       id: deploymentId,
       initiativeId,
