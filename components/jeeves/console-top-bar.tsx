@@ -1,5 +1,6 @@
 import { unstable_rethrow } from "next/navigation";
 import { getAppProvider, getCurrentWorkspaceId } from "@/app/_lib/data-provider";
+import { logUnexpectedError } from "@/lib/http/log-error";
 import { AppTopBar } from "./app-topbar";
 
 // Async server wrapper that loads the ⌘K palette's search index and hands it
@@ -30,7 +31,7 @@ export async function ConsoleTopBar() {
     initiatives = await getAppProvider().listInitiativeIndex({ viewerWorkspaceId });
   } catch (error) {
     unstable_rethrow(error);
-    console.error("Console top bar index unavailable:", error);
+    logUnexpectedError("Console top bar index unavailable", error);
   }
   return <AppTopBar initiatives={initiatives} />;
 }
