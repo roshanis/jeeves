@@ -1,5 +1,7 @@
 import Link from "next/link";
+import { notFound } from "next/navigation";
 import type { Metadata } from "next";
+import { isProductionMode } from "@/lib/config/deployment-mode";
 import { PublicIntakeQueue } from "@/components/jeeves/public-intake-queue";
 
 // The operator's page: real requests sent through "Send a real request".
@@ -8,13 +10,23 @@ import { PublicIntakeQueue } from "@/components/jeeves/public-intake-queue";
 // console — the persona picker there means nothing here, since this page is
 // opened by the site's OPERATOR_TOKEN, not by any persona — and it is not
 // marketing content. Unlinked from navigation and kept out of search.
-export const metadata: Metadata = {
-  title: "Real requests",
-  description: "Operator view of requests sent through the public intake form.",
-  robots: { index: false, follow: false },
-};
+//
+// Production has no operator queue (and no /api/public-intake behind it), so
+// it answers 404 from the page AND from its metadata: Next resolves metadata
+// separately from rendering, and a static export would put this page's title
+// into the 404's <head>.
+export function generateMetadata(): Metadata {
+  if (isProductionMode()) notFound();
+  return {
+    title: "Real requests",
+    description: "Operator view of requests sent through the public intake form.",
+    robots: { index: false, follow: false },
+  };
+}
 
 export default function OperatorPage() {
+  if (isProductionMode()) notFound();
+
   return (
     <main className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-12">
       <div className="flex flex-col gap-1.5">

@@ -1,12 +1,14 @@
 import { runtimeDatabaseUrl } from "@/lib/db/runtime-config";
 import type { Metadata, Viewport } from "next";
-import { SITE_URL } from "@/lib/marketing/site-config";
+import { rootMetadata } from "@/lib/config/site-metadata";
+import { deploymentMode } from "@/lib/config/deployment-mode";
 import localFont from "next/font/local";
 import "./globals.css";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/sonner";
 import { RoleProvider } from "@/components/jeeves/role-context";
 import { LiveSessionProvider } from "@/lib/client/session-context";
+import { DeploymentModeProvider } from "@/lib/client/deployment-mode-context";
 import { resolveDataProviderMode } from "@/lib/data/provider-mode";
 
 // Resolve capability at runtime, including mock-build/db-start demos, while
@@ -48,37 +50,12 @@ const fontMono = localFont({
   display: "swap",
 });
 
-export const metadata: Metadata = {
-  // metadataBase makes every relative OG/twitter image URL below resolve to
-  // an absolute one. Without it Next warns at build time and social
-  // crawlers, which do not resolve relative paths, silently show no image.
-  metadataBase: new URL(SITE_URL),
-  title: {
-    // Per-page `title` strings are slotted into this template, so a tab
-    // reads "Portfolio · Jeeves" rather than the same site-wide string on
-    // all 18 pages. A page that owns its own branding (the landing page)
-    // opts out with `title: { absolute }`.
-    template: "%s · Jeeves",
-    default: "Jeeves — AI Governance Gateway (Meridian Health demo)",
-  },
-  description:
-    "Fictional demo — synthetic data. AI governance workflow demo for a fictional healthcare payer.",
-  applicationName: "Jeeves",
-  openGraph: {
-    type: "website",
-    siteName: "Jeeves",
-    title: "Jeeves — AI Governance Gateway",
-    description:
-      "Intake, risk tiering, domain review, approval and continuous monitoring for AI initiatives — demonstrated end to end on a fictional healthcare payer.",
-    url: SITE_URL,
-  },
-  twitter: {
-    card: "summary_large_image",
-    title: "Jeeves — AI Governance Gateway",
-    description:
-      "Intake, risk tiering, domain review, approval and continuous monitoring for AI initiatives — demonstrated on a fictional healthcare payer.",
-  },
-};
+// Resolved per request, never at build: the root layout is force-dynamic, and
+// the mode comes from the runtime JEEVES_MODE (lib/config/site-metadata.ts).
+// A static `metadata` export would freeze whichever mode the build ran in.
+export function generateMetadata(): Metadata {
+  return rootMetadata();
+}
 
 /**
  * Mobile viewport (iPhone/iPad readiness pass 2026-08-04).
@@ -113,6 +90,9 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  // Server-side, per request (this layout is force-dynamic): the mode reaches
+  // client components only through this provider, never through the bundle.
+  const mode = deploymentMode();
   return (
     <html
       lang="en"
@@ -145,21 +125,23 @@ export default function RootLayout({
         >
           Skip to content
         </a>
-        <RoleProvider>
-          <LiveSessionProvider liveModeAvailable={resolveDataProviderMode(process.env.DATA_PROVIDER, !!runtimeDatabaseUrl()) === "db"}>
-            <TooltipProvider>
-              {/* Console chrome (sidebar/top bar/mobile nav/footer) moved to
-                  app/(console)/layout.tsx so the public marketing site at
-                  "/", "/frameworks", "/pilot" (app/(marketing)/*, with its
-                  own chrome in app/(marketing)/layout.tsx) renders
-                  full-bleed, without the ops sidebar bleeding through. Every
-                  ops route lives under the (console) route group and gets
-                  that chrome instead. */}
-              {children}
-              <Toaster />
-            </TooltipProvider>
-          </LiveSessionProvider>
-        </RoleProvider>
+        <DeploymentModeProvider mode={mode}>
+          <RoleProvider>
+            <LiveSessionProvider liveModeAvailable={resolveDataProviderMode(process.env.DATA_PROVIDER, !!runtimeDatabaseUrl()) === "db"}>
+              <TooltipProvider>
+                {/* Console chrome (sidebar/top bar/mobile nav/footer) moved to
+                    app/(console)/layout.tsx so the public marketing site at
+                    "/", "/frameworks", "/pilot" (app/(marketing)/*, with its
+                    own chrome in app/(marketing)/layout.tsx) renders
+                    full-bleed, without the ops sidebar bleeding through. Every
+                    ops route lives under the (console) route group and gets
+                    that chrome instead. */}
+                {children}
+                <Toaster />
+              </TooltipProvider>
+            </LiveSessionProvider>
+          </RoleProvider>
+        </DeploymentModeProvider>
       </body>
     </html>
   );

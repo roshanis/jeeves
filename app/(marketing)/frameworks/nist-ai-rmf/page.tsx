@@ -3,15 +3,17 @@ import { buttonVariants } from "@/components/ui/button";
 import { FrameworkMappingTable } from "@/components/jeeves/framework-mapping-table";
 import { FRAMEWORK_PAGES } from "@/lib/marketing/framework-mappings";
 import { CONTACT_URL } from "@/lib/marketing/site-config";
+import { guardDemoPage, demoPageMetadata } from "@/lib/config/demo-pages";
 
 const page = FRAMEWORK_PAGES.find((p) => p.slug === "nist-ai-rmf")!;
 
-export const metadata = {
+export const generateMetadata = demoPageMetadata({
   title: `${page.title} — Jeeves`,
   description: page.intro,
-};
+});
 
 export default function NistAiRmfCrosswalkPage() {
+  guardDemoPage();
   return (
     <section className="bg-background py-16 md:py-20">
       <div className="mx-auto max-w-[72rem] px-6">

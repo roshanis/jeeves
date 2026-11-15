@@ -1,4 +1,7 @@
-# Build context exclusions for `podman build` (also honoured by docker).
+# Build context exclusions for `podman build`. Docker/BuildKit ignores this
+# file and reads .dockerignore instead, so every pattern here is mirrored
+# there; keep the two in sync (tests/deploy/container-build-context.test.ts
+# fails on drift).
 # Keeping the context small matters: node_modules alone is ~1GB here and is
 # rebuilt inside the image anyway from package-lock.json.
 

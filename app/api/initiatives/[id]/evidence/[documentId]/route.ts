@@ -1,12 +1,14 @@
 import { getDb } from '@/lib/db/client';
-import { resolveSession, extractSessionToken } from '@/lib/services/route-guard';
+import { requireViewerForRequest } from '@/lib/services/require-viewer';
 import { downloadEvidence } from '@/lib/services/evidence-service';
 import { evidenceResponseError, privateHeaders } from '@/lib/evidence/http';
 import { EvidenceError } from '@/lib/evidence/files';
 export const runtime='nodejs';
 export async function GET(req:Request,context:{params:Promise<{id:string;documentId:string}>}):Promise<Response> {
  try{
-  const viewer=await resolveSession(extractSessionToken(req));
+  const gate=await requireViewerForRequest(req);
+  if(!gate.ok)return gate.response;
+  const viewer=gate.viewer;
   if(!viewer.actor)throw new EvidenceError(401,'Start the demo to download evidence.');
   const {id,documentId}=await context.params;
   const {document,bytes}=await downloadEvidence(getDb(),id,documentId,{actor:viewer.actor,workspaceId:viewer.workspaceId});

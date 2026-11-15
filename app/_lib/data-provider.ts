@@ -1,13 +1,11 @@
 import { runtimeDatabaseUrl } from "@/lib/db/runtime-config";
 /** Viewer-scoped server reads over the shared provider factory. */
-import { cookies, headers } from "next/headers";
+import { headers } from "next/headers";
 import type { DataProvider } from "@/lib/data/provider";
 import type { InitiativeDetail, InitiativeSummary } from "@/lib/data/dto";
 import { getProvider } from "@/lib/data";
 import { resolveDataProviderMode } from "@/lib/data/provider-mode";
-import { resolveWorkspaceCookieSecret, verifyWorkspaceCookie } from "@/lib/security/workspace-cookie";
-
-const WORKSPACE_COOKIE = "jeeves_workspace";
+import { requireViewer } from "@/lib/services/require-viewer";
 
 /** Keep app callers on the same provider factory as API read callers. */
 export function getAppProvider(): DataProvider {
@@ -15,21 +13,22 @@ export function getAppProvider(): DataProvider {
 }
 
 /**
- * The current browser's demo workspace id, or null for a public/no-session
- * visitor (M2.5 inc.2b). This reads the `jeeves_workspace` cookie set by
- * POST /api/session — it is a READ-SCOPING hint, never an auth credential.
- * null => seeded-only; a value => seeded + that workspace's live-created rows.
+ * The workspace id the current page request reads as, behind the viewer gate
+ * (lib/services/require-viewer.ts).
  *
- * Security-hardening pass: POST /api/session now signs this cookie
- * (lib/security/workspace-cookie.ts) so a caller cannot simply set an
- * arbitrary `jeeves_workspace` value to read another workspace's
- * live-created rows. Verified here the same way; an invalid/unsigned/
- * tampered cookie degrades to null (seeded-only view), never an error.
+ * Demo: the signed `jeeves_workspace` cookie set by POST /api/session, or null
+ * for a visitor with none (seeded-only view). It is a READ-SCOPING hint, never
+ * an auth credential, and POST /api/session signs it
+ * (lib/security/workspace-cookie.ts) so a caller cannot set an arbitrary value
+ * to read another workspace's live-created rows; an invalid, unsigned or
+ * tampered cookie degrades to null, never an error.
+ *
+ * Production: the workspace of the signed-in session, and a request with no
+ * session is redirected to /sign-in here, before any data is read. Every page
+ * that reads through this module is gated by it.
  */
 export async function getCurrentWorkspaceId(): Promise<string | null> {
-  const cookieStore = await cookies();
-  const raw = cookieStore.get(WORKSPACE_COOKIE)?.value ?? null;
-  return verifyWorkspaceCookie(raw, resolveWorkspaceCookieSecret());
+  return (await requireViewer()).workspaceId;
 }
 
 /** `listInitiatives` scoped to the current viewer's workspace (seeded + own). */
@@ -57,6 +56,8 @@ export async function getInitiativeDetailForViewer(
 export async function getInitiativeDetailCoherent(
   slug: string,
 ): Promise<InitiativeDetail | null> {
+  // The HTTP hop below bypasses getInitiativeDetailForViewer, so gate first.
+  await requireViewer();
   const hasDatabaseUrl = !!runtimeDatabaseUrl();
   const pgliteDbMode = resolveDataProviderMode(process.env.DATA_PROVIDER, hasDatabaseUrl) === "db" && !hasDatabaseUrl;
   if (!pgliteDbMode) {

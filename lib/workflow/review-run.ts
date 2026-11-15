@@ -4,7 +4,7 @@ import { and, desc, eq, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
 import { auditEvents, reviewCycles, reviewDecisions, runBudget } from "../db/schema";
 import type { Actor, Domain } from "../domain/types";
-import { getAgentPort } from "../agents";
+import { assertLlmConfigured, getAgentPort } from "../agents";
 import { AgentInitializationError } from "../agents/initialization-error";
 import type { AgentPort, DraftReviewOutput, PortFailure, PortResult } from "../agents/ports";
 import { lockCurrentReviewCycle, ReviewIntegrityError, type ReviewTx } from "../services/review-integrity";
@@ -227,7 +227,7 @@ async function execute(db: Db, claim: Claim, port: AgentPort | undefined, option
         const [current] = await tx.select().from(reviewDecisions).where(eq(reviewDecisions.id, claim.row.id));
         if (!current || current.activeAttemptId !== claim.id || current.revision !== claim.row.revision) return;
         await tx.update(reviewDecisions).set({ activeAttemptId: null, activeAttemptExpiresAt: null }).where(eq(reviewDecisions.id, current.id));
-        await receipt(tx, claim, options, "draft_attempt_initialization_failed", current.status, { code: "AGENT_INITIALIZATION_FAILED" });
+        await receipt(tx, claim, options, "draft_attempt_initialization_failed", current.status, { code: error.code });
       });
     }
     throw error;
@@ -235,6 +235,8 @@ async function execute(db: Db, claim: Claim, port: AgentPort | undefined, option
 }
 
 export async function startDraftRun(db:Db,initiativeId:string,domains:Domain[],port?:AgentPort,options:StartDraftRunOptions={}):Promise<StartDraftRunResult> {
+  // A production install with no LLM refuses before claiming, reserving or auditing anything.
+  if(!port)assertLlmConfigured();
   const [cycle]=await db.select().from(reviewCycles).where(eq(reviewCycles.initiativeId,initiativeId)).orderBy(desc(reviewCycles.openedAt),desc(reviewCycles.id)).limit(1);
   if(!cycle)throw new ReviewIntegrityError("not_found","Review cycle not found.");
   const runId=`run-${randomUUID()}`, unique=[...new Set(domains)], outcomes:DraftRunDomainOutcome[]=new Array(unique.length);
@@ -257,6 +259,7 @@ export async function startDraftRun(db:Db,initiativeId:string,domains:Domain[],p
   return {runId,cycleId:cycle.id,outcomes};
 }
 export async function runSingleDomainDraft(db:Db,cycleId:string,domain:Domain,port?:AgentPort,options:RunSingleDomainOptions={}):Promise<RunSingleDomainResult> {
+  if(!port)assertLlmConfigured();
   const deadline=Date.now()+bounded(options.runTimeoutMs,90_000,180_000);
   const claim=await claimDomain(db,cycleId,domain,true,options,deadline);
   if("status" in claim)return {cycleId,domain,status:claim.status,reason:claim.reason};

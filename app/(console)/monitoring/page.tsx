@@ -8,6 +8,7 @@ import type { InitiativeDetail, TelemetrySeries } from "@/lib/data/dto";
 import { SyntheticDataLabel } from "@/components/jeeves/synthetic-data-label";
 import { LifecycleBadge } from "@/components/jeeves/lifecycle-badge";
 import { telemetryConnectorStatus, syntheticTraces } from "@/lib/telemetry/connector";
+import { isProductionMode } from "@/lib/config/deployment-mode";
 import { TelemetryConnectorCard } from "@/components/jeeves/telemetry-connector-card";
 import { GpuQuotaCard } from "@/components/jeeves/gpu-quota-card";
 import { CostBudgetCard, type PortfolioCostPoint } from "@/components/jeeves/cost-budget-card";
@@ -27,11 +28,17 @@ import {
 } from "@/components/ui/table";
 import type { Metadata } from "next";
 
-export const metadata: Metadata = {
-  title: "Deployed model health",
-  description:
-    "Eval quality, cost and utilization across every deployed model, with incidents raised against breached controls. Synthetic telemetry — demo data.",
-};
+const DESCRIPTION =
+  "Eval quality, cost and utilization across every deployed model, with incidents raised against breached controls.";
+
+// Mode-aware, so resolved per request: the demo's telemetry is synthetic and
+// says so; a production install has no telemetry source and does not.
+export function generateMetadata(): Metadata {
+  return {
+    title: "Deployed model health",
+    description: isProductionMode() ? DESCRIPTION : `${DESCRIPTION} Synthetic telemetry — demo data.`,
+  };
+}
 
 /** Portfolio-wide daily cost: sums each operating deployment's cost_tokens_usd_day
  * series by timestamp. Pure aggregation over data the page already loaded. */
@@ -61,6 +68,10 @@ function breached(series: TelemetrySeries | undefined): boolean {
 }
 
 export default async function MonitoringPage() {
+  // Production has no telemetry source (no ingest; the monitor is off), so the
+  // demo's illustrative telemetry, its generated trace rows and its monitor
+  // hint are not shown. Incidents are real rows and stay.
+  const production = isProductionMode();
   const provider = getAppProvider();
   const viewerWorkspaceId = await getCurrentWorkspaceId();
   const [details, incidentResult] = await Promise.all([
@@ -93,84 +104,95 @@ export default async function MonitoringPage() {
           Deployed models — operational health
         </h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Eval quality, cost, and utilization across every deployment. Open an
-          initiative to see full telemetry, or run the monitor from Administration.
+          {production
+            ? "Incidents raised against deployed models."
+            : "Eval quality, cost, and utilization across every deployment. Open an initiative to see full telemetry, or run the monitor from Administration."}
         </p>
       </div>
 
-      <Card className="overflow-hidden">
-        <CardHeader className="border-b bg-muted/40 py-3">
-          <CardTitle className="kicker">Deployments</CardTitle>
-        </CardHeader>
-        <CardContent className="p-0">
-          <SyntheticDataLabel className="p-4">
-            <div className="scroll-thin scroll-x-pane overflow-x-auto rounded-md border border-border">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="kicker">Initiative</TableHead>
-                    <TableHead className="kicker">Version</TableHead>
-                    <TableHead className="kicker">Status</TableHead>
-                    <TableHead className="kicker text-right">Eval (hallucination)</TableHead>
-                    <TableHead className="kicker text-right">Cost / day</TableHead>
-                    <TableHead className="kicker text-right">GPU</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {operating.map((d) => {
-                    const evalSeries = d.telemetry.find((t) => t.kind === "eval_hallucination");
-                    const costSeries = d.telemetry.find((t) => t.kind === "cost_tokens_usd_day");
-                    const gpuSeries = d.telemetry.find((t) => t.kind === "gpu_util_pct");
-                    const evalVal = latest(evalSeries);
-                    const isBreach = breached(evalSeries);
-                    const dep = d.deployments[d.deployments.length - 1];
-                    const costVal = latest(costSeries);
-                    const gpuVal = latest(gpuSeries);
-                    return (
-                      <TableRow key={d.summary.slug}>
-                        <TableCell>
-                          <Link href={`/initiatives/${d.summary.slug}?tab=evals`} className="font-medium hover:text-primary hover:underline">
-                            {d.summary.title}
-                          </Link>
-                          <div className="font-mono text-xs text-muted-foreground">{d.summary.slug}</div>
-                        </TableCell>
-                        <TableCell className="font-mono text-xs">{dep?.version ?? "—"}</TableCell>
-                        <TableCell><LifecycleBadge state={d.summary.state} /></TableCell>
-                        <TableCell className="text-right">
-                          {evalVal === null ? (
-                            <span className="text-xs text-muted-foreground">—</span>
-                          ) : (
-                            <span className="inline-flex items-center justify-end gap-1.5">
-                              <span
-                                className={`font-mono text-sm tabular-nums ${
-                                  isBreach ? "font-medium text-status-critical-fg" : "text-foreground"
-                                }`}
-                              >
-                                {evalVal.toFixed(3)}
-                              </span>
-                              {isBreach ? (
-                                <span className="inline-flex items-center rounded-full bg-status-critical-bg px-1.5 py-0.5 text-[11px] font-medium text-status-critical-fg">
-                                  over floor
+      {production ? (
+        <div role="status" className="rounded-lg border bg-muted/40 px-4 py-3 text-sm">
+          <p className="font-medium">Telemetry is not connected for this installation.</p>
+          <p className="mt-1 text-muted-foreground">
+            Eval quality, cost and utilization for deployed models appear here
+            once a telemetry source is connected.
+          </p>
+        </div>
+      ) : (
+        <Card className="overflow-hidden">
+          <CardHeader className="border-b bg-muted/40 py-3">
+            <CardTitle className="kicker">Deployments</CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            <SyntheticDataLabel className="p-4">
+              <div className="scroll-thin scroll-x-pane overflow-x-auto rounded-md border border-border">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="kicker">Initiative</TableHead>
+                      <TableHead className="kicker">Version</TableHead>
+                      <TableHead className="kicker">Status</TableHead>
+                      <TableHead className="kicker text-right">Eval (hallucination)</TableHead>
+                      <TableHead className="kicker text-right">Cost / day</TableHead>
+                      <TableHead className="kicker text-right">GPU</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {operating.map((d) => {
+                      const evalSeries = d.telemetry.find((t) => t.kind === "eval_hallucination");
+                      const costSeries = d.telemetry.find((t) => t.kind === "cost_tokens_usd_day");
+                      const gpuSeries = d.telemetry.find((t) => t.kind === "gpu_util_pct");
+                      const evalVal = latest(evalSeries);
+                      const isBreach = breached(evalSeries);
+                      const dep = d.deployments[d.deployments.length - 1];
+                      const costVal = latest(costSeries);
+                      const gpuVal = latest(gpuSeries);
+                      return (
+                        <TableRow key={d.summary.slug}>
+                          <TableCell>
+                            <Link href={`/initiatives/${d.summary.slug}?tab=evals`} className="font-medium hover:text-primary hover:underline">
+                              {d.summary.title}
+                            </Link>
+                            <div className="font-mono text-xs text-muted-foreground">{d.summary.slug}</div>
+                          </TableCell>
+                          <TableCell className="font-mono text-xs">{dep?.version ?? "—"}</TableCell>
+                          <TableCell><LifecycleBadge state={d.summary.state} /></TableCell>
+                          <TableCell className="text-right">
+                            {evalVal === null ? (
+                              <span className="text-xs text-muted-foreground">—</span>
+                            ) : (
+                              <span className="inline-flex items-center justify-end gap-1.5">
+                                <span
+                                  className={`font-mono text-sm tabular-nums ${
+                                    isBreach ? "font-medium text-status-critical-fg" : "text-foreground"
+                                  }`}
+                                >
+                                  {evalVal.toFixed(3)}
                                 </span>
-                              ) : null}
-                            </span>
-                          )}
-                        </TableCell>
-                        <TableCell className="text-right font-mono text-sm tabular-nums">
-                          {costVal !== null ? `$${costVal.toFixed(0)}` : "—"}
-                        </TableCell>
-                        <TableCell className="text-right font-mono text-sm tabular-nums">
-                          {gpuVal !== null ? `${gpuVal.toFixed(0)}%` : "—"}
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
-            </div>
-          </SyntheticDataLabel>
-        </CardContent>
-      </Card>
+                                {isBreach ? (
+                                  <span className="inline-flex items-center rounded-full bg-status-critical-bg px-1.5 py-0.5 text-[11px] font-medium text-status-critical-fg">
+                                    over floor
+                                  </span>
+                                ) : null}
+                              </span>
+                            )}
+                          </TableCell>
+                          <TableCell className="text-right font-mono text-sm tabular-nums">
+                            {costVal !== null ? `$${costVal.toFixed(0)}` : "—"}
+                          </TableCell>
+                          <TableCell className="text-right font-mono text-sm tabular-nums">
+                            {gpuVal !== null ? `${gpuVal.toFixed(0)}%` : "—"}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+            </SyntheticDataLabel>
+          </CardContent>
+        </Card>
+      )}
 
       <Card className="overflow-hidden">
         <CardHeader className="border-b bg-muted/40 py-3">
@@ -188,10 +210,12 @@ export default async function MonitoringPage() {
             <div className="flex flex-col items-center justify-center gap-1.5 px-4 py-10 text-center">
               <ShieldCheck className="size-5 text-muted-foreground/60" aria-hidden="true" />
               <p className="text-sm text-muted-foreground">No incidents recorded.</p>
-              <p className="text-xs text-muted-foreground/70">
-                Run the monitor from Administration to evaluate deployments
-                against their eval-quality floor.
-              </p>
+              {production ? null : (
+                <p className="text-xs text-muted-foreground/70">
+                  Run the monitor from Administration to evaluate deployments
+                  against their eval-quality floor.
+                </p>
+              )}
             </div>
           ) : (
             <Table>
@@ -231,36 +255,38 @@ export default async function MonitoringPage() {
         </CardContent>
       </Card>
 
-      <details className="panel card-quiet p-4">
-        <summary className="cursor-pointer text-sm font-medium">
-          Cost, GPU, and illustrative telemetry
-        </summary>
-        <div className="mt-4 space-y-4">
-          <TelemetryConnectorCard status={connectorStatus} traces={traces} />
-          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-            <CostBudgetCard points={portfolioCost} />
-            {gpuInitiative && gpuSeries ? (
-              <GpuQuotaCard
-                slug={gpuInitiative.summary.slug}
-                title={gpuInitiative.summary.title}
-                series={gpuSeries}
-              />
-            ) : (
-              <Card data-slot="gpu-quota-card-missing">
-                <CardHeader className="border-b bg-muted/40 py-3">
-                  <CardTitle className="kicker">GPU utilization vs quota</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <p className="text-sm text-muted-foreground">
-                    No self-hosted initiative with GPU telemetry (claims-ocr-coder) is
-                    present in this data set.
-                  </p>
-                </CardContent>
-              </Card>
-            )}
+      {production ? null : (
+        <details className="panel card-quiet p-4">
+          <summary className="cursor-pointer text-sm font-medium">
+            Cost, GPU, and illustrative telemetry
+          </summary>
+          <div className="mt-4 space-y-4">
+            <TelemetryConnectorCard status={connectorStatus} traces={traces} />
+            <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+              <CostBudgetCard points={portfolioCost} />
+              {gpuInitiative && gpuSeries ? (
+                <GpuQuotaCard
+                  slug={gpuInitiative.summary.slug}
+                  title={gpuInitiative.summary.title}
+                  series={gpuSeries}
+                />
+              ) : (
+                <Card data-slot="gpu-quota-card-missing">
+                  <CardHeader className="border-b bg-muted/40 py-3">
+                    <CardTitle className="kicker">GPU utilization vs quota</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-sm text-muted-foreground">
+                      No self-hosted initiative with GPU telemetry (claims-ocr-coder) is
+                      present in this data set.
+                    </p>
+                  </CardContent>
+                </Card>
+              )}
+            </div>
           </div>
-        </div>
-      </details>
+        </details>
+      )}
     </div>
   );
 }

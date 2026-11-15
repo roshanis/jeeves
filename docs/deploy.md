@@ -11,14 +11,32 @@ all data is synthetic, and no LLM call ever touches real PHI. See the top of
 Deploy itself is **not executed by any agent** in this repo — this document
 only describes the steps. A human runs them.
 
+> **Before this change is deployed: set `JEEVES_MODE=demo` in Vercel.**
+> The deployment mode now **defaults to production**. Demo is an explicit
+> opt-in: only the exact value `JEEVES_MODE=demo` selects it, and anything else
+> (unset, empty, `Demo`, `prod`) is production — a closed shell with no
+> personas, no playground and no public intake, which also refuses to boot
+> without `APP_BASE_URL`, `JEEVES_TENANT_ID` and a 32+ character
+> `JEEVES_COOKIE_SECRET`. A Vercel project that does not set the variable
+> **flips the live demo into production mode on its next deploy.**
+>
+> In the Vercel project settings, add `JEEVES_MODE` = `demo` to **Production,
+> Preview and Development** (all three), and only then merge or deploy this
+> change. Preview deployments are the ones people forget. Local development,
+> the test suite, Playwright, CI and the Podman stack set it themselves
+> (`.env.example`, `vitest.config.ts`, `playwright.config.ts`,
+> `.github/workflows/ci.yml`, `deploy/podman/`); Vercel is the one place only a
+> human can set it. Never expose it as `NEXT_PUBLIC_JEEVES_MODE`: the mode is
+> server-only.
+
 ---
 
 ## 1. Local demo quickstart
 
 ```bash
 npm install
-npm run db:seed
-DATA_PROVIDER=db JEEVES_COOKIE_SECRET=<server-signing-key> npm run dev
+JEEVES_MODE=demo npm run db:seed
+JEEVES_MODE=demo DATA_PROVIDER=db JEEVES_COOKIE_SECRET=<server-signing-key> npm run dev
 ```
 
 Notes on each step:
@@ -26,6 +44,9 @@ Notes on each step:
 - `npm install` — installs from `package-lock.json` (npm is the toolchain in
   use here; there is no `pnpm-lock.yaml` in the repo despite `AGENTS.md`
   mentioning `pnpm` — use `npm run <script>` from `package.json`).
+- `JEEVES_MODE=demo` is required locally: the mode defaults to production,
+  which refuses the local PGlite store, the mock data provider and the mock
+  LLM (`lib/db/client.ts`, `lib/data/index.ts`, `lib/agents/index.ts`).
 - `npm run db:seed` runs `tsx scripts/seed.ts`. With no `DATABASE_URL` set,
   this seeds a **persistent local PGlite store** at `./.pglite` (gitignored)
   — no external service, no signup. The seed is deterministic (fixed PRNG
@@ -85,6 +106,7 @@ npm run start        # next start (after build)
    | `DATABASE_URL` or `POSTGRES_URL` | Yes | Explicit nonblank `DATABASE_URL` wins; otherwise the Vercel integration `POSTGRES_URL` is used consistently for runtime, pages and incident reads. Neon hosts use the Neon driver; other PostgreSQL hosts use `pg`. Vercel refuses local PGlite fallback. |
    | `DATABASE_MIGRATION_URL` | For Supabase migrations | Direct or session-pooler connection on port 5432. Runtime transaction-pooler URLs on port 6543 cannot run migrations. |
    | `DATABASE_SSL_CA` | Optional | Project CA if required; recognized Supabase connections verify certificates and use a bounded pool. |
+   | `JEEVES_MODE` | **Yes: `demo`** | Must be exactly `demo` in Production, Preview and Development, or the deployment runs in production mode (see the note at the top of this page). Server-only; never `NEXT_PUBLIC_`. |
    | `DATA_PROVIDER` | Optional | Defaults to DB when either runtime URL exists. `db` makes this explicit; `mock` deliberately shows the read-only preview dataset. |
    | `JEEVES_COOKIE_SECRET` | Yes for new deployments | Random server-only signing key for browser workspace continuity. Visitor entry is passwordless. Existing DEMO_PASSCODE can serve only as a deprecated signing fallback. |
    | `OPENAI_API_KEY` | Optional | Only set this if you want **live** LLM-drafted reviews during the demo. Omit it and the app runs entirely on the keyless mock adapter — safe default for a public URL. |
@@ -124,22 +146,26 @@ npm run start        # next start (after build)
 5. **Seed only an explicitly approved disposable demo database.**
 
    ```bash
-   DATABASE_URL="<your Neon pooled connection string>" npm run db:seed
+   JEEVES_MODE=demo DATABASE_URL="<your Neon pooled connection string>" npm run db:seed
    ```
 
    Read this before running it: `npm run db:seed` **wipes every seeded
    table and repopulates it**, and to do that it issues
-   `ALTER TABLE audit_events DISABLE TRIGGER ALL` so it can delete the
+   `ALTER TABLE audit_events DISABLE TRIGGER USER` so it can delete the
    append-only audit log (`scripts/seed.ts`, "Wipe in FK-safe order"). That
    is correct for a demo dataset and catastrophic for a real one — the audit
    log is the compliance record the product exists to keep.
 
-   `scripts/seed.ts` refuses to run when `NODE_ENV=production` unless you
-   set `ALLOW_SEED=1`. Treat that prompt as the question it is, not a
-   formality. Seeding also assumes the schema already exists (including the
-   append-only trigger in `drizzle/0002_audit_events_append_only.sql`), which
-   is why step 4 comes first. Do not seed against a database that is
-   currently serving a live demo audience mid-session.
+   `scripts/seed.ts` and `scripts/reset-demo.ts` are demo-only: they refuse
+   to run unless `JEEVES_MODE=demo` (the mode defaults to production), even
+   when `DATABASE_URL` is set, so a seed can never stamp an unprepared
+   database `demo`. `scripts/seed.ts` also refuses to run when
+   `NODE_ENV=production` unless you set `ALLOW_SEED=1`. Treat that prompt as
+   the question it is, not a formality. Seeding also assumes the schema
+   already exists (including the append-only trigger in
+   `drizzle/0002_audit_events_append_only.sql`), which is why step 4 comes
+   first. Do not seed against a database that is currently serving a live demo
+   audience mid-session.
 
 6. **Playwright is NOT run on Vercel.** `npm run test:e2e` boots its own
    production build/server on a fixed local port (3117) and is a local/CI-only
@@ -249,7 +275,9 @@ different problems.
    every seeded table and disables the `audit_events` append-only triggers to
    do it. The `ALLOW_SEED=1` guard under `NODE_ENV=production` is the only
    thing standing between a mistyped `DATABASE_URL` and the loss of the
-   compliance record.
+   compliance record, except against a database stamped `production`
+   (`installation.deploy_mode`, migration 0015): the seed and reset scripts
+   refuse that one whatever `ALLOW_SEED` says.
 
 ### Restore
 
@@ -300,7 +328,7 @@ Run through this the morning of a demo, in order:
 
 1. **Seed fresh.**
    ```bash
-   DATABASE_URL="<Neon pooled connection string>" npm run db:seed
+   JEEVES_MODE=demo DATABASE_URL="<Neon pooled connection string>" npm run db:seed
    ```
    Confirms a clean, deterministic 12-initiative dataset.
 

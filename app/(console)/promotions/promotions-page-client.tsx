@@ -38,6 +38,7 @@ import {
 } from "@/components/ui/table";
 import { TierBadge } from "@/components/jeeves/tier-badge";
 import { SyntheticDataLabel } from "@/components/jeeves/synthetic-data-label";
+import { useDeploymentMode } from "@/lib/client/deployment-mode-context";
 import { DisableWithTooltip } from "@/components/jeeves/role-gate";
 import {
   PromotionDialog,
@@ -50,6 +51,17 @@ import type { InitiativeHistoryContext } from "./page";
 
 function formatDate(iso: string): string {
   return iso.slice(0, 10);
+}
+
+/**
+ * The queue is workflow data, not telemetry. In the demo its rows are seeded,
+ * so they carry the synthetic label; in production they are real promotion
+ * candidates and the label would be false (and SyntheticDataLabel, which
+ * removes whatever it wraps in production, would hide the queue).
+ */
+function QueueFrame({ children }: { children: React.ReactNode }) {
+  if (useDeploymentMode() === "production") return <>{children}</>;
+  return <SyntheticDataLabel>{children}</SyntheticDataLabel>;
 }
 
 export function PromotionsPageClient({
@@ -139,7 +151,7 @@ export function PromotionsPageClient({
         </p>
       </div>
 
-      <SyntheticDataLabel>
+      <QueueFrame>
         <Card>
           <CardContent>
             {loadError ? (
@@ -210,7 +222,7 @@ export function PromotionsPageClient({
             )}
           </CardContent>
         </Card>
-      </SyntheticDataLabel>
+      </QueueFrame>
 
       {items && items.length > 0 ? (
         <div className="flex flex-col gap-4" data-slot="promotion-detail-panels">

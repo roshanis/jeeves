@@ -10,7 +10,7 @@ import { initiatives, reviewCycles } from "@/lib/db/schema";
 import { startDraftRun, getRunProgress } from "@/lib/workflow/review-run";
 import { runMutationGuard } from "@/lib/services/route-guard";
 import { workspaceMismatch, mutationWorkspaceMismatch } from "@/lib/services/workspace-guard";
-import { resolveViewerWorkspaceId } from "@/lib/services/viewer-workspace";
+import { requireViewerForRequest } from "@/lib/services/require-viewer";
 import type { Domain } from "@/lib/domain/types";
 import { agentInitializationResponse } from "@/lib/services/agent-error-response";
 
@@ -94,6 +94,10 @@ export async function POST(
 }
 
 export async function GET(req: Request): Promise<Response> {
+  // Progress polling is a read: demo leaves it open to anonymous visitors
+  // (scoped below), production requires a session (lib/services/require-viewer.ts).
+  const gate = await requireViewerForRequest(req);
+  if (!gate.ok) return gate.response;
   const url = new URL(req.url);
   const cycleId = url.searchParams.get("cycleId");
   if (!cycleId) {
@@ -101,7 +105,7 @@ export async function GET(req: Request): Promise<Response> {
   }
 
   const db = getDb();
-  const viewerWorkspaceId = await resolveViewerWorkspaceId(req);
+  const viewerWorkspaceId = gate.viewer.workspaceId;
 
   const [cycle] = await db
     .select({ initiativeId: reviewCycles.initiativeId })

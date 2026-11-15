@@ -1,6 +1,7 @@
 import { beforeEach, afterEach, describe, it, expect, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { RoleProvider } from "@/components/jeeves/role-context";
+import { DeploymentModeProvider } from "@/lib/client/deployment-mode-context";
 import { LiveSessionProvider, resetLiveSessionForTests, useLiveSession } from "@/lib/client/session-context";
 import { TryDemoButton } from "@/components/jeeves/try-demo-button";
 import MarketingLayout from "@/app/(marketing)/layout";
@@ -17,7 +18,8 @@ vi.mock("@/components/jeeves/app-mobile-nav", () => ({ AppMobileNav: () => null 
 vi.mock("@/components/jeeves/console-top-bar", () => ({ ConsoleTopBar: () => null }));
 beforeEach(() => { resetLiveSessionForTests(); push.mockReset(); fetchMock.mockReset(); vi.stubGlobal("fetch", fetchMock); });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
-function show(liveModeAvailable = true) { render(<RoleProvider><LiveSessionProvider liveModeAvailable={liveModeAvailable}><TryDemoButton /></LiveSessionProvider></RoleProvider>); }
+// The demo entry button is demo chrome, so these cases mount the provider the way the root layout does.
+function show(liveModeAvailable = true) { render(<DeploymentModeProvider mode="demo"><RoleProvider><LiveSessionProvider liveModeAvailable={liveModeAvailable}><TryDemoButton /></LiveSessionProvider></RoleProvider></DeploymentModeProvider>); }
 
 function SessionProbe({ personaKey }: { personaKey: string }) {
   const { login, pending, session } = useLiveSession();

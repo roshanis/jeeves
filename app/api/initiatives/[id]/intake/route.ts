@@ -1,7 +1,8 @@
 import { getDb } from "@/lib/db/client";
 import { intakePayloadSchema } from "@/lib/services/intake-payload-schema";
 import { ConflictError, IllegalTransitionError, NotFoundError, getIntakeDraft, updateIntakeDraft } from "@/lib/services/initiative-service";
-import { extractSessionToken, resolveSession, runMutationGuard } from "@/lib/services/route-guard";
+import { runMutationGuard } from "@/lib/services/route-guard";
+import { requireViewerForRequest } from "@/lib/services/require-viewer";
 import { INTAKE_AUTHOR_ROLES } from "@/lib/services/intake-author-roles";
 
 function failure(error: unknown): Response {
@@ -12,10 +13,12 @@ function failure(error: unknown): Response {
 }
 
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }): Promise<Response> {
-  const session = await resolveSession(extractSessionToken(req));
-  if (!session.actor) return Response.json({ error: "invalid or missing session" }, { status: 401 });
-  if (!INTAKE_AUTHOR_ROLES.has(session.actor.role)) return Response.json({ error: "only requesters may edit an intake draft" }, { status: 403 });
-  try { return Response.json(await getIntakeDraft(getDb(), (await params).id, session.actor, session.workspaceId)); }
+  const gate = await requireViewerForRequest(req);
+  if (!gate.ok) return gate.response;
+  const { actor, workspaceId } = gate.viewer;
+  if (!actor) return Response.json({ error: "invalid or missing session" }, { status: 401 });
+  if (!INTAKE_AUTHOR_ROLES.has(actor.role)) return Response.json({ error: "only requesters may edit an intake draft" }, { status: 403 });
+  try { return Response.json(await getIntakeDraft(getDb(), (await params).id, actor, workspaceId)); }
   catch (error) { return failure(error); }
 }
 

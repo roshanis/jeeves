@@ -29,7 +29,7 @@
 import { z } from "zod";
 import { getAgentPort } from "@/lib/agents";
 import type { AgentPort, PortFailure } from "@/lib/agents/ports";
-import { agentInitializationResponse } from "@/lib/services/agent-error-response";
+import { agentInitializationResponse, llmNotConfigured, llmNotConfiguredResponse } from "@/lib/services/agent-error-response";
 import { getProvider } from "@/lib/data";
 import type { AuditQueryRow, CannedAuditQueryId } from "@/lib/data/dto";
 import { runMutationGuard } from "@/lib/services/route-guard";
@@ -135,10 +135,15 @@ export async function POST(req: Request): Promise<Response> {
       : "",
   };
 
+  // A production install with no LLM has nothing to spend tokens on, so the
+  // guard (which still authenticates first: an anonymous caller gets its 401)
+  // is asked to reserve none; the 503 follows once the caller is accepted.
+  const noLlm = llmNotConfigured();
+
   const guard = await runMutationGuard(req, bodyText, {
     inputLimits: [{ field: "question", maxChars: QUESTION_MAX_CHARS }],
     inputTotalCap: QUESTION_MAX_CHARS,
-    requiresBudget: true,
+    requiresBudget: !noLlm,
     estimatedTokens: ESTIMATED_TOKENS,
   });
   if (!guard.ok) {
@@ -149,6 +154,9 @@ export async function POST(req: Request): Promise<Response> {
   if (!parsed.success) {
     return Response.json({ error: "invalid request body" }, { status: 400 });
   }
+
+  // Refuse before the grounding queries below: there is no provider to answer.
+  if (noLlm) return llmNotConfiguredResponse();
 
   const provider = getProvider();
   const strategy = pickGroundingStrategy(parsed.data.question);

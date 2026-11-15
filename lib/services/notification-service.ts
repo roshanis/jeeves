@@ -23,10 +23,10 @@
  *    keeping the review, which is the failure mode that makes a governance
  *    queue quietly stall.
  */
-import { and, asc, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, isNull, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import type { Db } from "../db/client";
-import { reviewNotifications } from "../db/schema";
+import { initiatives, reviewNotifications } from "../db/schema";
 import type { Domain, Tier } from "../domain/types";
 import { DOMAIN_LABEL } from "../domain/labels";
 
@@ -128,10 +128,15 @@ export async function pendingNotificationsForDomain(
 }
 
 /**
- * Everything not yet delivered — the operator view. With no transport
- * configured this is every notification ever recorded, which is the honest
- * picture: these are asks that exist in the system and have reached nobody
- * outside it.
+ * Everything not yet delivered, across EVERY workspace — the operator view.
+ * With no transport configured this is every notification ever recorded, which
+ * is the honest picture: these are asks that exist in the system and have
+ * reached nobody outside it.
+ *
+ * Unscoped on purpose, so it must never feed a page or route a viewer can
+ * reach: each subject and body embeds the initiative's title, and playground
+ * visitors each own a workspace. Anything shown to a viewer goes through
+ * undeliveredNotificationsForViewer.
  */
 export async function undeliveredNotifications(db: Db): Promise<ReviewNotificationRow[]> {
   return db
@@ -139,6 +144,31 @@ export async function undeliveredNotifications(db: Db): Promise<ReviewNotificati
     .from(reviewNotifications)
     .where(isNull(reviewNotifications.deliveredAt))
     .orderBy(asc(reviewNotifications.createdAt)) as Promise<ReviewNotificationRow[]>;
+}
+
+/**
+ * The undelivered queue as one viewer may see it: the asks for initiatives in
+ * the viewer's own workspace plus those for shared (null-workspace) examples,
+ * the same visibility rule as every other read (lib/services/workspace-guard.ts
+ * workspaceMismatch). A viewer with no workspace sees the shared examples only.
+ * Visibility is resolved through the notification's initiative, which is
+ * where the workspace lives.
+ */
+export async function undeliveredNotificationsForViewer(
+  db: Db,
+  viewerWorkspaceId: string | null,
+): Promise<ReviewNotificationRow[]> {
+  const visible =
+    viewerWorkspaceId === null
+      ? isNull(initiatives.workspaceId)
+      : or(isNull(initiatives.workspaceId), eq(initiatives.workspaceId, viewerWorkspaceId));
+  const rows = await db
+    .select({ notification: reviewNotifications })
+    .from(reviewNotifications)
+    .innerJoin(initiatives, eq(reviewNotifications.initiativeId, initiatives.id))
+    .where(and(isNull(reviewNotifications.deliveredAt), visible))
+    .orderBy(asc(reviewNotifications.createdAt));
+  return rows.map((row) => row.notification) as ReviewNotificationRow[];
 }
 
 export interface TransportStatus {

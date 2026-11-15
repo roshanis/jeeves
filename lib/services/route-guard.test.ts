@@ -256,3 +256,95 @@ describe("lib/services/route-guard", () => {
     });
   });
 });
+
+// Pure header parsing: kept outside the DB-backed describe above so these do
+// not each pay for a fresh PGlite instance.
+describe("clientKeyFor — JEEVES_TRUSTED_PROXY_HOPS", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+  });
+
+  const withXff = (value: string | null): Request =>
+    new Request("http://localhost/api/x", value === null ? {} : { headers: { "x-forwarded-for": value } });
+
+  // Vercel overwrites the header, so the leftmost entry is the client.
+  // That default must not change: it is what the live demo runs on.
+  it.each([undefined, "", "   ", "0", " 0 ", "00"])(
+    "keeps the leftmost entry (today's behaviour) when set to %j",
+    (value) => {
+      if (value !== undefined) vi.stubEnv("JEEVES_TRUSTED_PROXY_HOPS", value);
+      expect(clientKeyFor(withXff("9.9.9.9, 1.1.1.1, 2.2.2.2"))).toBe("9.9.9.9");
+    },
+  );
+
+  it("with 1 hop (ALB) takes the rightmost entry, which the ALB appended", () => {
+    vi.stubEnv("JEEVES_TRUSTED_PROXY_HOPS", "1");
+    expect(clientKeyFor(withXff("203.0.113.9"))).toBe("203.0.113.9");
+  });
+
+  it("with 1 hop ignores spoofed entries to the left of the one the proxy appended", () => {
+    vi.stubEnv("JEEVES_TRUSTED_PROXY_HOPS", "1");
+    // The attacker sent "X-Forwarded-For: 10.0.0.1, 10.0.0.2"; the ALB
+    // appended the address it actually saw.
+    expect(clientKeyFor(withXff("10.0.0.1, 10.0.0.2, 203.0.113.9"))).toBe("203.0.113.9");
+  });
+
+  it("rotating a spoofed left entry does not change the key", () => {
+    vi.stubEnv("JEEVES_TRUSTED_PROXY_HOPS", "1");
+    const a = clientKeyFor(withXff("1.1.1.1, 203.0.113.9"));
+    const b = clientKeyFor(withXff("2.2.2.2, 203.0.113.9"));
+    expect(a).toBe(b);
+  });
+
+  it("with 2 hops (CloudFront then ALB) skips the edge address and takes the viewer", () => {
+    vi.stubEnv("JEEVES_TRUSTED_PROXY_HOPS", "2");
+    // spoofed, viewer (appended by CloudFront), edge (appended by the ALB)
+    expect(clientKeyFor(withXff("6.6.6.6, 198.51.100.7, 130.176.0.1"))).toBe("198.51.100.7");
+  });
+
+  it("tolerates whitespace around the setting and the entries", () => {
+    vi.stubEnv("JEEVES_TRUSTED_PROXY_HOPS", " 1 ");
+    expect(clientKeyFor(withXff("  6.6.6.6 ,   203.0.113.9  "))).toBe("203.0.113.9");
+  });
+
+  it("falls back to the constant key when the header is absent", () => {
+    vi.stubEnv("JEEVES_TRUSTED_PROXY_HOPS", "1");
+    expect(clientKeyFor(withXff(null))).toBe("unknown-client");
+  });
+
+  it("does not trust a shorter chain than configured (a request that skipped a proxy)", () => {
+    vi.stubEnv("JEEVES_TRUSTED_PROXY_HOPS", "2");
+    // One entry cannot have passed through two trusted proxies, so it is
+    // whatever the caller typed. Never use it.
+    expect(clientKeyFor(withXff("6.6.6.6"))).toBe("unknown-client");
+  });
+
+  it("falls back to the constant key when the selected entry is empty", () => {
+    vi.stubEnv("JEEVES_TRUSTED_PROXY_HOPS", "1");
+    expect(clientKeyFor(withXff("1.1.1.1,,"))).toBe("unknown-client");
+  });
+
+  // A malformed value must not silently degrade to "trust the leftmost
+  // entry" - that would reopen the spoofing hole on exactly the install
+  // that tried to close it. Fail closed: one shared bucket, loud log.
+  it.each(["abc", "-1", "1.5", "1e2", "0x1", "+1", "NaN", "Infinity", "one", "1,2", "99999999999999999999"])(
+    "treats malformed value %j as misconfiguration: ignores the header and warns",
+    (value) => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      vi.stubEnv("JEEVES_TRUSTED_PROXY_HOPS", value);
+      expect(clientKeyFor(withXff("6.6.6.6, 203.0.113.9"))).toBe("unknown-client");
+      expect(warn).toHaveBeenCalled();
+      expect(String(warn.mock.calls[0]![0])).toContain("JEEVES_TRUSTED_PROXY_HOPS");
+    },
+  );
+
+  it("warns once per malformed value, not on every request", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.stubEnv("JEEVES_TRUSTED_PROXY_HOPS", "not-a-number-once");
+    clientKeyFor(withXff("1.1.1.1"));
+    clientKeyFor(withXff("1.1.1.1"));
+    clientKeyFor(withXff("1.1.1.1"));
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+});

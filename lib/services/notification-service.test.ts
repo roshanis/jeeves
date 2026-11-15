@@ -9,8 +9,12 @@ let testDb: TestDb;
 vi.mock("@/lib/db/client", () => ({ getDb: () => testDb }));
 
 const svc = await import("./initiative-service");
-const { pendingNotificationsForDomain, undeliveredNotifications, deliveryTransportStatus } =
-  await import("./notification-service");
+const {
+  pendingNotificationsForDomain,
+  undeliveredNotifications,
+  undeliveredNotificationsForViewer,
+  deliveryTransportStatus,
+} = await import("./notification-service");
 
 const REQUESTER: Actor = { id: "priya-raman", role: "requester" };
 const PROGRAM: Actor = { id: "nia-okafor", role: "program" };
@@ -41,15 +45,17 @@ describe("review-request notifications", () => {
   // Through the QC gate, not merely submitted: triage() is only reachable
   // from `in_qc`. The gate itself is lib/services/qc-gate.test.ts's subject;
   // here it is one hop on the way to the fan-out these tests are about.
-  async function championReadyToTriage(): Promise<string> {
+  async function championReadyToTriage(workspaceId: string | null = null, title?: string): Promise<string> {
     const draft = await svc.createDraft(testDb, {
-      payload: CHAMPION_PREFILL_PAYLOAD,
+      payload: title
+        ? { ...CHAMPION_PREFILL_PAYLOAD, basics: { ...CHAMPION_PREFILL_PAYLOAD.basics, title } }
+        : CHAMPION_PREFILL_PAYLOAD,
       requesterActor: REQUESTER,
       requesterName: "Priya Raman",
-      workspaceId: null,
+      workspaceId,
     });
-    await svc.submitIntake(testDb, draft.initiativeId, REQUESTER, null);
-    await svc.startQc(testDb, draft.initiativeId, PROGRAM, null);
+    await svc.submitIntake(testDb, draft.initiativeId, REQUESTER, workspaceId);
+    await svc.startQc(testDb, draft.initiativeId, PROGRAM, workspaceId);
     return draft.initiativeId;
   }
 
@@ -138,6 +144,63 @@ describe("review-request notifications", () => {
     const queue = await undeliveredNotifications(testDb);
     expect(queue.length).toBeGreaterThan(0);
     expect(queue.every((n) => n.deliveredAt === null)).toBe(true);
+  });
+
+  // The queue names initiatives ("<Domain> review requested: <title>"), and every
+  // playground visitor has their own workspace: a queue that lists every row
+  // would show strangers each other's initiative titles.
+  describe("the undelivered queue as one viewer sees it", () => {
+    async function threeInitiatives() {
+      const alpha = await championReadyToTriage("ws_alpha", "Alpha Ward Copilot");
+      const bravo = await championReadyToTriage("ws_bravo", "Bravo Ward Copilot");
+      const shared = await championReadyToTriage(null, "Shared Example Copilot");
+      for (const [id, ws] of [[alpha, "ws_alpha"], [bravo, "ws_bravo"], [shared, null]] as const) {
+        await svc.triage(testDb, id, SYSTEM, ws);
+      }
+      return { alpha, bravo, shared };
+    }
+
+    const idsOf = (rows: { initiativeId: string }[]) => new Set(rows.map((r) => r.initiativeId));
+
+    it("shows each playground workspace its own asks and the shared examples', never another's", async () => {
+      const { alpha, bravo, shared } = await threeInitiatives();
+
+      const asAlpha = await undeliveredNotificationsForViewer(testDb, "ws_alpha");
+      expect(idsOf(asAlpha)).toEqual(new Set([alpha, shared]));
+
+      const asBravo = await undeliveredNotificationsForViewer(testDb, "ws_bravo");
+      expect(idsOf(asBravo)).toEqual(new Set([bravo, shared]));
+    });
+
+    it("never carries another workspace's initiative title in a subject or body", async () => {
+      await threeInitiatives();
+      const asAlpha = await undeliveredNotificationsForViewer(testDb, "ws_alpha");
+      const text = asAlpha.map((n) => `${n.subject} ${n.body}`).join(" ");
+
+      expect(text).toContain("Alpha Ward Copilot");
+      expect(text).not.toContain("Bravo Ward Copilot");
+    });
+
+    it("shows a viewer with no workspace only the shared examples", async () => {
+      const { shared } = await threeInitiatives();
+      for (const viewer of [null, "ws_unknown"] as const) {
+        const rows = await undeliveredNotificationsForViewer(testDb, viewer);
+        expect(idsOf(rows)).toEqual(new Set([shared]));
+        expect(rows.every((n) => n.deliveredAt === null)).toBe(true);
+      }
+    });
+
+    it("keeps the queue in the order the asks were made", async () => {
+      await threeInitiatives();
+      const rows = await undeliveredNotificationsForViewer(testDb, "ws_alpha");
+      const times = rows.map((n) => n.createdAt.getTime());
+      expect(times).toEqual([...times].sort((a, b) => a - b));
+    });
+
+    it("leaves the unscoped operator query as it was: every ask, every workspace", async () => {
+      const { alpha, bravo, shared } = await threeInitiatives();
+      expect(idsOf(await undeliveredNotifications(testDb))).toEqual(new Set([alpha, bravo, shared]));
+    });
   });
 
   it("does not break triage when migration 0013 has not been applied yet", async () => {

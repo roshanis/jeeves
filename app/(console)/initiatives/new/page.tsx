@@ -3,6 +3,7 @@
 // (live tier preview + completeness meter recompute on every change / chat
 // state); this page provides the static shell.
 import { IntakeModeToggle } from "@/components/jeeves/intake-mode-toggle";
+import { requireViewer } from "@/lib/services/require-viewer";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
@@ -13,7 +14,9 @@ export const metadata: Metadata = {
     "Start an AI initiative intake: what it does, what data it touches, and who it affects. Completeness and a live risk-tier preview update as you type.",
 };
 
-export default function NewInitiativePage() {
+export default async function NewInitiativePage() {
+  // No data is read here, but production has no anonymous console.
+  await requireViewer();
   return (
     <div className="flex flex-col gap-6">
       <div>

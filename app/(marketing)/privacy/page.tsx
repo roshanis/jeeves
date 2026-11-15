@@ -1,6 +1,6 @@
-import type { Metadata } from "next";
 import { LegalPage, LegalSection } from "@/components/jeeves/legal-page";
 import { LEGAL_LAST_UPDATED, PRIVACY_CONTACT } from "@/lib/marketing/site-config";
+import { guardDemoPage, demoPageMetadata } from "@/lib/config/demo-pages";
 
 // Written from what the code actually does, not from a template. Every claim
 // below is checkable against a file:
@@ -10,13 +10,14 @@ import { LEGAL_LAST_UPDATED, PRIVACY_CONTACT } from "@/lib/marketing/site-config
 //   - OpenAI calls                 -> lib/agents/openai-adapter.ts
 //   - append-only audit trail      -> lib/db/schema.ts
 // If one of those changes, this page is wrong and must change with it.
-export const metadata: Metadata = {
+export const generateMetadata = demoPageMetadata({
   title: "Privacy",
   description:
     "What this demonstration stores, where it is stored, who can see it, and how to have it removed.",
-};
+});
 
 export default function PrivacyPage() {
+  guardDemoPage();
   return (
     <LegalPage title="Privacy" lastUpdated={LEGAL_LAST_UPDATED}>
       <LegalSection heading="What this service is">

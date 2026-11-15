@@ -13,7 +13,7 @@
  */
 import { generateText } from "ai";
 import { openai } from "@ai-sdk/openai";
-import { getAgentPort } from "./index";
+import { assertLlmConfigured, getAgentPort } from "./index";
 import { AgentInitializationError } from "./initialization-error";
 import { resolveAgentRuntimeConfig, type AgentRuntimeConfig } from "./runtime";
 
@@ -37,8 +37,11 @@ export async function probeConnector(options?: { timeoutMs?: number }): Promise<
   // model; this one-word check does not verify chat or structured output.
   const model = runtime.reviewerModel;
 
-  // No key -> mock adapter. Return immediately; make NO network call.
+  // No key -> mock adapter in demo. Return immediately; make NO network call.
+  // Production has no mock to report: it throws LlmNotConfiguredError, which
+  // the route maps to 503 llm_not_configured.
   if (!runtime.configured) {
+    assertLlmConfigured();
     return {
       ...runtime,
       reachable: false,

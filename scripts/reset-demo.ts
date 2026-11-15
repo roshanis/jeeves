@@ -14,13 +14,18 @@
  *   3. Prints a checklist: workspace signing, agent (OpenAI) connector, telemetry
  *      connector, cron secret, build SHA, and a seed smoke-count.
  *
- * Refuses to run against NODE_ENV=production unless ALLOW_SEED=1 (same guard
- * as scripts/seed.ts — this is destructive/idempotent reseeding).
+ * Refuses to run unless JEEVES_MODE=demo (the mode defaults to production), and
+ * refuses NODE_ENV=production unless ALLOW_SEED=1 (same guard
+ * as scripts/seed.ts — this is destructive/idempotent reseeding). Separately,
+ * and regardless of ALLOW_SEED, it stamps the database 'demo' and refuses to
+ * touch one stamped 'production' (lib/demo/bootstrap.ts).
  */
 import { resolveWorkspaceCookieSecret } from "../lib/security/workspace-cookie";
 import { execSync } from "node:child_process";
-import { getDb, closeDb } from "../lib/db/client";
+import { getDb, closeDb, type Db } from "../lib/db/client";
+import { assertDemoMode, DemoOnlyError } from "../lib/config/demo-doors";
 import { initiatives, runBudget, sessions } from "../lib/db/schema";
+import { assertDemoDatabase } from "../lib/demo/bootstrap";
 import { seedDatabase } from "./seed";
 import { agentRuntimeStatus } from "../lib/agents/registry";
 import { telemetryConnectorStatus } from "../lib/telemetry/connector";
@@ -42,10 +47,19 @@ function buildSha(): string {
   }
 }
 
-async function resetDemo(): Promise<void> {
-  const db = getDb();
+export async function resetDemo(database?: Db): Promise<void> {
+  // A demo tool: it reseeds, clears sessions and stamps the database 'demo' for
+  // good. Refuse outside demo mode before a database is opened, which is why the
+  // handle is resolved here and not in a default parameter.
+  assertDemoMode("scripts/reset-demo.ts");
+  const db = database ?? getDb();
 
   console.log("Jeeves — demo reset ritual\n");
+
+  // Stamp the database 'demo', or refuse if it is stamped 'production'. This
+  // runs before anything is reseeded or cleared; seedDatabase checks again.
+  // ALLOW_SEED never overrides the stamp.
+  await assertDemoDatabase(db);
 
   // 1. Re-seed to canonical state.
   console.log("Re-seeding database…");
@@ -100,7 +114,11 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     resetDemo()
       .then(() => closeDb())
       .catch((err) => {
-        console.error(err);
+        console.error(
+          err instanceof DemoOnlyError
+            ? `${err.message}. Set JEEVES_MODE=demo to reset a demo database.`
+            : err,
+        );
         process.exit(1);
       });
   }

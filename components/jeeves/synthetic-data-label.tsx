@@ -1,5 +1,8 @@
+"use client";
+
 import { FlaskConical, Plug } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useDeploymentMode } from "@/lib/client/deployment-mode-context";
 
 /**
  * Mandatory wrapper for every Operate-tab telemetry panel (ui-spec §3.6/§9/
@@ -8,6 +11,13 @@ import { cn } from "@/lib/utils";
  * ("Arize: not connected" until M3, per seed-spec §4). A single shared
  * component makes the no-exceptions rule easy to enforce by construction —
  * do not render a telemetry chart without this wrapper.
+ *
+ * Production has no telemetry source (the monitor is off and there is no
+ * ingest), so a panel in this wrapper could only be the demo's fabricated
+ * series. The wrapper is the choke point for "no telemetry without the label",
+ * so it removes the panel along with the label rather than showing the data
+ * unlabeled. Workflow data that is merely seeded in the demo (not telemetry)
+ * does not belong in this wrapper; see the promotions queue.
  */
 export function SyntheticDataLabel({
   children,
@@ -16,6 +26,7 @@ export function SyntheticDataLabel({
   children: React.ReactNode;
   className?: string;
 }) {
+  if (useDeploymentMode() === "production") return null;
   return (
     <div className={cn("space-y-2", className)}>
       <div className="flex flex-wrap items-center gap-2">

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { FileQuestion } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { NAV_SECTIONS } from "@/components/jeeves/nav-items";
+import { isDemoMode } from "@/lib/config/deployment-mode";
 
 // Console 404. Rendered inside app/(console)/layout.tsx, so the sidebar,
 // top bar and mobile nav stay put — this is the panel that fills <main>.
@@ -35,8 +36,10 @@ export default function ConsoleNotFound() {
         </h1>
         <p className="text-sm text-muted-foreground">
           The initiative, agent or page you followed doesn&apos;t exist here. It may
-          have been a stale link, or it may belong to a different demo workspace —
-          a live session creates its own, isolated from the seeded one.
+          have been a stale link
+          {isDemoMode()
+            ? ", or it may belong to a different demo workspace — a live session creates its own, isolated from the seeded one."
+            : "."}
         </p>
       </div>
 

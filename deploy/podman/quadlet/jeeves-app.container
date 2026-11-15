@@ -27,9 +27,16 @@ Image=localhost/jeeves:latest
 Network=jeeves.network
 PublishPort=3000:3000
 
+# jeeves.env (a copy of deploy/podman/env.example) must define DATABASE_URL and
+# should define JEEVES_COOKIE_SECRET (`openssl rand -hex 32`), the key that
+# signs browser workspace cookies; without it a key derived from DEMO_PASSCODE
+# is used (deprecated, demo only).
 EnvironmentFile=%h/.config/containers/systemd/jeeves.env
 Environment=DATA_PROVIDER=db
 Environment=NODE_ENV=production
+# This unit runs the demo. An unset JEEVES_MODE means production, which refuses
+# to boot without APP_BASE_URL, JEEVES_TENANT_ID and a cookie secret.
+Environment=JEEVES_MODE=demo
 
 # GET /api/health round-trips `select 1` to Postgres, so an instance that is
 # running but cannot reach its database reports unhealthy rather than up.
