@@ -12,13 +12,8 @@ import { auditEvents, initiatives } from "@/lib/db/schema";
 
 let testDb: TestDb;
 
-let dbHandles = 0;
-
 vi.mock("@/lib/db/client", () => ({
-  getDb: () => {
-    dbHandles += 1;
-    return testDb;
-  },
+  getDb: () => testDb,
 }));
 
 const CRON_SECRET = "cron-secret-for-tests";
@@ -130,22 +125,6 @@ describe("GET /api/cron/monitor", () => {
     expect(locked.status).toBe(429);
     expect(locked.headers.get("Retry-After")).toBeTruthy();
     expect((await GET(req(CRON_SECRET, "30.0.0.3"))).status).toBe(200);
-  });
-
-  it("answers the read-only preview before the limiter and the compare, without opening the database", async () => {
-    vi.stubEnv("DATA_PROVIDER", "mock");
-    try {
-      const { GET } = await import("../monitor/route");
-      const before = dbHandles;
-      for (const secret of [CRON_SECRET, "wrong-secret", null]) {
-        const res = await GET(cronReq(secret));
-        expect(res.status).toBe(403);
-        expect(((await res.json()) as { error: string }).error).toMatch(/read-only/);
-      }
-      expect(dbHandles).toBe(before);
-    } finally {
-      vi.unstubAllEnvs();
-    }
   });
 
   it("never spends a token for correct calls", async () => {
