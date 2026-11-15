@@ -108,6 +108,44 @@ describe("lib/services/monitor-service", () => {
       expect(owner.incidentsCreated).toBe(1);
     });
 
+    it("scoped run never queries other workspaces' deployments and reads the Q-01 definition at most once", async () => {
+      const { init } = await memberChatCopilot(db);
+      const { init: other } = await fwaAnomalyDetector(db);
+      await db.update(initiatives).set({ workspaceId: "ws-A" }).where(eq(initiatives.id, init.id));
+      const calls: Array<{ sql: string; params: unknown[] }> = [];
+      const client = db.$client as unknown as {
+        query: (...a: unknown[]) => Promise<unknown>;
+        transaction: (cb: (t: { query: (...a: unknown[]) => Promise<unknown> }) => Promise<unknown>) => Promise<unknown>;
+      };
+      const record = (a: unknown[]) => calls.push({ sql: String(a[0]), params: (a[1] as unknown[]) ?? [] });
+      const origQuery = client.query.bind(client);
+      const origTx = client.transaction.bind(client);
+      const spy = vi.spyOn(client, "query").mockImplementation((...a: unknown[]) => {
+        record(a);
+        return origQuery(...a);
+      });
+      const txSpy = vi.spyOn(client, "transaction").mockImplementation((cb) =>
+        origTx(async (t) => {
+          const tq = t.query.bind(t);
+          t.query = (...a: unknown[]) => {
+            record(a);
+            return tq(...a);
+          };
+          return cb(t);
+        }),
+      );
+      try {
+        await runMonitor(db, RAY_CHEN, PLUS_14D, "ws-A");
+      } finally {
+        spy.mockRestore();
+        txSpy.mockRestore();
+      }
+      expect(calls.length).toBeGreaterThan(0);
+      const initiativeLookups = calls.filter((c) => /from "initiatives"/.test(c.sql));
+      expect(initiativeLookups.some((c) => c.params.includes(other.id))).toBe(false);
+      expect(calls.filter((c) => /from "control_definitions"/.test(c.sql)).length).toBeLessThanOrEqual(1);
+    });
+
     it("does not breach #4 member-chat-copilot at nowTs=base+8d (before the sustained window)", async () => {
       const result = await runMonitor(db, SYSTEM_ACTOR, PLUS_8D, UNSCOPED_WORKSPACE);
       const chatCopilotBreach = result.breaches.find((b) => b.deploymentId);
