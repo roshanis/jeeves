@@ -2251,4 +2251,23 @@ describe("lib/services/initiative-service", () => {
       }
     });
   });
+
+  describe("intake version in QC audit metadata (domain-F29)", () => {
+    it("submit, start_qc and return events name the intake version they acted on", async () => {
+      const draft = await svc.createDraft(db, {
+        payload: CHAMPION_PREFILL_PAYLOAD,
+        requesterActor: REQUESTER,
+        requesterName: "Priya Raman",
+      });
+      await svc.submitIntake(db, draft.initiativeId, REQUESTER);
+      await svc.startQc(db, draft.initiativeId, PROGRAM);
+      await svc.returnFromQc(db, draft.initiativeId, PROGRAM, "needs more detail");
+      const [v1] = await db.select().from(intakeVersions).where(eq(intakeVersions.initiativeId, draft.initiativeId));
+      const events = await db.select().from(auditEvents).where(eq(auditEvents.initiativeId, draft.initiativeId));
+      const tagged = events.filter(
+        (e) => (e.metadata as { intakeVersionId?: string } | null)?.intakeVersionId === v1!.id,
+      );
+      expect(tagged.map((e) => e.after).sort()).toEqual(["intake_draft", "in_qc", "submitted"].sort());
+    });
+  });
 });

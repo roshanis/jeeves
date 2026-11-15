@@ -555,7 +555,7 @@ export async function submitIntake(
       initiativeId,
       result.auditEvent,
       `Submitted intake v${intake.version} (${completeness.completenessPct}% complete).`,
-      { completenessPct: completeness.completenessPct },
+      { completenessPct: completeness.completenessPct, intakeVersionId: intake.id, intakeVersion: intake.version },
     );
 
     return { submitted: true, completenessPct: completeness.completenessPct };
@@ -646,7 +646,7 @@ export async function startQc(
       initiativeId,
       result.auditEvent,
       `Opened QC on intake v${intake.version} (${completeness.completenessPct}% complete).`,
-      { completenessPct: completeness.completenessPct },
+      { completenessPct: completeness.completenessPct, intakeVersionId: intake.id, intakeVersion: intake.version },
     );
 
     return { state: "in_qc", completenessPct: completeness.completenessPct };
@@ -707,7 +707,7 @@ export async function returnFromQc(
       initiativeId,
       result.auditEvent,
       `Returned from QC to the requester: ${trimmed}`,
-      { reason: trimmed },
+      { reason: trimmed, ...(intake ? { intakeVersionId: intake.id, intakeVersion: intake.version } : {}) },
     );
 
     return { state: "intake_draft", reason: trimmed };
