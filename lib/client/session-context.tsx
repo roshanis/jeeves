@@ -290,6 +290,13 @@ export function LiveSessionProvider({ children, liveModeAvailable = true }: {
     entryRequest.current = null;
     setPending(false);
     setStartError(null);
+    // Revoke a persona token on the server too (best-effort, never blocks Exit). Public sessions are left to expire.
+    const current = getSessionSnapshot();
+    if (current && current.personaKey !== PUBLIC_PERSONA_KEY) {
+      try {
+        void fetch("/api/session", { method: "DELETE", keepalive: true, headers: { Authorization: `Bearer ${current.token}` } }).catch(() => {});
+      } catch { /* ignore */ }
+    }
     setStoredSession(null);
   }, []);
 
