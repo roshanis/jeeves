@@ -4,7 +4,7 @@
 // selected tab's bg-primary fill previously swallowed the browser's default
 // focus outline).
 import { describe, expect, it } from "vitest";
-import { fireEvent, screen } from "@testing-library/react";
+import { fireEvent, screen, within } from "@testing-library/react";
 import { renderWithProviders } from "./helpers";
 import { PortfolioView } from "@/components/jeeves/portfolio-view";
 import type { InitiativeSummary } from "@/lib/data/dto";
@@ -50,7 +50,7 @@ describe("PortfolioView saved views", () => {
 
     expect(screen.getAllByRole("link", { name: /Initiative/ })).toHaveLength(2);
 
-    fireEvent.click(screen.getByRole("tab", { name: /Critical/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Critical/ }));
 
     const links = screen.getAllByRole("link", { name: /Initiative/ });
     expect(links).toHaveLength(1);
@@ -61,7 +61,10 @@ describe("PortfolioView saved views", () => {
     const rows = [summary("a", "high", "in_review")];
     renderWithProviders(<PortfolioView initiatives={rows} />);
 
-    for (const tab of screen.getAllByRole("tab")) {
+    expect(screen.queryAllByRole("tab")).toHaveLength(0);
+    const views = within(screen.getByRole("group", { name: "Saved views" })).getAllByRole("button");
+    expect(views.filter((b) => b.getAttribute("aria-pressed") === "true")).toHaveLength(1);
+    for (const tab of views) {
       expect(tab.className).toContain("focus-visible:ring-2");
       expect(tab.className).toContain("focus-visible:ring-offset-background");
     }
