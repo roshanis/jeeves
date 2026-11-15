@@ -326,6 +326,32 @@ describe("clientKeyFor — JEEVES_TRUSTED_PROXY_HOPS", () => {
     expect(clientKeyFor(withXff("1.1.1.1,,"))).toBe("unknown-client");
   });
 
+  // `none`: nothing in front of the app appends to or overwrites the header
+  // (a directly published port), so any X-Forwarded-For is forged.
+  describe("none (no proxy in front)", () => {
+    it("is a valid value: it logs no warning", () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      vi.stubEnv("JEEVES_TRUSTED_PROXY_HOPS", "none");
+      clientKeyFor(withXff("203.0.113.9"));
+      expect(warn).not.toHaveBeenCalled();
+    });
+
+    it("ignores the header: every caller gets the same key as a request with no header", () => {
+      vi.stubEnv("JEEVES_TRUSTED_PROXY_HOPS", "none");
+      const bare = clientKeyFor(withXff(null));
+      expect(bare).toBe("unknown-client");
+      expect(clientKeyFor(withXff("203.0.113.9, 198.51.100.7"))).toBe(bare);
+      expect(clientKeyFor(withXff("6.6.6.6"))).toBe(bare);
+    });
+
+    it.each(["NONE", " none ", " None "])("accepts %j case-insensitively after trimming", (value) => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      vi.stubEnv("JEEVES_TRUSTED_PROXY_HOPS", value);
+      expect(clientKeyFor(withXff("203.0.113.9, 198.51.100.7"))).toBe("unknown-client");
+      expect(warn).not.toHaveBeenCalled();
+    });
+  });
+
   // A malformed value must not silently degrade to "trust the leftmost
   // entry" - that would reopen the spoofing hole on exactly the install
   // that tried to close it. Fail closed: one shared bucket, loud log.

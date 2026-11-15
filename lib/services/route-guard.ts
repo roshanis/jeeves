@@ -328,12 +328,15 @@ const warnedHopValues = new Set<string>();
 /**
  * JEEVES_TRUSTED_PROXY_HOPS: how many reverse proxies in front of the app each
  * append to X-Forwarded-For. Unset/blank/0 -> 0 (Vercel, which overwrites the
- * header). Returns null for a set-but-malformed value so the caller can fail
- * closed instead of guessing; warns once per distinct bad value.
+ * header). The keyword `none` (case-insensitive) -> "none": nothing in front
+ * appends to or overwrites the header, so it is ignored. Returns null for a
+ * set-but-malformed value so the caller can fail closed instead of guessing;
+ * warns once per distinct bad value.
  */
-function trustedProxyHops(): number | null {
+function trustedProxyHops(): number | "none" | null {
   const raw = process.env.JEEVES_TRUSTED_PROXY_HOPS?.trim();
   if (!raw) return 0;
+  if (raw.toLowerCase() === "none") return "none";
   if (/^\d+$/.test(raw)) {
     const hops = Number(raw);
     if (Number.isSafeInteger(hops)) return hops;
@@ -341,7 +344,7 @@ function trustedProxyHops(): number | null {
   if (!warnedHopValues.has(raw)) {
     warnedHopValues.add(raw);
     console.warn(
-      `JEEVES_TRUSTED_PROXY_HOPS=${JSON.stringify(raw.slice(0, 40))} is not a non-negative integer; ` +
+      `JEEVES_TRUSTED_PROXY_HOPS=${JSON.stringify(raw.slice(0, 40))} is not a non-negative integer or "none"; ` +
         "ignoring X-Forwarded-For and rate-limiting all clients as one until it is fixed.",
     );
   }
@@ -359,15 +362,18 @@ function trustedProxyHops(): number | null {
  *    APPENDS the address it saw, so the client is the Nth entry from the RIGHT.
  *    Everything left of that is caller-supplied and ignored, so rotating a
  *    spoofed leading entry cannot mint a fresh rate-limit bucket.
+ *  - `none` (the app port is published directly, nothing in front): any
+ *    X-Forwarded-For is caller-supplied, so it is ignored and every caller
+ *    shares the one constant key.
  *
  * A chain shorter than N did not pass through every trusted proxy, and a
  * malformed setting cannot be trusted either; both fall back to the shared
  * constant key rather than to an attacker-controlled entry.
  */
 export function clientKeyFor(req: Request): string {
-  const forwarded = req.headers.get("x-forwarded-for");
   const hops = trustedProxyHops();
-  if (hops === null) return UNKNOWN_CLIENT;
+  if (hops === null || hops === "none") return UNKNOWN_CLIENT;
+  const forwarded = req.headers.get("x-forwarded-for");
   if (hops === 0) {
     if (forwarded) return forwarded.split(",")[0]!.trim();
     return UNKNOWN_CLIENT;

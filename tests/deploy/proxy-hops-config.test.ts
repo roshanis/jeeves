@@ -8,12 +8,12 @@ import { describe, expect, it } from "vitest";
  * JEEVES_TRUSTED_PROXY_HOPS (lib/services/route-guard.ts), so every shipped
  * stack sets it explicitly and every operator doc explains it. Both stacks
  * publish the app port directly with no proxy in front, so they use the
- * largest safe integer: the chain is always shorter, which ignores a
- * caller-supplied X-Forwarded-For entirely.
+ * keyword `none`: the header is ignored entirely (every caller shares one
+ * rate-limit bucket) because anything a caller sends there is forged.
  */
 const ROOT = path.resolve(__dirname, "../..");
 const read = (rel: string) => readFileSync(path.join(ROOT, rel), "utf8");
-const NO_PROXY = String(Number.MAX_SAFE_INTEGER);
+const NO_PROXY = "none";
 
 describe("JEEVES_TRUSTED_PROXY_HOPS in the Podman stacks", () => {
   it("compose sets it explicitly, overridable from .env", () => {
@@ -32,6 +32,19 @@ describe("JEEVES_TRUSTED_PROXY_HOPS in the Podman stacks", () => {
       const text = read(doc);
       expect(text, doc).toContain("JEEVES_TRUSTED_PROXY_HOPS");
       expect(text, doc).toMatch(/X-Forwarded-For/);
+    }
+  });
+
+  it("no shipped file carries the old magic number", () => {
+    for (const file of [
+      "deploy/podman/compose.yaml",
+      "deploy/podman/quadlet/jeeves-app.container",
+      "deploy/podman/env.example",
+      "docs/environment-reference.md",
+      "docs/deploy-podman.md",
+      "docs/production-readiness.md",
+    ]) {
+      expect(read(file), file).not.toContain("9007199254740991");
     }
   });
 });

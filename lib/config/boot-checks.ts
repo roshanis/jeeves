@@ -124,13 +124,13 @@ export async function runBootChecks(deps: BootCheckDeps = {}): Promise<void> {
     // fails the boot; unset is only a warning (Vercel overwrites the header).
     const hops = trustedProxyHopsState(env);
     if (hops === "malformed") {
-      fail("JEEVES_TRUSTED_PROXY_HOPS must be a non-negative integer (0 on Vercel, 1 behind an AWS ALB)");
+      fail("JEEVES_TRUSTED_PROXY_HOPS must be a non-negative integer or none (none with no proxy in front, 0 on Vercel, 1 behind an AWS ALB)");
       return;
     }
     if (hops === "unset" && !env.VERCEL) {
       log(
         "[boot] JEEVES_TRUSTED_PROXY_HOPS is not set: rate limits key on the leftmost X-Forwarded-For entry, " +
-          "which a caller can forge unless the proxy in front overwrites it. Set it (1 behind an AWS ALB or an appending proxy).",
+          "which a caller can forge unless the proxy in front overwrites it. Set it (none with no proxy in front, 1 behind an AWS ALB or an appending proxy).",
       );
     }
     if (!runtimeDatabaseUrl(env) && env.DATA_PROVIDER !== "db") return;

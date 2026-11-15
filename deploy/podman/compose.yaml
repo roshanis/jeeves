@@ -49,14 +49,15 @@ services:
       DATABASE_URL: postgres://${POSTGRES_USER:-jeeves}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-jeeves}
       DATA_PROVIDER: db
       # How many reverse proxies in front of the app append to X-Forwarded-For;
-      # rate limits key on the client address that implies. This stack publishes
-      # the app port directly, with no proxy, so any X-Forwarded-For a caller
-      # sends is forged. The largest safe integer is always longer than the
-      # chain, which makes the app ignore the header (all callers share one
-      # bucket) instead of trusting it. Behind a proxy that appends the client
-      # address set 1 (an AWS ALB or Caddy/nginx with $proxy_add_x_forwarded_for)
-      # in .env. Never leave the port published AND set 0 or 1.
-      JEEVES_TRUSTED_PROXY_HOPS: ${JEEVES_TRUSTED_PROXY_HOPS:-9007199254740991}
+      # rate limits key on the client address that implies. `none` means
+      # nothing in front appends to or overwrites the header. This stack
+      # publishes the app port directly, with no proxy, so any X-Forwarded-For
+      # a caller sends is forged: `none` ignores it and all callers share one
+      # rate-limit bucket. Behind a proxy that appends the client address
+      # (an AWS ALB, or Caddy/nginx with $proxy_add_x_forwarded_for) set 1 in
+      # .env and stop publishing the port. Never leave the port published AND
+      # set 0 or 1.
+      JEEVES_TRUSTED_PROXY_HOPS: ${JEEVES_TRUSTED_PROXY_HOPS:-none}
       # This stack runs the demo. An unset JEEVES_MODE means production, which
       # refuses to boot without APP_BASE_URL, JEEVES_TENANT_ID and a cookie
       # secret, and closes the demo doors.

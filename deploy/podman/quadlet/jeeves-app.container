@@ -37,13 +37,13 @@ Environment=NODE_ENV=production
 # This unit runs the demo. An unset JEEVES_MODE means production, which refuses
 # to boot without APP_BASE_URL, JEEVES_TENANT_ID and a cookie secret.
 Environment=JEEVES_MODE=demo
-# Proxies in front of the app that append to X-Forwarded-For. This unit
-# publishes the port directly with no proxy, so a caller-sent header is forged:
-# the largest safe integer is longer than any chain, so the app ignores the
-# header (all callers share one rate-limit bucket) rather than trusting it.
-# Behind a proxy that appends the client address, change it to 1 (an AWS ALB or
-# nginx) and stop publishing the port to the network.
-Environment=JEEVES_TRUSTED_PROXY_HOPS=9007199254740991
+# Proxies in front of the app that append to X-Forwarded-For. `none` means
+# nothing in front appends to or overwrites the header. This unit publishes the
+# port directly with no proxy, so a caller-sent header is forged: `none`
+# ignores it and all callers share one rate-limit bucket. Behind a proxy that
+# appends the client address, change it to 1 (an AWS ALB or nginx) and stop
+# publishing the port to the network.
+Environment=JEEVES_TRUSTED_PROXY_HOPS=none
 
 # GET /api/health round-trips `select 1` to Postgres, so an instance that is
 # running but cannot reach its database reports unhealthy rather than up.

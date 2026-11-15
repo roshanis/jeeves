@@ -6,6 +6,7 @@ import {
   deploymentMode,
   isDemoMode,
   isProductionMode,
+  trustedProxyHopsState,
 } from "./deployment-mode";
 
 afterEach(() => {
@@ -245,6 +246,12 @@ describe("assertProductionConfig", () => {
 
     it("accepts 0 (a proxy that overwrites the header), 1 (ALB) and 2", () => {
       for (const value of ["0", "1", "2"]) {
+        expect(problemsFor({ ...completeConfig(), JEEVES_TRUSTED_PROXY_HOPS: value }), value).toEqual([]);
+      }
+    });
+    it("accepts none (no proxy in front: the header is ignored), case-insensitively", () => {
+      for (const value of ["none", "NONE", " None "]) {
+        expect(trustedProxyHopsState({ JEEVES_TRUSTED_PROXY_HOPS: value }), value).toBe("valid");
         expect(problemsFor({ ...completeConfig(), JEEVES_TRUSTED_PROXY_HOPS: value }), value).toEqual([]);
       }
     });

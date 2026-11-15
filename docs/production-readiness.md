@@ -99,11 +99,12 @@ remain; its focused tests cover burst, refill, isolation and shared allowance.
 
 **Client key (X-Forwarded-For).** The bucket key is the client address from
 `X-Forwarded-For`, read according to `JEEVES_TRUSTED_PROXY_HOPS` (the number of
-trusted proxies that append to the header; `0` is only right where the
+trusted proxies that append to the header; `none` when nothing is in front and
+the header is ignored, as in the Podman stacks; `0` is only right where the
 platform overwrites it, as on Vercel). Left unset anywhere else, the leftmost
 entry is whatever the caller sent, so a random header per request gets a fresh
 bucket each time. Production boot therefore refuses to start without an explicit
-integer, a malformed value fails boot in both modes, and demo off Vercel warns
+value (`none` or an integer), a malformed value fails boot in both modes, and demo off Vercel warns
 when it is unset. See `docs/deploy-podman.md` §6 for the values per shape.
 
 **Correctly scoped already:** sessions and the daily token budget are *not*

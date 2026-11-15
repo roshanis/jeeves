@@ -265,8 +265,9 @@ against the new migrator image, then `systemctl --user restart jeeves-app`.
   operator-token attempt limiter) key on the client address taken from
   `X-Forwarded-For`, and `JEEVES_TRUSTED_PROXY_HOPS` says how to read it: the
   number of reverse proxies in front that *append* to the header. Both stacks
-  here publish the port directly, so they set it to `9007199254740991`: the
-  app ignores the header entirely, because anything a caller sends is forged
+  here publish the port directly, so they set it to `none` (nothing in front
+  appends to or overwrites the header): the app ignores the header entirely,
+  because anything a caller sends is forged
   (a random `X-Forwarded-For` per request would otherwise get a fresh bucket
   every time). The cost is that every caller shares one bucket, so a handful
   of visitors can hit 429 together. Behind a proxy that appends the client
