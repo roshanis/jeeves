@@ -1503,4 +1503,20 @@ describe("triage route: QC pass role gate and error mapping", () => {
     const triageEvent = events.find((e) => e.action === "triage");
     expect(triageEvent!.actorRole).toBe("system");
   });
+
+  it("a repeated triage is a 409, and triage on an intake_draft is not a 500", async () => {
+    const { token, workspaceCookie, initiativeId } = await submittedInitiative("72.0.0.1", "routes-triage-gate-0002");
+    const { token: niaToken } = await issueSessionInWorkspace("nia-okafor", workspaceCookie);
+
+    const draftRes = await triageAs(initiativeId, niaToken, "72.0.0.2");
+    expect(draftRes.status).toBeLessThan(500);
+    expect(draftRes.status).toBeGreaterThanOrEqual(400);
+
+    await submit(initiativeId, token, "72.0.0.1");
+    await passQcOverHttp(initiativeId, workspaceCookie, "72.0.0.3");
+    expect((await triageAs(initiativeId, niaToken, "72.0.0.4")).status).toBe(200);
+    const again = await triageAs(initiativeId, niaToken, "72.0.0.5");
+    expect(again.status).toBe(409);
+    expect((await again.json()).error).toBeTruthy();
+  });
 });

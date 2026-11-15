@@ -19,10 +19,12 @@
  * 200:   TriageFastLaneResult | TriageReviewResult (see initiative-service.ts)
  * 401/429/404: as other mutating routes.
  * 403:   { error }  (the persona may not pass QC)
- * 409:   { error: string }  (concurrent triage()/submitIntake() raced this initiative — retry)
+ * 409:   { error: string }  (concurrent triage()/submitIntake() raced this initiative — retry; or not in QC, e.g. already triaged)
+ * 400:   { error: string }  (initiative has no intake to triage)
  */
 import { getDb } from "@/lib/db/client";
-import { ConflictError, NotFoundError, triage } from "@/lib/services/initiative-service";
+import { ConflictError, NotFoundError, ValidationError, triage } from "@/lib/services/initiative-service";
+import { IllegalTransitionError } from "@/lib/lifecycle/transitions";
 import { runMutationGuard } from "@/lib/services/route-guard";
 import { SYSTEM_ACTOR } from "@/lib/services/actors";
 
@@ -51,6 +53,12 @@ export async function POST(
     }
     if (err instanceof ConflictError) {
       return Response.json({ error: err.message }, { status: 409 });
+    }
+    if (err instanceof IllegalTransitionError) {
+      return Response.json({ error: err.message }, { status: 409 });
+    }
+    if (err instanceof ValidationError) {
+      return Response.json({ error: err.message }, { status: 400 });
     }
     throw err;
   }
