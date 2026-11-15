@@ -24,7 +24,7 @@ import {
 import type { TelemetrySeries } from "@/lib/data/dto";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { OFFLINE_COMPARISON_SLUG } from "./eval-comparison";
+import { OFFLINE_COMPARISON_SLUG, OFFLINE_COMPARISON_VERSIONS } from "./eval-comparison";
 import { SyntheticDataLabel } from "./synthetic-data-label";
 import { RunMonitorPanel } from "./run-monitor-panel";
 
@@ -41,11 +41,13 @@ const SERIES_COLOR = "var(--chart-1)";
 
 // Deterministic offline-eval comparison for #5's v2.0 -> v2.1 promotion
 // story (seed-spec §4: "v2.0->v2.1 offline eval comparison instead of live
-// drift"). Fixed constants — this is a synthetic fixture, not telemetry.
+// drift"). Fixed constants — this is a synthetic fixture, not telemetry. The
+// version pair is shared with the Promotions pointer (eval-comparison.tsx).
+const { current: OFFLINE_CURRENT, candidate: OFFLINE_CANDIDATE } = OFFLINE_COMPARISON_VERSIONS;
 const PROMOTION_EVAL_COMPARISON = [
-  { metric: "Hallucination", "v2.0": 0.042, "v2.1": 0.031 },
-  { metric: "Relevance", "v2.0": 0.87, "v2.1": 0.91 },
-  { metric: "Completeness", "v2.0": 0.82, "v2.1": 0.88 },
+  { metric: "Hallucination", [OFFLINE_CURRENT]: 0.042, [OFFLINE_CANDIDATE]: 0.031 },
+  { metric: "Relevance", [OFFLINE_CURRENT]: 0.87, [OFFLINE_CANDIDATE]: 0.91 },
+  { metric: "Completeness", [OFFLINE_CURRENT]: 0.82, [OFFLINE_CANDIDATE]: 0.88 },
 ];
 
 /** Y-axis domain: eval/cost series pad the data range, and always reach the
@@ -292,13 +294,13 @@ function PromotionComparisonPanel() {
   return (
     <Card data-slot="telemetry-panel" data-kind="promotion-comparison">
       <CardHeader>
-        <CardTitle className="text-sm">Offline eval — v2.0 vs v2.1</CardTitle>
+        <CardTitle className="text-sm">Offline eval — {OFFLINE_CURRENT} vs {OFFLINE_CANDIDATE}</CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
         <Alert>
           <AlertTitle>Promotion gate: awaiting feedback-provenance sign-off</AlertTitle>
           <AlertDescription>
-            v2.1 checkpoint cannot be promoted until feedback-provenance
+            {OFFLINE_CANDIDATE} checkpoint cannot be promoted until feedback-provenance
             review is signed (RL/version-promotion story — not a training
             dashboard).
           </AlertDescription>
@@ -326,8 +328,8 @@ function PromotionComparisonPanel() {
                   cursor={{ fill: "var(--muted)", fillOpacity: 0.4 }}
                 />
                 <Legend wrapperStyle={{ fontSize: 11, color: "var(--muted-foreground)" }} />
-                <Bar dataKey="v2.0" name="v2.0" fill="var(--chart-1)" radius={[3, 3, 0, 0]} />
-                <Bar dataKey="v2.1" name="v2.1" fill="var(--chart-2)" radius={[3, 3, 0, 0]} />
+                <Bar dataKey={OFFLINE_CURRENT} name={OFFLINE_CURRENT} fill="var(--chart-1)" radius={[3, 3, 0, 0]} />
+                <Bar dataKey={OFFLINE_CANDIDATE} name={OFFLINE_CANDIDATE} fill="var(--chart-2)" radius={[3, 3, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>

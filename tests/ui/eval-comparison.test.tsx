@@ -5,7 +5,12 @@
 // being compared since there is no per-checkpoint eval series in the data.
 import { describe, expect, it } from "vitest";
 import { screen } from "@testing-library/react";
-import { EvalComparison, OFFLINE_COMPARISON_SLUG } from "@/components/jeeves/eval-comparison";
+import {
+  EvalComparison,
+  hasOfflineComparisonFor,
+  OFFLINE_COMPARISON_SLUG,
+  OFFLINE_COMPARISON_VERSIONS,
+} from "@/components/jeeves/eval-comparison";
 import { renderWithProviders } from "./helpers";
 
 describe("EvalComparison", () => {
@@ -89,7 +94,13 @@ describe("EvalComparison", () => {
     expect(screen.getByText(/live eval series/)).toBeDefined();
   });
 
-  it("uses the promotion-story slug shared with the Evals tab", () => {
+  it("offers the pointer only to the card proposing the pair the Evals-tab panel compares", () => {
     expect(OFFLINE_COMPARISON_SLUG).toBe("pa-correspondence-model");
+    expect(OFFLINE_COMPARISON_VERSIONS).toEqual({ current: "v2.0", candidate: "v2.1" });
+    expect(hasOfflineComparisonFor(OFFLINE_COMPARISON_SLUG, "v2.0", "v2.1")).toBe(true);
+    expect(hasOfflineComparisonFor(OFFLINE_COMPARISON_SLUG, "v2.1", "v2.2")).toBe(false);
+    expect(hasOfflineComparisonFor(OFFLINE_COMPARISON_SLUG, "v2.1", "v2.0")).toBe(false);
+    expect(hasOfflineComparisonFor(OFFLINE_COMPARISON_SLUG, null, "v2.1")).toBe(false);
+    expect(hasOfflineComparisonFor("case-one", "v2.0", "v2.1")).toBe(false);
   });
 });

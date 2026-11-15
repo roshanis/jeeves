@@ -21,9 +21,24 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { SyntheticDataLabel } from "@/components/jeeves/synthetic-data-label";
 import { cn } from "@/lib/utils";
 
-/** The one initiative whose Evals tab renders the offline version comparison
- * panel (operate-tab.tsx); the Promotions pointer is shown only for it. */
+/** The offline version comparison panel on the Evals tab (operate-tab.tsx) is a
+ * fixed synthetic fixture for one seeded initiative and one version pair. The
+ * Promotions pointer names that pair, so it is offered only to the card that
+ * proposes exactly that pair. */
 export const OFFLINE_COMPARISON_SLUG = "pa-correspondence-model";
+export const OFFLINE_COMPARISON_VERSIONS = { current: "v2.0", candidate: "v2.1" } as const;
+
+export function hasOfflineComparisonFor(
+  slug: string,
+  currentVersion: string | null,
+  candidateVersion: string,
+): boolean {
+  return (
+    slug === OFFLINE_COMPARISON_SLUG &&
+    currentVersion === OFFLINE_COMPARISON_VERSIONS.current &&
+    candidateVersion === OFFLINE_COMPARISON_VERSIONS.candidate
+  );
+}
 
 export interface EvalSeriesLike {
   kind: string;
@@ -73,7 +88,8 @@ export function EvalComparison({
    * series, not a per-version one (see file-level honesty note).
    */
   evalSeries: EvalSeriesLike | null;
-  /** True only when the initiative's Evals tab renders the offline comparison panel. */
+  /** True only for the card proposing the pair the Evals-tab panel compares
+   * (see hasOfflineComparisonFor). */
   hasOfflineComparison?: boolean;
 }) {
   if (!evalSeries || evalSeries.points.length === 0) {
@@ -130,8 +146,8 @@ export function EvalComparison({
             per-checkpoint series — the candidate checkpoint has not yet run
             its own separate eval telemetry) against the runtime threshold
             this deployment is gated on.
-            {hasOfflineComparison && currentVersion
-              ? ` A separate, labelled offline ${currentVersion} vs ${candidateVersion} comparison is on the initiative's Evals tab.`
+            {hasOfflineComparison
+              ? ` A separate, labelled offline ${OFFLINE_COMPARISON_VERSIONS.current} vs ${OFFLINE_COMPARISON_VERSIONS.candidate} comparison is on the initiative's Evals tab.`
               : null}
           </p>
           <div className="flex flex-wrap items-center gap-3">
