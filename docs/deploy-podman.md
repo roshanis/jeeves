@@ -208,6 +208,15 @@ podman compose exec db pg_dump -U jeeves jeeves > jeeves-$(date +%F).sql
 The same caveat as `deploy.md` §4 applies: nobody has restored from one of
 these. A backup you have not restored from is a hypothesis.
 
+### Stopping during a draft run
+
+Draft runs execute inside the HTTP request, and a deep review makes many model
+calls. Podman sends SIGKILL after 10 s by default, which cuts a live run off.
+Give the app time to drain: `podman compose stop -t 60 app` for compose, and
+for Quadlet a drop-in `~/.config/containers/systemd/jeeves-app.container.d/stop.conf`
+containing `[Container]` and `StopTimeout=60`. On ECS set the container
+`stopTimeout` to 60 as well.
+
 ### Upgrading
 
 ```bash

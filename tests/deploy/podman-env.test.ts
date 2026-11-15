@@ -34,4 +34,9 @@ describe("Podman stack configuration", () => {
     const quadlet = guide.slice(guide.indexOf("## 3."), guide.indexOf("## 4."));
     expect(quadlet).toContain("DATABASE_URL=postgres://jeeves:");
   });
+
+  it("documents a stop timeout longer than Podman's 10 s default", () => {
+    expect(guide).toMatch(/podman (compose )?stop -t 60/);
+    expect(guide).toContain("StopTimeout=60");
+  });
 });
