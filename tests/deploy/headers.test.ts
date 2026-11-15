@@ -22,6 +22,12 @@ describe("next.config headers", () => {
     expect(await effectiveHeader("/inbox", "Content-Security-Policy")).toContain("script-src");
   });
 
+  it("gives every /api response private, no-store and Vary on the credentials, and a page neither", async () => {
+    expect(await effectiveHeader("/api/exceptions", "Cache-Control")).toBe("private, no-store");
+    expect(await effectiveHeader("/api/initiatives/init-1/intake", "Vary")).toBe("Authorization, Cookie");
+    expect(await effectiveHeader("/dashboard", "Cache-Control")).toBeUndefined();
+  });
+
   it("marks viewer-scoped JSON as private, no-store and varying on the credential", async () => {
     const rules = await nextConfig.headers!();
     for (const source of ["/api/:path*", "/initiatives/:slug/detail-data"]) {
