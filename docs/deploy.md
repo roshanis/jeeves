@@ -298,11 +298,13 @@ moot — but that stops being true the moment it is not a demo.
 
 Run through this the morning of a demo, in order:
 
-1. **Seed fresh.**
-   ```bash
-   DATABASE_URL="<Neon pooled connection string>" npm run db:seed
-   ```
-   Confirms a clean, deterministic 12-initiative dataset.
+1. **Do not reseed the hosted database.** Seed exactly once, when the
+   database is provisioned (`npm run db:seed`). Re-running it against a
+   database that visitors have used deletes every visitor workspace, the whole
+   audit log and any real inbound requests (including submitters' contact
+   details), and it refuses outright once evidence exists. If you need a
+   clean stage, use a disposable database (local PGlite, a Neon branch or a
+   second project) behind a preview deployment.
 
 2. **Verify `/audit` queries.** Visit `/audit` and run all four canned
    queries (`lib/data/dto.ts` → `CannedAuditQueryId`):
@@ -329,5 +331,7 @@ Run through this the morning of a demo, in order:
    15-minute stakeholder talk track, screen-by-screen, including
    anticipated questions and answers — use it as the actual run-of-show.
 
-6. **Reset before the next audience** if you mutated anything live: re-seed
-   (step 1) to restore the deterministic baseline.
+6. **Starting over for the next audience.** Do not re-seed the live
+   database. Each visitor works in an isolated workspace: use **Exit demo** in
+   the demo-mode chip to start a new browser workspace, or point the next
+   audience at a disposable database seeded for the occasion.

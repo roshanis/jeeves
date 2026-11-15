@@ -225,15 +225,15 @@ budget multiplier when it is enabled — the daily cap stays honest.
 Whichever runtime is selected, the hard rule is unchanged: **agents draft,
 recommend, route, and flag missing evidence — they never approve.**
 
-**Demo reset ritual** — before a live walkthrough, run:
-
-```bash
-npm run reset:demo
-```
-
-It re-seeds to the canonical state, clears live session + budget state, and
-prints a pre-flight checklist (workspace signing, agent/telemetry connector status,
-cron secret, build SHA, and a 12-initiative smoke count).
+**Demo reset** — never run `npm run reset:demo` or `npm run db:seed` against a
+shared or hosted database: they delete every visitor workspace, the audit log
+and any real inbound requests, and sign every visitor out. Use them only on a
+local or disposable database (local PGlite, a Neon branch, a second project).
+To start over on the live demo, use **Exit demo** to get a fresh workspace.
+`npm run reset:demo` on a disposable database re-seeds to the canonical state,
+clears session and budget state, and prints a pre-flight checklist (workspace
+signing, agent/telemetry connector status, cron secret, build SHA, and a
+12-initiative smoke count).
 
 See `docs/deploy.md` for the full Vercel + Neon deployment runbook, known
 gaps, and a demo-day checklist. Use `npm run db:migrate` (non-destructive) to
