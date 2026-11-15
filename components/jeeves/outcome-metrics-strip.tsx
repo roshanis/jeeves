@@ -14,10 +14,12 @@ function OutcomeMetricCard({
   label,
   value,
   subtext,
+  tooltip = TOOLTIP_TEXT,
 }: {
   label: string;
   value: string;
   subtext?: string;
+  tooltip?: string;
 }) {
   return (
     <div data-slot="outcome-metric-card" className="flex min-w-0 flex-col gap-1.5 px-4 py-3.5">
@@ -31,7 +33,7 @@ function OutcomeMetricCard({
               </span>
             }
           />
-          <TooltipContent>{TOOLTIP_TEXT}</TooltipContent>
+          <TooltipContent>{tooltip}</TooltipContent>
         </Tooltip>
       </div>
       <div className="flex items-end justify-between gap-2">
@@ -69,7 +71,8 @@ export function OutcomeMetricsStrip({ metrics }: { metrics: OutcomeMetrics }) {
       <OutcomeMetricCard
         label="Reviewer hours saved"
         value={`~${metrics.reviewerHoursSavedPerReview}h`}
-        subtext="per review, drafted vs. scratch"
+        subtext="estimate per drafted review"
+        tooltip="Estimate: ~4h saved per agent-drafted review. A fixed assumption, not measured from audit events."
       />
       <OutcomeMetricCard
         label="Evidence freshness"

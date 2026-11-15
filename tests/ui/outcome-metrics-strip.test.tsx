@@ -31,4 +31,14 @@ describe("OutcomeMetricsStrip", () => {
     expect(screen.getByText("10/12")).toBeDefined();
     expect(screen.getByText("Overdue controls")).toBeDefined();
   });
+
+  it("labels reviewer hours saved as an estimate, not as computed data", async () => {
+    const metrics = await new MockDataProvider().outcomeMetrics();
+    const { container } = renderWithProviders(<OutcomeMetricsStrip metrics={metrics} />);
+    const card = Array.from(container.querySelectorAll('[data-slot="outcome-metric-card"]')).find((c) =>
+      c.textContent?.includes("Reviewer hours saved"),
+    )!;
+    expect(card.textContent).toMatch(/estimate/i);
+    expect(card.textContent).not.toMatch(/Computed from/);
+  });
 });
