@@ -9,3 +9,17 @@ describe("README claims about .env.example (docs-F13)", () => {
     expect(read("README.md")).not.toMatch(/full variable list/i);
   });
 });
+
+describe("docs/production-readiness.md (docs-F16)", () => {
+  const doc = read("docs/production-readiness.md");
+  it("mentions the passcode only to say it is gone", () => {
+    const stale = doc.split("\n").filter((l) => /passcode/i.test(l) && !/no passcode|former|retired|removed/i.test(l));
+    expect(stale).toEqual([]);
+  });
+  it("hard-codes no test or migration counts", () => {
+    expect(doc).not.toMatch(/\b\d+ (unit tests|migrations)\b/);
+  });
+  it("does not point at a public/ directory that does not exist", () => {
+    expect(doc).not.toMatch(/`public\/` still holds/);
+  });
+});
