@@ -11,6 +11,8 @@ import {
   buildSmokeChecks,
   databaseSecrets,
   evaluateCheck,
+  extractStaticAssetUrl,
+  standaloneStaticTarget,
   parsePort,
   portInUse,
   prepareSmokeDatabase,
@@ -450,5 +452,21 @@ describe("runToCompletion", () => {
     expect(run.code).not.toBe(0);
     expect(run.output).toContain("started");
     expect(Date.now() - started).toBeLessThan(10_000);
+  });
+});
+
+describe("static asset check", () => {
+  it("extracts the first /_next/static script or stylesheet URL", () => {
+    const html = '<link rel="stylesheet" href="/_next/static/css/app.css"/><script src="/_next/static/chunks/a.js" async></script>';
+    expect(extractStaticAssetUrl(html)).toBe("/_next/static/css/app.css");
+    expect(extractStaticAssetUrl('<script src="/_next/static/chunks/a.js?dpl=1"></script>')).toBe("/_next/static/chunks/a.js?dpl=1");
+  });
+
+  it("returns null when the page references no static asset", () => {
+    expect(extractStaticAssetUrl("<html><body>sign in</body></html>")).toBeNull();
+  });
+
+  it("copies .next/static to the place the Containerfile puts it", () => {
+    expect(standaloneStaticTarget().replace(/\\/g, "/")).toMatch(/\.next\/standalone\/\.next\/static$/);
   });
 });

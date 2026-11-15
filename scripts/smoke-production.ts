@@ -29,7 +29,7 @@
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync } from "node:fs";
+import { cpSync, existsSync } from "node:fs";
 import http from "node:http";
 import net from "node:net";
 import path from "node:path";
@@ -409,6 +409,16 @@ export function serverCommand(port: number, force: string | undefined): ServerCo
   };
 }
 
+/** Where the standalone server looks for static assets; the Containerfile copies .next/static here. */
+export function standaloneStaticTarget(): string {
+  return path.join(REPO_ROOT, ".next/standalone/.next/static");
+}
+
+/** The first /_next/static script or stylesheet URL in a page, or null. */
+export function extractStaticAssetUrl(html: string): string | null {
+  return /\/_next\/static\/[^"'\s<>]+\.(?:js|css)(?:\?[^"'\s<>]*)?/.exec(html)?.[0] ?? null;
+}
+
 function spawnServer(cmd: ServerCommand, env: Record<string, string>): { child: ChildProcess; output: () => string } {
   // The node binary is spawned directly (never through npm/npx), so signalling
   // the child stops the server itself.
@@ -653,6 +663,8 @@ async function main(): Promise<void> {
       : "Build: demo-capable. The server runs without JEEVES_MODE.",
   );
 
+  if (cmd.label.startsWith("standalone")) cpSync(path.join(REPO_ROOT, ".next/static"), standaloneStaticTarget(), { recursive: true });
+
   console.log("Migrating and stamping the smoke database...");
   await migrateAndStamp(databaseUrl);
 
@@ -692,6 +704,20 @@ async function main(): Promise<void> {
           } catch (err) {
             record(false, check.name, [`request failed: ${err instanceof Error ? err.message : "unknown error"}`]);
           }
+        }
+        const name = "GET /sign-in links a static asset that is served";
+        try {
+          const page = await request(port, { method: "GET", path: SIGN_IN_PATH });
+          const asset = extractStaticAssetUrl(page.body);
+          if (!asset) {
+            record(false, name, ["no /_next/static script or stylesheet found in the /sign-in HTML"]);
+          } else {
+            const res = await request(port, { method: "GET", path: asset });
+            const type = res.headers["content-type"] ?? "";
+            record(res.status === 200 && /javascript|css/.test(type), name, res.status === 200 && /javascript|css/.test(type) ? [] : [`${asset}: status ${res.status}, content-type ${type || "none"}`]);
+          }
+        } catch (err) {
+          record(false, name, [`request failed: ${err instanceof Error ? err.message : "unknown error"}`]);
         }
       }),
     );
