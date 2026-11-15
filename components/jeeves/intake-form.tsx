@@ -29,6 +29,7 @@ import {
   type CompletenessGap,
 } from "@/lib/intake/completeness";
 import { SAMPLE_INITIATIVE_PAYLOAD } from "@/lib/intake/champion-prefill";
+import { INTAKE_LIMITS } from "@/lib/intake/schema";
 import { previewTier } from "@/lib/client/tier-preview";
 import {
   createInitiative,
@@ -146,12 +147,14 @@ function TextField({
   onChange,
   type = "text",
   hint,
+  maxLength,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   type?: string;
   hint?: string;
+  maxLength?: number;
 }) {
   return (
     <label className="flex flex-col gap-1 text-sm">
@@ -159,6 +162,7 @@ function TextField({
       <input
         type={type}
         value={value}
+        maxLength={maxLength}
         onChange={(e) => onChange(e.target.value)}
         className={inputClass}
       />
@@ -172,16 +176,18 @@ function TextAreaField({
   value,
   onChange,
   hint,
+  maxLength,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   hint?: string;
+  maxLength?: number;
 }) {
   return (
     <label className="flex flex-col gap-1 text-sm">
       <span className="font-medium">{label}</span>
-      <textarea value={value} onChange={(e) => onChange(e.target.value)} className={textareaClass} />
+      <textarea value={value} maxLength={maxLength} onChange={(e) => onChange(e.target.value)} className={textareaClass} />
       {hint ? <span className="text-xs text-muted-foreground">{hint}</span> : null}
     </label>
   );
@@ -540,16 +546,19 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
             <CardContent className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <TextField
                 label="Initiative title"
+                maxLength={INTAKE_LIMITS.short}
                 value={payload.basics.title}
                 onChange={(v) => patch((p) => ({ ...p, basics: { ...p.basics, title: v } }))}
               />
               <TextField
                 label="Sponsor organization"
+                maxLength={INTAKE_LIMITS.short}
                 value={payload.basics.sponsorOrg}
                 onChange={(v) => patch((p) => ({ ...p, basics: { ...p.basics, sponsorOrg: v } }))}
               />
               <TextField
                 label="Requester name"
+                maxLength={INTAKE_LIMITS.short}
                 value={payload.basics.requesterName}
                 onChange={(v) =>
                   patch((p) => ({ ...p, basics: { ...p.basics, requesterName: v } }))
@@ -557,6 +566,7 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
               />
               <TextField
                 label="Requester email"
+                maxLength={INTAKE_LIMITS.line}
                 type="email"
                 value={payload.basics.requesterEmail}
                 onChange={(v) =>
@@ -566,6 +576,7 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
               <div className="sm:col-span-2">
                 <TextAreaField
                   label="Business problem"
+                  maxLength={INTAKE_LIMITS.businessProblem}
                   value={payload.basics.businessProblem}
                   hint="Describe the problem being solved, not the solution (20–2000 chars)."
                   onChange={(v) =>
@@ -583,6 +594,7 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
             <CardContent className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <TextField
                 label="Who uses it"
+                maxLength={INTAKE_LIMITS.line}
                 value={payload.useCase.primaryUsers}
                 onChange={(v) =>
                   patch((p) => ({ ...p, useCase: { ...p.useCase, primaryUsers: v } }))
@@ -590,6 +602,7 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
               />
               <TextField
                 label="Decision it informs"
+                maxLength={INTAKE_LIMITS.medium}
                 value={payload.useCase.decisionInformed}
                 hint="Name the concrete decision (e.g. coverage approval/denial recommendation)."
                 onChange={(v) =>
@@ -652,6 +665,7 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
               {payload.data.phiCategories.includes("Other") ? (
                 <TextField
                   label="Other PHI category"
+                  maxLength={INTAKE_LIMITS.line}
                   value={payload.data.phiCategoriesOtherText ?? ""}
                   onChange={(v) =>
                     patch((p) => ({
@@ -672,6 +686,7 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
                 />
                 <TextField
                   label="Retention note (optional)"
+                  maxLength={INTAKE_LIMITS.medium}
                   value={payload.data.retentionIntentNote ?? ""}
                   onChange={(v) =>
                     patch((p) => ({
@@ -712,6 +727,7 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
               />
               <TextField
                 label="Vendor name"
+                maxLength={INTAKE_LIMITS.short}
                 value={payload.modelVendor.vendorName ?? ""}
                 onChange={(v) =>
                   patch((p) => ({
@@ -756,6 +772,7 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
               />
               <TextAreaField
                 label="Expected benefits"
+                maxLength={INTAKE_LIMITS.long}
                 value={payload.populationImpact.expectedBenefits ?? ""}
                 onChange={(v) =>
                   patch((p) => ({
@@ -769,6 +786,7 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
               />
               <TextAreaField
                 label="Expected harms / risks"
+                maxLength={INTAKE_LIMITS.long}
                 value={payload.populationImpact.expectedHarms ?? ""}
                 hint="Must be distinct from expected benefits."
                 onChange={(v) =>
@@ -806,6 +824,7 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
               />
               <TextAreaField
                 label="Rollout plan"
+                maxLength={INTAKE_LIMITS.long}
                 value={payload.deployment.rolloutPlan ?? ""}
                 onChange={(v) =>
                   patch((p) => ({
