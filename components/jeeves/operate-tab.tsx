@@ -47,6 +47,21 @@ const PROMOTION_EVAL_COMPARISON = [
   { metric: "Completeness", "v2.0": 0.82, "v2.1": 0.88 },
 ];
 
+/** Y-axis domain: eval/cost series pad the data range, and always reach the
+ * threshold so its reference line is drawn (Recharts discards a line that
+ * falls outside the domain). GPU keeps its fixed 0-100 scale. */
+export function seriesYDomain(
+  kind: TelemetrySeries["kind"],
+  threshold: number | null,
+): [number | ((min: number) => number), number | ((max: number) => number)] {
+  if (kind === "gpu_util_pct") return [0, 100];
+  return [
+    (min: number) => Math.floor(min * 0.9 * 1000) / 1000,
+    (max: number) =>
+      Math.ceil(Math.max(max * 1.15, threshold !== null ? threshold * 1.05 : 0) * 1000) / 1000,
+  ];
+}
+
 function formatShortDate(ts: string): string {
   const d = new Date(ts);
   if (Number.isNaN(d.getTime())) return ts.slice(5, 10);
@@ -196,11 +211,7 @@ function SeriesPanel({ series }: { series: TelemetrySeries }) {
                   tickLine={{ stroke: "var(--chart-axis)" }}
                 />
                 <YAxis
-                  domain={
-                    series.kind === "gpu_util_pct"
-                      ? [0, 100]
-                      : [(min: number) => Math.floor(min * 0.9 * 1000) / 1000, (max: number) => Math.ceil(max * 1.15 * 1000) / 1000]
-                  }
+                  domain={seriesYDomain(series.kind, series.threshold)}
                   tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
                   axisLine={{ stroke: "var(--chart-axis)" }}
                   tickLine={false}

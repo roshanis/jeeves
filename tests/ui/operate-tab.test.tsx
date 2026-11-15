@@ -1,8 +1,17 @@
-import { describe, expect, it, beforeAll } from "vitest";
-import { screen } from "@testing-library/react";
-import { EvalsTab } from "@/components/jeeves/operate-tab";
+import { describe, expect, it, beforeAll, beforeEach, afterEach, vi } from "vitest";
+import { act, screen } from "@testing-library/react";
+import {
+  LiveSessionProvider,
+  resetLiveSessionForTests,
+  useLiveSession,
+} from "@/lib/client/session-context";
+import { EvalsTab, seriesYDomain } from "@/components/jeeves/operate-tab";
 import { MockDataProvider } from "@/lib/data/mock-provider";
 import { installResizeObserverStub, renderWithProviders } from "./helpers";
+
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ refresh: () => {}, push: () => {} }),
+}));
 
 beforeAll(() => {
   installResizeObserverStub();
@@ -69,5 +78,15 @@ describe("EvalsTab — breach marker (review P3)", () => {
       <EvalsTab slug={detail!.summary.slug} telemetry={detail!.telemetry} />,
     );
     expect(container.querySelector('[data-slot="breach-marker"]')).toBeNull();
+  });
+});
+
+describe("seriesYDomain — threshold line stays visible (ui-shell-F13)", () => {
+  it("raises the axis top to the threshold when the series sits well below it", () => {
+    const [, top] = seriesYDomain("eval_hallucination", 0.08);
+    expect((top as (max: number) => number)(0.0494)).toBeGreaterThanOrEqual(0.08);
+  });
+  it("keeps the fixed GPU scale", () => {
+    expect(seriesYDomain("gpu_util_pct", 90)).toEqual([0, 100]);
   });
 });
