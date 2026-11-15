@@ -50,12 +50,12 @@ const PROMOTION_EVAL_COMPARISON = [
 function formatShortDate(ts: string): string {
   const d = new Date(ts);
   if (Number.isNaN(d.getTime())) return ts.slice(5, 10);
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 }
 
 function formatValue(kind: TelemetrySeries["kind"], value: number): string {
   if (kind === "gpu_util_pct") return `${value.toFixed(0)}%`;
-  if (kind === "cost_tokens_usd_day") return `$${value.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+  if (kind === "cost_tokens_usd_day") return `$${value.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
   return value.toFixed(4);
 }
 
