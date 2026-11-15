@@ -4,6 +4,7 @@
 import type { DecisionRow } from "@/lib/data/dto";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { formatUtcTimestamp } from "@/lib/format/timestamp";
 import { AccountableApproverChip } from "./accountable-approver-chip";
 import { EvidenceLink } from "./evidence-link";
 
@@ -46,7 +47,7 @@ export function DecisionsTab({
                 {DECISION_LABEL[decision.type]}
               </Badge>
               <span className="font-mono text-xs font-normal tabular-nums text-muted-foreground">
-                {decision.at.slice(0, 10)}
+                <time dateTime={decision.at}>{formatUtcTimestamp(decision.at)}</time>
               </span>
             </CardTitle>
             <AccountableApproverChip name={decision.approver} />

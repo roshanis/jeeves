@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/table";
 import type { LifecycleState } from "@/lib/domain/types";
 import { TierBadge } from "./tier-badge";
+import { formatUtcTimestamp } from "@/lib/format/timestamp";
 import { LIFECYCLE_LABEL, LifecycleBadge } from "./lifecycle-badge";
 import { EvidenceLink } from "./evidence-link";
 
@@ -123,7 +124,7 @@ export function AuditConsole({
                         {row.detail}
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground">
-                        {row.eventTs ? row.eventTs.slice(0, 10) : "—"}
+                        {row.eventTs ? <time dateTime={row.eventTs}>{formatUtcTimestamp(row.eventTs)}</time> : "—"}
                       </TableCell>
                       <TableCell>
                         {row.slug ? (

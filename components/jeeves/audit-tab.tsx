@@ -3,6 +3,7 @@
 import type { AuditEventRow } from "@/lib/data/dto";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
+import { formatUtcTimestamp } from "@/lib/format/timestamp";
 
 function initials(name: string): string {
   return name
@@ -34,7 +35,7 @@ export function AuditTab({ events }: { events: AuditEventRow[] }) {
                 {event.action}
               </Badge>
               <span className="font-mono text-xs tabular-nums text-muted-foreground">
-                {event.ts.slice(0, 10)}
+                <time dateTime={event.ts}>{formatUtcTimestamp(event.ts)}</time>
               </span>
               <span className="text-xs text-muted-foreground">
                 {event.actor} ({event.actorRole})
