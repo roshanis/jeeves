@@ -101,4 +101,16 @@ describe("GET /api/cron/monitor", () => {
     }
     expect((await testDb.select().from(auditEvents)).length).toBe(before);
   });
+
+  it("429s repeated wrong bearers from one client", async () => {
+    const { GET } = await import("../monitor/route");
+    const wrong = () => new Request("http://localhost/api/cron/monitor", {
+      method: "GET",
+      headers: { authorization: "Bearer wrong-secret", "x-forwarded-for": "30.0.0.1" },
+    });
+    const statuses: number[] = [];
+    for (let n = 0; n < 12; n++) statuses.push((await GET(wrong())).status);
+    expect(statuses[0]).toBe(401);
+    expect(statuses).toContain(429);
+  });
 });

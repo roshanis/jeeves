@@ -23,7 +23,7 @@
  * 401: missing/invalid bearer.  503: CRON_SECRET not configured.
  * 400: nowTs not a valid ISO-8601 timestamp, or outside [base date, now + 1 day].
  */
-import { timingSafeEqual } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { getDb } from "@/lib/db/client";
 import {
   runMonitor,
@@ -31,7 +31,7 @@ import {
 } from "@/lib/services/monitor-service";
 import { expireDueExceptions } from "@/lib/services/exception-service";
 import { SYSTEM_ACTOR } from "@/lib/services/actors";
-import { checkReadOnlyMode } from "@/lib/services/route-guard";
+import { checkOperatorAttempt, checkReadOnlyMode, clientKeyFor } from "@/lib/services/route-guard";
 
 // Kept in sync with app/api/monitor/run/route.ts#DEFAULT_MONITOR_NOW_TS (a
 // literal here rather than a cross-route import — same rationale as that file).
@@ -46,15 +46,27 @@ function authorizeCron(req: Request): { ok: true } | { ok: false; status: 401 | 
 
   const auth = req.headers.get("authorization") ?? "";
   const provided = auth.startsWith("Bearer ") ? auth.slice("Bearer ".length) : "";
-  const a = Buffer.from(provided);
-  const b = Buffer.from(secret);
-  const match = a.length === b.length && timingSafeEqual(a, b);
+  // Hash both sides so the compare runs over equal-length buffers and the
+  // secret's length is not observable.
+  const a = createHash("sha256").update(provided).digest();
+  const b = createHash("sha256").update(secret).digest();
+  const match = timingSafeEqual(a, b);
   return match ? { ok: true } : { ok: false, status: 401 };
 }
 
 export async function GET(req: Request): Promise<Response> {
   const auth = authorizeCron(req);
   if (!auth.ok) {
+    if (auth.status === 401) {
+      // Failed attempts spend a limiter bucket; a correct scheduler never does.
+      const attempt = await checkOperatorAttempt(clientKeyFor(req));
+      if (!attempt.allowed) {
+        return Response.json(
+          { error: "too many attempts — try again later" },
+          { status: 429, headers: { "Retry-After": String(attempt.retryAfterSeconds) } },
+        );
+      }
+    }
     const message =
       auth.status === 503 ? "scheduled monitoring not configured (CRON_SECRET unset)" : "unauthorized";
     return Response.json({ error: message }, { status: auth.status });
