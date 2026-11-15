@@ -820,11 +820,8 @@ export class DbDataProvider implements DataProvider {
         // Project overrides are initiative-linked and must be visible only
         // when their owning initiative survived visibleSnapshot().
         const visibleInitiativeIds = new Set(snap.initiatives.map((initiative) => initiative.id));
-        const events = await this.db
-          .select()
-          .from(auditEvents)
-          .where(eq(auditEvents.action, "control_threshold_changed"))
-          .orderBy(asc(auditEvents.ts));
+        // The snapshot already holds every audit event, ordered by (ts, id).
+        const events = snap.auditEvents.filter((e) => e.action === "control_threshold_changed");
         return events
           .filter(
             (event) =>

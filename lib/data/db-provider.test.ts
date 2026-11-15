@@ -791,5 +791,15 @@ describe("lib/data/db-provider", () => {
       const row = (await provider.listInitiatives()).find((r) => r.slug === "approver-id-form");
       expect(row?.accountableApprover).toBe("Angela Torres");
     });
+
+    it("q01-control-changes reuses the loaded snapshot instead of querying audit_events again", async () => {
+      const spy = vi.spyOn(db, "select");
+      try {
+        await provider.auditQuery("q01-control-changes");
+        expect(spy.mock.calls.length).toBe(11);
+      } finally {
+        spy.mockRestore();
+      }
+    });
   });
 });
