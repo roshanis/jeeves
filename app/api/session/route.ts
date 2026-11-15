@@ -125,7 +125,8 @@ export async function POST(req: Request): Promise<Response> {
   let attempt;
   try {
     parent = token ? await resolveSession(token) : null;
-    attempt = await checkSessionAttempt(clientKeyFor(req), Boolean(parent?.actor && parent.workspaceId));
+    attempt = await checkSessionAttempt(clientKeyFor(req), Boolean(parent?.actor && parent.workspaceId && parent.actor.role !== "public"));
+    // A public parent is never a workspace donor (below), so it mints a fresh workspace and pays the anonymous rate.
   } catch (error) {
     return storageUnavailable(error);
   }
