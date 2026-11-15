@@ -32,6 +32,12 @@ podman compose run --rm seed         # load the synthetic demo data
 
 Then open `http://localhost:3000`.
 
+`OPERATOR_TOKEN` in `.env` (32+ characters, `openssl rand -hex 32`) is optional.
+It opens the "Send a real request" door and the `/operator` queue that reads
+those requests. While it is unset the door is closed: visitors are not offered
+it, because nobody could read what they sent. The Quadlet units pick it up from
+`jeeves.env` the same way.
+
 `podman compose` needs a compose provider (Podman 4.7+ shells out to
 `docker-compose` or `podman-compose`). If you would rather not have one, use
 the Quadlet units in §3 — they are the Podman-native path.

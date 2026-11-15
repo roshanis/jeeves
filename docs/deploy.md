@@ -92,6 +92,8 @@ npm run start        # next start (after build)
    | `DATABASE_MIGRATION_LOCK_TIMEOUT_MS` | Optional | How long `npm run db:migrate` waits for a lock before it fails and can be retried, in milliseconds (default `10000`; `0` turns it off). Migrations have no statement timeout. Not sent to Neon or Supabase hosts. |
    | `DATA_PROVIDER` | Optional | Defaults to DB when either runtime URL exists. `db` makes this explicit; `mock` deliberately shows the read-only preview dataset. |
    | `JEEVES_COOKIE_SECRET` | Yes for new deployments | Random server-only signing key for browser workspace continuity. Visitor entry is passwordless. Existing DEMO_PASSCODE can serve only as a deprecated signing fallback. |
+   | `OPERATOR_TOKEN` | Optional | At least 32 characters (for example `openssl rand -hex 32`). Opens the "Send a real request" door and unlocks the `/operator` queue where those requests are read, sent as `Authorization: Bearer <token>`. While it is unset or shorter than 32 characters the real-request door is closed (`POST /api/public-session` answers 404 and the intake form does not offer it), because nobody could read what a visitor sent. |
+   | `CRON_SECRET` | Optional | Bearer token for `GET /api/cron/monitor` (the 6-hourly Vercel cron in `vercel.json`). Unset, the cron endpoint returns 503; the manual `POST /api/monitor/run` admin action still works. |
    | `OPENAI_API_KEY` | Optional | Only set this if you want **live** LLM-drafted reviews during the demo. Omit it and the app runs entirely on the keyless mock adapter — safe default for a public URL. |
    | `OPENAI_MODEL` | Optional (only meaningful with `OPENAI_API_KEY`) | Model id for the real adapter, e.g. the value in `.env.example` (`gpt-5.1`). Unused when `OPENAI_API_KEY` is unset. |
 
