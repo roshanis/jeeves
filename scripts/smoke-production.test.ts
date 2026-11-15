@@ -3,12 +3,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   assertDisposableDatabaseUrl,
   bootRefusalCases,
+  bootRefusalCasesFor,
   buildServerEnv,
   buildSmokeChecks,
   databaseSecrets,
   evaluateCheck,
   parsePort,
   redact,
+  runtimeEnvFor,
   type Observed,
   type SmokeCheck,
 } from "./smoke-production";
@@ -219,6 +221,27 @@ describe("bootRefusalCases", () => {
       expect(c.modify({ ...base })).not.toEqual(base);
     }
     expect(new Set(bootRefusalCases.map((c) => c.name)).size).toBe(4);
+  });
+});
+
+describe("a demo-locked build (JEEVES_DEMO_ENABLED=0)", () => {
+  const good = { PATH: "/p", JEEVES_COOKIE_SECRET: "s", APP_BASE_URL: "https://jeeves.example.com" };
+
+  it("a demo-capable build keeps every refusal and runs without JEEVES_MODE", () => {
+    expect(bootRefusalCasesFor(false)).toEqual(bootRefusalCases);
+    expect(runtimeEnvFor(good, false)).toEqual(good);
+  });
+
+  it("a locked build cannot refuse demo mode, because it never enters it", () => {
+    const cases = bootRefusalCasesFor(true);
+    expect(cases).toHaveLength(3);
+    expect(cases.some((c) => c.modify({ ...good }).JEEVES_MODE === "demo")).toBe(false);
+  });
+
+  it("a locked build is started WITH JEEVES_MODE=demo, so every production check doubles as proof the flag is ignored", () => {
+    expect(runtimeEnvFor(good, true)).toEqual({ ...good, JEEVES_MODE: "demo" });
+    // The caller's environment is not mutated.
+    expect("JEEVES_MODE" in good).toBe(false);
   });
 });
 
