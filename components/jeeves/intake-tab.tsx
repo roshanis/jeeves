@@ -93,10 +93,11 @@ function answerRows(fields: Record<string, unknown>): [string, string | boolean 
   return rows;
 }
 
-function renderValue(value: string | boolean | null, optional: boolean): React.ReactNode {
+function renderValue(value: string | boolean | null, optional: boolean, flagged: boolean): React.ReactNode {
   if (optional && (value === null || (typeof value === "string" && value.trim() === ""))) {
     return <span className="text-muted-foreground">Not provided (optional)</span>;
   }
+  if (value === null && !flagged) return <span className="text-muted-foreground">Not provided</span>;
   if (value === null) {
     return (
       <Badge variant="destructive" className="bg-status-critical-bg text-status-critical-fg">
@@ -164,7 +165,7 @@ export function IntakeTab({ intake, summary, events }: {
                 <TableCell className="whitespace-normal font-medium">
                   {ADDITIONAL_FIELD_LABELS[key] ?? FIELD_LABEL[key] ?? key}
                 </TableCell>
-                <TableCell className="whitespace-pre-wrap">{key === "evidenceAttachments" && value === "" ? <span className="text-muted-foreground">None</span> : renderValue(value, key in ADDITIONAL_FIELD_LABELS)}</TableCell>
+                <TableCell className="whitespace-pre-wrap">{key === "evidenceAttachments" && value === "" ? <span className="text-muted-foreground">None</span> : renderValue(value, key in ADDITIONAL_FIELD_LABELS, intake.missing.includes(key))}</TableCell>
               </TableRow>
             ))}
           </TableBody>

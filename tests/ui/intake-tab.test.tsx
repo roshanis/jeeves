@@ -44,6 +44,12 @@ describe("IntakeTab — champion initiative (#1 prior-auth-summarizer)", () => {
 });
 
 describe("IntakeTab draft banner and answers", () => {
+  it("shows muted Not provided, not a red Missing badge, for a null field that is not a gap (ui-intake-F14)", () => {
+    renderWithProviders(<IntakeTab intake={draft(CHAMPION_PREFILL_PAYLOAD, [])} />);
+    expect(screen.queryByText("Missing")).toBeNull();
+    expect(screen.getAllByText("Not provided").length).toBeGreaterThan(0);
+  });
+
   it("labels seeded field paths and evidence attachments (ui-intake-F25)", () => {
     const seeded = { overlay: { phi: true, humanInLoop: false }, data: { sourceSystems: ["EHR"] }, evidenceAttachments: [] };
     renderWithProviders(<IntakeTab intake={draft(seeded, [])} />);
