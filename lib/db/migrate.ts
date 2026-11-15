@@ -1,4 +1,6 @@
 // Apply the versioned migration journal without reseeding or deleting data.
+import { readFileSync } from "node:fs";
+import { sql } from "drizzle-orm";
 import { Pool } from "pg";
 import { drizzle as drizzleNodePg } from "drizzle-orm/node-postgres";
 import { drizzle as drizzleNeon } from "drizzle-orm/neon-serverless";
@@ -21,6 +23,28 @@ function driverForHandle(db: Db): DbDriver {
   const client = (db as { $client?: unknown }).$client;
   if (client instanceof PGlite) return "pglite";
   return selectDriver(runtimeDatabaseUrl(), process.env.JEEVES_DB_DRIVER);
+}
+
+/**
+ * drizzle runs an entry only if its `when` exceeds the newest applied one, so
+ * a migration merged with an equal or lower `when` is skipped silently and
+ * forever. Compare what is applied with the journal, in order, and fail loudly.
+ */
+async function assertAppliedMatchesJournal(db: Db): Promise<void> {
+  const journal = JSON.parse(readFileSync(`${MIGRATIONS_FOLDER}/meta/_journal.json`, "utf8")) as
+    { entries: { tag: string; when: number }[] };
+  const result = await (db as { execute: (q: unknown) => Promise<{ rows: Record<string, unknown>[] }> })
+    .execute(sql`select created_at from drizzle.__drizzle_migrations order by id`);
+  const applied = result.rows.map((row) => Number(row.created_at));
+  const length = Math.max(applied.length, journal.entries.length);
+  for (let i = 0; i < length; i++) {
+    if (applied[i] !== journal.entries[i]?.when) {
+      throw new Error(
+        `Applied migrations diverge from the journal at position ${i} (${journal.entries[i]?.tag ?? "no journal entry"}): ` +
+        `${applied.length} applied, ${journal.entries.length} in the journal. A migration was skipped or the journal changed; do not continue.`,
+      );
+    }
+  }
 }
 
 /** Apply migrations using the driver that created the supplied Drizzle handle. */
@@ -46,6 +70,7 @@ export async function applyMigrations(
     const { migrate } = await import("drizzle-orm/pglite/migrator");
     await migrate(db as Parameters<typeof migrate>[0], { migrationsFolder: MIGRATIONS_FOLDER });
   }
+  await assertAppliedMatchesJournal(db);
 }
 
 /** Use a dedicated migration connection when configured; never borrow the runtime transaction pool. */

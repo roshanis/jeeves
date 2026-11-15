@@ -33,6 +33,12 @@ describe("lib/db/migrate — non-destructive migration runner", () => {
     await closeTestDb(db);
   });
 
+  it("fails loudly, naming the first divergent tag, when an applied migration was skipped", async () => {
+    // Simulates a migration whose `when` was not newest: drizzle never ran it.
+    await db.execute(sql`delete from drizzle.__drizzle_migrations where id = 3`);
+    await expect(applyMigrations(db)).rejects.toThrow(/position 2 \(0002_audit_events_append_only\)/);
+  });
+
   it("is idempotent — re-running against an up-to-date database is a no-op", async () => {
     await expect(applyMigrations(db)).resolves.toBeUndefined();
     await expect(applyMigrations(db)).resolves.toBeUndefined();
