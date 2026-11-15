@@ -153,7 +153,9 @@ rejected) → deployed ↔ paused → re_review → (deployed | retired)`, with
 `submitted --start_qc--> in_qc` (Program Office or Admin only, never
 `system`), then from `in_qc` either `triage` (system-only, deterministic) or
 `return_to_requester` (Program Office/Admin, reason required, back to
-`intake_draft`). `triage` is not reachable directly from `submitted`. Key
+`intake_draft`). `triage` is not reachable directly from `submitted`, and
+is refused (400 `INTAKE_TIER_GAPS`, state stays `in_qc`) while a
+REQUIRED_FOR_TIER intake gap is open. Key
 authority rules baked into the transition table:
 
 - Only an **approver** may `approve` / `conditionally_approve` / `reject` —
@@ -353,7 +355,7 @@ submitted`. A submitted intake then passes the QC gate (§2.5):
 failing intake back to the requester with a reason. `POST
 /api/initiatives/[id]/triage` is only reachable from `in_qc` and is itself
 a Program Office / Admin call (the choice to pass QC; the actor is recorded
-as `qc_passed`). It computes the tier and required-domain set
+as `qc_passed`). It refuses with 400 `INTAKE_TIER_GAPS` (nothing written, state stays `in_qc`) while a REQUIRED_FOR_TIER intake gap is open. Otherwise it computes the tier and required-domain set
 deterministically (`lib/triage/rules.ts` + `lib/triage/routing.ts`, §2.6),
 writes a `risk_assessments` row, and transitions to `in_review` or, for an
 eligible Low-tier initiative, directly to the fast lane (§2.6, §5.5).
@@ -741,7 +743,8 @@ candid on purpose:
   `docs/production-readiness.md` §1.3.
 - **QC gate.** A submitted intake waits for a Program Office or Admin
   persona to open QC (`start_qc`), then to route it (`triage`) or return it
-  with a reason (§2.5).
+  with a reason (§2.5). Routing is refused while a REQUIRED_FOR_TIER intake
+  gap is open (`INTAKE_TIER_GAPS`); the intake is returned instead.
 - **Evidence submission.** PDF/DOCX packets bound to checklist requirements,
   with immutable submissions and reviewer assessments; domain signature is
   blocked until applicable requirements have accepted evidence. See

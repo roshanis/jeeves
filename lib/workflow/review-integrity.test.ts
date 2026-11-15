@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
 import { createTestDb, closeTestDb, type TestDb } from "../db/test-client";
-import { CHAMPION_PREFILL_PAYLOAD } from "../intake/champion-prefill";
+import { TRIAGE_READY_CHAMPION_PAYLOAD } from "../../tests/fixtures/triage-ready-intake";
 import { createMockAgentPort } from "../agents/mock-adapter";
 import type { AgentPort, DraftReviewOutput, PortResult } from "../agents/ports";
 import { reviewDecisions } from "../db/schema";
@@ -33,7 +33,7 @@ describe("review integrity regression", () => {
   let cycleId: string;
   beforeEach(async () => {
     db = await createTestDb();
-    ({ initiativeId } = await svc.createDraft(db, { payload: CHAMPION_PREFILL_PAYLOAD, requesterActor: REQUESTER, requesterName: "Priya Raman" }));
+    ({ initiativeId } = await svc.createDraft(db, { payload: TRIAGE_READY_CHAMPION_PAYLOAD, requesterActor: REQUESTER, requesterName: "Priya Raman" }));
     await svc.submitIntake(db, initiativeId, REQUESTER);
     // QC gate: `submitted --triage-->` no longer exists — the fan-out is
     // reachable only through `in_qc`, which the Program Office opens.

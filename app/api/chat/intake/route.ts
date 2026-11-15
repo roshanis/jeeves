@@ -204,7 +204,7 @@ export async function POST(req: Request): Promise<Response> {
 
   // "done" semantics (judgment call, documented per task brief): the
   // intake-spec §2 completeness model gates initial submit on BLOCKING rules
-  // only (REQUIRED-FOR-TIER and ADVISORY never block) — so we mirror that
+  // only (REQUIRED-FOR-TIER and ADVISORY never block submit) — so we mirror that
   // exact precedent here: the conversational interview is "done" once there
   // are no remaining BLOCKING-level gaps, matching evaluateCompleteness's
   // own `canSubmit` semantics (canSubmit === no BLOCKING gaps). We reuse

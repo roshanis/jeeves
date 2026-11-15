@@ -4,7 +4,7 @@ import type { Db } from "../../lib/db/client";
 import { auditEvents, initiatives, reviewCycles, reviewDecisions } from "../../lib/db/schema";
 import { createMockAgentPort } from "../../lib/agents/mock-adapter";
 import type { AgentPort, DraftReviewOutput, PortResult } from "../../lib/agents/ports";
-import { CHAMPION_PREFILL_PAYLOAD } from "../../lib/intake/champion-prefill";
+import { TRIAGE_READY_CHAMPION_PAYLOAD } from "../fixtures/triage-ready-intake";
 import * as service from "../../lib/services/initiative-service";
 import { runSingleDomainDraft } from "../../lib/workflow/review-run";
 import { deferred, openPrivatePostgres, waitForDatabaseBlock, withDeadline, type PrivatePostgres } from "./private-postgres";
@@ -52,7 +52,7 @@ postgres("real Postgres review integrity (independent connection pools)", () => 
 
   async function fixture(drafted = false) {
     const created = await service.createDraft(db.dbA, {
-      payload: CHAMPION_PREFILL_PAYLOAD,
+      payload: TRIAGE_READY_CHAMPION_PAYLOAD,
       requesterActor: requester,
       requesterName: "Priya Raman",
     });

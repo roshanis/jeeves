@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { and, eq } from "drizzle-orm";
 import { createTestDb, closeTestDb, type TestDb } from "../db/test-client";
 import { auditEvents, controlDefinitions, initiatives, initiativeDecisions, reviewCycles, reviewDecisions } from "../db/schema";
-import { CHAMPION_PREFILL_PAYLOAD } from "../intake/champion-prefill";
+import { TRIAGE_READY_CHAMPION_PAYLOAD } from "../../tests/fixtures/triage-ready-intake";
 import { createMockAgentPort } from "../agents/mock-adapter";
 import type { DraftReviewOutput, PortResult } from "../agents/ports";
 import { DbDataProvider } from "../data/db-provider";
@@ -26,7 +26,7 @@ describe("domain reviewer abstention", () => {
   beforeEach(async () => {
     db = await createTestDb();
     await db.insert(controlDefinitions).values(CONTROL_SEEDS.map(control => ({ ...control })));
-    ({ initiativeId, slug } = await svc.createDraft(db, { payload: CHAMPION_PREFILL_PAYLOAD, requesterActor: requester, requesterName: "Priya Raman", workspaceId: workspace }));
+    ({ initiativeId, slug } = await svc.createDraft(db, { payload: TRIAGE_READY_CHAMPION_PAYLOAD, requesterActor: requester, requesterName: "Priya Raman", workspaceId: workspace }));
     await svc.submitIntake(db, initiativeId, requester, workspace);
     // QC gate: `submitted --triage-->` no longer exists — the fan-out is
     // reachable only through `in_qc`, which the Program Office opens.

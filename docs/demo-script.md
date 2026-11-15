@@ -37,7 +37,7 @@
 **On screen:** Structured intake form (no chat), partially filled with patient data access, member-facing, care/coverage influence flags.
 
 **Presenter talk track:**
-"This is Priya from Clinical Ops submitting a new initiative: 'Prior-Auth Clinical Summarizer.' It's a model that ingests member records and generates summaries for clinicians to use in prior-auth decisions. Priya answers our structured intake questions: Does it access PHI? Yes. Does its output reach members? Yes — the summaries feed the determination letters members receive. Does it influence care or coverage decisions? Yes. Is it vendor-hosted? Yes. Is each output reviewed by a human before it takes effect? No. The form flags a missing data-retention answer — she can submit, but the gap is tracked and must close before approval. Jeeves enforces completeness — no garbage in, no garbage out."
+"This is Priya from Clinical Ops submitting a new initiative: 'Prior-Auth Clinical Summarizer.' It's a model that ingests member records and generates summaries for clinicians to use in prior-auth decisions. Priya answers our structured intake questions: Does it access PHI? Yes. Does its output reach members? Yes — the summaries feed the determination letters members receive. Does it influence care or coverage decisions? Yes. Is it vendor-hosted? Yes. Is each output reviewed by a human before it takes effect? No. The form flags a missing data-retention answer, so she answers it before submitting (the sample initiative fills it). Jeeves enforces completeness — no garbage in, no garbage out."
 
 **Anticipated question:** *"Why not a conversational chat instead of a form?"*
 
@@ -49,7 +49,7 @@
 **On screen:** Switch to Nia Okafor (Program Office). The submitted initiative shows "Open QC" (the table action reads "Start QC").
 
 **Presenter talk track:**
-"A submitted intake does not go straight to review. Nothing reaches triage except through a QC gate, opened by a human in the Program Office (or Admin) — an agent cannot open it. Nia opens QC, checks the intake is complete enough to spend eight reviewers' time on, and routes it on. If it were not, she would return it to the requester with a written reason, and Priya would fix and resubmit."
+"A submitted intake does not go straight to review. Nothing reaches triage except through a QC gate, opened by a human in the Program Office (or Admin) — an agent cannot open it. Nia opens QC, checks the intake is complete enough to spend eight reviewers' time on, and routes it on. If it were not, or if it still lacked an answer its risk tier requires (QC refuses to pass that), she would return it to the requester with a written reason, and Priya would fix and resubmit."
 
 ---
 

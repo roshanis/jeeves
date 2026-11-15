@@ -21,9 +21,15 @@
  * 403:   { error }  (the persona may not pass QC)
  * 409:   { error: string }  (concurrent triage()/submitIntake() raced this initiative — retry; or not in QC, e.g. already triaged)
  * 400:   { error: string }  (initiative has no intake to triage)
+ * 400:   { error, code: "INTAKE_TIER_GAPS", gaps: [{ruleId, level, field, message}] }
+ *        (a REQUIRED_FOR_TIER intake gap is open: QC cannot pass, the initiative
+ *        stays in_qc and nothing is written; return it to the requester.
+ *        400 rather than submit's 200 {submitted:false}: the client treats any
+ *        2xx as a TriageResult, and refused state changes that carry a reason
+ *        map ValidationError to 400 across the routes, as decide and promote do.)
  */
 import { getDb } from "@/lib/db/client";
-import { ConflictError, NotFoundError, ValidationError, triage } from "@/lib/services/initiative-service";
+import { ConflictError, IntakeTierGapsError, NotFoundError, ValidationError, triage } from "@/lib/services/initiative-service";
 import { IllegalTransitionError } from "@/lib/lifecycle/transitions";
 import { guardFailureResponse, runMutationGuard } from "@/lib/services/route-guard";
 import { isRouteId, notFoundResponse } from "@/lib/http/route-id";
@@ -58,6 +64,9 @@ export async function POST(
     }
     if (err instanceof IllegalTransitionError) {
       return Response.json({ error: err.message }, { status: 409 });
+    }
+    if (err instanceof IntakeTierGapsError) {
+      return Response.json({ error: err.message, code: err.code, gaps: err.gaps }, { status: 400 });
     }
     if (err instanceof ValidationError) {
       return Response.json({ error: err.message }, { status: 400 });

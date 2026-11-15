@@ -63,6 +63,19 @@ describe("IntakeTab draft banner and answers", () => {
     expect(screen.getByText(/does not block submitting/)).toBeDefined();
   });
 
+  it("lists a required-for-tier gap under 'Needed before QC can pass', not as optional (d01)", () => {
+    renderWithProviders(<IntakeTab intake={draft(CHAMPION_PREFILL_PAYLOAD, ["data.retentionIntent"])} summary={{ isSeeded: false } as never} />);
+    expect(screen.getByText(/Needed before QC can pass \(Data retention.*\)\. This does not block submitting\./)).toBeDefined();
+    expect(screen.queryByText(/Optional improvements/)).toBeNull();
+    expect(screen.queryByText(/cannot be submitted/)).toBeNull();
+  });
+
+  it("says once that neither kind of gap blocks submitting when both are open (d01)", () => {
+    renderWithProviders(<IntakeTab intake={draft(CHAMPION_PREFILL_PAYLOAD, ["data.retentionIntent", "evidenceAttachments"])} summary={{ isSeeded: false } as never} />);
+    expect(screen.getByText(/Needed before QC can pass \(Data retention.*\)\. Optional improvements \(.+\)\. Neither blocks submitting\./)).toBeDefined();
+    expect(screen.queryByText(/does not block submitting/)).toBeNull();
+  });
+
   it("says it cannot be submitted for a blocking gap, using labels (ui-intake-F12)", () => {
     renderWithProviders(<IntakeTab intake={draft(EMPTY_INTAKE_PAYLOAD, ["basics.title"])} />);
     expect(screen.getByText(/missing Title .*cannot be submitted/)).toBeDefined();

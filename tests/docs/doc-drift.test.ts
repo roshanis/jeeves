@@ -175,3 +175,16 @@ describe("docs/deploy-podman.md image healthcheck (deploy-F16)", () => {
     expect(doc).toMatch(/HEALTHCHECK/);
   });
 });
+
+describe("docs/intake-spec.md REQUIRED-FOR-TIER gate (d01)", () => {
+  const spec = read("docs/intake-spec.md");
+  it("no longer describes the old review-creation or draft-state behaviour", () => {
+    expect(spec).not.toMatch(/prevents `ReviewCycle` creation/);
+    expect(spec).not.toMatch(/blocking `ReviewCycle` creation/);
+    expect(spec).not.toMatch(/keeps the initiative in `intake-draft` state/);
+  });
+  it("says a failing rule blocks passing QC, with the typed code", () => {
+    expect(spec).toMatch(/INTAKE_TIER_GAPS/);
+    expect(spec).toMatch(/blocks passing QC/);
+  });
+});
