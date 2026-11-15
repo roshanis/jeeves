@@ -17,6 +17,7 @@ import {
   observations,
   reviewCycles,
   reviewDecisions,
+  reviewNotifications,
   riskAssessments,
 } from "../db/schema";
 import {
@@ -334,6 +335,19 @@ describe("lib/services/monitor-service", () => {
    * deployment. Now isolated per-candidate: recorded in `result.errors`,
    * the run completes, and other candidates are unaffected.
    * -------------------------------------------------------------------- */
+  describe("runMonitor — reassessment review requests (domain-F15)", () => {
+    it("records a review request for every pending reassessment review row", async () => {
+      const { dep } = await memberChatCopilot(db);
+      const run = await runMonitor(db, SYSTEM_ACTOR, PLUS_14D, UNSCOPED_WORKSPACE);
+      const cycleId = run.breaches.find((b) => b.deploymentId === dep.id)!.reviewCycleId!;
+      const decisions = await db.select().from(reviewDecisions).where(eq(reviewDecisions.cycleId, cycleId));
+      const notes = await db.select().from(reviewNotifications).where(eq(reviewNotifications.cycleId, cycleId));
+      expect(decisions.length).toBeGreaterThan(0);
+      expect(notes.map((n) => n.domain).sort()).toEqual(decisions.map((d) => d.domain).sort());
+      expect(notes.every((n) => n.kind === "review_requested")).toBe(true);
+    });
+  });
+
   describe("runMonitor — wall-clock stamps", () => {
     it("stamps audit events and incident rows with the wall clock and keeps nowTs as metadata.evaluatedAt", async () => {
       const { init, dep } = await memberChatCopilot(db);

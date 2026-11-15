@@ -48,12 +48,13 @@ import {
   reviewDecisions,
   riskAssessments,
 } from "../db/schema";
-import type { Actor, LifecycleState, Observation, Tier } from "../domain/types";
+import type { Actor, Domain, LifecycleState, Observation, Tier } from "../domain/types";
 import { evaluateControl, resolveThreshold, type EffectiveControl } from "../controls/evaluate";
 import { transition, IllegalTransitionError, type AuditEventPayload } from "../lifecycle/transitions";
 import { redactDbError } from "../db/redact-error";
 import { currentControlRevisions } from "../controls/current-revisions";
 import { SYSTEM_ACTOR } from "./actors";
+import { enqueueReviewRequests } from "./notification-service";
 import { ConflictError } from "./initiative-service";
 
 /**
@@ -497,6 +498,16 @@ export async function runMonitor(
             status: "pending",
             createdAt: new Date(wallTs),
           })));
+          // Same invariant as triage(): a review row never exists without a
+          // recorded request for it. Idempotent via the unique index.
+          await enqueueReviewRequests(tx, {
+            initiativeId: initiative.id,
+            initiativeTitle: initiative.title,
+            cycleId: reviewCycleId,
+            domains: [...new Set(latestRa.requiredDomains)] as Domain[],
+            tier,
+            now: wallTs,
+          });
         }
         await insertAuditEvent(
           tx,
