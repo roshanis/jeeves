@@ -7,7 +7,7 @@ import { logUnexpectedError } from "@/lib/http/log-error";
 import { listExceptions, type ExceptionRow } from "@/lib/services/exception-service";
 import { ControlCatalog } from "@/components/jeeves/control-catalog";
 import { ExceptionsPanel } from "@/components/jeeves/exceptions-panel";
-import { isProductionMode } from "@/lib/config/deployment-mode";
+import { isDemoMode, isProductionMode } from "@/lib/config/deployment-mode";
 import { BASE_DATE_MS } from "@/lib/demo/reference-data";
 import type { Metadata } from "next";
 
@@ -69,12 +69,15 @@ export default async function ControlsPage() {
         <p className="mt-1 text-sm text-muted-foreground">
           {controls.length} controls across {domainCount} domains + runtime.
         </p>
-        <Link
-          href="/frameworks"
-          className="mt-1 inline-block text-sm font-medium text-primary hover:underline"
-        >
-          Framework mappings (NIST AI RMF · EU AI Act) →
-        </Link>
+        {/* /frameworks is a marketing path: a production install answers it with an empty 404. */}
+        {isDemoMode() ? (
+          <Link
+            href="/frameworks"
+            className="mt-1 inline-block text-sm font-medium text-primary hover:underline"
+          >
+            Framework mappings (NIST AI RMF · EU AI Act) →
+          </Link>
+        ) : null}
       </div>
       <ControlCatalog controls={controls} asOfMs={isProductionMode() ? undefined : DEMO_AS_OF_MS} />
       <ExceptionsPanel exceptions={exceptions} loadFailed={exceptionsLoadFailed} />
