@@ -24,14 +24,34 @@ async function main() {
 
 }
 
+/**
+ * What an operator needs to act on a failed upgrade: SQLSTATE, the driver's
+ * message, constraint/table/detail. Connection strings are removed.
+ */
+export function describeMigrationFailure(err: unknown): string {
+  let root: unknown = err;
+  for (let i = 0; i < 5 && typeof root === "object" && root !== null && "cause" in root && root.cause; i++) root = root.cause;
+  const field = (key: string) => {
+    const value = typeof root === "object" && root !== null ? (root as Record<string, unknown>)[key] : undefined;
+    return typeof value === "string" && value ? value : undefined;
+  };
+  const code = field("code");
+  const message = root instanceof Error ? root.message : typeof root === "string" ? root : "";
+  const parts = [
+    `Migration failed${code && /^[A-Z0-9_]+$/.test(code) ? ` (${code})` : ""}${message ? `: ${message}` : ""}`,
+    ...(["constraint", "table", "detail"] as const).flatMap((k) => (field(k) ? [`${k}: ${field(k)}`] : [])),
+  ];
+  let text = parts.join("\n");
+  for (const secret of [process.env.DATABASE_URL, process.env.POSTGRES_URL, process.env.DATABASE_MIGRATION_URL]) {
+    if (secret?.trim()) text = text.split(secret.trim()).join("[redacted]");
+  }
+  return text.replace(/[a-z][a-z0-9+.-]*:\/\/\S+/gi, "[redacted]");
+}
+
 // Only run when executed directly (not when imported by tests).
 if (import.meta.url === `file://${process.argv[1]}`) {
   main().catch((err) => {
-    const code = typeof err === "object" && err !== null && "code" in err &&
-      typeof err.code === "string" && /^[A-Z0-9_]+$/.test(err.code)
-      ? ` (${err.code})`
-      : "";
-    console.error(`Migration failed${code}. Check the database configuration and migration connection.`);
+    console.error(describeMigrationFailure(err));
     process.exitCode = 1;
   });
 }
