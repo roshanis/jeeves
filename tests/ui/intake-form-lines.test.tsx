@@ -23,11 +23,14 @@ describe("IntakeForm one-per-line textareas", () => {
   });
 
   it("derives the payload array from the typed lines", () => {
-    const { rerender } = render(<IntakeForm />);
+    const onPayloadChange = vi.fn();
+    const { rerender } = render(<IntakeForm onPayloadChange={onPayloadChange} />);
     const field = screen.getByLabelText(/Affected populations/) as HTMLTextAreaElement;
     type(field, "Prior auth nurses\nMembers");
     expect(field.value).toBe("Prior auth nurses\nMembers");
-    rerender(<IntakeForm />);
+    const last = onPayloadChange.mock.calls.at(-1)?.[0];
+    expect(last.populationImpact.affectedPopulations).toEqual(["Prior auth nurses", "Members"]);
+    rerender(<IntakeForm onPayloadChange={onPayloadChange} />);
     expect(field.value).toBe("Prior auth nurses\nMembers");
   });
 
