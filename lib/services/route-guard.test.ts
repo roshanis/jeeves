@@ -10,6 +10,7 @@ import {
   extractSessionToken,
   getBudgetStoreForTests,
   issueDemoSession,
+  issuePublicSession,
   resolveSession,
   resolveSessionActor,
   runMutationGuard,
@@ -174,6 +175,35 @@ describe("lib/services/route-guard", () => {
       expect(err!.message).not.toContain(token);
       expect(JSON.stringify(err, Object.getOwnPropertyNames(err))).not.toContain(token);
       expect(err!.code).toBe("42P01");
+    });
+  });
+
+  describe("session insert database failure", () => {
+    async function failureOf(issue: () => Promise<unknown>): Promise<Error & { code?: string }> {
+      await testDb.execute(sql`drop table sessions cascade`);
+      const err = await issue().then(
+        () => null,
+        (e: unknown) => e as Error & { code?: string },
+      );
+      expect(err).toBeInstanceOf(Error);
+      return err!;
+    }
+
+    // The insert binds the new session token as a parameter; a raw driver
+    // error would quote it. A redacted error carries no statement or params.
+    function expectRedacted(err: Error & { code?: string }): void {
+      expect(err.message).toBe("Database query failed (SQLSTATE 42P01)");
+      expect("params" in err).toBe(false);
+      expect(JSON.stringify(err, Object.getOwnPropertyNames(err))).not.toMatch(/[0-9a-f]{32}/i);
+      expect(err.code).toBe("42P01");
+    }
+
+    it("redacts a failed demo session insert", async () => {
+      expectRedacted(await failureOf(() => issueDemoSession("elena-vasquez")));
+    });
+
+    it("redacts a failed public session insert", async () => {
+      expectRedacted(await failureOf(() => issuePublicSession("7.7.7.7")));
     });
   });
 

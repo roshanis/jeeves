@@ -103,12 +103,18 @@ export async function issuePublicSession(
   // session token, stored in a column built to be read by humans.
   const personaKey = `${PUBLIC_PERSONA_PREFIX}${randomUUID()}`;
 
-  await getDb().insert(sessions).values({
-    token: session.token,
-    personaKey,
-    workspaceId,
-    expiresAt: session.expiresAt,
-  });
+  await getDb()
+    .insert(sessions)
+    .values({
+      token: session.token,
+      personaKey,
+      workspaceId,
+      expiresAt: session.expiresAt,
+    })
+    // The driver error embeds the bound token; never let it reach the log.
+    .catch((err: unknown) => {
+      throw redactDbError(err);
+    });
   return { token: session.token, workspaceId, expiresAt: session.expiresAt };
 }
 
@@ -230,12 +236,18 @@ export async function issueDemoSession(
 
   const session = issueSession({ ttlMs: SESSION_TTL_MS }, () => Date.now());
   const workspaceId = existingWorkspaceId ? existingWorkspaceId : session.workspaceId;
-  await getDb().insert(sessions).values({
-    token: session.token,
-    personaKey,
-    workspaceId,
-    expiresAt: session.expiresAt,
-  });
+  await getDb()
+    .insert(sessions)
+    .values({
+      token: session.token,
+      personaKey,
+      workspaceId,
+      expiresAt: session.expiresAt,
+    })
+    // The driver error embeds the bound token; never let it reach the log.
+    .catch((err: unknown) => {
+      throw redactDbError(err);
+    });
   return { token: session.token, workspaceId, expiresAt: session.expiresAt };
 }
 
