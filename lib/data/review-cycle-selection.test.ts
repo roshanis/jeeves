@@ -27,6 +27,10 @@ it("uses the same descending cycle ID for equal timestamps in drafting, projecti
   const [original] = await db.select().from(reviewCycles).where(eq(reviewCycles.id, triaged.cycleId));
   const selectedCycleId = "zz-cycle-equal-timestamp";
   await db.insert(reviewCycles).values({ ...original, id: selectedCycleId });
+  // Triage owns the review rows, and the draft path never adds one: give the
+  // duplicate cycle its own rows, as triage would.
+  const originalRows = await db.select().from(reviewDecisions).where(eq(reviewDecisions.cycleId, triaged.cycleId));
+  await db.insert(reviewDecisions).values(originalRows.map((row) => ({ ...row, id: `zz-${row.id}`, cycleId: selectedCycleId })));
 
   // Fan-out already orders ties by id descending. The old cycle stays pending.
   const run = await startDraftRun(db, initiativeId, triaged.requiredDomains, createMockAgentPort());
