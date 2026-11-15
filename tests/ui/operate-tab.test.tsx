@@ -81,6 +81,44 @@ describe("EvalsTab — breach marker (review P3)", () => {
   });
 });
 
+describe("EvalsTab — Run monitor action (ui-shell-F11)", () => {
+  let login: ((personaKey: string) => Promise<unknown>) | null = null;
+  function LoginCapture() {
+    login = useLiveSession().login;
+    return null;
+  }
+  beforeEach(() => resetLiveSessionForTests());
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    resetLiveSessionForTests();
+  });
+
+  it("is enabled in a live session, not a permanently disabled button", async () => {
+    const detail = await new MockDataProvider().getInitiativeDetail("member-chat-copilot");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({ token: "tok", workspaceId: "ws-1", expiresAt: Date.now() + 60_000 }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      ),
+    );
+    renderWithProviders(
+      <LiveSessionProvider>
+        <LoginCapture />
+        <EvalsTab slug={detail!.summary.slug} telemetry={detail!.telemetry} />
+      </LiveSessionProvider>,
+    );
+    await act(async () => {
+      await login!("ray-chen");
+    });
+    const button = document.querySelector('[data-slot="run-monitor"]') as HTMLButtonElement;
+    expect(button).not.toBeNull();
+    expect(button.getAttribute("aria-disabled")).not.toBe("true");
+  });
+});
+
 describe("seriesYDomain — threshold line stays visible (ui-shell-F13)", () => {
   it("raises the axis top to the threshold when the series sits well below it", () => {
     const [, top] = seriesYDomain("eval_hallucination", 0.08);

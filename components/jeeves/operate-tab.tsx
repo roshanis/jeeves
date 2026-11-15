@@ -25,7 +25,7 @@ import type { TelemetrySeries } from "@/lib/data/dto";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { SyntheticDataLabel } from "./synthetic-data-label";
-import { DisableWithTooltip } from "./role-gate";
+import { RunMonitorPanel } from "./run-monitor-panel";
 
 const KIND_TITLE: Record<TelemetrySeries["kind"], string> = {
   cost_tokens_usd_day: "Cost — daily token spend (USD)",
@@ -352,9 +352,7 @@ export function EvalsTab({
     <div className="space-y-4" data-slot="evals-tab">
       <div className="flex items-center justify-between gap-2">
         <h3 className="text-sm font-medium">Evals &amp; telemetry</h3>
-        {/* Admin-shaped action, rendered disabled for every role in this
-            read-only build (auth gating; see role-gate.tsx). */}
-        <DisableWithTooltip label="Run monitor" variant="outline" />
+        <RunMonitorPanel />
       </div>
 
       {telemetry.length === 0 ? (
