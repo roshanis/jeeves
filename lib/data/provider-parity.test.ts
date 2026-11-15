@@ -102,3 +102,11 @@ describe("mock provider honours the lifecycle invariants the DB enforces", () =>
     expect(offenders).toEqual([]);
   });
 });
+
+describe("mock audit queries agree with the DB provider on rejections", () => {
+  it("approved-by-torres lists no rejected initiative (the DB provider excludes rejections)", async () => {
+    const rows = await provider.auditQuery("approved-by-torres");
+    expect(rows.filter((r) => r.state === "rejected" || r.detail.startsWith("rejected"))).toEqual([]);
+    expect(rows.length).toBeGreaterThan(0);
+  });
+});
