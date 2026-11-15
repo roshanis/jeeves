@@ -20,6 +20,10 @@
  * 503: { status: "degraded",    database: "unreachable" }
  * 503: { status: "boot_failed" }
  *
+ * A demo whose database could not be reached at boot (lib/config/boot-state.ts,
+ * the installation gate) answers the degraded 503 with a Retry-After, without
+ * touching the database: it serves its static pages but is not ready for data.
+ *
  * `boot_failed` means instrumentation.ts refused to start this server (an
  * invalid production configuration, lib/config/boot-checks.ts). It is checked
  * first and never touches the database: a server that failed its boot checks
@@ -28,8 +32,9 @@
  * the server log.
  */
 import { sql } from "drizzle-orm";
-import { bootFailure } from "@/lib/config/boot-state";
+import { bootFailure, installationGateClosed } from "@/lib/config/boot-state";
 import { getDb } from "@/lib/db/client";
+import { RETRY_AFTER_SECONDS, scheduleInstallationRecheck } from "@/lib/http/database-gate";
 
 // Never cached or prerendered: a stale 200 would keep a broken instance in
 // the load balancer.
@@ -45,6 +50,13 @@ const NO_STORE = { "cache-control": "no-store, max-age=0" } as const;
 export async function GET(): Promise<Response> {
   if (bootFailure() !== null) {
     return Response.json({ status: "boot_failed" }, { status: 503, headers: NO_STORE });
+  }
+  if (installationGateClosed()) {
+    scheduleInstallationRecheck();
+    return Response.json(
+      { status: "degraded", database: "unreachable" },
+      { status: 503, headers: { ...NO_STORE, "retry-after": String(RETRY_AFTER_SECONDS) } },
+    );
   }
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {

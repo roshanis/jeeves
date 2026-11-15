@@ -31,6 +31,7 @@ import {
   isOperatorAuthorized,
   operatorAttemptStatus,
 } from "@/lib/services/route-guard";
+import { databaseNotReady } from "@/lib/http/database-gate";
 
 const NO_STORE = { "Cache-Control": "no-store" };
 
@@ -39,6 +40,9 @@ export const { POST, PUT, PATCH, DELETE, OPTIONS } = demoDoorFallbacks("GET");
 export async function GET(req: Request): Promise<Response> {
   const closed = demoDoorClosed();
   if (closed) return closed;
+
+  const unavailable = databaseNotReady();
+  if (unavailable) return unavailable;
 
   const expected = configuredOperatorToken();
   if (!expected) {

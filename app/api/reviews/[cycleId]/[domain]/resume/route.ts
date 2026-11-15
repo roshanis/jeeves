@@ -10,6 +10,7 @@ import {
 import { guardFailureResponse, runMutationGuard } from "@/lib/services/route-guard";
 import { isRouteId, notFoundResponse } from "@/lib/http/route-id";
 import type { Domain } from "@/lib/domain/types";
+import { databaseNotReady } from "@/lib/http/database-gate";
 
 const bodySchema = z.object({
   expectedRevision: z.number().int().nonnegative().safe(),
@@ -19,6 +20,8 @@ export async function POST(
   req: Request,
   context: { params: Promise<{ cycleId: string; domain: string }> },
 ): Promise<Response> {
+  const unavailable = databaseNotReady();
+  if (unavailable) return unavailable;
   const guard = await runMutationGuard(req, () => undefined, { bodyOptional: true });
   if (!guard.ok) {
     return guardFailureResponse(guard.failure);

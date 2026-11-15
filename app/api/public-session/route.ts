@@ -28,6 +28,7 @@
 import { demoDoorClosed, demoDoorFallbacks } from "@/lib/config/demo-doors";
 import { isSameOriginRequest } from "@/lib/security/same-origin";
 import { clientKeyFor, configuredOperatorToken, issuePublicSession } from "@/lib/services/route-guard";
+import { databaseNotReady } from "@/lib/http/database-gate";
 
 export const { GET, HEAD, PUT, PATCH, DELETE, OPTIONS } = demoDoorFallbacks("POST");
 
@@ -41,6 +42,9 @@ export async function POST(req: Request): Promise<Response> {
   if (contentType && !contentType.toLowerCase().startsWith("application/json")) {
     return Response.json({ error: "content-type must be application/json" }, { status: 415 });
   }
+
+  const unavailable = databaseNotReady();
+  if (unavailable) return unavailable;
   if (!configuredOperatorToken()) {
     return Response.json({ error: "not found" }, { status: 404, headers: { "Cache-Control": "no-store" } });
   }

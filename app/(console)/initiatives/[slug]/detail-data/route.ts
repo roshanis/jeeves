@@ -23,11 +23,14 @@
  */
 import { getInitiativeDetailForViewer } from "@/app/_lib/data-provider";
 import { requireViewerForRequest } from "@/lib/services/require-viewer";
+import { databaseNotReady } from "@/lib/http/database-gate";
 
 export async function GET(
   req: Request,
   context: { params: Promise<{ slug: string }> },
 ): Promise<Response> {
+  const unavailable = databaseNotReady();
+  if (unavailable) return unavailable;
   // The helper below gates too, but as a page would (a redirect); a data
   // endpoint answers 401 (lib/services/require-viewer.ts).
   const gate = await requireViewerForRequest(req);

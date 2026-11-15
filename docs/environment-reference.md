@@ -132,6 +132,8 @@ Inlined by Next.js at build; set them in the build environment.
 
 `instrumentation.ts` runs them once per server start (not during `next build`).
 On failure the process logs, marks `/api/health` as 503 and exits with code 1.
+One exception, demo only: a database that cannot be reached at all (see the
+last paragraph of this section) does not exit the instance.
 
 Production reports every configuration problem at once
 (`production configuration is invalid: ...`), among them:
@@ -151,3 +153,12 @@ Then, in both modes, the installation stamp is verified against the database
 (`npm run db:migrate`); demo stamps an unstamped database and refuses a
 `production` one, and retries a database read error with a short backoff. In
 demo a malformed `JEEVES_TRUSTED_PROXY_HOPS` also fails the boot.
+
+A demo that still cannot reach its database after the retries (each attempt is
+cut off after 3 seconds) does not exit: the marketing and legal pages need no
+data. It holds the database closed instead. Nothing reads or writes until the
+installation stamp has been verified in that process; database-backed routes
+answer `503` with `Retry-After: 15` and the console shows a notice;
+`/api/health` answers `503` `degraded`. The check is retried from requests, at
+most every 15 seconds. A stamp mismatch still exits at once; a credentials or TLS
+error exits after the retries; production never holds: it exits.

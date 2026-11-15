@@ -9,6 +9,7 @@ import { guardFailureResponse, runMutationGuard } from "@/lib/services/route-gua
 import { isRouteId, notFoundResponse } from "@/lib/http/route-id";
 import { revokeException } from "@/lib/services/exception-service";
 import { ConflictError, NotFoundError, ValidationError, IllegalTransitionError } from "@/lib/services/initiative-service";
+import { databaseNotReady } from "@/lib/http/database-gate";
 
 const REASON_MAX = 2_000;
 const bodySchema = z.object({ reason: z.string().min(1).max(REASON_MAX) });
@@ -17,6 +18,8 @@ export async function POST(
   req: Request,
   context: { params: Promise<{ id: string }> },
 ): Promise<Response> {
+  const unavailable = databaseNotReady();
+  if (unavailable) return unavailable;
   const guard = await runMutationGuard(req, (json) => {
     const bodyText: Record<string, string> =
       typeof (json as { reason?: unknown })?.reason === "string"

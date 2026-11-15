@@ -7,6 +7,7 @@ import { evidenceResponseError, privateHeaders, readEvidenceJson } from '@/lib/e
 import { EvidenceError } from '@/lib/evidence/files';
 import { isRouteId } from '@/lib/http/route-id';
 import { isSameOriginRequest } from '@/lib/security/same-origin';
+import { databaseNotReady } from "@/lib/http/database-gate";
 export const runtime='nodejs';
 const id=z.string().min(1).max(150);
 const entry=z.object({controlId:id,documentId:id,pageReference:z.string().max(120),note:z.string().max(2000)}).strict();
@@ -18,6 +19,8 @@ const schema=z.discriminatedUnion('action',[
 ]);
 type Context={params:Promise<{id:string}>};
 export async function GET(req:Request,context:Context):Promise<Response> {
+  const unavailable = databaseNotReady();
+  if (unavailable) return unavailable;
  try {
   const gate=await requireViewerForRequest(req);
   if(!gate.ok)return gate.response;
@@ -29,6 +32,8 @@ export async function GET(req:Request,context:Context):Promise<Response> {
  }catch(error){return evidenceResponseError(error);}
 }
 export async function POST(req:Request,context:Context):Promise<Response> {
+  const unavailable = databaseNotReady();
+  if (unavailable) return unavailable;
  try {
   const guard=await runMutationGuard(req,undefined);
   if(!guard.ok)return guardFailureResponse(guard.failure,privateHeaders);

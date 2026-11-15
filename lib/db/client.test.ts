@@ -5,13 +5,15 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Pool as PgPool } from "pg";
 import { sql } from "drizzle-orm";
 import { ProductionConfigError } from "../config/deployment-mode";
-import { closeDb, getDb, getDbDriverForHandle, localPgliteDirectory } from "./client";
+import { closeInstallationGate, openInstallationGate, resetBootStateForTests } from "../config/boot-state";
+import { closeDb, DatabaseUnavailableError, getDb, getDbDriverForHandle, getDbForInstallationCheck, localPgliteDirectory } from "./client";
 
 const originalDirectory = process.env.JEEVES_PGLITE_DIR;
 const keys = ["DATABASE_URL", "POSTGRES_URL", "VERCEL", "JEEVES_DB_DRIVER"] as const;
 const original = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
 
 afterEach(async () => {
+  resetBootStateForTests();
   // Drop any pool a test opened so the memoized handle never leaks across tests.
   await closeDb();
   vi.restoreAllMocks();
@@ -188,5 +190,34 @@ describe("getDb transaction error redaction", () => {
     } finally {
       await closeDb();
     }
+  });
+});
+
+describe("installation gate", () => {
+  it("getDb throws DatabaseUnavailableError, naming no URL, and opens no pool while the gate is closed", () => {
+    delete process.env.VERCEL;
+    process.env.DATABASE_URL = "postgres://u:secret-pw@db.internal:5432/jeeves";
+    closeInstallationGate();
+    let thrown: unknown;
+    try {
+      getDb();
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(DatabaseUnavailableError);
+    expect((thrown as Error).message).not.toMatch(/secret-pw|db\.internal/);
+    const slot = (globalThis as Record<symbol, unknown>)[Symbol.for("jeeves.db.cachedDb")] as { db: unknown; pgPool: unknown };
+    expect(slot.db).toBeNull();
+    expect(slot.pgPool).toBeNull();
+  });
+
+  it("getDbForInstallationCheck hands out a handle while the gate is closed, and getDb returns the same one once it opens", () => {
+    delete process.env.VERCEL;
+    process.env.DATABASE_URL = "postgres://app:hunter2@db.internal:5432/jeeves";
+    closeInstallationGate();
+    const checked = getDbForInstallationCheck();
+    expect(getDbDriverForHandle(checked)).toBe("pg");
+    openInstallationGate();
+    expect(getDb()).toBe(checked);
   });
 });

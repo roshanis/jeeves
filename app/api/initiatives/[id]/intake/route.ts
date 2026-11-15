@@ -6,6 +6,7 @@ import { requireViewerForRequest } from "@/lib/services/require-viewer";
 import { BodyReadError, hasNul, readBodyText } from "@/lib/http/read-json-body";
 import { isRouteId, notFoundResponse } from "@/lib/http/route-id";
 import { INTAKE_AUTHOR_ROLES } from "@/lib/services/intake-author-roles";
+import { databaseNotReady } from "@/lib/http/database-gate";
 
 function failure(error: unknown): Response {
   if (error instanceof NotFoundError) return Response.json({ error: error.message }, { status: 404 });
@@ -15,6 +16,8 @@ function failure(error: unknown): Response {
 }
 
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }): Promise<Response> {
+  const unavailable = databaseNotReady();
+  if (unavailable) return unavailable;
   const gate = await requireViewerForRequest(req);
   if (!gate.ok) return gate.response;
   const { actor, workspaceId } = gate.viewer;
@@ -27,6 +30,8 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 }
 
 export async function PUT(req: Request, { params }: { params: Promise<{ id: string }> }): Promise<Response> {
+  const unavailable = databaseNotReady();
+  if (unavailable) return unavailable;
   const guard = await runMutationGuard(req, undefined, { allowPublic: true });
   if (!guard.ok) return guardFailureResponse(guard.failure);
   if (!INTAKE_AUTHOR_ROLES.has(guard.actor.role)) return Response.json({ error: "only requesters may edit an intake draft" }, { status: 403 });

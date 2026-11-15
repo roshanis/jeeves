@@ -25,6 +25,7 @@ import { demoDoorClosed, demoDoorFallbacks } from "@/lib/config/demo-doors";
 import { getDb } from "@/lib/db/client";
 import { runMonitor } from "@/lib/services/monitor-service";
 import { guardFailureResponse, runMutationGuard } from "@/lib/services/route-guard";
+import { databaseNotReady } from "@/lib/http/database-gate";
 
 /**
  * Demo's fixed base date (docs/seed-spec.md top: "fixed base date
@@ -54,6 +55,9 @@ export const { GET, HEAD, PUT, PATCH, DELETE, OPTIONS } = demoDoorFallbacks("POS
 export async function POST(req: Request): Promise<Response> {
   const closed = demoDoorClosed();
   if (closed) return closed;
+
+  const unavailable = databaseNotReady();
+  if (unavailable) return unavailable;
 
   const guard = await runMutationGuard(req, () => undefined, { bodyOptional: true });
   if (!guard.ok) {

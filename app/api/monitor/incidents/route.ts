@@ -20,8 +20,11 @@
 import { getDb } from "@/lib/db/client";
 import { listIncidentsForViewer } from "@/lib/services/monitor-service";
 import { requireViewerForRequest } from "@/lib/services/require-viewer";
+import { databaseNotReady } from "@/lib/http/database-gate";
 
 export async function GET(req: Request): Promise<Response> {
+  const unavailable = databaseNotReady();
+  if (unavailable) return unavailable;
   const gate = await requireViewerForRequest(req);
   if (!gate.ok) return gate.response;
   const db = getDb();

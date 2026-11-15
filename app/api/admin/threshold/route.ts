@@ -31,6 +31,7 @@ import {
   ValidationError,
 } from "@/lib/services/admin-service";
 import { guardFailureResponse, runMutationGuard } from "@/lib/services/route-guard";
+import { databaseNotReady } from "@/lib/http/database-gate";
 
 const bodySchema = z.object({
   controlId: z.string().min(1).max(50),
@@ -41,6 +42,8 @@ const bodySchema = z.object({
 });
 
 export async function POST(req: Request): Promise<Response> {
+  const unavailable = databaseNotReady();
+  if (unavailable) return unavailable;
   const guard = await runMutationGuard(req, (json) => {
     const bodyText: Record<string, string> = {
       reason: typeof (json as { reason?: unknown })?.reason === "string" ? (json as { reason: string }).reason : "",

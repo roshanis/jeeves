@@ -5,9 +5,9 @@
 // or database dependencies belongs behind its `NEXT_RUNTIME === "nodejs"`
 // guard in a dynamically imported module like this one.
 import type { InstallationDb } from "../db/installation";
-import { safeDriverCode } from "../db/driver-error";
+import { BootDeadlineError, isConnectionClassError, safeDriverCode } from "../db/driver-error";
 import { runtimeDatabaseUrl } from "../db/runtime-config";
-import { markBootFailed } from "./boot-state";
+import { closeInstallationGate, markBootFailed, openInstallationGate, setInstallationRecheck } from "./boot-state";
 import { assertProductionConfig, deploymentMode, ProductionConfigError, trustedProxyHopsState } from "./deployment-mode";
 import { InstallationCheckError, verifyInstallation } from "./installation-check";
 
@@ -31,15 +31,42 @@ export interface BootCheckDeps {
 
 /**
  * Waits between the attempts of a demo boot's installation check: three
- * attempts over about five seconds. On Vercel every cold start does three
+ * attempts, 5 s of waiting plus up to 3 x DEMO_BOOT_ATTEMPT_DEADLINE_MS of
+ * attempts, so about 14 s in the worst case. On Vercel every cold start does three
  * database calls before serving, and a brief Neon error (a compute waking from
  * suspend, a dropped connection) must not take the instance down. Production
  * does not retry: a database it cannot read is not one it may serve from.
  */
 export const DEMO_CHECK_RETRY_DELAYS_MS: readonly number[] = [1_000, 4_000];
 
+/**
+ * One attempt of a demo boot check may take this long before it counts as
+ * "the database cannot be reached". Without it a hanging endpoint costs three
+ * 10 s connect timeouts inside register(), before any page is served.
+ */
+export const DEMO_BOOT_ATTEMPT_DEADLINE_MS = 3_000;
+
+/** A recheck of an unverified demo installation is abandoned after this long. */
+export const DEMO_RECHECK_DEADLINE_MS = 20_000;
+
+// getDb() refuses while the demo's installation gate is closed, and the check
+// is what opens it: it uses the one handle that bypasses the gate.
 async function defaultGetDb(): Promise<InstallationDb> {
-  return (await import("../db/client")).getDb();
+  return (await import("../db/client")).getDbForInstallationCheck();
+}
+
+async function withDeadline<T>(work: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new BootDeadlineError(ms)), ms);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 const defaultSleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
@@ -86,8 +113,17 @@ function describeError(err: unknown, env: Record<string, string | undefined>): s
  * outruns its migration must not take the demo down.
  *
  * In demo, a database ERROR (unreachable, timed out) is retried with a short
- * backoff before it fails the boot (DEMO_CHECK_RETRY_DELAYS_MS). A stamp
- * mismatch is an answer, not an error: it is never retried and fails at once.
+ * backoff (DEMO_CHECK_RETRY_DELAYS_MS), each attempt bounded by
+ * DEMO_BOOT_ATTEMPT_DEADLINE_MS. A stamp mismatch is an answer, not an error:
+ * it is never retried and fails at once. If the database still cannot be
+ * REACHED after the retries (a connection-class error, isConnectionClassError)
+ * the demo does not exit: the marketing and legal pages need no data. It keeps
+ * the installation gate closed (lib/config/boot-state.ts), so getDb() throws
+ * and database-backed routes answer 503, and registers a recheck that a request
+ * starts at most every DEMO_RECHECK_INTERVAL_MS. The gate is closed before the
+ * first attempt and opens only when the check passes (or the database predates
+ * the stamp). Any other error (credentials, TLS, an unexpected throw) still
+ * fails the boot. Production never uses the gate: one attempt, exit on failure.
  *
  * Further boot-time checks belong here, inside the same fail-closed handling.
  */
@@ -142,30 +178,112 @@ export async function runBootChecks(deps: BootCheckDeps = {}): Promise<void> {
     if (!runtimeDatabaseUrl(env) && env.DATA_PROVIDER?.trim().toLowerCase() !== "db") return;
   }
 
-  const delays = mode === "demo" ? DEMO_CHECK_RETRY_DELAYS_MS : [];
-  for (let attempt = 0; ; attempt++) {
+  if (mode !== "demo") {
+    await checkInstallation();
+    return;
+  }
+
+  // Demo: nothing may read the database until the check has passed in this
+  // process. Whatever happens below, on return the gate is open, or it is
+  // closed with a recheck registered, or the boot has failed.
+  closeInstallationGate();
+  try {
+    await checkInstallation();
+  } catch (err) {
+    const reason = `installation check failed unexpectedly: ${describeError(err, env)}`;
+    markBootFailed(reason);
     try {
-      await verifyInstallation(await getDb(), mode);
-      return;
-    } catch (err) {
-      if (err instanceof InstallationCheckError) {
-        if (mode === "demo" && err.code === "not_migrated") {
-          log(`[boot] ${err.message} Continuing without an installation stamp.`);
+      log(`[boot] ${reason}`);
+      log("[boot] refusing to start; exiting.");
+    } catch {
+      // The sink is what failed; the flag above and the exit below still apply.
+    }
+    exit(1);
+  }
+
+  async function checkInstallation(): Promise<void> {
+    const delays = mode === "demo" ? DEMO_CHECK_RETRY_DELAYS_MS : [];
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const verify = async () => verifyInstallation(await getDb(), mode);
+        await (mode === "demo" ? withDeadline(verify(), DEMO_BOOT_ATTEMPT_DEADLINE_MS) : verify());
+        if (mode === "demo") openInstallationGate();
+        return;
+      } catch (err) {
+        if (err instanceof InstallationCheckError) {
+          if (mode === "demo" && err.code === "not_migrated") {
+            openInstallationGate();
+            log(`[boot] ${err.message} Continuing without an installation stamp.`);
+            return;
+          }
+          fail(`installation check failed: ${err.message}`);
           return;
         }
-        fail(`installation check failed: ${err.message}`);
+        if (attempt < delays.length) {
+          log(
+            `[boot] installation check could not read the database (attempt ${attempt + 1} of ${delays.length + 1}): ` +
+              `${describeError(err, env)}; retrying in ${delays[attempt]} ms.`,
+          );
+          await sleep(delays[attempt]);
+          continue;
+        }
+        if (mode === "demo" && isConnectionClassError(err)) {
+          setInstallationRecheck(() => recheckDemoInstallation({ env, exit, log, getDb }));
+          log(
+            `[boot] installation check could not reach the database: ${describeError(err, env)}. ` +
+              "Continuing: pages that need no data are served, and database-backed routes answer 503 until the stamp is verified.",
+          );
+          return;
+        }
+        fail(`installation check failed: could not read the installation stamp: ${describeError(err, env)}`);
         return;
       }
-      if (attempt < delays.length) {
-        log(
-          `[boot] installation check could not read the database (attempt ${attempt + 1} of ${delays.length + 1}): ` +
-            `${describeError(err, env)}; retrying in ${delays[attempt]} ms.`,
-        );
-        await sleep(delays[attempt]);
-        continue;
+    }
+  }
+}
+
+/**
+ * Run again, while a demo's installation gate is closed, the check that could
+ * not reach the database at boot. Registered by runBootChecks and started by a
+ * request (lib/http/database-gate.ts), never awaited by one. Passing (or a
+ * database that predates the stamp) opens the gate; still unreachable or past
+ * DEMO_RECHECK_DEADLINE_MS leaves it closed; any other outcome fails the boot
+ * exactly as at boot. An attempt abandoned at the deadline may finish later and
+ * stamp concurrently with the next one: the stamp insert is
+ * onConflictDoNothing (lib/demo/bootstrap.ts), so that is safe.
+ */
+export async function recheckDemoInstallation(deps: BootCheckDeps = {}): Promise<void> {
+  const env = deps.env ?? process.env;
+  const exit = deps.exit ?? ((code: number) => process.exit(code));
+  const log = deps.log ?? ((...args: unknown[]) => console.error(...args));
+  const getDb = deps.getDb ?? defaultGetDb;
+  const fail = (reason: string): void => {
+    markBootFailed(reason);
+    log(`[boot] ${reason}`);
+    log("[boot] refusing to start; exiting.");
+    exit(1);
+  };
+  try {
+    await withDeadline(
+      (async () => verifyInstallation(await getDb(), "demo"))(),
+      DEMO_RECHECK_DEADLINE_MS,
+    );
+    openInstallationGate();
+    log("[boot] installation verified; database-backed routes are open.");
+  } catch (err) {
+    if (err instanceof InstallationCheckError) {
+      if (err.code === "not_migrated") {
+        openInstallationGate();
+        log(`[boot] ${err.message} Continuing without an installation stamp.`);
+        return;
       }
-      fail(`installation check failed: could not read the installation stamp: ${describeError(err, env)}`);
+      fail(`installation check failed: ${err.message}`);
       return;
     }
+    if (isConnectionClassError(err)) {
+      log(`[boot] installation recheck could not reach the database: ${describeError(err, env)}.`);
+      return;
+    }
+    fail(`installation check failed: could not read the installation stamp: ${describeError(err, env)}`);
   }
 }

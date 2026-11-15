@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
-import { bootFailure, resetBootStateForTests } from "@/lib/config/boot-state";
+import { bootFailure, installationGateClosed, resetBootStateForTests } from "@/lib/config/boot-state";
 import { clearInstallationFixtures, closeTestDb, createTestDb, type TestDb } from "@/lib/db/test-client";
 import { installation } from "@/lib/db/schema";
 import { register } from "@/instrumentation";
@@ -105,6 +105,19 @@ describe("instrumentation register()", () => {
 
     expect(exit).toHaveBeenCalledWith(1);
     expect(bootFailure()).toMatch(/installation stamp/i);
+  });
+
+  it("demo boot with an unreachable database keeps the instance up, with the data gate closed", async () => {
+    vi.stubEnv("JEEVES_MODE", "demo");
+    vi.stubEnv("DATA_PROVIDER", "db");
+    vi.stubEnv("DATABASE_URL", "postgres://u:p@db.internal:5432/jeeves");
+    vi.stubEnv("JEEVES_TRUSTED_PROXY_HOPS", "0");
+    getDb.mockRejectedValue(Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" }));
+    await register({ exit, log, getDb, sleep: async () => {} });
+
+    expect(exit).not.toHaveBeenCalled();
+    expect(bootFailure()).toBeNull();
+    expect(installationGateClosed()).toBe(true);
   });
 
   it("does nothing during `next build`", async () => {

@@ -32,11 +32,14 @@ import {
 import { guardFailureResponse, runMutationGuard } from "@/lib/services/route-guard";
 import { isRouteId, notFoundResponse } from "@/lib/http/route-id";
 import { INTAKE_AUTHOR_ROLES } from "@/lib/services/intake-author-roles";
+import { databaseNotReady } from "@/lib/http/database-gate";
 
 export async function POST(
   req: Request,
   context: { params: Promise<{ id: string }> },
 ): Promise<Response> {
+  const unavailable = databaseNotReady();
+  if (unavailable) return unavailable;
   const guard = await runMutationGuard(req, undefined, { allowPublic: true });
   if (!guard.ok) {
     return guardFailureResponse(guard.failure);

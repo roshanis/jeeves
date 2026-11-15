@@ -33,6 +33,7 @@ import { agentInitializationResponse, llmNotConfigured, llmNotConfiguredResponse
 import { getProvider } from "@/lib/data";
 import type { AuditQueryRow, CannedAuditQueryId } from "@/lib/data/dto";
 import { guardFailureResponse, reserveDailyBudget, runMutationGuard } from "@/lib/services/route-guard";
+import { databaseNotReady } from "@/lib/http/database-gate";
 
 const bodySchema = z.object({
   question: z.string().min(1).max(2000),
@@ -155,6 +156,8 @@ function statusForFailure(error: PortFailure): number {
 }
 
 export async function POST(req: Request): Promise<Response> {
+  const unavailable = databaseNotReady();
+  if (unavailable) return unavailable;
   // A production install with no LLM has nothing to answer with. The guard
   // still authenticates first (an anonymous caller gets its 401); the 503
   // follows once the caller is accepted, before any budget is reserved.

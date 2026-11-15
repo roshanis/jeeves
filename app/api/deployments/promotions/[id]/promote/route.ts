@@ -51,6 +51,7 @@ import {
 } from "@/lib/services/promotion-service";
 import { guardFailureResponse, runMutationGuard } from "@/lib/services/route-guard";
 import { isRouteId, notFoundResponse } from "@/lib/http/route-id";
+import { databaseNotReady } from "@/lib/http/database-gate";
 
 const bodySchema = z.object({
   attestation: z.object({
@@ -65,6 +66,8 @@ export async function POST(
   req: Request,
   context: { params: Promise<{ id: string }> },
 ): Promise<Response> {
+  const unavailable = databaseNotReady();
+  if (unavailable) return unavailable;
   const guard = await runMutationGuard(req, (json) => {
     const body = json as {
       attestation?: { feedbackDataSource?: unknown; consentBasis?: unknown; reviewedBy?: unknown };

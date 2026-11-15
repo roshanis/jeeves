@@ -20,6 +20,7 @@ import {
   type ExceptionStatus,
 } from "@/lib/services/exception-service";
 import { NotFoundError, ValidationError, IllegalTransitionError } from "@/lib/services/initiative-service";
+import { databaseNotReady } from "@/lib/http/database-gate";
 
 const REASON_MAX = 2_000;
 
@@ -31,6 +32,8 @@ const bodySchema = z.object({
 const STATUSES: ExceptionStatus[] = ["requested", "approved", "rejected", "revoked", "expired", "superseded"];
 
 export async function GET(req: Request): Promise<Response> {
+  const unavailable = databaseNotReady();
+  if (unavailable) return unavailable;
   const gate = await requireViewerForRequest(req);
   if (!gate.ok) return gate.response;
   const statusParam = new URL(req.url).searchParams.get("status");
@@ -42,6 +45,8 @@ export async function GET(req: Request): Promise<Response> {
 }
 
 export async function POST(req: Request): Promise<Response> {
+  const unavailable = databaseNotReady();
+  if (unavailable) return unavailable;
   const guard = await runMutationGuard(req, (json) => {
     const bodyText: Record<string, string> =
       typeof (json as { reason?: unknown })?.reason === "string"
