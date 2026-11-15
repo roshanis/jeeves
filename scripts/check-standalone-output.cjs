@@ -83,6 +83,11 @@ function walk(dir, base, out) {
     // Files are what ship; list a directory only so an empty or top-level one is judged too.
     if (entry.isDirectory()) {
       out.push(rel);
+      if (rel === "node_modules") {
+        // List the first level only (node_modules/<name>, node_modules/@scope) so the sharp and @img guard can fire.
+        for (const child of fs.readdirSync(abs)) out.push(path.join(rel, child));
+        continue;
+      }
       if (rel.split(path.sep)[0] === ".next" || rel.split(path.sep)[0] === "node_modules") continue;
       walk(abs, base, out);
     } else {
