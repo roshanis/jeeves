@@ -775,33 +775,9 @@ export async function triage(
       createdAt: new Date(nowTs()),
     });
 
-    // 3. review_cycle + pending review_decisions per required domain
-    const cycleId = `cycle-${randomUUID()}`;
-    await tx.insert(reviewCycles).values({
-      id: cycleId,
-      initiativeId,
-      kind: "initial",
-      riskAssessmentId,
-      openedAt: new Date(nowTs()),
-      closedAt: null,
-      incidentId: null,
-    });
-    for (const domain of domains) {
-      await tx.insert(reviewDecisions).values({
-        id: `rd-${randomUUID()}`,
-        cycleId,
-        domain,
-        status: "pending",
-        reviewer: null,
-        draftMd: null,
-        citations: [],
-        signedAt: null,
-        returnReason: null,
-        createdAt: new Date(nowTs()),
-      });
-    }
-
-    // 4. fast-lane branch
+    // Fast-lane eligibility is decided before any review rows exist: an
+    // approved fast-lane initiative gets an already-closed cycle and no pending
+    // review_decisions, matching the seeded shape.
     // FL-2.1(2): an incomplete intake is never fast-lane eligible. `canSubmit`
     // is BLOCKING-only, so also require no REQUIRED_FOR_TIER gap for this tier
     // and an answered data-retention question. Anything else takes full review.
@@ -816,6 +792,33 @@ export async function triage(
       policy: FAST_LANE_POLICY,
     });
 
+    // 3. review_cycle + pending review_decisions per required domain
+    const cycleId = `cycle-${randomUUID()}`;
+    await tx.insert(reviewCycles).values({
+      id: cycleId,
+      initiativeId,
+      kind: "initial",
+      riskAssessmentId,
+      openedAt: new Date(nowTs()),
+      closedAt: eligibility.eligible ? new Date(nowTs()) : null,
+      incidentId: null,
+    });
+    for (const domain of eligibility.eligible ? [] : domains) {
+      await tx.insert(reviewDecisions).values({
+        id: `rd-${randomUUID()}`,
+        cycleId,
+        domain,
+        status: "pending",
+        reviewer: null,
+        draftMd: null,
+        citations: [],
+        signedAt: null,
+        returnReason: null,
+        createdAt: new Date(nowTs()),
+      });
+    }
+
+    // 4. fast-lane branch (eligibility was evaluated before step 3)
     if (eligibility.eligible) {
       const flResult = transition(triageResult.after, "fast_lane_approve", SYSTEM_ACTOR, {
         ts: nowTs(),

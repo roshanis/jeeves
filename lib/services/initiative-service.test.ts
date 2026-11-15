@@ -419,6 +419,25 @@ describe("lib/services/initiative-service", () => {
       expect(row.state).toBe("in_review");
     });
 
+    it("fast-lane approval closes its review cycle and leaves no pending review rows", async () => {
+      const draft = await svc.createDraft(db, {
+        payload: lowTierPayload(),
+        requesterActor: { id: "dan-kowalski", role: "requester" },
+        requesterName: "Dan Kowalski",
+      });
+      await svc.submitIntake(db, draft.initiativeId, { id: "dan-kowalski", role: "requester" });
+      await svc.startQc(db, draft.initiativeId, PROGRAM);
+      const result = await svc.triage(db, draft.initiativeId);
+      expect(result.branch).toBe("fast-lane");
+
+      const cycle = (await db.select().from(reviewCycles).where(eq(reviewCycles.id, result.cycleId)))[0]!;
+      expect(cycle.closedAt).not.toBeNull();
+      const rows = await db.select().from(reviewDecisions).where(eq(reviewDecisions.cycleId, result.cycleId));
+      expect(rows).toHaveLength(0);
+      const decision = (await db.select().from(initiativeDecisions).where(eq(initiativeDecisions.initiativeId, draft.initiativeId)))[0]!;
+      expect(decision.cycleId).toBe(result.cycleId);
+    });
+
     it("fast-lane approval ALSO generates effective controls — live parity with seeded fast-lane initiatives (seed-spec #2 marketing-ab-tester carries effective_controls against a deployment row)", async () => {
       const draft = await svc.createDraft(db, {
         payload: lowTierPayload(),
