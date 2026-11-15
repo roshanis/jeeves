@@ -82,53 +82,49 @@ export function RiskHeatmap({ initiatives }: { initiatives: InitiativeSummary[] 
 
   return (
     <div className="flex flex-col gap-4" data-slot="risk-heatmap">
-      <div
-        className="scroll-x-pane overflow-x-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        tabIndex={0}
-        role="region"
-        aria-label="Risk heatmap — tier by domain status"
+      <Table
+        containerLabel="Risk heatmap — tier by domain status"
+        className="border-separate [border-spacing:2px]"
       >
-        <Table className="border-separate [border-spacing:2px]">
-          <TableHeader>
-            <TableRow className="border-b-0 hover:bg-transparent">
-              <TableHead className="kicker">Tier</TableHead>
-              {STATUSES.map((s) => (
-                <TableHead key={s} className="kicker">
-                  {s}
-                </TableHead>
-              ))}
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {TIERS.map((tier) => (
-              <TableRow key={tier} className="border-b-0 hover:bg-transparent">
-                <TableCell className="p-1.5">
-                  <TierBadge tier={tier} />
-                </TableCell>
-                {STATUSES.map((status) => {
-                  const count = grid.get(tier)!.get(status) ?? 0;
-                  const bucket = bucketFor(count, maxCount);
-                  return (
-                    <TableCell key={status} className="p-0">
-                      <div
-                        data-slot="risk-heatmap-cell"
-                        data-bucket={bucket}
-                        className={cn(
-                          "stat-value flex h-9 w-full min-w-12 items-center justify-center rounded-sm text-sm",
-                          CELL_BG[bucket],
-                          CELL_TEXT[bucket],
-                        )}
-                      >
-                        {count}
-                      </div>
-                    </TableCell>
-                  );
-                })}
-              </TableRow>
+        <TableHeader>
+          <TableRow className="border-b-0 hover:bg-transparent">
+            <TableHead className="kicker">Tier</TableHead>
+            {STATUSES.map((s) => (
+              <TableHead key={s} className="kicker">
+                {s}
+              </TableHead>
             ))}
-          </TableBody>
-        </Table>
-      </div>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {TIERS.map((tier) => (
+            <TableRow key={tier} className="border-b-0 hover:bg-transparent">
+              <TableCell className="p-1.5">
+                <TierBadge tier={tier} />
+              </TableCell>
+              {STATUSES.map((status) => {
+                const count = grid.get(tier)!.get(status) ?? 0;
+                const bucket = bucketFor(count, maxCount);
+                return (
+                  <TableCell key={status} className="p-0">
+                    <div
+                      data-slot="risk-heatmap-cell"
+                      data-bucket={bucket}
+                      className={cn(
+                        "stat-value flex h-9 w-full min-w-12 items-center justify-center rounded-sm text-sm",
+                        CELL_BG[bucket],
+                        CELL_TEXT[bucket],
+                      )}
+                    >
+                      {count}
+                    </div>
+                  </TableCell>
+                );
+              })}
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
 
       <div className="label-mono flex items-center gap-2" data-slot="risk-heatmap-legend">
         <span>0</span>

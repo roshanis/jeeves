@@ -50,6 +50,17 @@ describe("RiskHeatmap scroll region (WCAG SHOULD-FIX #2, 2026-08-03)", () => {
   });
 });
 
+describe("RiskHeatmap landmarks", () => {
+  it("renders exactly one named scroll region, not a nested pair", () => {
+    const { container } = renderWithProviders(
+      <RiskHeatmap initiatives={[summary("a", "high", "deployed")]} />,
+    );
+    const regions = container.querySelectorAll('[role="region"]');
+    expect(regions).toHaveLength(1);
+    expect(regions[0].getAttribute("aria-label")).toBe("Risk heatmap — tier by domain status");
+  });
+});
+
 describe("RiskHeatmap bucket ink", () => {
   it("a bucket-4 cell switches ink per theme (text-white dark:text-neutral-900), matching bucket 5", () => {
     // 5 "critical / All signed" rows -> bucket 5 (the grid's max cell);

@@ -94,7 +94,7 @@ export default async function AdminPage() {
                 visually secondary in the footer rather than a prominent
                 big-number CTA. Per-initiative override values live behind the
                 edit dialog — not fabricated here. */}
-            <Table>
+            <Table containerLabel="Control thresholds">
               <TableHeader>
                 <TableRow>
                   <TableHead>Scope</TableHead>
@@ -179,7 +179,7 @@ export default async function AdminPage() {
               against their eval-quality floor.
             </p>
           ) : (
-            <Table>
+            <Table containerLabel="Open incidents">
               <TableHeader>
                 <TableRow>
                   <TableHead>Detected</TableHead>
@@ -222,7 +222,7 @@ export default async function AdminPage() {
           <CardTitle>Deployments — pause / resume</CardTitle>
         </CardHeader>
         <CardContent>
-          <Table>
+          <Table containerLabel="Deployments">
             <TableHeader>
               <TableRow>
                 <TableHead>Initiative</TableHead>
@@ -273,7 +273,7 @@ export default async function AdminPage() {
           <CardTitle>Control-change audit log</CardTitle>
         </CardHeader>
         <CardContent>
-          <Table>
+          <Table containerLabel="Control-change audit log">
             <TableHeader>
               <TableRow>
                 <TableHead>When</TableHead>

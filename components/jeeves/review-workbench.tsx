@@ -241,7 +241,7 @@ export function ReviewWorkbench({ rows, selection, onSelectionChange }: {
               </p>
             ) : null}
           </div>
-          <Table>
+          <Table containerLabel="Domain reviews">
             <TableHeader>
               <TableRow>
                 <TableHead>Initiative</TableHead>
