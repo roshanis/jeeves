@@ -253,7 +253,13 @@ export async function requestException(
     throw new ValidationError("exception request requires a non-empty reason");
   }
   return db.transaction(async (tx) => {
-    const [ec] = await tx.select().from(effectiveControls).where(eq(effectiveControls.id, effectiveControlId));
+    // FOR UPDATE serializes concurrent requests on this control, so the
+    // active-exception check below cannot race into the unique index.
+    const [ec] = await tx
+      .select()
+      .from(effectiveControls)
+      .where(eq(effectiveControls.id, effectiveControlId))
+      .for("update");
     if (!ec) throw new NotFoundError("effectiveControl", effectiveControlId);
 
     const initiativeIdForCheck = await initiativeIdForEffectiveControl(tx, ec.deploymentId);
@@ -522,6 +528,16 @@ export async function renewException(
     );
     if (exc.status !== "approved") {
       throw new ValidationError(`only an approved exception can be renewed; ${exceptionId} is '${exc.status}'`);
+    }
+    // Serialize renewals per control, then refuse a second pending request
+    // (the partial unique index would otherwise answer with a 500).
+    await tx.select().from(effectiveControls).where(eq(effectiveControls.id, exc.effectiveControlId)).for("update");
+    const pending = await tx
+      .select({ id: controlExceptions.id })
+      .from(controlExceptions)
+      .where(and(eq(controlExceptions.effectiveControlId, exc.effectiveControlId), eq(controlExceptions.status, "requested")));
+    if (pending.length > 0) {
+      throw new ValidationError(`control ${exc.controlId} already has a renewal pending (${pending[0]!.id})`);
     }
     const id = `exc-${randomUUID()}`;
     await tx.insert(controlExceptions).values({

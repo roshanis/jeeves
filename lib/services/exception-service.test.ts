@@ -383,6 +383,16 @@ describe("exception-service", () => {
    * hardcoded status on every transition.
    * -------------------------------------------------------------------- */
   describe("renewal supersession and derived control status (external-review finding #5)", () => {
+    it("a second renewal while one is pending is a ValidationError, not a unique-index violation", async () => {
+      const { ecId } = await anEffectiveControl();
+      const original = await svc.requestException(db, ecId, REQUESTER, null, "original reason");
+      await svc.decideException(db, original.id, APPROVER, null, true, "granted");
+      await svc.renewException(db, original.id, REQUESTER, null, "first renewal");
+      await expect(svc.renewException(db, original.id, REQUESTER, null, "second renewal")).rejects.toThrow(
+        ValidationError,
+      );
+    });
+
     it("rejecting a renewal leaves the control 'exception_requested' — the original approved exception is still active, NOT 'overdue'", async () => {
       const { ecId } = await anEffectiveControl();
       const original = await svc.requestException(db, ecId, REQUESTER, null, "original reason");
