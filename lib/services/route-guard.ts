@@ -314,7 +314,9 @@ const SESSION_COOKIE_NAME = "jeeves_session";
 export function extractSessionToken(req: Request): string | null {
   const auth = req.headers.get("authorization");
   if (auth && /^bearer /i.test(auth)) {
-    return auth.slice("Bearer ".length).trim();
+    const bearer = auth.slice("Bearer ".length).trim();
+    // U+0000 cannot be stored in Postgres text: such a token is signed out, not a 500.
+    return bearer.includes("\u0000") ? null : bearer;
   }
   const cookieHeader = req.headers.get("cookie");
   if (cookieHeader) {
@@ -325,7 +327,8 @@ export function extractSessionToken(req: Request): string | null {
     if (match) {
       // A stray "%" must read as "no session", not throw into a 500.
       try {
-        return decodeURIComponent(match.slice(SESSION_COOKIE_NAME.length + 1));
+        const cookie = decodeURIComponent(match.slice(SESSION_COOKIE_NAME.length + 1));
+        return cookie.includes("\u0000") ? null : cookie;
       } catch {
         return null;
       }

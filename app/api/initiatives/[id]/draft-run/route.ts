@@ -9,6 +9,7 @@ import { getDb } from "@/lib/db/client";
 import { initiatives, reviewCycles } from "@/lib/db/schema";
 import { startDraftRun, getRunProgress } from "@/lib/workflow/review-run";
 import { runMutationGuard } from "@/lib/services/route-guard";
+import { isRouteId, notFoundResponse } from "@/lib/http/route-id";
 import { workspaceMismatch, mutationWorkspaceMismatch } from "@/lib/services/workspace-guard";
 import { resolveViewerWorkspaceId } from "@/lib/services/viewer-workspace";
 import type { Domain } from "@/lib/domain/types";
@@ -53,6 +54,7 @@ export async function POST(
   }
 
   const { id } = await context.params;
+  if (!isRouteId(id)) return notFoundResponse();
   const db = getDb();
 
   // Finding #1: workspace authorization — load the initiative first so a

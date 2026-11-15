@@ -7,6 +7,7 @@
 import { z } from "zod";
 import { getDb } from "@/lib/db/client";
 import { runMutationGuard } from "@/lib/services/route-guard";
+import { isRouteId, notFoundResponse } from "@/lib/http/route-id";
 import { decideException } from "@/lib/services/exception-service";
 import { ConflictError, NotFoundError, ValidationError, IllegalTransitionError } from "@/lib/services/initiative-service";
 
@@ -43,6 +44,7 @@ export async function POST(
   }
 
   const { id } = await context.params;
+  if (!isRouteId(id)) return notFoundResponse();
   try {
     const result = await decideException(
       getDb(),

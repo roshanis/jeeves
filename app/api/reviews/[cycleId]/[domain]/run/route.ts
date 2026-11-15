@@ -13,6 +13,7 @@ import {
   runReviewAgent,
 } from "@/lib/services/initiative-service";
 import { runMutationGuard } from "@/lib/services/route-guard";
+import { isRouteId, notFoundResponse } from "@/lib/http/route-id";
 import { BodyReadError, DEFAULT_BODY_MAX_BYTES, readBodyText } from "@/lib/http/read-json-body";
 import type { Domain } from "@/lib/domain/types";
 import { agentInitializationResponse } from "@/lib/services/agent-error-response";
@@ -40,6 +41,7 @@ export async function POST(
   }
 
   const { cycleId, domain } = await context.params;
+  if (!isRouteId(cycleId) || !isRouteId(domain)) return notFoundResponse();
   if (!(DOMAINS as readonly string[]).includes(domain)) {
     return Response.json({ error: "unknown domain" }, { status: 400 });
   }

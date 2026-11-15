@@ -41,6 +41,7 @@ import {
   ConflictError,
 } from "@/lib/services/promotion-service";
 import { runMutationGuard } from "@/lib/services/route-guard";
+import { isRouteId, notFoundResponse } from "@/lib/http/route-id";
 
 const bodySchema = z.object({
   targetDeploymentVersionId: z.string().min(1).max(200),
@@ -78,6 +79,7 @@ export async function POST(
   }
 
   const { id } = await context.params;
+  if (!isRouteId(id)) return notFoundResponse();
   const db = getDb();
 
   try {

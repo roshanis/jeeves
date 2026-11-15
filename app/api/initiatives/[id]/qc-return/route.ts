@@ -24,6 +24,7 @@ import {
 } from "@/lib/services/initiative-service";
 import { IllegalTransitionError } from "@/lib/lifecycle/transitions";
 import { runMutationGuard } from "@/lib/services/route-guard";
+import { isRouteId, notFoundResponse } from "@/lib/http/route-id";
 
 const bodySchema = z.object({ reason: z.string().min(1).max(2000) });
 
@@ -49,6 +50,7 @@ export async function POST(
   }
 
   const { id } = await context.params;
+  if (!isRouteId(id)) return notFoundResponse();
 
   try {
     const result = await returnFromQc(getDb(), id, guard.actor, parsed.data.reason, guard.workspaceId);

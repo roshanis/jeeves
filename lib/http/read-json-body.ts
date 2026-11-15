@@ -8,6 +8,16 @@ export const DEFAULT_BODY_MAX_BYTES = 1024 * 1024;
 /** Cap for a route that must read a body before any session exists. */
 export const PRE_SESSION_BODY_MAX_BYTES = 16 * 1024;
 
+/** True when any string in a parsed JSON value (key or value) contains U+0000, which Postgres text cannot store. */
+export function hasNul(value: unknown): boolean {
+  if (typeof value === "string") return value.includes("\u0000");
+  if (Array.isArray(value)) return value.some(hasNul);
+  if (value && typeof value === "object") {
+    return Object.entries(value).some(([k, v]) => k.includes("\u0000") || hasNul(v));
+  }
+  return false;
+}
+
 export class BodyReadError extends Error {
   constructor(
     readonly status: 400 | 413,
@@ -53,11 +63,14 @@ export async function readJsonBody(
   options: { optional?: boolean } = {},
 ): Promise<unknown> {
   const text = await readBodyText(req, maxBytes);
+  let parsed: unknown;
   try {
     if (text.trim() === "") throw new Error("empty");
-    return JSON.parse(text);
+    parsed = JSON.parse(text);
   } catch {
     if (options.optional) return {};
     throw new BodyReadError(400, "invalid JSON body");
   }
+  if (hasNul(parsed)) throw new BodyReadError(400, "invalid request body");
+  return parsed;
 }

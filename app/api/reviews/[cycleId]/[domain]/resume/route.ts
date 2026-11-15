@@ -8,6 +8,7 @@ import {
   resumeReview,
 } from "@/lib/services/initiative-service";
 import { runMutationGuard } from "@/lib/services/route-guard";
+import { isRouteId, notFoundResponse } from "@/lib/http/route-id";
 import type { Domain } from "@/lib/domain/types";
 
 const bodySchema = z.object({
@@ -30,6 +31,7 @@ export async function POST(
   }
 
   const { cycleId, domain } = await context.params;
+  if (!isRouteId(cycleId) || !isRouteId(domain)) return notFoundResponse();
   const db = getDb();
 
   try {

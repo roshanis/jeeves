@@ -7,6 +7,7 @@
 import { z } from "zod";
 import { getDb } from "@/lib/db/client";
 import { runMutationGuard } from "@/lib/services/route-guard";
+import { isRouteId, notFoundResponse } from "@/lib/http/route-id";
 import { renewException } from "@/lib/services/exception-service";
 import { NotFoundError, ValidationError, IllegalTransitionError } from "@/lib/services/initiative-service";
 
@@ -39,6 +40,7 @@ export async function POST(
   }
 
   const { id } = await context.params;
+  if (!isRouteId(id)) return notFoundResponse();
   try {
     const result = await renewException(getDb(), id, guard.actor, guard.workspaceId, parsed.data.reason);
     return Response.json(result, { status: 200 });
