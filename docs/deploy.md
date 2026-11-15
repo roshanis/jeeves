@@ -84,7 +84,7 @@ npm run start        # next start (after build)
    |---|---|---|
    | `DATABASE_URL` or `POSTGRES_URL` | Yes | Explicit nonblank `DATABASE_URL` wins; otherwise the Vercel integration `POSTGRES_URL` is used consistently for runtime, pages and incident reads. Neon hosts use the Neon driver; other PostgreSQL hosts use `pg`. Vercel refuses local PGlite fallback. |
    | `DATABASE_MIGRATION_URL` | For Supabase migrations | Direct or session-pooler connection on port 5432. Runtime transaction-pooler URLs on port 6543 cannot run migrations. |
-   | `DATABASE_SSL_CA` | Optional | Project CA if required; recognized Supabase connections verify certificates and use a bounded pool. |
+   | `DATABASE_SSL_CA` | Optional | Optional CA (PEM). Applies to every PostgreSQL host reached through node-postgres, not to Neon, which uses its own driver and public certificates. When set, the connection uses TLS and verifies the server against this CA (for Amazon RDS, the RDS CA bundle). It cannot be combined with `sslmode=disable` or `no-verify`, or with `sslrootcert`, `sslcert` or `sslkey` in the URL. Supabase hosts additionally always verify and use a pool of one. |
    | `DATA_PROVIDER` | Optional | Defaults to DB when either runtime URL exists. `db` makes this explicit; `mock` deliberately shows the read-only preview dataset. |
    | `JEEVES_COOKIE_SECRET` | Yes for new deployments | Random server-only signing key for browser workspace continuity. Visitor entry is passwordless. Existing DEMO_PASSCODE can serve only as a deprecated signing fallback. |
    | `OPENAI_API_KEY` | Optional | Only set this if you want **live** LLM-drafted reviews during the demo. Omit it and the app runs entirely on the keyless mock adapter — safe default for a public URL. |
