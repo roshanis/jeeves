@@ -320,7 +320,7 @@ describe("remaining mutation routes enforce session workspace authorization", ()
     expect(sharedAfterPromote!.status).toBe("awaiting_promotion_signoff");
   });
 
-  it("project threshold override returns the unknown-initiative 404 shape and preserves owner/shared access", async () => {
+  it("project threshold override returns the unknown-initiative 404 shape and allows the owning workspace and refuses shared seeded rows (404, unchanged)", async () => {
     const requester = await issueSession("priya-raman", "70.0.3.1");
     const initiativeId = await createLiveInitiative(requester.token, "70.0.3.2");
     const owner = await issueSession("ray-chen", "70.0.3.3", requester.workspaceCookie);
@@ -376,7 +376,7 @@ describe("remaining mutation routes enforce session workspace authorization", ()
     expect((await call(shared!.id, foreign.token, "70.0.3.8")).status).toBe(404);
   });
 
-  it("pause returns 404 before state validation and allows owner/shared mutations", async () => {
+  it("pause returns 404 before state validation and allows the owning workspace and refuses shared seeded rows (404, unchanged)", async () => {
     const requester = await issueSession("priya-raman", "70.0.4.1");
     const initiativeId = await createLiveInitiative(requester.token, "70.0.4.2");
     const owner = await issueSession("ray-chen", "70.0.4.3", requester.workspaceCookie);
@@ -430,7 +430,7 @@ describe("remaining mutation routes enforce session workspace authorization", ()
     expect(pausedSharedAfter!.state).toBe("deployed");
   });
 
-  it("resume returns the unknown-initiative 404 shape and allows owner/shared mutations", async () => {
+  it("resume returns the unknown-initiative 404 shape and allows the owning workspace and refuses shared seeded rows (404, unchanged)", async () => {
     const requester = await issueSession("priya-raman", "70.0.5.1");
     const initiativeId = await createLiveInitiative(requester.token, "70.0.5.2");
     const owner = await issueSession("ray-chen", "70.0.5.3", requester.workspaceCookie);
