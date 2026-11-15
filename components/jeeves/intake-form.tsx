@@ -323,6 +323,23 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
   const requestId = React.useRef<string | null>(null);
   const creationPayload = React.useRef<IntakePayload | null>(null);
   const [error, setError] = React.useState<string | null>(null);
+  // A new session in another workspace (an expired real-request session, then
+  // "Send a real request" again) cannot see the old draft: forget it so the
+  // next submit re-creates it from the form instead of updating a 404.
+  const draftWorkspaceId = React.useRef<string | undefined>(undefined);
+  const sessionWorkspaceId = session?.workspaceId;
+  React.useEffect(() => {
+    if (!sessionWorkspaceId) return;
+    if (draftWorkspaceId.current && draftWorkspaceId.current !== sessionWorkspaceId) {
+      setInitiativeId(undefined);
+      setVersion(undefined);
+      setSlug(undefined);
+      setSavedPayload(null);
+      requestId.current = null;
+      creationPayload.current = null;
+    }
+    draftWorkspaceId.current = sessionWorkspaceId;
+  }, [sessionWorkspaceId]);
 
   const patch = React.useCallback((update: (prev: IntakePayload) => IntakePayload) => {
     const next = update(payload);
