@@ -278,7 +278,6 @@ export function guardFailureResponse(failure: GuardFailure, headers: Record<stri
   );
 }
 
-/** Static preview reads cannot reflect writes, so reject before any DB access. */
 /**
  * Fail-closed backstop for a process whose boot checks failed but which the
  * host did not stop (see lib/config/boot-state.ts). A bare status: the reason
@@ -288,6 +287,7 @@ function checkBootFailure(): GuardFailure | null {
   return bootFailure() === null ? null : { kind: "unavailable", status: 503, message: "service unavailable" };
 }
 
+/** Static preview reads cannot reflect writes, so reject before any DB access. */
 export function checkReadOnlyMode(): GuardFailure | null {
   return resolveDataProviderMode(process.env.DATA_PROVIDER, !!runtimeDatabaseUrl()) === "mock"
     ? { kind: "read_only", status: 403, message: READ_ONLY_PREVIEW_MESSAGE }
