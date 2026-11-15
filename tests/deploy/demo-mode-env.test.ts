@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -91,5 +91,18 @@ describe("explicit JEEVES_MODE=demo for every demo, dev, test and CI path", () =
     expect(doc).toMatch(/Production, Preview and Development/);
     // Prominent: in the opening, before the first numbered section.
     expect(doc.indexOf("JEEVES_MODE=demo")).toBeLessThan(doc.indexOf("## 1. Local demo quickstart"));
+  });
+
+  it("every fenced npm run dev / db:seed / reset:demo command in README.md and docs/*.md carries it", () => {
+    const files = ["README.md", ...readdirSync(path.join(ROOT, "docs")).filter((f) => f.endsWith(".md")).map((f) => `docs/${f}`)];
+    const bad: string[] = [];
+    for (const file of files) {
+      let fenced = false;
+      read(file).split("\n").forEach((line, n) => {
+        if (/^\s*```/.test(line)) fenced = !fenced;
+        else if (fenced && /npm run (dev|db:seed|reset:demo)\b/.test(line) && !/JEEVES_MODE=demo/.test(line)) bad.push(`${file}:${n + 1}: ${line.trim()}`);
+      });
+    }
+    expect(bad).toEqual([]);
   });
 });

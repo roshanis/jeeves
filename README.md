@@ -171,7 +171,7 @@ further configuration.
 ### Interactive visitor demo
 
 ```bash
-DATA_PROVIDER=db JEEVES_COOKIE_SECRET=<server-signing-key> npm run dev
+JEEVES_MODE=demo DATA_PROVIDER=db JEEVES_COOKIE_SECRET=<server-signing-key> npm run dev
 ```
 
 Click **Try the demo** to enter as a requester and open intake. Click **Use a
@@ -239,7 +239,7 @@ recommend, route, and flag missing evidence — they never approve.**
 **Demo reset ritual** — before a live walkthrough, run:
 
 ```bash
-npm run reset:demo
+JEEVES_MODE=demo npm run reset:demo
 ```
 
 It re-seeds to the canonical state, clears live session + budget state, and
