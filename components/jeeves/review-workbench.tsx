@@ -250,7 +250,7 @@ export function ReviewWorkbench({ rows, selection, onSelectionChange }: {
                 <TableHead>Status</TableHead>
                 <TableHead>Age</TableHead>
                 <TableHead>Reviewer</TableHead>
-                <TableHead>Last updated</TableHead>
+                <TableHead>Signed</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -346,7 +346,7 @@ export function ReviewWorkbench({ rows, selection, onSelectionChange }: {
             isSeeded={visibleSelected.isSeeded === true}
             reviewCycleId={visibleSelected.review.cycleId}
           >
-            {({ signingBlock, cycleId, cycleChanged, evidencePacketId }) => (
+            {({ signingBlock, cycleId, cycleChanged, evidencePacketId, evidenceLoading }) => (
             <AssessmentPane
               key={draftKey}
               row={visibleSelected}
@@ -354,6 +354,7 @@ export function ReviewWorkbench({ rows, selection, onSelectionChange }: {
               evidenceCycleId={cycleId}
               cycleChanged={cycleChanged}
               evidencePacketId={evidencePacketId}
+              evidenceLoading={evidenceLoading}
               editedRevision={drafts[draftKey]?.revision}
               editedEvidencePacketId={drafts[draftKey]?.evidencePacketId}
               returnReason={returnReasons[draftKey] ?? ""}
@@ -411,6 +412,7 @@ function AssessmentPane({
   evidenceCycleId,
   cycleChanged,
   evidencePacketId,
+  evidenceLoading,
   editedRevision,
   editedEvidencePacketId,
   onReviewedRevision,
@@ -425,6 +427,7 @@ function AssessmentPane({
   evidenceCycleId: string | null;
   cycleChanged: boolean;
   evidencePacketId: string | null;
+  evidenceLoading: boolean;
   editedRevision?: number;
   editedEvidencePacketId?: string | null;
   onReviewedRevision: () => void;
@@ -463,6 +466,7 @@ function AssessmentPane({
   );
   const alreadySigned = row.review.status === "signed";
   const hasDraft = Boolean(row.review.draftMd);
+  const blankAssessment = editedText.trim() === "";
 
   async function handleRunAgent() {
     if (!session || !cycleId || !eligibility.canRunAgent || pending || mustReviewAgain) return;
@@ -488,7 +492,7 @@ function AssessmentPane({
   }
 
   async function handleSign() {
-    if (!session || !cycleId || signingBlock || pending || running || !eligibility.canSignOrReturn || mustReviewAgain || row.review.revision === undefined) return;
+    if (!session || !cycleId || signingBlock || pending || running || !eligibility.canSignOrReturn || mustReviewAgain || blankAssessment || row.review.revision === undefined) return;
     setPending(true);
     try {
       await performReviewMutation(
@@ -609,7 +613,7 @@ function AssessmentPane({
           className="min-h-56 w-full rounded-md border border-input bg-transparent p-3 text-sm leading-relaxed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
           value={editedText}
           onChange={(e) => onEditedTextChange(e.target.value)}
-          disabled={!eligibility.canEdit || pending || running}
+          disabled={!eligibility.canEdit || pending || running || evidenceLoading}
           maxLength={20_000}
           aria-label="Assessment text"
           data-slot="assessment-textarea"
@@ -621,6 +625,7 @@ function AssessmentPane({
           <p className="text-xs">Compare the AI draft above with your assessment, check the submitted sources, and update your edits before acknowledging.</p>
           <button type="button" disabled={Boolean(signingBlock) || !refreshedAfterConflict || row.review.revision === undefined} onClick={onLoadCurrentDraft} className="min-h-11 font-medium underline underline-offset-4 disabled:opacity-50">Discard edits and load current draft</button>
         </div> : null}
+        {blankAssessment && eligibility.canSignOrReturn && !alreadySigned ? <p role="status" className="text-xs text-muted-foreground">Write an assessment before signing.</p> : null}
         {signingBlock && !alreadySigned ? <p role="status" className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">{signingBlock}</p> : null}
         {alreadySigned ? <p className="rounded-lg border bg-muted/30 p-3 text-sm">Signed by {row.review.reviewer ?? "the assigned reviewer"}{row.review.signedAt ? ` on ${row.review.signedAt.slice(0, 10)}` : ""}. This domain review is read-only.</p> : null}
         {row.review.status === "abstained" ? <div role="status" className="space-y-1 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
@@ -634,7 +639,7 @@ function AssessmentPane({
           <GatedActionButton
             label="Sign"
             requiresRole="reviewer"
-            pending={pending || running || Boolean(signingBlock) || mustReviewAgain}
+            pending={pending || running || Boolean(signingBlock) || mustReviewAgain || blankAssessment}
             pendingLabel={pending ? "Signing…" : "Sign"}
             onAction={eligibility.canSignOrReturn ? () => void handleSign() : undefined}
           />

@@ -31,6 +31,7 @@ export interface EvidenceReviewContext {
   cycleId: string | null;
   cycleChanged: boolean;
   evidencePacketId: string | null;
+  evidenceLoading: boolean;
 }
 
 interface Props {
@@ -264,7 +265,7 @@ function EvidenceWorkspace({ slug, domain, citations, citationProvenance, missin
           </CardContent>
         </>}
       </Card>
-      {children({ signingBlock, cycleId: cycleChanged ? null : state?.cycleId ?? null, cycleChanged, evidencePacketId: cycleChanged ? null : state?.latest?.id ?? null })}
+      {children({ signingBlock, cycleId: cycleChanged ? null : state?.cycleId ?? null, cycleChanged, evidencePacketId: cycleChanged ? null : state?.latest?.id ?? null, evidenceLoading: loading })}
     </div>
     <p className="flex items-start gap-2 px-1 text-xs leading-relaxed text-muted-foreground"><LockKeyhole className="mt-0.5 size-3.5 shrink-0" aria-hidden />Submitted documents and requirement assessments are versioned. Domain signatures and the accountable approver’s decision remain separate.</p>
   </div>;

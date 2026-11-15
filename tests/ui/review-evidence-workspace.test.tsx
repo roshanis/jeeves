@@ -78,6 +78,43 @@ describe("evidence-led review", () => {
     }));
   });
 
+  it("labels the queue column Signed, not Last updated", async () => {
+    const row: ReviewQueueRow = { slug: "case", title: "Case", tier: "high", review: { cycleId: "cycle", revision: 4, domain: "privacy-hipaa", status: "drafted", reviewer: null, createdAt: "2026-09-19T12:00:00Z", signedAt: null, draftMd: "Draft", citations: [] } };
+    renderWithProviders(<ReviewWorkbench rows={[row, { ...row, slug: "other", title: "Other" }]} selection={null} />);
+    expect(screen.getAllByRole("columnheader").map((h) => h.textContent)).toContain("Signed");
+    expect(screen.queryByRole("columnheader", { name: "Last updated" })).toBeNull();
+  });
+
+  it("disables Sign with a hint when the assessment text is blank", async () => {
+    const state = fixture();
+    state.requirements[0].status = "accepted";
+    mocks.request.mockResolvedValue(state);
+    const row: ReviewQueueRow = { slug: "case", title: "Case", tier: "high", review: { cycleId: "cycle", revision: 4, domain: "privacy-hipaa", status: "drafted", reviewer: null, createdAt: "2026-09-19T12:00:00Z", signedAt: null, draftMd: "Agent draft", citations: [] } };
+    renderWithProviders(<ReviewWorkbench rows={[row]} selection={{ slug: "case", domain: "privacy-hipaa" }} />);
+    await screen.findByRole("heading", { name: "retention-v2.pdf" });
+    fireEvent.change(screen.getByLabelText("Assessment text"), { target: { value: "   " } });
+    expect(screen.getByText("Write an assessment before signing.")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Sign" }));
+    expect(mocks.mutate).not.toHaveBeenCalled();
+  });
+
+  it("keeps the assessment textarea disabled while evidence loads so typing cannot look stale", async () => {
+    const state = fixture();
+    state.requirements[0].status = "accepted";
+    let resolve!: (value: EvidenceState) => void;
+    mocks.request.mockImplementation(() => new Promise<EvidenceState>((r) => { resolve = r; }));
+    const row: ReviewQueueRow = { slug: "case", title: "Case", tier: "high", review: { cycleId: "cycle", revision: 4, domain: "privacy-hipaa", status: "drafted", reviewer: null, createdAt: "2026-09-19T12:00:00Z", signedAt: null, draftMd: "Agent draft", citations: [] } };
+    renderWithProviders(<ReviewWorkbench rows={[row]} selection={{ slug: "case", domain: "privacy-hipaa" }} />);
+    const box = screen.getByLabelText("Assessment text") as HTMLTextAreaElement;
+    expect(box.disabled).toBe(true);
+    resolve(state);
+    await screen.findByRole("heading", { name: "retention-v2.pdf" });
+    expect(box.disabled).toBe(false);
+    fireEvent.change(box, { target: { value: "My text" } });
+    expect(screen.queryByText(/This review or its evidence changed/)).toBeNull();
+    expect((screen.getByRole("button", { name: "Sign" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
   it("opens a supplied case/domain selection and preserves edits across URL-driven selection changes", async () => {
     const rows: ReviewQueueRow[] = ["one", "two"].map((slug) => ({ slug, title: `Case ${slug}`, tier: "high", review: { cycleId: "cycle", revision: 4, domain: "privacy-hipaa", status: "drafted", reviewer: null, createdAt: "2026-09-19T12:00:00Z", signedAt: null, draftMd: "Agent draft", citations: [] } }));
     const onSelectionChange = vi.fn();
