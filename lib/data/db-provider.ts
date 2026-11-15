@@ -373,9 +373,10 @@ export class DbDataProvider implements DataProvider {
       : [];
 
     const ecs = this.controlsOf(snap, init.id);
+    const initEvents = snap.auditEvents.filter(event => event.initiativeId === init.id);
     const cycleReviews = cycleDecisions.map(row => ({
       ...row,
-      abstention: currentAbstention(row, snap.auditEvents.filter(event => event.initiativeId === init.id)),
+      abstention: currentAbstention(row, initEvents),
     }));
 
     return {
@@ -455,13 +456,14 @@ export class DbDataProvider implements DataProvider {
         }
       : null;
 
+    const eventRows = snap.auditEvents.filter((event) => event.initiativeId === init.id);
     const cycle = this.latestCycle(snap, init.id);
     const reviews: ReviewRow[] = (
       cycle ? snap.reviewDecisions.filter((rd) => rd.cycleId === cycle.id) : []
     )
       .sort((a, b) => a.domain.localeCompare(b.domain))
       .map((rd) => {
-        const receipt = currentAbstention(rd, snap.auditEvents.filter((event) => event.initiativeId === init.id));
+        const receipt = currentAbstention(rd, eventRows);
         return {
           ...(receipt ? { abstention: { reason: receipt.reason, reviewer: receipt.reviewer, at: receipt.at } } : {}),
           cycleId: rd.cycleId,
@@ -554,7 +556,6 @@ export class DbDataProvider implements DataProvider {
       at: toIso(d.deployedAt),
     }));
 
-    const eventRows = snap.auditEvents.filter((event) => event.initiativeId === init.id);
     const events: AuditEventRow[] = eventRows.map((e) => ({
       ts: toIso(e.ts),
       actor: e.actor,

@@ -801,5 +801,19 @@ describe("lib/data/db-provider", () => {
         spy.mockRestore();
       }
     });
+
+    it("scans the audit events once per initiative, not once per review", async () => {
+      const holder: { current?: Promise<{ auditEvents: unknown[] }> } = {};
+      const p = new DbDataProvider(db, { snapshotHolder: () => holder as never });
+      await p.getInitiativeDetail("member-chat-copilot");
+      const snap = await holder.current!;
+      const spy = vi.spyOn(snap.auditEvents, "filter");
+      try {
+        await p.getInitiativeDetail("member-chat-copilot");
+        expect(spy.mock.calls.length).toBeLessThanOrEqual(2);
+      } finally {
+        spy.mockRestore();
+      }
+    });
   });
 });
