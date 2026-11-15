@@ -312,6 +312,11 @@ weigh against it.
   code — `drizzle/0002_audit_events_append_only.sql` installs triggers that
   raise on UPDATE and DELETE, enforced regardless of which role issues the
   statement. `lib/db/schema.test.ts` tests it at the DB level.
+  The table owner can still disable them, so a production boot checks that
+  all six append-only triggers (audit_events, installation) exist and are
+  enabled, and refuses to start otherwise (`audit_triggers` in
+  `lib/config/installation-check.ts`). A separate owner/runtime role split is
+  not built and is an open production-design decision.
 - **Security response headers are thorough**: a real CSP pinning every
   fetchable resource to same-origin, HSTS with preload, `X-Frame-Options:
   DENY`, nosniff, Referrer-Policy, Permissions-Policy. `next/image` is

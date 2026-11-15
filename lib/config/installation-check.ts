@@ -28,7 +28,9 @@ export type InstallationCheckCode =
   /** Production, and the applied migrations do not cover the bundled journal. */
   | "schema_behind"
   /** Production, and the bundled migration journal could not be read. */
-  | "journal_unreadable";
+  | "journal_unreadable"
+  /** Production, and an append-only trigger on audit_events or installation is missing or disabled. */
+  | "audit_triggers";
 
 /**
  * Thrown by verifyInstallation(). The message names what was found and what to
@@ -124,6 +126,36 @@ async function countUnappliedMigrations(db: InstallationDb): Promise<number> {
   return bundled.filter((when) => !applied.has(when)).length;
 }
 
+/**
+ * The triggers that make audit_events and installation append-only
+ * (drizzle/0002, 0014, 0015). Each must exist and be enabled ('O', origin):
+ * the app role owns these tables, so a DISABLE TRIGGER leaves the server
+ * answering health checks with the audit log silently rewritable.
+ */
+const APPEND_ONLY_TRIGGERS: { table: string; trigger: string }[] = [
+  { table: "audit_events", trigger: "audit_events_no_update" },
+  { table: "audit_events", trigger: "audit_events_no_delete" },
+  { table: "audit_events", trigger: "audit_events_no_truncate" },
+  { table: "installation", trigger: "installation_no_rewrite" },
+  { table: "installation", trigger: "installation_no_delete" },
+  { table: "installation", trigger: "installation_no_truncate" },
+];
+
+/** The names of the append-only triggers that are missing or not enabled. */
+async function findBrokenAppendOnlyTriggers(db: InstallationDb): Promise<string[]> {
+  const result = await db.execute(sql`
+    SELECT c.relname AS table_name, t.tgname AS trigger_name
+    FROM pg_trigger t
+    JOIN pg_class c ON c.oid = t.tgrelid
+    WHERE NOT t.tgisinternal AND t.tgenabled = 'O'
+      AND c.relnamespace = to_regnamespace(current_schema())
+      AND c.relname IN ('audit_events', 'installation')
+  `);
+  const rows = (Array.isArray(result) ? result : result.rows) as { table_name: string; trigger_name: string }[];
+  const enabled = new Set(rows.map((r) => `${r.table_name}.${r.trigger_name}`));
+  return APPEND_ONLY_TRIGGERS.filter((t) => !enabled.has(`${t.table}.${t.trigger}`)).map((t) => `${t.table}.${t.trigger}`);
+}
+
 function plural(n: number, singular: string, pluralForm = `${singular}s`): string {
   return `${n} ${n === 1 ? singular : pluralForm}`;
 }
@@ -206,6 +238,15 @@ export async function verifyInstallation(db: InstallationDb, mode: DeploymentMod
         "schema_behind",
         `The database schema is behind this build: ${unapplied} of ${(await bundledMigrationTimes()).length} migrations are not applied. ` +
           "Run `npm run db:migrate` against this database, then restart. Refusing to start.",
+      );
+    }
+    const broken = await findBrokenAppendOnlyTriggers(db);
+    if (broken.length > 0) {
+      throw new InstallationCheckError(
+        "audit_triggers",
+        `The append-only triggers that protect the audit log are missing or disabled: ${broken.join(", ")}. ` +
+          "Re-create or re-enable them (ALTER TABLE ... ENABLE TRIGGER, or re-apply drizzle/0002, 0014 and 0015) " +
+          "and find out who disabled them. Refusing to start.",
       );
     }
     const found = describeDemoData(await countDemoData(db));

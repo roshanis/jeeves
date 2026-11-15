@@ -171,6 +171,51 @@ describe("verifyInstallation", () => {
       await expect(verifyInstallation(db, "production")).resolves.toBeUndefined();
     });
 
+    describe("refuses a database whose append-only triggers are not enabled", () => {
+      const guards: [string, string][] = [
+        ["audit_events", "audit_events_no_update"],
+        ["audit_events", "audit_events_no_delete"],
+        ["audit_events", "audit_events_no_truncate"],
+        ["installation", "installation_no_rewrite"],
+        ["installation", "installation_no_delete"],
+        ["installation", "installation_no_truncate"],
+      ];
+
+      it.each(guards)("%s: a disabled %s", async (table, trigger) => {
+        await stamp(db, "production");
+        await db.execute(sql.raw(`ALTER TABLE ${table} DISABLE TRIGGER ${trigger}`));
+        try {
+          const err = await failure(verifyInstallation(db, "production"));
+          expect(err.code).toBe("audit_triggers");
+          expect(err.message).toContain(trigger);
+          expect(err.message).toMatch(/Refusing to start/);
+        } finally {
+          await db.execute(sql.raw(`ALTER TABLE ${table} ENABLE TRIGGER ${trigger}`));
+        }
+      });
+
+      it("a dropped trigger", async () => {
+        await stamp(db, "production");
+        await db.execute(sql`DROP TRIGGER audit_events_no_update ON audit_events`);
+        try {
+          const err = await failure(verifyInstallation(db, "production"));
+          expect(err.code).toBe("audit_triggers");
+          expect(err.message).toContain("audit_events_no_update");
+        } finally {
+          await db.execute(sql`CREATE TRIGGER audit_events_no_update BEFORE UPDATE ON audit_events FOR EACH ROW EXECUTE FUNCTION audit_events_append_only()`);
+        }
+      });
+
+      it("demo mode does not look at the triggers", async () => {
+        await db.execute(sql`ALTER TABLE audit_events DISABLE TRIGGER audit_events_no_update`);
+        try {
+          await expect(verifyInstallation(db, "demo")).resolves.toBeUndefined();
+        } finally {
+          await db.execute(sql`ALTER TABLE audit_events ENABLE TRIGGER audit_events_no_update`);
+        }
+      });
+    });
+
     it("reports a database without migration 0015 as not_migrated", async () => {
       await withoutInstallationTable(async (lagging) => {
         const err = await failure(verifyInstallation(lagging, "production"));
