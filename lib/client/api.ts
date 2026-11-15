@@ -49,18 +49,20 @@ export function isApiError(value: unknown): value is ApiError {
   return value instanceof ApiError;
 }
 
-/**
- * Stable, user-facing copy per status class (task contract):
- *   401 -> restart demo session; 429 -> rate limit/budget; 403 -> role;
- *   400 -> surface the server's own validation message; else generic.
- */
-// Set by DeploymentModeProvider (apiErrorToMessage is a plain function with 45
-// callers). "demo" until a provider mounts, which keeps the demo copy.
+// Set by DeploymentModeProvider (apiErrorToMessage is a plain function, so it
+// cannot read the context). The module defaults to "demo" while the context
+// defaults to "production": renders without a provider, such as
+// tests/ui/api-client.test.ts, keep the demo copy.
 let clientMode: DeploymentMode = "demo";
 export function setApiDeploymentMode(mode: DeploymentMode): void {
   clientMode = mode;
 }
 
+/**
+ * Stable, user-facing copy per status class (task contract):
+ *   401 -> restart the demo session (demo) or sign in again (production); 429 -> rate limit/budget; 403 -> role;
+ *   400 -> surface the server's own validation message; else generic.
+ */
 export function apiErrorToMessage(err: ApiError): string {
   if (err.status === 403 && err.message === READ_ONLY_PREVIEW_MESSAGE) {
     return READ_ONLY_PREVIEW_MESSAGE;
