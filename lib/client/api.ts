@@ -20,6 +20,7 @@ import type { IntakePayload } from "@/lib/intake/types";
 import type { CompletenessGap } from "@/lib/intake/completeness";
 import { issueFieldLabel } from "@/lib/intake/field-labels";
 import { READ_ONLY_PREVIEW_MESSAGE } from "@/lib/data/provider-mode";
+import type { DeploymentMode } from "@/lib/config/deployment-mode";
 
 /* -------------------------------------------------------------------------
  * Error type
@@ -53,6 +54,13 @@ export function isApiError(value: unknown): value is ApiError {
  *   401 -> restart demo session; 429 -> rate limit/budget; 403 -> role;
  *   400 -> surface the server's own validation message; else generic.
  */
+// Set by DeploymentModeProvider (apiErrorToMessage is a plain function with 45
+// callers). "demo" until a provider mounts, which keeps the demo copy.
+let clientMode: DeploymentMode = "demo";
+export function setApiDeploymentMode(mode: DeploymentMode): void {
+  clientMode = mode;
+}
+
 export function apiErrorToMessage(err: ApiError): string {
   if (err.status === 403 && err.message === READ_ONLY_PREVIEW_MESSAGE) {
     return READ_ONLY_PREVIEW_MESSAGE;
@@ -71,7 +79,7 @@ export function apiErrorToMessage(err: ApiError): string {
   }
   switch (err.status) {
     case 401:
-      return "Session expired or invalid — start the demo again.";
+      return clientMode === "production" ? "Your session has expired. Sign in again." : "Session expired or invalid — start the demo again.";
     case 429:
       if (/budget (exhausted|reached)/i.test(err.message)) return "The daily model budget is used up — please come back tomorrow.";
       return err.retryAfterSeconds !== undefined
