@@ -1778,3 +1778,13 @@ Hard rules: no violations found.
 - Codex: (1) a table scroller that holds sr-only text must be positioned (`relative`), or the text escapes the scroller; tests/ui/containing-block.ts checks it in jsdom. (2) Read DATA_PROVIDER only through resolveDataProviderMode. (3) Session responses carry expiresInMs, and the client deadline is Date.now() plus that. (4) `requiresRole` takes a list. (5) A route that adds a guard failure response should use guardFailureResponse so Retry-After survives.
 - Owner follow-ups left in shared files: the 130 s stop timeout the Podman guide documents is not yet in deploy/podman/compose.yaml or the Quadlet app unit; deploy/podman/env.example has no commented DATABASE_URL line for Quadlet; the compose header comment shows up-then-migrate order.
 - Merge order: #24, #25, this branch's PR, #26 into #23, the production-mode wave 3 PR into #23's branch, then #23.
+
+## [AGENT: Claude] [2026-11-15T18:31Z]
+### Action: implementer: two more findings from the wave 3 integration on the main line (human request 2026-11-15 "peer review, find out all issues that we can solve, and help me fix")
+### Files changed: app/api/public-intake/route.ts, lib/services/preview-mode.test.ts (57cf186); agents/auditor/instructions.md, lib/agents/instructions-consistency.test.ts, and comments in lib/agents/schemas.ts and lib/agents/ports.ts (e1a3b75).
+### Diff summary:
+- own-F24: in the read-only preview the operator queue now answers every caller the read-only 403 before the limiter and the list, as the cron door does. With OPERATOR_TOKEN set and no database it answered 500, because the lockout check and the list both open the database. An unset OPERATOR_TOKEN still answers 404.
+- own-F21: the auditor prompt asked for decision ids, which no grounding row carries, so the grounded-citation filter (ceba051) dropped every one. It now asks for the row's eventTs or ts, or row-N for a row without one, which is what the offline adapter already cites.
+### Verified: both new tests fail without their fix (the preview test because the limiter opens the database, the prompt test on the "decision id" wording). Typecheck and lint clean. lib/agents, app/api/chat, the agent detail page, the operator queue, the preview-mode and the standalone-output tests pass: 18 files, 316 tests.
+### Recommendations / Next steps:
+- agents/auditor/instructions.md is the owner's wording; review it with the two prompts changed in 7159290.

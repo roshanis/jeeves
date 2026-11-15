@@ -186,7 +186,7 @@ export interface AuditorAnswerInput {
  */
 export interface AuditorAnswerOutput {
   readonly answerMd: string;
-  /** Every event timestamp (ISO 8601) or decision id relied upon; empty on a refusal. */
+  /** Every row timestamp (eventTs or ts) or row-N label relied upon; empty on a refusal. */
   readonly citedEvents: readonly string[];
   /** The query id/label actually used, echoed back verbatim from the input. */
   readonly queryUsed: string;

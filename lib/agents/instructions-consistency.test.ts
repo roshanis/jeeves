@@ -13,6 +13,16 @@ describe("agent prompts match what the runtime sends", () => {
     expect(text).not.toMatch(/treat it as given|do not recompute/i);
   });
 
+  it("auditor: asks only for citations the route can match to a grounding row", () => {
+    // app/api/chat/auditor/route.ts keeps a citation only when it is a row's
+    // eventTs or ts (or the same instant), or a row-N label. No grounding row
+    // carries an id, so a decision-id citation is always dropped (own-F21).
+    const text = read("agents/auditor/instructions.md");
+    expect(text).not.toMatch(/decision id/i);
+    expect(text).toMatch(/`row-N`/);
+    expect(text).toMatch(/`eventTs`/);
+  });
+
   it("intake: does not promise a 'rules already checked' input the runtime never sends", () => {
     const text = read("agents/intake/instructions.md");
     expect(text).not.toMatch(/already\s+been\s+checked/i);
