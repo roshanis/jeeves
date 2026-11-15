@@ -764,7 +764,7 @@ export interface ExceptionRow {
   decisionReason: string | null;
   expiresAt: number | null;
   supersedesId: string | null;
-  /** Shared sample row: read-only for visitors. */
+  /** True when this viewer cannot act on the row (its workspace differs from the viewer's). */
   isShared?: boolean;
 }
 

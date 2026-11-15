@@ -633,7 +633,7 @@ export interface ExceptionRow {
   decisionReason: string | null;
   expiresAt: number | null;
   supersedesId: string | null;
-  /** True for shared sample rows (no owning workspace): visitors cannot act on them. */
+  /** True when this viewer cannot act on the row (its workspace differs from the viewer's); always false when `listExceptions` is called without `opts`. */
   isShared: boolean;
 }
 
@@ -698,6 +698,11 @@ export async function listExceptions(
       decisionReason: r.decisionReason,
       expiresAt: r.expiresAt,
       supersedesId: r.supersedesId,
-      isShared: !r.initiativeId || (workspaceIds.get(r.initiativeId) ?? null) === null,
+      isShared: opts
+        ? mutationWorkspaceMismatch(
+            r.initiativeId ? (workspaceIds.get(r.initiativeId) ?? null) : null,
+            opts.viewerWorkspaceId ?? null,
+          )
+        : false,
     }));
 }

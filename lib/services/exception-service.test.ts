@@ -794,5 +794,24 @@ describe("exception-service", () => {
       // initiative) and stays visible to every viewer, including anonymous.
       expect(anonymous.some((r) => r.id === "exc-seed-hr-r01")).toBe(true);
     });
+
+    it("isShared means the viewer cannot act on the row (api-initiatives-F11)", async () => {
+      const { ecId: ecA } = await anEffectiveControlInWorkspace("ws-A");
+      await svc.requestException(db, ecA, REQUESTER, "ws-A", "ws-A reason");
+
+      // A row without an owning workspace is shared for a viewer who has one.
+      const asWsA = await svc.listExceptions(db, undefined, { viewerWorkspaceId: "ws-A" });
+      expect(asWsA.find((r) => r.id === "exc-seed-hr-r01")!.isShared).toBe(true);
+      // A viewer's own workspace row is theirs to act on.
+      expect(asWsA.find((r) => r.reason === "ws-A reason")!.isShared).toBe(false);
+
+      // Single-tenant: neither the viewer nor the row has a workspace.
+      const anonymous = await svc.listExceptions(db, undefined, { viewerWorkspaceId: null });
+      expect(anonymous.find((r) => r.id === "exc-seed-hr-r01")!.isShared).toBe(false);
+
+      // Unfiltered internal read: nothing is labelled shared.
+      const all = await svc.listExceptions(db);
+      expect(all.every((r) => r.isShared === false)).toBe(true);
+    });
   });
 });
