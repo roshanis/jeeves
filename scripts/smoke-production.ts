@@ -19,7 +19,8 @@
  *   SMOKE_DATABASE_URL=postgres://user:pass@127.0.0.1:5432/jeeves_smoke_local \
  *     npm run smoke:production
  *
- * Needs a finished build (it never builds). SMOKE_PORT (default 3217) picks the
+ * Needs a finished build (it never builds; for the standalone server it copies
+ * .next/static into the standalone folder, as the Containerfile does). SMOKE_PORT (default 3217) picks the
  * port; SMOKE_SERVER=standalone|next-start forces the server command.
  *
  * SMOKE_DEMO_LOCKED=1 is for a build made with JEEVES_DEMO_ENABLED=0 (what a
@@ -390,6 +391,8 @@ const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout
 
 interface ServerCommand {
   label: string;
+  /** True for the standalone server, which needs .next/static copied beside it. */
+  standalone: boolean;
   args: string[];
   cwd: string;
 }
@@ -400,10 +403,11 @@ export function serverCommand(port: number, force: string | undefined): ServerCo
   if (useStandalone) {
     if (!existsSync(standalone)) throw new Error(".next/standalone/server.js is missing; SMOKE_SERVER=next-start can run without it");
     // What deploy/podman/Containerfile runs (it chdirs to its own directory itself).
-    return { label: "standalone (node .next/standalone/server.js)", args: [standalone], cwd: REPO_ROOT };
+    return { label: "standalone (node .next/standalone/server.js)", standalone: true, args: [standalone], cwd: REPO_ROOT };
   }
   return {
     label: "next-start (node node_modules/next/dist/bin/next start)",
+    standalone: false,
     args: [path.join(REPO_ROOT, "node_modules/next/dist/bin/next"), "start", "-p", String(port), "-H", "127.0.0.1"],
     cwd: REPO_ROOT,
   };
@@ -663,7 +667,7 @@ async function main(): Promise<void> {
       : "Build: demo-capable. The server runs without JEEVES_MODE.",
   );
 
-  if (cmd.label.startsWith("standalone")) cpSync(path.join(REPO_ROOT, ".next/static"), standaloneStaticTarget(), { recursive: true });
+  if (cmd.standalone) cpSync(path.join(REPO_ROOT, ".next/static"), standaloneStaticTarget(), { recursive: true });
 
   console.log("Migrating and stamping the smoke database...");
   await migrateAndStamp(databaseUrl);
@@ -714,7 +718,8 @@ async function main(): Promise<void> {
           } else {
             const res = await request(port, { method: "GET", path: asset });
             const type = res.headers["content-type"] ?? "";
-            record(res.status === 200 && /javascript|css/.test(type), name, res.status === 200 && /javascript|css/.test(type) ? [] : [`${asset}: status ${res.status}, content-type ${type || "none"}`]);
+            const served = res.status === 200 && /javascript|css/.test(type);
+            record(served, name, served ? [] : [`${asset}: status ${res.status}, content-type ${type || "none"}`]);
           }
         } catch (err) {
           record(false, name, [`request failed: ${err instanceof Error ? err.message : "unknown error"}`]);
