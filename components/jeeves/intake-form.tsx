@@ -352,7 +352,16 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
             session.token,
             creationPayload.current ?? payload,
             requestId.current,
-          );
+          ).catch((err: unknown) => {
+            // A definitive rejection (not a lost response, 5xx or 429) means
+            // nothing was created: the next attempt must send what the user
+            // has now, under a fresh idempotency key.
+            if (isApiError(err) && [400, 403, 404, 409, 413, 422].includes(err.status)) {
+              requestId.current = null;
+              creationPayload.current = null;
+            }
+            throw err;
+          });
       if (!initiativeId && JSON.stringify(creationPayload.current) !== JSON.stringify(payload)) {
         created = await updateIntakeDraft(
           session.token,

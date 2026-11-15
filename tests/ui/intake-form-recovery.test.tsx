@@ -52,6 +52,21 @@ describe("IntakeForm retry recovery", () => {
     );
   });
 
+  it("sends the current payload with a fresh key after a definitive 4xx rejection of the create", async () => {
+    const { ApiError } = await import("@/lib/client/api");
+    mocks.create.mockRejectedValueOnce(new ApiError(400, "invalid intake payload")).mockResolvedValueOnce(created);
+    mocks.submit.mockResolvedValue({ submitted: true, completenessPct: 95 });
+    render(<IntakeForm />);
+    fireEvent.click(screen.getByRole("button", { name: "Use a sample initiative" }));
+    fireEvent.click(screen.getByRole("button", { name: "Submit intake" }));
+    await waitFor(() => expect(mocks.create).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Submit intake" })).not.toHaveProperty("disabled", true));
+    fireEvent.change(screen.getByLabelText("Initiative title"), { target: { value: "Edited after rejection" } });
+    fireEvent.click(screen.getByRole("button", { name: "Submit intake" }));
+    await waitFor(() => expect(mocks.create).toHaveBeenCalledTimes(2));
+    expect(mocks.create.mock.calls[1][1].basics.title).toBe("Edited after rejection");
+  });
+
   it("retries submit directly after its response is lost without creating or updating again", async () => {
     mocks.create.mockResolvedValue(created);
     mocks.submit.mockRejectedValueOnce(new TypeError("response lost")).mockResolvedValueOnce({ submitted: true, completenessPct: 95 });
