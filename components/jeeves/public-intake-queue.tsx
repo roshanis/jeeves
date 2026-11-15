@@ -44,6 +44,25 @@ function writeStoredToken(token: string | null): void {
   }
 }
 
+// Only a rejected token is forgotten; a 429, a 500 or a network blip keeps it.
+function tokenRejected(err: unknown): boolean {
+  return isApiError(err) && (err.status === 401 || err.status === 404);
+}
+
+function errorMessage(err: unknown): string {
+  return !isApiError(err)
+    ? "Could not load requests. Try again."
+    : err.status === 404
+      ? "The request queue is not switched on for this site (no OPERATOR_TOKEN is configured)."
+      : err.status === 401
+        ? "That token was not accepted."
+        : apiErrorToMessage(err);
+}
+
+// A mailto: link only for a plain address; anything carrying mail-URL
+// parameters (? & % , ; # =) is shown as text so it cannot add cc/bcc/body.
+const SAFE_MAILTO_RE = /^[A-Za-z0-9._+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;
+
 type State =
   | { kind: "locked"; error: string | null }
   | { kind: "loading" }
@@ -53,21 +72,18 @@ export function PublicIntakeQueue() {
   const [state, setState] = React.useState<State>({ kind: "locked", error: null });
   const [draft, setDraft] = React.useState("");
 
+  const manualOpen = React.useRef(false);
+
   const open = React.useCallback(async (token: string) => {
+    manualOpen.current = true;
     setState({ kind: "loading" });
     try {
       const rows = await listPublicSubmissions(token);
       writeStoredToken(token);
       setState({ kind: "open", rows });
     } catch (err) {
-      writeStoredToken(null);
-      const message = !isApiError(err)
-        ? "Could not load requests. Try again."
-        : err.status === 404
-          ? "The request queue is not switched on for this site (no OPERATOR_TOKEN is configured)."
-          : err.status === 401
-            ? "That token was not accepted."
-            : apiErrorToMessage(err);
+      if (tokenRejected(err)) writeStoredToken(null);
+      const message = errorMessage(err);
       setState({ kind: "locked", error: message });
     }
   }, []);
@@ -82,12 +98,15 @@ export function PublicIntakeQueue() {
     let cancelled = false;
     listPublicSubmissions(remembered).then(
       (rows) => {
-        if (!cancelled) setState({ kind: "open", rows });
+        if (!cancelled && !manualOpen.current) setState({ kind: "open", rows });
       },
-      () => {
-        // A remembered token that no longer works is simply forgotten; the
-        // operator sees the unlock form, which is where they would start.
-        writeStoredToken(null);
+      (err) => {
+        // A remembered token the server rejects is forgotten; any other
+        // failure keeps it and says what went wrong.
+        if (tokenRejected(err)) writeStoredToken(null);
+        if (!cancelled && !manualOpen.current && !(isApiError(err) && err.status === 401)) {
+          setState({ kind: "locked", error: errorMessage(err) });
+        }
       },
     );
     return () => {
@@ -187,7 +206,9 @@ export function PublicIntakeQueue() {
               ) : null}
               <p className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
                 <span>{row.requester}</span>
-                {row.requesterEmail ? (
+                {row.requesterEmail && !SAFE_MAILTO_RE.test(row.requesterEmail) ? (
+                  <span>{row.requesterEmail}</span>
+                ) : row.requesterEmail ? (
                   <a
                     href={`mailto:${row.requesterEmail}`}
                     className="inline-flex items-center gap-1 underline underline-offset-4 hover:text-foreground"

@@ -91,4 +91,54 @@ describe("PublicIntakeQueue (operator)", () => {
     expect(window.sessionStorage.getItem("jeeves_operator_token")).toBeNull();
     expect(screen.queryByText("Appointment Reminder Summarizer")).toBeNull();
   });
+
+  it("renders a submitter email with mailto parameters as plain text, not a link", async () => {
+    const evil = "x@y.example?bcc=evil%40example.com&body=hi";
+    mocks.listPublicSubmissions.mockResolvedValue([{ ...ROW, requesterEmail: evil }]);
+    renderWithProviders(<PublicIntakeQueue />);
+    unlockWith("the-operator-token");
+
+    await waitFor(() => expect(screen.getByText("Appointment Reminder Summarizer")).toBeDefined());
+    expect(screen.getByText(evil)).toBeDefined();
+    expect(document.querySelector('a[href^="mailto:"]')).toBeNull();
+  });
+
+  it("keeps a plus-addressed email as a mailto link", async () => {
+    mocks.listPublicSubmissions.mockResolvedValue([{ ...ROW, requesterEmail: "a+b@example.test" }]);
+    renderWithProviders(<PublicIntakeQueue />);
+    unlockWith("the-operator-token");
+    await waitFor(() => expect(screen.getByRole("link", { name: /a\+b@example\.test/ })).toBeDefined());
+  });
+
+  it("keeps the token after a server error and clears it after a 401", async () => {
+    window.sessionStorage.setItem("jeeves_operator_token", "the-operator-token");
+    mocks.listPublicSubmissions.mockRejectedValueOnce(new ApiError(429, "slow down"));
+    renderWithProviders(<PublicIntakeQueue />);
+    await waitFor(() => expect(screen.getByRole("alert")).toBeDefined());
+    mocks.listPublicSubmissions.mockRejectedValueOnce(new ApiError(500, "boom"));
+    unlockWith("the-operator-token");
+    await waitFor(() => expect(mocks.listPublicSubmissions).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getByRole("button", { name: /open queue/i })).toBeDefined());
+    expect(window.sessionStorage.getItem("jeeves_operator_token")).toBe("the-operator-token");
+
+    mocks.listPublicSubmissions.mockRejectedValue(new ApiError(401, "no"));
+    unlockWith("the-operator-token");
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toMatch(/not accepted/i));
+    expect(window.sessionStorage.getItem("jeeves_operator_token")).toBeNull();
+  });
+
+  it("on resume, a 500 keeps the token and shows the error", async () => {
+    window.sessionStorage.setItem("jeeves_operator_token", "remembered");
+    mocks.listPublicSubmissions.mockRejectedValue(new ApiError(500, "boom"));
+    renderWithProviders(<PublicIntakeQueue />);
+    await waitFor(() => expect(screen.getByRole("alert")).toBeDefined());
+    expect(window.sessionStorage.getItem("jeeves_operator_token")).toBe("remembered");
+  });
+
+  it("on resume, a 401 forgets the token", async () => {
+    window.sessionStorage.setItem("jeeves_operator_token", "stale");
+    mocks.listPublicSubmissions.mockRejectedValue(new ApiError(401, "no"));
+    renderWithProviders(<PublicIntakeQueue />);
+    await waitFor(() => expect(window.sessionStorage.getItem("jeeves_operator_token")).toBeNull());
+  });
 });
