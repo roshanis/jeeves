@@ -32,6 +32,12 @@ podman compose run --rm seed         # load the synthetic demo data
 
 Then open `http://localhost:3000`.
 
+Open it as `localhost` (or over HTTPS). The app marks its workspace cookie
+`Secure` because the image runs with `NODE_ENV=production`, and browsers drop a
+`Secure` cookie over plain HTTP from any other address, such as
+`http://192.168.1.20:3000`. The pages then show only the seeded rows and a
+visitor's own initiatives are missing.
+
 `OPERATOR_TOKEN` in `.env` (32+ characters, `openssl rand -hex 32`) is optional.
 It opens the "Send a real request" door and the `/operator` queue that reads
 those requests. While it is unset the door is closed: visitors are not offered
