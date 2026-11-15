@@ -76,7 +76,7 @@ export async function resolveViewerWorkspaceId(req: Request): Promise<string | n
 
 /** SQL form of `workspaceMismatch`: seeded rows plus the viewer's own. Omitting
  * the viewer loads every row (callers that filter themselves). */
-function viewerRowsFilter(viewerWorkspaceId?: string | null): SQL | undefined {
+export function viewerRowsFilter(viewerWorkspaceId?: string | null): SQL | undefined {
   if (viewerWorkspaceId === undefined) return undefined;
   return viewerWorkspaceId === null
     ? isNull(initiatives.workspaceId)

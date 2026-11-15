@@ -20,22 +20,12 @@
  * 200: { incidents: IncidentListRow[] }
  */
 import { getDb } from "@/lib/db/client";
-import { listIncidents } from "@/lib/services/monitor-service";
-import {
-  deploymentWorkspaceMap,
-  isDeploymentVisible,
-  resolveViewerWorkspaceId,
-} from "@/lib/services/viewer-workspace";
+import { listIncidentsForViewer } from "@/lib/services/monitor-service";
+import { resolveViewerWorkspaceId } from "@/lib/services/viewer-workspace";
 
 export async function GET(req: Request): Promise<Response> {
   const db = getDb();
   const viewerWorkspaceId = await resolveViewerWorkspaceId(req);
-  const [incidents, workspaceByDeployment] = await Promise.all([
-    listIncidents(db),
-    deploymentWorkspaceMap(db, viewerWorkspaceId),
-  ]);
-  const visible = incidents.filter((inc) =>
-    isDeploymentVisible(workspaceByDeployment, inc.deploymentId, viewerWorkspaceId),
-  );
-  return Response.json({ incidents: visible }, { status: 200 });
+  const incidents = await listIncidentsForViewer(db, viewerWorkspaceId);
+  return Response.json({ incidents }, { status: 200 });
 }

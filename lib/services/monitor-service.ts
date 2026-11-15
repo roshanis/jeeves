@@ -32,7 +32,7 @@
  * demo/test can replay history deterministically and idempotently.
  */
 import { randomUUID } from "node:crypto";
-import { and, eq, inArray, isNotNull, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import type { Db } from "../db/client";
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import type * as schema from "../db/schema";
@@ -56,6 +56,7 @@ import { currentControlRevisions } from "../controls/current-revisions";
 import { SYSTEM_ACTOR } from "./actors";
 import { enqueueReviewRequests } from "./notification-service";
 import { ConflictError } from "./initiative-service";
+import { viewerRowsFilter } from "./viewer-workspace";
 
 /**
  * Re-exported so route handlers/callers can catch a compare-and-set race on
@@ -656,18 +657,34 @@ export interface IncidentListRow {
   resolvedAt: string | null;
 }
 
+function toIncidentListRow(r: typeof incidents.$inferSelect): IncidentListRow {
+  return {
+    id: r.id,
+    deploymentId: r.deploymentId,
+    controlId: r.controlId,
+    windowStart: r.windowStart.toISOString(),
+    detectedAt: r.detectedAt.toISOString(),
+    reviewCycleId: r.reviewCycleId,
+    resolvedAt: r.resolvedAt ? r.resolvedAt.toISOString() : null,
+  };
+}
+
 export async function listIncidents(db: Db): Promise<IncidentListRow[]> {
   const rows = await db.select().from(incidents);
   return rows
     .slice()
     .sort((a, b) => b.detectedAt.getTime() - a.detectedAt.getTime())
-    .map((r) => ({
-      id: r.id,
-      deploymentId: r.deploymentId,
-      controlId: r.controlId,
-      windowStart: r.windowStart.toISOString(),
-      detectedAt: r.detectedAt.toISOString(),
-      reviewCycleId: r.reviewCycleId,
-      resolvedAt: r.resolvedAt ? r.resolvedAt.toISOString() : null,
-    }));
+    .map(toIncidentListRow);
+}
+
+/** Incidents of seeded deployments plus the viewer's own, newest first, filtered in SQL (an absent deployment/initiative is excluded by the inner joins). */
+export async function listIncidentsForViewer(db: Db, viewerWorkspaceId: string | null): Promise<IncidentListRow[]> {
+  const rows = await db
+    .select({ incident: incidents })
+    .from(incidents)
+    .innerJoin(deploymentVersions, eq(incidents.deploymentId, deploymentVersions.id))
+    .innerJoin(initiatives, eq(deploymentVersions.initiativeId, initiatives.id))
+    .where(viewerRowsFilter(viewerWorkspaceId))
+    .orderBy(desc(incidents.detectedAt));
+  return rows.map((r) => toIncidentListRow(r.incident));
 }

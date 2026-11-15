@@ -23,6 +23,7 @@ import {
 import {
   runMonitor,
   listIncidents,
+  listIncidentsForViewer,
   UNSCOPED_WORKSPACE,
   ConflictError,
 } from "./monitor-service";
@@ -723,6 +724,25 @@ describe("lib/services/monitor-service", () => {
     it("returns an empty list before any breach has been detected", async () => {
       const rows = await listIncidents(db);
       expect(rows).toEqual([]);
+    });
+  });
+
+  describe("listIncidentsForViewer", () => {
+    it("returns seeded-deployment incidents for any viewer, newest first, and none once the deployment's initiative belongs to another workspace", async () => {
+      const { init } = await memberChatCopilot(db);
+      await runMonitor(db, RAY_CHEN, PLUS_14D, UNSCOPED_WORKSPACE);
+      const all = await listIncidents(db);
+      expect(all.length).toBeGreaterThanOrEqual(1);
+
+      const seeded = await listIncidentsForViewer(db, null);
+      expect(seeded).toEqual(all);
+      const times = seeded.map((r) => r.detectedAt);
+      expect(times).toEqual(times.slice().sort().reverse());
+
+      await db.update(initiatives).set({ workspaceId: "ws-owner" }).where(eq(initiatives.id, init.id));
+      expect(await listIncidentsForViewer(db, null)).toEqual([]);
+      expect(await listIncidentsForViewer(db, "ws-other")).toEqual([]);
+      expect((await listIncidentsForViewer(db, "ws-owner")).length).toBe(all.length);
     });
   });
 });
