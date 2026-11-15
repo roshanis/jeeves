@@ -465,6 +465,11 @@ function AssessmentPane({
     row.review.revision,
   );
   const alreadySigned = row.review.status === "signed";
+  const signDisabledReason = !eligibility.isOwnDomain ? `Only the ${DOMAIN_LABEL[row.review.domain]} reviewer can sign or return this review`
+    : row.review.status === "signed" ? "Already signed"
+    : row.review.status === "abstained" ? "Resume the review before signing"
+    : row.review.status === "pending" ? "Run the agent to draft this review before signing"
+    : "This is a read-only example; open a live review to sign";
   const hasDraft = Boolean(row.review.draftMd);
   const blankAssessment = editedText.trim() === "";
 
@@ -639,6 +644,7 @@ function AssessmentPane({
           <GatedActionButton
             label="Sign"
             requiresRole="reviewer"
+            disabledReason={signDisabledReason}
             pending={pending || running || Boolean(signingBlock) || mustReviewAgain || blankAssessment}
             pendingLabel={pending ? "Signing…" : "Sign"}
             onAction={eligibility.canSignOrReturn ? () => void handleSign() : undefined}
@@ -647,6 +653,7 @@ function AssessmentPane({
             label="Return"
             variant="outline"
             requiresRole="reviewer"
+            disabledReason={signDisabledReason}
             pending={pending || running || mustReviewAgain}
             onAction={eligibility.canSignOrReturn ? () => { setReturnError(null); setReturnRevision(row.review.revision!); setReturnOpen(true); } : undefined}
           />

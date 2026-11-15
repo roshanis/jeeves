@@ -60,6 +60,8 @@ export interface GatedActionProps {
   onAction?: () => void | Promise<void>;
   /** Only enable when the live session's ActorRole equals this role. */
   requiresRole?: LivePersona["role"];
+  /** Why the action is unavailable to a signed-in persona (shown instead of the "start the demo" prompt). */
+  disabledReason?: string;
   /** Externally-managed in-flight state; disables the enabled button. */
   pending?: boolean;
   /** Label swap while pending (defaults to `label`). */
@@ -77,6 +79,7 @@ export function DisableWithTooltip({
   variant,
   onAction,
   requiresRole,
+  disabledReason,
   pending = false,
   pendingLabel,
   "data-slot": dataSlot,
@@ -110,6 +113,8 @@ export function DisableWithTooltip({
       ? "Not available for a real request"
       : session && requiresRole && !roleSatisfied
       ? `Requires the ${requiresRole} role — choose a persona in the header`
+      : session && disabledReason
+      ? disabledReason
       : DEMO_SESSION_TOOLTIP;
 
   return (
