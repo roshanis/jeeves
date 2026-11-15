@@ -48,7 +48,7 @@ function isNonEmptyStringInRange(value: string | null | undefined, min: number, 
   return len >= min && len <= max;
 }
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const EMAIL_RE = /^[^\s@?&%,;#=]+@[^\s@?&%,;#=]+\.[^\s@?&%,;#=]+$/;
 
 function isValidEmail(value: string | null | undefined): boolean {
   return typeof value === "string" && EMAIL_RE.test(value);
