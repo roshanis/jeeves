@@ -61,7 +61,7 @@ export default function MarketingLayout({
               >
                 Pilot
               </Link>
-              <TryDemoButton size="sm" />
+              <TryDemoButton size="sm" showStatus={false} />
             </nav>
           </div>
         </header>
