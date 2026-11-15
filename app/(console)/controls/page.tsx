@@ -33,10 +33,13 @@ export default async function ControlsPage() {
   // Exceptions live in the real DB (not the read-model provider). Guard the
   // read so a fresh/unseeded dev database never crashes the catalog page.
   let exceptions: ExceptionRow[] = [];
+  let exceptionsLoadFailed = false;
   try {
     exceptions = await listExceptions(getDb(), undefined, { viewerWorkspaceId });
-  } catch {
+  } catch (err) {
+    console.error("controls: could not load control exceptions", err);
     exceptions = [];
+    exceptionsLoadFailed = true;
   }
 
   return (
@@ -58,7 +61,7 @@ export default async function ControlsPage() {
         </Link>
       </div>
       <ControlCatalog controls={controls} asOfMs={DEMO_AS_OF_MS} />
-      <ExceptionsPanel exceptions={exceptions} />
+      <ExceptionsPanel exceptions={exceptions} loadFailed={exceptionsLoadFailed} />
     </div>
   );
 }
