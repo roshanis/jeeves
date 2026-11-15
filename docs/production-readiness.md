@@ -253,7 +253,8 @@ Nothing used to start a real production-mode server, which is how a relative
 database, stamps it `production`, boots the real server (the standalone build
 the container image runs, or `next start`), and checks the HTTP behaviour on
 the wire: redirects, 404s for marketing pages and demo doors, 401s for gated
-reads, the sign-in page and its security headers, robots, sitemap and health.
+reads, the sign-in page and its security headers, one of the page's own
+`/_next/static` scripts or stylesheets, robots, sitemap and health.
 It also starts the server four times with a deliberately bad configuration and
 requires each to refuse to boot.
 
@@ -261,7 +262,9 @@ It stamps its database for good, so it only accepts `SMOKE_DATABASE_URL`
 (there is no fallback to `DATABASE_URL`) naming a database called
 `jeeves_smoke_<name>`. Create one with `CREATE DATABASE jeeves_smoke_local;`.
 It needs a finished build and never builds: run
-`DATA_PROVIDER=mock JEEVES_MODE=demo npm run build` first. Then:
+`DATA_PROVIDER=mock JEEVES_MODE=demo npm run build` first. For the standalone
+server it copies `.next/static` into `.next/standalone/.next/static`, as the
+Containerfile does. Then:
 
     SMOKE_DATABASE_URL=postgres://user:pass@127.0.0.1:5432/jeeves_smoke_local npm run smoke:production
 

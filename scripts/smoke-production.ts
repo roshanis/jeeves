@@ -20,8 +20,9 @@
  *     npm run smoke:production
  *
  * Needs a finished build (it never builds; for the standalone server it copies
- * .next/static into the standalone folder, as the Containerfile does). SMOKE_PORT (default 3217) picks the
- * port; SMOKE_SERVER=standalone|next-start forces the server command.
+ * .next/static into the standalone folder, as the Containerfile does).
+ * SMOKE_PORT (default 3217) picks the port; SMOKE_SERVER=standalone|next-start
+ * forces the server command.
  *
  * SMOKE_DEMO_LOCKED=1 is for a build made with JEEVES_DEMO_ENABLED=0 (what a
  * production image is built with). Such a build has demo mode compiled out, so
