@@ -320,13 +320,14 @@ events" path to undo *with* — the trigger rejects `DELETE` from the app
 entirely.
 
 **Always restore into a new database or instance, never over the live one.**
-`audit_events` rejects `UPDATE` and `DELETE` by trigger, so clearing the bad
-rows before loading a dump means deleting them, which the triggers reject, and
+`audit_events` rejects `UPDATE`, `DELETE` and (since migration 0014)
+`TRUNCATE` by trigger, so clearing the bad rows before loading a dump means
+deleting or truncating them, which the triggers reject, and
 `pg_restore --clean` against the running database drops and recreates every
 table, which discards every audit row written since the backup and leaves
-nothing to compare against. Restore into an empty
-database, check it as below, then repoint `DATABASE_URL` (and
-`DATABASE_MIGRATION_URL`) at it and retire the old one.
+nothing to compare against. Restore into an empty database, check it as
+below, then repoint `DATABASE_URL` (and `DATABASE_MIGRATION_URL`) at it and
+retire the old one.
 
 The same rule gives the per-platform recipes:
 
@@ -358,7 +359,12 @@ After any restore, before sending traffic to it:
    (`npm run db:migrate` checks this and refuses to continue when one is
    missing).
 2. Boot the app against the restored database and `GET /api/health` answers
-   200.
+   200. The restored database keeps the source's `installation.deploy_mode`
+   stamp (migration 0015), so boot it with the same `JEEVES_MODE`. A
+   production boot also refuses a database whose applied migrations are
+   behind the build or whose append-only triggers are missing or disabled.
+   A refused boot logs `[boot] installation check failed: ...` with the
+   reason and does not start.
 3. Compare `select count(*) from audit_events` with the source (or with what
    you expect at the restore point), and open a recent initiative and one of
    its evidence files.
