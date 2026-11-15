@@ -903,7 +903,7 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
           )}
           {session && isRequester && !completeness.canSubmit ? (
             <span className="text-xs text-muted-foreground">
-              Resolve the blocking gaps above to enable submission.
+              Resolve the blocking gaps listed under Completeness to enable submission.
             </span>
           ) : null}
         </div>
