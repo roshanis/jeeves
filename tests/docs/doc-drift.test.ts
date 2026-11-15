@@ -113,7 +113,9 @@ describe("docs/deploy.md section 4 backups (docs-F28)", () => {
   it("says to restore into a new database because of the append-only triggers", () => {
     expect(section).toMatch(/new database/);
     expect(section).toMatch(/drops and recreates every\s+table/);
-    expect(section).not.toMatch(/TRUNCATE/);
+    // Only while no migration guards TRUNCATE: the production-mode line's 0014 does.
+    const migrations = readdirSync("drizzle").filter((f) => f.endsWith(".sql")).map((f) => read(`drizzle/${f}`)).join("\n");
+    if (!/BEFORE\s+TRUNCATE/i.test(migrations)) expect(section).not.toMatch(/TRUNCATE/);
     expect(section).toMatch(/Restore to a New Project/i);
   });
   it("checks the migration journal and health after a restore", () => {

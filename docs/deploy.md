@@ -306,9 +306,8 @@ The same rule gives the per-platform recipes:
   daily backup or, with the PITR add-on, a point in time; otherwise restore a
   dump into a new project. The in-place backup restore and point-in-time
   recovery replace the live project's database, so do not use them for Jeeves.
-  The transaction
-  pooler cannot restore or migrate: use the direct or session connection
-  string for the restore and the checks below.
+  The transaction pooler cannot restore or migrate: use the direct or session
+  connection string for the restore and the checks below.
 - **AWS RDS for PostgreSQL:** turn on automated backups with a retention
   window, and take a manual snapshot before every upgrade. "Restore to point
   in time" and "Restore snapshot" both create a *new* DB instance with a new

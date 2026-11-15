@@ -209,7 +209,7 @@ Stop the stack first — exporting a volume under a running Postgres captures a
 torn snapshot. For a consistent online backup use `pg_dump` instead:
 
 ```bash
-podman compose exec db pg_dump -U jeeves jeeves > jeeves-$(date +%F).sql
+podman compose exec -T db pg_dump -U jeeves jeeves > jeeves-$(date +%F).sql
 ```
 
 Restore into a fresh database rather than over the running one, and run the
