@@ -18,7 +18,7 @@
 import type { Domain, LifecycleState, Tier } from "@/lib/domain/types";
 import type { IntakePayload } from "@/lib/intake/types";
 import type { CompletenessGap } from "@/lib/intake/completeness";
-import { fieldLabel } from "@/lib/intake/field-labels";
+import { issueFieldLabel } from "@/lib/intake/field-labels";
 import { READ_ONLY_PREVIEW_MESSAGE } from "@/lib/data/provider-mode";
 
 /* -------------------------------------------------------------------------
@@ -81,7 +81,8 @@ export function apiErrorToMessage(err: ApiError): string {
     case 409:
       return "This record changed. Refresh and review the latest information before trying again.";
     case 400:
-      return err.message ? (err.issuePath ? `${err.message} (${fieldLabel(err.issuePath.replace(/^(evidenceAttachments)\.(\d+)/, (_, k, n) => `${k}.${Number(n) + 1}`))})` : err.message) : "Invalid request.";
+      if (!err.message) return "Invalid request.";
+      return err.issuePath ? `${err.message} (${issueFieldLabel(err.issuePath)})` : err.message;
     default:
       return "Something went wrong — please try again.";
   }

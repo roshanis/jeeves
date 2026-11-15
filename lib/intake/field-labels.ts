@@ -58,3 +58,15 @@ export function fieldLabel(key: string): string {
   if (attachment) return `Evidence attachment ${attachment[1]}: ${ATTACHMENT_FIELD_LABEL[attachment[2]] ?? attachment[2]}`;
   return ADDITIONAL_FIELD_LABELS[key] ?? FIELD_LABEL[key] ?? key;
 }
+
+/**
+ * Label for the path of a validation issue. The server counts the entries of a
+ * list from 0 and the intake tab numbers its rows from 1, so a position is
+ * shown 1-based: an attachment's field reads as its row does, and an entry of
+ * any other list as that list's label plus the position.
+ */
+export function issueFieldLabel(path: string): string {
+  const rowPath = path.replace(/^evidenceAttachments\.(\d+)\./, (_, index) => `evidenceAttachments.${Number(index) + 1}.`);
+  const entry = /^(.+)\.(\d+)$/.exec(rowPath);
+  return entry ? `${fieldLabel(entry[1])}, item ${Number(entry[2]) + 1}` : fieldLabel(rowPath);
+}

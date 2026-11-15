@@ -284,6 +284,15 @@ describe("error mapping", () => {
     expect(apiErrorToMessage(unknown)).toBe("invalid intake payload (mystery.field)");
   });
 
+  it("names the list and the 1-based position for an issue on one entry of a list", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(400, { error: "invalid intake payload", issues: [{ path: ["data", "dataSources", 0], message: "too long" }] }));
+    const source = await createInitiative("tok", CHAMPION_PREFILL_PAYLOAD).catch((e) => e);
+    expect(apiErrorToMessage(source)).toBe("invalid intake payload (Data sources, item 1)");
+    fetchMock.mockResolvedValueOnce(jsonResponse(400, { error: "invalid intake payload", issues: [{ path: ["evidenceAttachments", 2], message: "expected object" }] }));
+    const attachment = await createInitiative("tok", CHAMPION_PREFILL_PAYLOAD).catch((e) => e);
+    expect(apiErrorToMessage(attachment)).toBe("invalid intake payload (Evidence attached at intake, item 3)");
+  });
+
   it("tells a spent daily budget apart from the per-minute rate limit", async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse(429, { error: "demo token budget exhausted for today" }));
     const budget = await startDraftRun("tok", "init-1", ["legal"]).catch((e) => e);
