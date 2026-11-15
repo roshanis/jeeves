@@ -52,15 +52,23 @@ export default function NotFound() {
       </div>
 
       <div className="flex flex-wrap items-center justify-center gap-2">
-        <Link href="/" className={cn(buttonVariants({ size: "sm" }))}>
-          Back to home
-        </Link>
-        <Link
-          href="/inbox"
-          className={cn(buttonVariants({ size: "sm", variant: "outline" }))}
-        >
-          Open the console
-        </Link>
+        {isDemoMode() ? (
+          <>
+            <Link href="/" className={cn(buttonVariants({ size: "sm" }))}>
+              Back to home
+            </Link>
+            <Link
+              href="/inbox"
+              className={cn(buttonVariants({ size: "sm", variant: "outline" }))}
+            >
+              Open the console
+            </Link>
+          </>
+        ) : (
+          <Link href="/inbox" className={cn(buttonVariants({ size: "sm" }))}>
+            Open the console
+          </Link>
+        )}
       </div>
 
       <div className="w-full border-t pt-5 text-left">
