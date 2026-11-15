@@ -170,6 +170,13 @@ describe("lib/services/viewer-workspace", () => {
       expect(isDeploymentVisible(map, "dep-ws-a", "ws_A")).toBe(true);
     });
 
+    it("loads only seeded deployments and the viewer's own when a viewer is given", async () => {
+      const keys = async (viewer: string | null) => [...(await deploymentWorkspaceMap(testDb, viewer)).keys()].sort();
+      expect(await keys("ws_A")).toEqual(["dep-seeded", "dep-ws-a"]);
+      expect(await keys("ws_B")).toEqual(["dep-seeded"]);
+      expect(await keys(null)).toEqual(["dep-seeded"]);
+    });
+
     it("an unknown deploymentId is never visible", async () => {
       const map = await deploymentWorkspaceMap(testDb);
       expect(isDeploymentVisible(map, "does-not-exist", "ws_A")).toBe(false);
@@ -207,6 +214,13 @@ describe("lib/services/viewer-workspace", () => {
           workspaceId: "ws_A",
         },
       ]);
+    });
+
+    it("loads only seeded rows and the viewer's own when a viewer is given", async () => {
+      const keys = async (viewer: string | null) => [...(await initiativeWorkspaceMap(testDb, viewer)).keys()].sort();
+      expect(await keys("ws_A")).toEqual(["init-seeded-2", "init-ws-a-2"]);
+      expect(await keys("ws_B")).toEqual(["init-seeded-2"]);
+      expect(await keys(null)).toEqual(["init-seeded-2"]);
     });
 
     it("mirrors deploymentWorkspaceMap's visibility semantics for initiative-keyed rows", async () => {

@@ -33,7 +33,7 @@ export async function loadIncidentsForViewer(
     const db = options.db ?? getDb();
     const [incidentRows, workspaceByDeployment] = await Promise.all([
       listIncidents(db),
-      deploymentWorkspaceMap(db),
+      deploymentWorkspaceMap(db, viewerWorkspaceId),
     ]);
     return {
       status: "success",

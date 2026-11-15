@@ -32,7 +32,7 @@ export async function GET(req: Request): Promise<Response> {
   const viewerWorkspaceId = await resolveViewerWorkspaceId(req);
   const [incidents, workspaceByDeployment] = await Promise.all([
     listIncidents(db),
-    deploymentWorkspaceMap(db),
+    deploymentWorkspaceMap(db, viewerWorkspaceId),
   ]);
   const visible = incidents.filter((inc) =>
     isDeploymentVisible(workspaceByDeployment, inc.deploymentId, viewerWorkspaceId),
