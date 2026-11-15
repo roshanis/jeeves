@@ -11,6 +11,8 @@ import {
   reviewCycles,
   deploymentVersions,
   initiatives,
+  initiativeDecisions,
+  reviewDecisions,
   intakeVersions,
   observations,
 } from "../lib/db/schema";
@@ -205,5 +207,33 @@ describe("scripts/seed.ts", () => {
     expect(decisions).toHaveLength(5);
     expect(decisions.filter((d) => d.status === "signed")).toHaveLength(3);
     expect(decisions.filter((d) => d.status === "pending")).toHaveLength(2);
+  });
+
+  it("backs every seeded decision and signed review with an audit event, and records fast-lane as system (seed-spec section 5)", async () => {
+    await seedDatabase(db);
+    const events = await db.select().from(auditEvents);
+    const actionFor: Record<string, string> = {
+      approved: "approve",
+      rejected: "reject",
+      conditionally_approved: "conditionally_approve",
+      fast_lane_approved: "fast_lane_approve",
+    };
+    for (const d of await db.select().from(initiativeDecisions)) {
+      expect(
+        events.some((e) => e.initiativeId === d.initiativeId && e.action === actionFor[d.type]),
+        `${d.initiativeId} ${d.type}`,
+      ).toBe(true);
+    }
+    const cycles = await db.select().from(reviewCycles);
+    for (const r of (await db.select().from(reviewDecisions)).filter((x) => x.status === "signed")) {
+      const initiativeId = cycles.find((c) => c.id === r.cycleId)!.initiativeId;
+      expect(
+        events.some((e) => e.initiativeId === initiativeId && e.action === "review_signed" && (e.metadata as { domain?: string } | null)?.domain === r.domain),
+        `${initiativeId} ${r.domain}`,
+      ).toBe(true);
+    }
+    for (const e of events.filter((x) => x.action === "fast_lane_approve")) {
+      expect(e.actor).toBe("system");
+    }
   });
 });
