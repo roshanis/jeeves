@@ -248,8 +248,9 @@ current code, not hypothetical ones.
 ## 4. Backups and restore
 
 Short version: **Neon's own branching and point-in-time restore are the
-backup mechanism; this repository adds nothing on top, and nothing here
-substitutes for setting a retention window on the Neon project.**
+backup mechanism on Neon (Supabase, RDS and Podman have their own, below);
+this repository adds nothing on top, and nothing here substitutes for setting
+a retention window on your platform.**
 
 That matters more here than in a typical app. `audit_events` is append-only
 at the database level, which protects it from the *application* — it does not
@@ -282,10 +283,55 @@ different problems.
 
 ### Restore
 
-Restore is a Neon operation, not an application one: branch from a timestamp
-before the bad write and repoint `DATABASE_URL` at the new branch. There is
-no application-level undo, and there deliberately is no "delete audit events"
-path to undo *with* — the trigger rejects `DELETE` from the app entirely.
+Restore is a platform operation, not an application one. On Neon, branch from
+a timestamp before the bad write and repoint `DATABASE_URL` at the new branch.
+There is no application-level undo, and there deliberately is no "delete audit
+events" path to undo *with* — the trigger rejects `DELETE` from the app
+entirely.
+
+**Always restore into a new database or instance, never over the live one.**
+`audit_events` rejects `UPDATE`, `DELETE` and `TRUNCATE` by trigger, so
+loading a dump on top of existing rows (for example `pg_restore --clean`
+against the running database) fights those triggers. Restore into an empty
+database, check it as below, then repoint `DATABASE_URL` (and
+`DATABASE_MIGRATION_URL`) at it and retire the old one.
+
+The same rule gives the per-platform recipes:
+
+- **Neon:** branch from a timestamp (above); the branch is the new database.
+- **Supabase:** use the project's backups or point-in-time recovery if your
+  plan includes them, or restore a dump into a new project. The transaction
+  pooler cannot restore or migrate: use the direct or session connection
+  string for the restore and the checks below.
+- **AWS RDS for PostgreSQL:** turn on automated backups with a retention
+  window, and take a manual snapshot before every upgrade. "Restore to point
+  in time" and "Restore snapshot" both create a *new* DB instance with a new
+  endpoint; repoint `DATABASE_URL` at it.
+- **Podman:** `deploy-podman.md` covers the volume export and an online
+  `pg_dump`. Restore a dump into a fresh database, not into the one that
+  holds the bad data:
+  `createdb -U jeeves jeeves_restored`, then
+  `pg_restore -U jeeves --no-owner -d jeeves_restored backup.dump` for a
+  `pg_dump -Fc` file, or `psql` for a plain `.sql` file.
+
+After any restore, before sending traffic to it:
+
+1. The migration journal matches the build you are about to run: every entry
+   of `drizzle/meta/_journal.json` has a row in `drizzle.__drizzle_migrations`
+   (`npm run db:migrate` checks this and refuses to continue when one is
+   missing).
+2. Boot the app against the restored database and `GET /api/health` answers
+   200.
+3. Compare `select count(*) from audit_events` with the source (or with what
+   you expect at the restore point), and open a recent initiative and one of
+   its evidence files.
+
+Evidence files are stored in the database as `bytea`, so the database size,
+and with it backup time and restore time, grows with uploads. Sessions and
+rate-limit buckets are disposable: nothing is lost if they are absent after a
+restore, and users simply sign in again. Backups also hold whatever real
+requests visitors submitted through the intake door, so apply your retention
+and deletion rules to backups too.
 
 ### Upgrades and rollback
 
@@ -317,10 +363,10 @@ or delete audit history.
 
 ### Not covered
 
-No automated backup verification, and no drill. A backup nobody has restored
-from is a hypothesis. If this goes to a pilot, restoring into a scratch
-branch and booting the app against it should be part of the runbook, not a
-thing discovered during an incident.
+No automated backup verification. A backup nobody has restored from is a
+hypothesis. Run the three checks under Restore as a drill on a schedule
+(restore into a scratch database, boot the app against it, then discard it)
+so it is not discovered during an incident.
 
 ---
 

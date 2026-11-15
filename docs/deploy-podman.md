@@ -206,8 +206,9 @@ torn snapshot. For a consistent online backup use `pg_dump` instead:
 podman compose exec db pg_dump -U jeeves jeeves > jeeves-$(date +%F).sql
 ```
 
-The same caveat as `deploy.md` §4 applies: nobody has restored from one of
-these. A backup you have not restored from is a hypothesis.
+Restore into a fresh database rather than over the running one, and run the
+post-restore checks: see `deploy.md` §4. The same caveat applies: nobody has
+restored from one of these. A backup you have not restored from is a hypothesis.
 
 ### Stopping during a draft run
 

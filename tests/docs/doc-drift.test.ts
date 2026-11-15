@@ -102,3 +102,20 @@ describe("data disclaimers cover the real-request door (docs-F23)", () => {
     expect(read("docs/ARCHITECTURE.md")).not.toMatch(/no real PHI,\s+PII, or production data exists anywhere/);
   });
 });
+
+describe("docs/deploy.md section 4 backups (docs-F28)", () => {
+  const doc = read("docs/deploy.md");
+  const section = doc.slice(doc.indexOf("## 4. Backups and restore"), doc.indexOf("## 5. Staging"));
+  it("covers RDS and Supabase, not only Neon", () => {
+    expect(section).toMatch(/RDS/);
+    expect(section).toMatch(/Supabase/);
+  });
+  it("says to restore into a new database because of the append-only triggers", () => {
+    expect(section).toMatch(/new database/);
+    expect(section).toMatch(/pg_restore --clean/);
+  });
+  it("checks the migration journal and health after a restore", () => {
+    expect(section).toMatch(/__drizzle_migrations/);
+    expect(section).toMatch(/\/api\/health/);
+  });
+});
