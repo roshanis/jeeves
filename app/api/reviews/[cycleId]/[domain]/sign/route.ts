@@ -20,7 +20,7 @@ import {
   ValidationError,
   signReview,
 } from "@/lib/services/initiative-service";
-import { runMutationGuard } from "@/lib/services/route-guard";
+import { guardFailureResponse, runMutationGuard } from "@/lib/services/route-guard";
 import { isRouteId, notFoundResponse } from "@/lib/http/route-id";
 import type { Domain } from "@/lib/domain/types";
 
@@ -46,7 +46,7 @@ export async function POST(
     inputTotalCap: 20_000,
   });
   if (!guard.ok) {
-    return Response.json({ error: guard.failure.message }, { status: guard.failure.status });
+    return guardFailureResponse(guard.failure);
   }
   const json = guard.json;
 

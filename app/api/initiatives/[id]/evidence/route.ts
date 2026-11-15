@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { getDb } from '@/lib/db/client';
-import { runMutationGuard, resolveSession, extractSessionToken } from '@/lib/services/route-guard';
+import { guardFailureResponse, runMutationGuard, resolveSession, extractSessionToken } from '@/lib/services/route-guard';
 import { getEvidence, uploadEvidence, saveEvidenceDraft, submitEvidence, assessEvidence } from '@/lib/services/evidence-service';
 import { evidenceResponseError, privateHeaders, readEvidenceJson } from '@/lib/evidence/http';
 import { EvidenceError } from '@/lib/evidence/files';
@@ -28,7 +28,7 @@ export async function GET(req:Request,context:Context):Promise<Response> {
 export async function POST(req:Request,context:Context):Promise<Response> {
  try {
   const guard=await runMutationGuard(req,undefined);
-  if(!guard.ok)return Response.json({error:guard.failure.message},{status:guard.failure.status,headers:privateHeaders});
+  if(!guard.ok)return guardFailureResponse(guard.failure,privateHeaders);
   // JSON + same-origin checks also prevent cross-site cookie-authenticated form uploads.
   if(!isSameOriginRequest(req))throw new EvidenceError(403,'Cross-origin evidence mutations are not permitted.');
   const parsed=schema.safeParse(await readEvidenceJson(req));
