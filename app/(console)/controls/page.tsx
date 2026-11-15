@@ -20,7 +20,9 @@ export function generateMetadata(): Metadata {
 }
 
 // The demo timeline is frozen at 2026-07-01 and the monitor evaluates at base+14d
-// (same constant as app/api/monitor/run/route.ts); evidence freshness uses that clock.
+// (same constant as app/api/monitor/run/route.ts); in the demo, evidence freshness
+// uses that clock. A production install has real evidence dates and no frozen
+// timeline, so there the catalog falls back to the browser's clock.
 const DEMO_AS_OF_MS = Date.parse("2026-07-01T00:00:00Z") + 14 * 24 * 60 * 60 * 1000;
 
 // Control catalog (plan §6): the full ControlDefinition catalog across all 8
@@ -62,7 +64,7 @@ export default async function ControlsPage() {
           Framework mappings (NIST AI RMF · EU AI Act) →
         </Link>
       </div>
-      <ControlCatalog controls={controls} asOfMs={DEMO_AS_OF_MS} />
+      <ControlCatalog controls={controls} asOfMs={isProductionMode() ? undefined : DEMO_AS_OF_MS} />
       <ExceptionsPanel exceptions={exceptions} />
     </div>
   );
