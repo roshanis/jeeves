@@ -103,5 +103,6 @@ export function reviewerDomainFor(actorId: string): Domain | null {
  */
 export const FAST_LANE_POLICY = {
   policyId: "FL-2026-01",
+  policyVersion: "v1",
   accountableApprover: "Angela Torres",
 } as const;

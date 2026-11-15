@@ -419,6 +419,31 @@ describe("lib/services/initiative-service", () => {
       expect(row.state).toBe("in_review");
     });
 
+    it("fast-lane approval records the eligibility snapshot, policy version and accountable approver on the audit trail", async () => {
+      const draft = await svc.createDraft(db, {
+        payload: lowTierPayload(),
+        requesterActor: { id: "dan-kowalski", role: "requester" },
+        requesterName: "Dan Kowalski",
+      });
+      await svc.submitIntake(db, draft.initiativeId, { id: "dan-kowalski", role: "requester" });
+      await svc.startQc(db, draft.initiativeId, PROGRAM);
+      await svc.triage(db, draft.initiativeId, SYSTEM_ACTOR, null, PROGRAM);
+
+      const events = await db.select().from(auditEvents).where(eq(auditEvents.initiativeId, draft.initiativeId));
+      const computed = events.find((e) => e.action === "fast_lane_eligibility_computed");
+      expect(computed).toBeDefined();
+      expect(computed!.metadata).toMatchObject({
+        eligible: true, tier: "low", intakeComplete: true, reasons: [],
+        policyId: "FL-2026-01", policyVersion: "v1",
+      });
+      const approve = events.find((e) => e.action === "fast_lane_approve")!;
+      expect(approve.metadata).toMatchObject({
+        policyId: "FL-2026-01", policyVersion: "v1", accountableApprover: "Angela Torres",
+        triggeredBy: { id: "nia-okafor", role: "program" },
+      });
+      expect((approve.metadata as { eligibility: { eligible: boolean } }).eligibility.eligible).toBe(true);
+    });
+
     it("fast-lane approval closes its review cycle and leaves no pending review rows", async () => {
       const draft = await svc.createDraft(db, {
         payload: lowTierPayload(),

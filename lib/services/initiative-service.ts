@@ -820,6 +820,33 @@ export async function triage(
 
     // 4. fast-lane branch (eligibility was evaluated before step 3)
     if (eligibility.eligible) {
+      // Per-use record (FL-3.2 / FL-4.1): the criteria evaluated and their
+      // values at routing time, plus the policy version, as one snapshot that
+      // is also carried on the approval event below.
+      const eligibilitySnapshot = {
+        eligible: eligibility.eligible,
+        reasons: eligibility.reasons,
+        tier,
+        flags,
+        intakeComplete,
+        completenessPct: completeness.completenessPct,
+        gaps: completeness.gaps.map((g) => `${g.ruleId}:${g.level}`),
+        retentionAnswered: payload.data.retentionIntent !== null && payload.data.retentionIntent !== undefined,
+        policyId: FAST_LANE_POLICY.policyId,
+        policyVersion: FAST_LANE_POLICY.policyVersion,
+      };
+      await tx.insert(auditEvents).values({
+        id: `evt-${randomUUID()}`,
+        initiativeId,
+        ts: new Date(nowTs()),
+        actor: SYSTEM_ACTOR.id,
+        actorRole: SYSTEM_ACTOR.role,
+        action: "fast_lane_eligibility_computed",
+        detail: `Fast-lane eligibility computed under ${FAST_LANE_POLICY.policyId} ${FAST_LANE_POLICY.policyVersion}: eligible.`,
+        before: null,
+        after: null,
+        metadata: eligibilitySnapshot,
+      });
       const flResult = transition(triageResult.after, "fast_lane_approve", SYSTEM_ACTOR, {
         ts: nowTs(),
         policyId: FAST_LANE_POLICY.policyId,
@@ -833,7 +860,13 @@ export async function triage(
         initiativeId,
         flResult.auditEvent,
         `Fast-lane approved under standing authority ${FAST_LANE_POLICY.policyId}; named accountable approver ${FAST_LANE_POLICY.accountableApprover}.`,
-        { policyId: FAST_LANE_POLICY.policyId },
+        {
+          policyId: FAST_LANE_POLICY.policyId,
+          policyVersion: FAST_LANE_POLICY.policyVersion,
+          accountableApprover: FAST_LANE_POLICY.accountableApprover,
+          ...(passedBy ? { triggeredBy: { id: passedBy.id, role: passedBy.role } } : {}),
+          eligibility: eligibilitySnapshot,
+        },
       );
       await tx.insert(initiativeDecisions).values({
         id: `decision-${randomUUID()}`,
