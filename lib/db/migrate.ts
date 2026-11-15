@@ -6,7 +6,7 @@ import { PGlite } from "@electric-sql/pglite";
 import { Pool as NeonPool, neonConfig } from "@neondatabase/serverless";
 import ws from "ws";
 import type { Db } from "./client";
-import { getDbDriverForHandle } from "./client";
+import { createNeonPool, getDbDriverForHandle } from "./client";
 import * as schema from "./schema";
 import { selectDriver, type DbDriver } from "./driver-select";
 import { migrationDatabaseUrl, postgresPoolConfig } from "./connection-config";
@@ -62,7 +62,7 @@ export async function runMigrations(): Promise<void> {
   let pool: Pool | NeonPool;
   if (driver === "neon") {
     neonConfig.webSocketConstructor = ws;
-    pool = new NeonPool({ connectionString: url! });
+    pool = createNeonPool(url!);
     try {
       await applyMigrations(drizzleNeon({ client: pool as NeonPool, schema }), "neon", url);
     } finally {
