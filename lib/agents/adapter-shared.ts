@@ -42,8 +42,30 @@ export function repoAgentsDir(): string {
   return path.join(process.cwd(), "agents");
 }
 
-export function readAgentFile(...segments: string[]): string {
-  return readFileSync(path.join(repoAgentsDir(), ...segments), "utf-8");
+/** The agent directories under `agents/`. */
+export const AGENT_DIRS = ["reviewer", "auditor", "intake", "ops-monitor"] as const;
+export type AgentDir = (typeof AGENT_DIRS)[number];
+
+/**
+ * Reads `agents/<dir>/<rest...>`. The directory is chosen by a branch that
+ * repeats a LITERAL path per directory on purpose. A dynamic segment directly
+ * after `"agents"` makes Turbopack's file tracer treat the path as the glob
+ * `agents*`, which ships `agents-build-log.md` (and any other `agents*` file
+ * at the repo root) into the deployable output. With the directory literal,
+ * only that directory's contents are traced. scripts/check-standalone-output.cjs
+ * guards the result. Keep these literal.
+ */
+export function readAgentFile(dir: AgentDir, ...rest: string[]): string {
+  switch (dir) {
+    case "reviewer":
+      return readFileSync(path.join(process.cwd(), "agents", "reviewer", ...rest), "utf-8");
+    case "auditor":
+      return readFileSync(path.join(process.cwd(), "agents", "auditor", ...rest), "utf-8");
+    case "intake":
+      return readFileSync(path.join(process.cwd(), "agents", "intake", ...rest), "utf-8");
+    case "ops-monitor":
+      return readFileSync(path.join(process.cwd(), "agents", "ops-monitor", ...rest), "utf-8");
+  }
 }
 
 export interface CachedInstructions {

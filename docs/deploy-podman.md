@@ -46,6 +46,17 @@ the Quadlet units in §3 — they are the Podman-native path.
 | `app` | built from `Containerfile` (`runner`) | The only published port. Non-root, read-only rootfs. |
 | `migrate` / `seed` | built from `Containerfile` (`migrator`) | One-shot jobs, `tools` profile. |
 
+### The image carries no source tree
+
+The runtime image is exactly `.next/standalone`, so that directory must hold
+only the traced server, the agent prompts (`agents/**/*.md`) and the policy
+corpus (`docs/policies/**/*.md`). A Turbopack file-tracing regression once
+shipped the whole repository (tests, scripts, planning notes) next to
+`server.js`. The builder stage now runs `node scripts/check-standalone-output.cjs`
+right after `npm run build` and fails the image build if anything else is
+there. To run it by hand: `npm run build`, then
+`node scripts/check-standalone-output.cjs [path/to/.next/standalone]`.
+
 ### Why two images
 
 The runtime image ships Next's **standalone output** — the traced set of files
