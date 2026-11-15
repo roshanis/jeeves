@@ -71,4 +71,13 @@ describe("selectDriver", () => {
     expect(selectDriver("postgres://u:p@neon.tech.evil.example.com/db", undefined)).toBe("pg");
     expect(selectDriver("postgres://u:p@myneon.tech/db", undefined)).toBe("pg");
   });
+
+  it("matches the Neon host case-insensitively and ignoring a trailing dot", () => {
+    expect(selectDriver("postgres://u:p@EP-Cool-123.us-east-2.aws.Neon.Tech/db", undefined)).toBe("neon");
+    expect(selectDriver("postgres://u:p@ep-cool-123.us-east-2.aws.neon.tech./db", undefined)).toBe("neon");
+  });
+
+  it("treats a malformed percent escape in the host as not Neon, without throwing", () => {
+    expect(selectDriver("postgres://u:p@a%zz.b/db", undefined)).toBe("pg");
+  });
 });
