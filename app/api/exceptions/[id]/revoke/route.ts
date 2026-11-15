@@ -1,6 +1,6 @@
 /**
  * POST /api/exceptions/[id]/revoke — revoke an approved exception early.
- * Approver/admin only (`revokeException` -> IllegalTransitionError -> 403).
+ * Approver/admin only, as a safety action (`revokeException` -> IllegalTransitionError -> 403).
  *   Body: { reason: string }
  */
 import { z } from "zod";

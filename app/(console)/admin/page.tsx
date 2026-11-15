@@ -73,7 +73,7 @@ export default async function AdminPage() {
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Admin console</h1>
         <p className="text-sm text-muted-foreground">
-          Narrow by design: threshold edits and pause/resume, both logged.
+          Narrow by design: threshold edits, pause/resume, rollback and exception revoke, all logged, plus filing requests like any other role.
           Admin never approves, signs, or returns — anywhere.
         </p>
       </div>

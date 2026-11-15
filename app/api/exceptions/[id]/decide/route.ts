@@ -1,6 +1,6 @@
 /**
  * POST /api/exceptions/[id]/decide — approve or reject a requested exception.
- * Approver/admin only, and never the requester (SoD) — `decideException`
+ * Approver only (admin never approves), and never the requester (SoD) — `decideException`
  * enforces both (IllegalTransitionError -> 403).
  *   Body: { approve: boolean, reason: string, expiresAt?: number }
  */

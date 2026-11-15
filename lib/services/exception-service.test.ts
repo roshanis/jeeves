@@ -200,6 +200,16 @@ describe("exception-service", () => {
     expect(ec!.status).toBe("overdue");
   });
 
+  it("an admin can neither approve nor reject an exception (Admin never approves), but may file a renewal like any role", async () => {
+    const { ecId } = await anEffectiveControl();
+    const req = await svc.requestException(db, ecId, REQUESTER, null, "reason");
+    await expect(svc.decideException(db, req.id, ADMIN, null, true, "admin approve")).rejects.toThrow(IllegalTransitionError);
+    await expect(svc.decideException(db, req.id, ADMIN, null, false, "admin reject")).rejects.toThrow(IllegalTransitionError);
+    await svc.decideException(db, req.id, APPROVER, null, true, "granted");
+    const renewal = await svc.renewException(db, req.id, ADMIN, null, "admin files a renewal request");
+    expect(renewal.status).toBe("requested");
+  });
+
   it("renewing an approved exception opens a new 'requested' one that supersedes it", async () => {
     const { ecId } = await anEffectiveControl();
     const req = await svc.requestException(db, ecId, REQUESTER, null, "reason");

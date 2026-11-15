@@ -88,11 +88,11 @@ function nowTs(): number {
   return Date.now();
 }
 
-/** Only an approver or admin may decide/revoke an exception (SoD). */
-function requireDecider(actor: Actor): void {
-  if (actor.role !== "approver" && actor.role !== "admin") {
+/** Only an approver may approve/reject an exception; an admin may additionally revoke one as a safety action (SoD). */
+function requireDecider(actor: Actor, allowAdmin = false): void {
+  if (actor.role !== "approver" && !(allowAdmin && actor.role === "admin")) {
     throw new IllegalTransitionError(
-      `only an approver or admin may decide a control exception; role '${actor.role}' is not permitted`,
+      `only an approver${allowAdmin ? " or admin" : ""} may ${allowAdmin ? "revoke" : "decide"} a control exception; role '${actor.role}' is not permitted`,
       "in_review",
       "start_review",
       actor.role,
@@ -450,7 +450,7 @@ export async function revokeException(
   sessionWorkspaceId: string | null,
   reason: string,
 ): Promise<ExceptionResult> {
-  requireDecider(actor);
+  requireDecider(actor, true);
   if (!reason || reason.trim().length === 0) {
     throw new ValidationError("exception revoke requires a non-empty reason");
   }
