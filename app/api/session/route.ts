@@ -3,6 +3,7 @@
 import { z } from "zod";
 import { checkReadOnlyMode, checkSessionAttempt, clientKeyFor, issueDemoSession, extractSessionToken, resolveSession } from "@/lib/services/route-guard";
 import { isPersonaKey, resolveActor } from "@/lib/services/actors";
+import { isSameOriginRequest } from "@/lib/security/same-origin";
 import { BodyReadError, PRE_SESSION_BODY_MAX_BYTES, readJsonBody } from "@/lib/http/read-json-body";
 import {
   resolveWorkspaceCookieSecret,
@@ -85,6 +86,11 @@ function storageUnavailable(error: unknown): Response {
 }
 
 export async function POST(req: Request): Promise<Response> {
+  // A cross-site form can POST here (req.json() ignores Content-Type) and replace the victim's workspace cookie.
+  if (!isSameOriginRequest(req)) return Response.json({ error: "cross-origin requests are not permitted" }, { status: 403 });
+  if (!req.headers.get("content-type")?.toLowerCase().startsWith("application/json")) {
+    return Response.json({ error: "content-type must be application/json" }, { status: 415 });
+  }
   const readOnlyFailure = checkReadOnlyMode();
   if (readOnlyFailure) {
     return Response.json({ error: readOnlyFailure.message }, { status: readOnlyFailure.status });

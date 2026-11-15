@@ -145,3 +145,38 @@ describe("public demo entry", () => {
     expect((await enter("priya-raman", headers)).status).toBe(429);
   });
 });
+
+describe("cross-site session requests (auth-F10)", () => {
+  it("refuses a foreign Origin with 403, no cookie, and no session row", async () => {
+    const res = await enter("priya-raman", { origin: "https://evil.example" });
+    expect(res.status).toBe(403);
+    expect(res.headers.has("set-cookie")).toBe(false);
+    expect(await db.select().from(sessions)).toHaveLength(0);
+  });
+
+  it("refuses a body not declared application/json with 415", async () => {
+    const res = await POST(new Request("http://localhost/api/session", {
+      method: "POST",
+      headers: { "content-type": "text/plain" },
+      body: JSON.stringify({ personaKey: "priya-raman" }),
+    }));
+    expect(res.status).toBe(415);
+    expect(res.headers.has("set-cookie")).toBe(false);
+  });
+
+  it("still serves a same-origin Origin and a request with no Origin", async () => {
+    expect((await enter("priya-raman", { origin: "http://localhost" })).status).toBe(200);
+    expect((await enter("priya-raman")).status).toBe(200);
+  });
+
+  it("public-session refuses a foreign Origin and a declared non-JSON body, and serves a bare same-origin POST", async () => {
+    vi.stubEnv("OPERATOR_TOKEN", "op-test-token-0123456789abcdefghijklmnop");
+    const { POST: publicPost } = await import("../public-session/route");
+    const foreign = await publicPost(new Request("http://localhost/api/public-session", { method: "POST", headers: { origin: "https://evil.example" } }));
+    expect(foreign.status).toBe(403);
+    const form = await publicPost(new Request("http://localhost/api/public-session", { method: "POST", headers: { "content-type": "text/plain" }, body: "x" }));
+    expect(form.status).toBe(415);
+    const ok = await publicPost(new Request("http://localhost/api/public-session", { method: "POST", headers: { origin: "http://localhost" } }));
+    expect(ok.status).toBe(200);
+  });
+});
