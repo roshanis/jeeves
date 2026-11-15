@@ -438,6 +438,7 @@ function AssessmentPane({
   const [pending, setPending] = React.useState(false);
   const [running, setRunning] = React.useState(false);
   const [returnOpen, setReturnOpen] = React.useState(false);
+  const [returnError, setReturnError] = React.useState<string | null>(null);
   const [abstainRevision, setAbstainRevision] = React.useState<number | null>(null);
   const [abstainError, setAbstainError] = React.useState<string | null>(null);
   const mounted = React.useRef(false);
@@ -520,6 +521,7 @@ function AssessmentPane({
   async function handleReturn(reason: string) {
     if (!session || !cycleId || returnRevision === null || pending || running || mustReviewAgain) return;
     setPending(true);
+    setReturnError(null);
     onReturnReasonChange(reason);
     try {
       await performReviewMutation(session.token, cycleId, row.review.domain, {
@@ -538,7 +540,9 @@ function AssessmentPane({
         setReturnOpen(false);
         router.refresh();
       }
-      toast.error(isApiError(err) ? apiErrorToMessage(err) : "Return failed.");
+      const returnMessage = isApiError(err) ? apiErrorToMessage(err) : "Return failed.";
+      if (!(isApiError(err) && err.status === 409)) setReturnError(returnMessage);
+      toast.error(returnMessage);
       if (isApiError(err) && err.status === 401) live?.logout();
     } finally {
       if (mounted.current) setPending(false);
@@ -638,7 +642,7 @@ function AssessmentPane({
             variant="outline"
             requiresRole="reviewer"
             pending={pending || running || mustReviewAgain}
-            onAction={eligibility.canSignOrReturn ? () => { setReturnRevision(row.review.revision!); setReturnOpen(true); } : undefined}
+            onAction={eligibility.canSignOrReturn ? () => { setReturnError(null); setReturnRevision(row.review.revision!); setReturnOpen(true); } : undefined}
           />
         </div>
         <p className="text-xs text-muted-foreground">
@@ -664,6 +668,8 @@ function AssessmentPane({
         domainLabel={DOMAIN_LABEL[row.review.domain]}
         pending={pending}
         initialReason={returnReason}
+        error={returnError}
+        onReasonChange={onReturnReasonChange}
         onConfirm={(reason) => void handleReturn(reason)}
       />
     </Card>
