@@ -56,4 +56,19 @@ describe("IntakeChat", () => {
     await waitFor(() => expect((screen.getByPlaceholderText(PLACEHOLDER) as HTMLInputElement).value).toBe("my answer"));
     expect(document.querySelector('[data-slot="intake-chat-transcript"]')!.textContent).not.toContain("my answer");
   });
+
+  it("announces replies, labels the input, ignores Enter while composing and shows a fallback for an empty reply", async () => {
+    intakeChatMock.mockResolvedValue({ reply: "", updatedPayload: {}, gaps: [], done: false });
+    render(<IntakeChat />);
+    const log = document.querySelector('[data-slot="intake-chat-transcript"]')!;
+    expect(log.getAttribute("role")).toBe("log");
+    expect(log.getAttribute("aria-live")).toBe("polite");
+    const input = screen.getByRole("textbox", { name: /message to the intake assistant/i });
+    fireEvent.change(input, { target: { value: "hello" } });
+    fireEvent.keyDown(input, { key: "Enter", isComposing: true });
+    expect(intakeChatMock).not.toHaveBeenCalled();
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(intakeChatMock).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(log.textContent).toContain("No further questions"));
+  });
 });

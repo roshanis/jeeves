@@ -180,7 +180,7 @@ export function IntakeChat({ payload, payloadRevision, onPayloadChange, onReview
           <CardTitle className="text-sm">Chat with the intake assistant</CardTitle>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
-          <div className="flex flex-col gap-3" data-slot="intake-chat-transcript">
+          <div className="flex flex-col gap-3" role="log" aria-live="polite" data-slot="intake-chat-transcript">
             {conversation.length === 0 ? (
               <p className="text-sm text-muted-foreground">
                 Describe the initiative you want to submit — the assistant
@@ -192,7 +192,9 @@ export function IntakeChat({ payload, payloadRevision, onPayloadChange, onReview
                   <span className="font-medium text-muted-foreground">
                     {turn.role === "user" ? "You: " : "Assistant: "}
                   </span>
-                  <span className="whitespace-pre-wrap">{turn.content}</span>
+                  <span className="whitespace-pre-wrap">
+                    {turn.content || (turn.role === "assistant" ? "No further questions." : "")}
+                  </span>
                 </div>
               ))
             )}
@@ -212,12 +214,13 @@ export function IntakeChat({ payload, payloadRevision, onPayloadChange, onReview
               value={message}
               onChange={(e) => setMessage(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && !pending) {
+                if (e.key === "Enter" && !e.nativeEvent.isComposing && !pending) {
                   e.preventDefault();
                   void handleSubmit();
                 }
               }}
               placeholder="Tell the assistant about your initiative…"
+              aria-label="Message to the intake assistant"
               maxLength={4000}
               data-slot="intake-chat-input"
               className="h-8 flex-1 rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
