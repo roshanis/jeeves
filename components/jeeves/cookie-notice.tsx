@@ -130,7 +130,7 @@ export function CookieNotice() {
           variant="ghost"
           onClick={dismiss}
           data-slot="cookie-notice-dismiss"
-          className="shrink-0"
+          className="touch-min shrink-0"
         >
           <X className="size-4" aria-hidden />
           <span className="sr-only">Dismiss cookie notice</span>

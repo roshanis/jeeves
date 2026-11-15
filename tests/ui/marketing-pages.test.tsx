@@ -67,6 +67,15 @@ describe("framework disclaimer contrast", () => {
   });
 });
 
+describe("MarketingLayout footer", () => {
+  it("keeps bottom padding at every width so the fixed cookie notice never covers the legal links", () => {
+    const { container } = render(<MarketingLayout><p>x</p></MarketingLayout>);
+    const cls = container.querySelector("footer")!.className;
+    expect(cls).toContain("pb-24");
+    expect(cls).not.toContain("sm:pb-4");
+  });
+});
+
 describe("MarketingLayout", () => {
   it("shows the exact demo banner string (moved here from LandingPage)", () => {
     const { getByText } = render(

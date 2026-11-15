@@ -85,7 +85,7 @@ export default function MarketingLayout({
         hint="No sign-up needed"
       />
 
-      <footer className="border-t px-5 py-4 pb-24 text-center text-xs text-muted-foreground sm:pb-4">
+      <footer className="border-t px-5 py-4 pb-24 text-center text-xs text-muted-foreground">
         <p>
           Fictional demo. Synthetic data only. Not affiliated with any real
           organization.

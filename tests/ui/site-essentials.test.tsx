@@ -150,6 +150,11 @@ describe("cookie notice", () => {
     expect(screen.getByText(/no third-party analytics/i)).toBeDefined();
   });
 
+  it("has a 44px dismiss target", () => {
+    renderWithProviders(<CookieNotice />);
+    expect(screen.getByRole("button", { name: /dismiss cookie notice/i }).className).toContain("touch-min");
+  });
+
   it("stays dismissed", () => {
     const { unmount } = renderWithProviders(<CookieNotice />);
     fireEvent.click(screen.getByRole("button", { name: /dismiss cookie notice/i }));
