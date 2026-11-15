@@ -1,16 +1,16 @@
 // Apply the versioned migration journal without reseeding or deleting data.
 import { readFileSync } from "node:fs";
 import { sql } from "drizzle-orm";
-import { Pool } from "pg";
+import { Pool, type PoolClient } from "pg";
 import { drizzle as drizzleNodePg } from "drizzle-orm/node-postgres";
 import { drizzle as drizzleNeon } from "drizzle-orm/neon-serverless";
 import { PGlite } from "@electric-sql/pglite";
-import { neonConfig } from "@neondatabase/serverless";
+import { neonConfig, type PoolClient as NeonPoolClient } from "@neondatabase/serverless";
 import ws from "ws";
 import type { Db } from "./client";
 import { createNeonPool, getDbDriverForHandle } from "./client";
 import * as schema from "./schema";
-import { selectDriver, type DbDriver } from "./driver-select";
+import { normalizeHost, selectDriver, type DbDriver } from "./driver-select";
 import { migrationDatabaseUrl, migrationPoolConfig } from "./connection-config";
 import { runtimeDatabaseUrl } from "./runtime-config";
 
@@ -95,8 +95,9 @@ const MIGRATION_LOCK_KEY = 7_426_113_005;
  * through that same client, so overlapping `db:migrate` runs (two CI jobs, a
  * retried deploy hook) wait for each other instead of failing with "already
  * exists". Only for a session-capable connection: runMigrations skips it for a
- * Neon pooled endpoint (PgBouncer transaction mode), where a session lock can
- * be unlocked from another server connection and then leak. On generic pg
+ * Neon pooled endpoint (PgBouncer transaction mode), where the unlock can run
+ * on a different server connection, return false and leave the original lock
+ * held. On generic pg
  * hosts the migration pool's lock_timeout (DATABASE_MIGRATION_LOCK_TIMEOUT_MS,
  * default 10 s) also bounds the wait, so an overlapping run fails with 55P03
  * after that time instead of waiting indefinitely.
@@ -121,7 +122,7 @@ async function withMigrationLock<C extends { query: (text: string) => Promise<un
 
 /** Neon pooled endpoints (ep-...-pooler.*.neon.tech) run PgBouncer in transaction mode. */
 function isNeonPooledUrl(url: string): boolean {
-  try { return new URL(url).hostname.toLowerCase().includes("-pooler."); }
+  try { return normalizeHost(new URL(url).hostname).includes("-pooler."); }
   catch { return false; }
 }
 
@@ -144,8 +145,8 @@ export async function runMigrations(): Promise<void> {
         // No advisory lock through the pooler: it cannot serialise anything there.
         await applyMigrations(drizzleNeon({ client: pool, schema }), "neon", url);
       } else {
-        await withMigrationLock(pool as unknown as Parameters<typeof withMigrationLock>[0], (client) =>
-          applyMigrations(drizzleNeon({ client: client as unknown as typeof pool, schema }), "neon", url));
+        await withMigrationLock<NeonPoolClient>(pool, (client) =>
+          applyMigrations(drizzleNeon({ client, schema }), "neon", url));
       }
     } finally {
       await pool.end();
@@ -154,8 +155,8 @@ export async function runMigrations(): Promise<void> {
     const pool = new Pool(migrationPoolConfig(url!, process.env.DATABASE_SSL_CA));
     pool.on("error", () => console.error("PostgreSQL migration connection error."));
     try {
-      await withMigrationLock(pool, (client) =>
-        applyMigrations(drizzleNodePg({ client: client as unknown as Pool, schema }), "pg", url));
+      await withMigrationLock<PoolClient>(pool, (client) =>
+        applyMigrations(drizzleNodePg({ client, schema }), "pg", url));
     } finally {
       await pool.end();
     }

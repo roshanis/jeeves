@@ -124,4 +124,13 @@ describe("runMigrations", () => {
     expect(state.calls.join()).not.toMatch(/advisory/);
     expect(state.end).toHaveBeenCalledTimes(1);
   });
+  it("recognises a pooled host written with a percent-encoded dash or upper case", async () => {
+    process.env.DATABASE_URL = "postgresql://u:p@EP-COOL-123%2Dpooler.eu-central-1.aws.neon.tech/neondb";
+    delete process.env.DATABASE_MIGRATION_URL;
+    state.migrated.mockImplementation(async () => { state.calls.push("migrate"); });
+
+    await runMigrations();
+
+    expect(state.calls).toEqual(["migrate"]);
+  });
 });
