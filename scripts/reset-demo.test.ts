@@ -24,6 +24,7 @@ describe("scripts/reset-demo.ts", () => {
   it("clears sessions, the daily budget and rate-limit buckets", async () => {
     await resetDemo(db);
     expect(await db.select().from(sessions)).toHaveLength(0);
+    expect(await db.select().from(runBudget)).toHaveLength(0);
     expect(await db.select().from(rateLimitBuckets)).toHaveLength(0);
     expect(await db.select().from(initiatives)).toHaveLength(12);
   });

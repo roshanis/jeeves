@@ -8,9 +8,12 @@
  * Does:
  *   1. Re-seeds the database (canonical 12 initiatives + control catalog +
  *      the one seeded pending control-exception; clears any live-created data).
- *   2. Clears live session + budget state (invalidates outstanding demo
- *      sessions; resets the daily token budget) — these live outside the
- *      seed's own reset scope.
+ *   2. Clears live session, budget and rate-limit state (invalidates
+ *      outstanding demo sessions; resets the daily token budget and the
+ *      limiter buckets) — these live outside the seed's own reset scope.
+ *      Steps 1 and 2 run in ONE transaction with lock_timeout 10 s: if
+ *      anything fails (including a lock not granted in time), everything
+ *      rolls back and the old seed and sessions stay as they were.
  *   3. Prints a checklist: workspace signing, agent (OpenAI) connector, telemetry
  *      connector, cron secret, build SHA, and a seed smoke-count.
  *
