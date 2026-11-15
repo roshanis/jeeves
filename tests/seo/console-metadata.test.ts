@@ -20,6 +20,8 @@ import type { Actor } from "@/lib/domain/types";
 import { generateMetadata as portfolioMetadata } from "@/app/(console)/portfolio/page";
 import { generateMetadata as controlsMetadata } from "@/app/(console)/controls/page";
 import { generateMetadata as adminMetadata } from "@/app/(console)/admin/page";
+import { metadata as inboxMetadata } from "@/app/(console)/inbox/page";
+import { generateMetadata as notFoundMetadata } from "@/app/not-found";
 import { generateMetadata as agentMetadata } from "@/app/(console)/agents/[id]/page";
 import { generateMetadata as initiativeMetadata } from "@/app/(console)/initiatives/[slug]/page";
 
@@ -152,5 +154,18 @@ describe("/initiatives/[slug] metadata", () => {
     const metadata = await initiativeMetadata({ params: Promise.resolve({ slug: "member-chat-copilot" }) });
     expect(text(metadata)).toContain("Member Chat Copilot");
     expect(text(metadata)).not.toMatch(DEMO_WORDING);
+  });
+});
+
+describe("Inbox and not-found metadata", () => {
+  it("does not describe the demo persona switcher", async () => {
+    expect(String(inboxMetadata.description)).not.toMatch(/role you are viewing as/);
+  });
+
+  it("describes no public site in the production 404 head, and keeps it in demo", async () => {
+    vi.stubEnv("JEEVES_MODE", undefined);
+    expect(text(await notFoundMetadata())).not.toMatch(/public site/i);
+    vi.stubEnv("JEEVES_MODE", "demo");
+    expect(String((await notFoundMetadata()).description)).toContain("the public site");
   });
 });

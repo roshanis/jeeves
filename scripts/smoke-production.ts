@@ -279,7 +279,7 @@ export function buildSmokeChecks(canary?: string): SmokeCheck[] {
   });
 
   // H. Unknown path.
-  checks.push({ name: "unknown path is 404", method: "GET", path: "/this-page-does-not-exist", expect: { status: 404 } });
+  checks.push({ name: "unknown path is 404", method: "GET", path: "/this-page-does-not-exist", expect: { status: 404, bodyExcludes: ["the public site", "role you are viewing as"] } });
 
   return checks;
 }
