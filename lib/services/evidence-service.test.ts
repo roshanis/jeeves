@@ -35,6 +35,12 @@ async function signLoadedEvidenceReview() {
   });
 }
 describe('versioned evidence workflow',()=>{
+  it('replays a retried upload after the initiative left the editable states',async()=>{
+    const first=await upload('lost-response-000001');
+    await db.update(initiatives).set({state:'approved'}).where(eq(initiatives.id,'i'));
+    await expect(upload('lost-response-000001')).resolves.toMatchObject({id:first.id});
+    await expect(upload('new-request-00000001')).rejects.toMatchObject({status:409});
+  });
   it('replays a retried upload whose name has a lone surrogate',async()=>{
     const input={requestId:'surrogate-request-001',fileName:'lone\ud800.pdf',mediaType:'application/pdf',contentBase64:bytes.toString('base64')};
     const first=await uploadEvidence(db,'i',owner,input);
