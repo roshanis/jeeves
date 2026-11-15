@@ -272,13 +272,28 @@ describe("error mapping", () => {
       jsonResponse(400, { error: "invalid intake payload", issues: [{ path: ["basics", "title"], message: "too long" }] }),
     );
     const err = await createInitiative("tok", CHAMPION_PREFILL_PAYLOAD).catch((e) => e);
-    expect(apiErrorToMessage(err)).toBe("invalid intake payload (basics.title)");
+    expect(apiErrorToMessage(err)).toBe("invalid intake payload (Title)");
+  });
+
+  it("labels an evidence attachment issue path and falls back to the raw path for an unknown field", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(400, { error: "invalid intake payload", issues: [{ path: ["evidenceAttachments", 0, "fileName"], message: "too long" }] }));
+    const attachment = await createInitiative("tok", CHAMPION_PREFILL_PAYLOAD).catch((e) => e);
+    expect(apiErrorToMessage(attachment)).toBe("invalid intake payload (Evidence attachment 1: file name)");
+    fetchMock.mockResolvedValueOnce(jsonResponse(400, { error: "invalid intake payload", issues: [{ path: ["mystery", "field"], message: "x" }] }));
+    const unknown = await createInitiative("tok", CHAMPION_PREFILL_PAYLOAD).catch((e) => e);
+    expect(apiErrorToMessage(unknown)).toBe("invalid intake payload (mystery.field)");
   });
 
   it("tells a spent daily budget apart from the per-minute rate limit", async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse(429, { error: "demo token budget exhausted for today" }));
     const budget = await startDraftRun("tok", "init-1", ["legal"]).catch((e) => e);
-    expect(apiErrorToMessage(budget)).toBe("The demo budget for today is used up — please come back tomorrow.");
+    expect(apiErrorToMessage(budget)).toBe("The daily model budget is used up — please come back tomorrow.");
+    for (const error of ["daily model budget reached", "Daily model budget reached.", "Demo token reservation budget exhausted for today."]) {
+      fetchMock.mockResolvedValueOnce(jsonResponse(429, { error }));
+      const reached = await startDraftRun("tok", "init-1", ["legal"]).catch((e) => e);
+      expect(apiErrorToMessage(reached)).toBe("The daily model budget is used up — please come back tomorrow.");
+      expect(apiErrorToMessage(reached)).not.toMatch(/demo/i);
+    }
     fetchMock.mockResolvedValueOnce(jsonResponse(429, { error: "rate limit exceeded", retryAfterSeconds: 30 }));
     const rate = await startDraftRun("tok", "init-1", ["legal"]).catch((e) => e);
     expect(apiErrorToMessage(rate)).toBe("Rate limit reached — try again in 30 seconds.");
@@ -288,6 +303,17 @@ describe("error mapping", () => {
     fetchMock.mockResolvedValueOnce(jsonResponse(403, { error: "this draft belongs to another requester" }));
     const err = await createInitiative("tok", CHAMPION_PREFILL_PAYLOAD).catch((e) => e);
     expect(apiErrorToMessage(err)).toBe("this draft belongs to another requester");
+  });
+
+  it("shows the generic permission sentence for a 403 written for developers", async () => {
+    for (const error of [
+      "action 'submit' from state 'in_qc' is restricted to roles [program]; role 'requester' is not permitted",
+      "requester 'priya-raman' does not own initiative 'some-slug'",
+    ]) {
+      fetchMock.mockResolvedValueOnce(jsonResponse(403, { error }));
+      const err = await submitIntake("tok", "init-1").catch((e) => e);
+      expect(apiErrorToMessage(err)).toBe("Not permitted for your current role.");
+    }
   });
 
   it("passes a 403 server message through", async () => {

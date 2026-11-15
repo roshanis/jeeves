@@ -18,6 +18,7 @@
 import type { Domain, LifecycleState, Tier } from "@/lib/domain/types";
 import type { IntakePayload } from "@/lib/intake/types";
 import type { CompletenessGap } from "@/lib/intake/completeness";
+import { fieldLabel } from "@/lib/intake/field-labels";
 import { READ_ONLY_PREVIEW_MESSAGE } from "@/lib/data/provider-mode";
 
 /* -------------------------------------------------------------------------
@@ -69,18 +70,18 @@ export function apiErrorToMessage(err: ApiError): string {
     case 401:
       return "Session expired or invalid — start the demo again.";
     case 429:
-      if (/budget exhausted/i.test(err.message)) return "The demo budget for today is used up — please come back tomorrow.";
+      if (/budget (exhausted|reached)/i.test(err.message)) return "The daily model budget is used up — please come back tomorrow.";
       return err.retryAfterSeconds !== undefined
         ? `Rate limit reached — try again in ${err.retryAfterSeconds} seconds.`
         : "Rate limit reached — try again shortly.";
     case 403:
-      return err.message && !err.message.startsWith("request failed (") ? err.message : "Not permitted for your current role.";
+      return err.message && !err.message.startsWith("request failed (") && !/restricted to roles|does not own initiative/.test(err.message) ? err.message : "Not permitted for your current role.";
     case 404:
       return "This record is no longer available. Refresh and review the latest information.";
     case 409:
       return "This record changed. Refresh and review the latest information before trying again.";
     case 400:
-      return err.message ? (err.issuePath ? `${err.message} (${err.issuePath})` : err.message) : "Invalid request.";
+      return err.message ? (err.issuePath ? `${err.message} (${fieldLabel(err.issuePath.replace(/^(evidenceAttachments)\.(\d+)/, (_, k, n) => `${k}.${Number(n) + 1}`))})` : err.message) : "Invalid request.";
     default:
       return "Something went wrong — please try again.";
   }
