@@ -318,36 +318,6 @@ describe("lib/services/monitor-service", () => {
     });
   });
 
-  /* -----------------------------------------------------------------------
-   * P2-5b fix — external-review finding: the breach-pause flip
-   * (`initiatives.state` -> 'paused') carried no observed-state predicate —
-   * a concurrent change (e.g. an admin manually acting on the same
-   * initiative between the candidate scan and this transaction) would be
-   * silently clobbered. Now compare-and-set, mirroring
-   * promotion-service.test.ts's "promoteCheckpoint — concurrency" tests:
-   * true overlapping transactions aren't reproducible against PGlite, so
-   * this simulates the race deterministically by injecting a
-   * same-transaction write between the read and the CAS update.
-   *
-   * P2-7 fix — external-review finding: previously a single candidate's
-   * failure (this CAS conflict, an illegal-state pause attempt, or the FK
-   * hazard below) aborted the ENTIRE `runMonitor` call, for every
-   * deployment. Now isolated per-candidate: recorded in `result.errors`,
-   * the run completes, and other candidates are unaffected.
-   * -------------------------------------------------------------------- */
-  describe("runMonitor — reassessment review requests (domain-F15)", () => {
-    it("records a review request for every pending reassessment review row", async () => {
-      const { dep } = await memberChatCopilot(db);
-      const run = await runMonitor(db, SYSTEM_ACTOR, PLUS_14D, UNSCOPED_WORKSPACE);
-      const cycleId = run.breaches.find((b) => b.deploymentId === dep.id)!.reviewCycleId!;
-      const decisions = await db.select().from(reviewDecisions).where(eq(reviewDecisions.cycleId, cycleId));
-      const notes = await db.select().from(reviewNotifications).where(eq(reviewNotifications.cycleId, cycleId));
-      expect(decisions.length).toBeGreaterThan(0);
-      expect(notes.map((n) => n.domain).sort()).toEqual(decisions.map((d) => d.domain).sort());
-      expect(notes.every((n) => n.kind === "review_requested")).toBe(true);
-    });
-  });
-
   describe("runMonitor — wall-clock stamps", () => {
     it("stamps audit events and incident rows with the wall clock and keeps nowTs as metadata.evaluatedAt", async () => {
       const { init, dep } = await memberChatCopilot(db);
@@ -368,6 +338,19 @@ describe("lib/services/monitor-service", () => {
         expect(e.ts.getTime()).toBeLessThanOrEqual(after);
         expect(e.metadata).toMatchObject({ evaluatedAt: new Date(nowTs).toISOString() });
       }
+    });
+  });
+
+  describe("runMonitor — reassessment review requests (domain-F15)", () => {
+    it("records a review request for every pending reassessment review row", async () => {
+      const { dep } = await memberChatCopilot(db);
+      const run = await runMonitor(db, SYSTEM_ACTOR, PLUS_14D, UNSCOPED_WORKSPACE);
+      const cycleId = run.breaches.find((b) => b.deploymentId === dep.id)!.reviewCycleId!;
+      const decisions = await db.select().from(reviewDecisions).where(eq(reviewDecisions.cycleId, cycleId));
+      const notes = await db.select().from(reviewNotifications).where(eq(reviewNotifications.cycleId, cycleId));
+      expect(decisions.length).toBeGreaterThan(0);
+      expect(notes.map((n) => n.domain).sort()).toEqual(decisions.map((d) => d.domain).sort());
+      expect(notes.every((n) => n.kind === "review_requested")).toBe(true);
     });
   });
 
@@ -395,6 +378,23 @@ describe("lib/services/monitor-service", () => {
     });
   });
 
+  /* -----------------------------------------------------------------------
+   * P2-5b fix — external-review finding: the breach-pause flip
+   * (`initiatives.state` -> 'paused') carried no observed-state predicate —
+   * a concurrent change (e.g. an admin manually acting on the same
+   * initiative between the candidate scan and this transaction) would be
+   * silently clobbered. Now compare-and-set, mirroring
+   * promotion-service.test.ts's "promoteCheckpoint — concurrency" tests:
+   * true overlapping transactions aren't reproducible against PGlite, so
+   * this simulates the race deterministically by injecting a
+   * same-transaction write between the read and the CAS update.
+   *
+   * P2-7 fix — external-review finding: previously a single candidate's
+   * failure (this CAS conflict, an illegal-state pause attempt, or the FK
+   * hazard below) aborted the ENTIRE `runMonitor` call, for every
+   * deployment. Now isolated per-candidate: recorded in `result.errors`,
+   * the run completes, and other candidates are unaffected.
+   * -------------------------------------------------------------------- */
   describe("runMonitor — per-candidate error isolation (external-review P2-5b/P2-7)", () => {
     it("does not return or log a failed statement's bound parameters", async () => {
       await memberChatCopilot(db);
