@@ -141,4 +141,24 @@ describe("PublicIntakeQueue (operator)", () => {
     renderWithProviders(<PublicIntakeQueue />);
     await waitFor(() => expect(window.sessionStorage.getItem("jeeves_operator_token")).toBeNull());
   });
+
+  it("lets the operator read a long request in full, hover the title, and refresh", async () => {
+    const long = "Members miss appointments. ".repeat(80);
+    mocks.listPublicSubmissions.mockResolvedValue([{ ...ROW, businessProblem: long }]);
+    renderWithProviders(<PublicIntakeQueue />);
+    unlockWith("the-operator-token");
+    await screen.findByText("Appointment Reminder Summarizer");
+    expect(screen.getByText("Appointment Reminder Summarizer").getAttribute("title")).toBe(
+      "Appointment Reminder Summarizer",
+    );
+    const problem = document.querySelector('[data-slot="request-problem"]')!;
+    expect(problem.className).toContain("line-clamp-3");
+    fireEvent.click(screen.getByRole("button", { name: /show full request/i }));
+    expect(problem.className).not.toContain("line-clamp-3");
+    expect(problem.textContent).toBe(long);
+
+    mocks.listPublicSubmissions.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: /refresh/i }));
+    await waitFor(() => expect(mocks.listPublicSubmissions).toHaveBeenCalledWith("the-operator-token"));
+  });
 });
