@@ -31,6 +31,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import http from "node:http";
+import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -427,6 +428,18 @@ async function stopChild(child: ChildProcess): Promise<void> {
   clearTimeout(timer);
 }
 
+/** True when something already accepts connections on 127.0.0.1:`port`. */
+export function portInUse(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = net.connect({ host: "127.0.0.1", port });
+    socket.once("connect", () => {
+      socket.destroy();
+      resolve(true);
+    });
+    socket.once("error", () => resolve(false));
+  });
+}
+
 function request(port: number, check: Pick<SmokeCheck, "method" | "path" | "headers" | "body">): Promise<Observed> {
   return new Promise((resolve, reject) => {
     const req = http.request(
@@ -454,7 +467,7 @@ function runToCompletion(args: string[], env: Record<string, string>): Promise<{
     let output = "";
     child.stdout.on("data", (d: Buffer) => (output += d.toString()));
     child.stderr.on("data", (d: Buffer) => (output += d.toString()));
-    child.on("exit", (code) => resolve({ code, output }));
+    child.on("close", (code) => resolve({ code, output }));
   });
 }
 
@@ -551,7 +564,7 @@ async function migrateAndStamp(databaseUrl: string): Promise<void> {
 async function runBootRefusal(c: BootRefusalCase, cmd: ServerCommand, good: Record<string, string>, secrets: string[]): Promise<string[]> {
   const { child, output } = spawnServer(cmd, c.modify(good));
   const exit = await new Promise<number | null | "timeout">((resolve) => {
-    child.once("exit", (code) => resolve(code));
+    child.once("close", (code) => resolve(code));
     setTimeout(() => resolve("timeout"), 30_000).unref();
   });
   const text = output();
@@ -599,6 +612,12 @@ async function main(): Promise<void> {
   }
   if (!existsSync(path.join(REPO_ROOT, ".next/BUILD_ID"))) {
     console.error("No production build found. Run: DATA_PROVIDER=mock JEEVES_MODE=demo npm run build");
+    process.exitCode = 2;
+    return;
+  }
+
+  if (await portInUse(port)) {
+    console.error(`Port ${port} is in use: a server is already listening there. Stop it or set SMOKE_PORT.`);
     process.exitCode = 2;
     return;
   }

@@ -12,6 +12,7 @@ import {
   databaseSecrets,
   evaluateCheck,
   parsePort,
+  portInUse,
   prepareSmokeDatabase,
   redact,
   removeCanaries,
@@ -421,5 +422,16 @@ describe("the /operator is-closed check", () => {
       .join("\n");
     expect(check.expect.bodyExcludes?.length).toBeGreaterThan(0);
     for (const marker of check.expect.bodyExcludes ?? []) expect(source, marker).toContain(marker);
+  });
+});
+
+describe("portInUse", () => {
+  it("is true while something listens on the port and false once it stops", async () => {
+    const server = net.createServer();
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as net.AddressInfo;
+    expect(await portInUse(port)).toBe(true);
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    expect(await portInUse(port)).toBe(false);
   });
 });
