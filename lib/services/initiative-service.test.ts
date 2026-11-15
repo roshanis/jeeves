@@ -903,6 +903,27 @@ describe("lib/services/initiative-service", () => {
       expect(afterFailedRetriage.state).toBe("in_review");
     });
 
+    it.each(["approved", "rejected"] as const)("decide() refuses conditions on a '%s' decision before any write", async (decision) => {
+      const draft = await svc.createDraft(db, {
+        payload: CHAMPION_PREFILL_PAYLOAD,
+        requesterActor: REQUESTER,
+        requesterName: "Priya Raman",
+      });
+      await svc.submitIntake(db, draft.initiativeId, REQUESTER);
+      await svc.startQc(db, draft.initiativeId, PROGRAM);
+      await svc.triage(db, draft.initiativeId);
+
+      await expect(
+        svc.decide(db, draft.initiativeId, APPROVER, null, {
+          decision,
+          conditions: [{ text: "Retain human review", controlId: "C-01" }],
+        }),
+      ).rejects.toThrow(/conditions are only allowed on a conditionally_approved decision/);
+
+      const row = (await db.select().from(initiatives).where(eq(initiatives.id, draft.initiativeId)))[0]!;
+      expect(row.state).toBe("in_review");
+    });
+
     it("decide() with an invalid conditionally_approved (no conditions) throws before any write", async () => {
       const draft = await svc.createDraft(db, {
         payload: CHAMPION_PREFILL_PAYLOAD,

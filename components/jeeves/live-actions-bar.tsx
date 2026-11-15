@@ -327,7 +327,8 @@ function DecideForm({
   async function handleConfirm() {
     if (!session) return;
     if (!(decision === "approved" ? readiness.canApprove : decision === "conditionally_approved" ? readiness.canConditionallyApprove : readiness.canReject)) return;
-    const cleanConditions = conditions
+    // Conditions only belong to a conditional approval; decide() refuses them otherwise.
+    const cleanConditions = (decision === "conditionally_approved" ? conditions : [])
       .map((c) => ({ text: c.text.trim(), controlId: c.controlId.trim() }))
       .filter((c) => c.text.length > 0 || c.controlId.length > 0);
     if (decision === "conditionally_approved" && cleanConditions.length === 0) {
@@ -385,10 +386,8 @@ function DecideForm({
         </select>
       </label>
 
-      {!reassessment ? <div className="flex flex-col gap-2 text-sm">
-        <span className="font-medium">
-          Conditions{decision === "conditionally_approved" ? " (at least one required)" : ""}
-        </span>
+      {!reassessment && decision === "conditionally_approved" ? <div className="flex flex-col gap-2 text-sm">
+        <span className="font-medium">Conditions (at least one required)</span>
         {conditions.map((condition, index) => (
           <div key={index} className="flex gap-2">
             <input

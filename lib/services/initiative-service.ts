@@ -1286,6 +1286,9 @@ export async function decide(
   if (decision === "conditionally_approved" && conditions.length === 0) {
     throw new ValidationError("conditionally_approved requires at least one condition");
   }
+  if (decision !== "conditionally_approved" && conditions.length > 0) {
+    throw new ValidationError("conditions are only allowed on a conditionally_approved decision");
+  }
 
   return db.transaction(async (tx) => {
     const initiative = await loadInitiativeOrThrow(tx, initiativeId, true);
