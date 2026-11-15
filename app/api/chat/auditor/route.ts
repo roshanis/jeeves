@@ -145,31 +145,26 @@ function statusForFailure(error: PortFailure): number {
 }
 
 export async function POST(req: Request): Promise<Response> {
-  let json: unknown;
-  try {
-    json = await req.json();
-  } catch {
-    return Response.json({ error: "invalid JSON body" }, { status: 400 });
-  }
-
-  const bodyText: Record<string, string> = {
-    question: typeof (json as { question?: unknown })?.question === "string"
-      ? (json as { question: string }).question
-      : "",
-  };
-
   // A production install with no LLM has nothing to answer with. The guard
   // still authenticates first (an anonymous caller gets its 401); the 503
   // follows once the caller is accepted, before any budget is reserved.
   const noLlm = llmNotConfigured();
 
-  const guard = await runMutationGuard(req, bodyText, {
+  const guard = await runMutationGuard(req, (json) => {
+    const bodyText: Record<string, string> = {
+      question: typeof (json as { question?: unknown })?.question === "string"
+        ? (json as { question: string }).question
+        : "",
+    };
+    return bodyText;
+  }, {
     inputLimits: [{ field: "question", maxChars: QUESTION_MAX_CHARS }],
     inputTotalCap: QUESTION_MAX_CHARS,
   });
   if (!guard.ok) {
     return Response.json({ error: guard.failure.message }, { status: guard.failure.status });
   }
+  const json = guard.json;
 
   const parsed = bodySchema.safeParse(json);
   if (!parsed.success) {

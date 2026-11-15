@@ -74,7 +74,9 @@ export default function MarketingLayout({
         </header>
       </div>
 
-      {children}
+      <main id="main-content" tabIndex={-1} className="outline-none">
+        {children}
+      </main>
 
       {/* Sticky only on phones, and only past the hero — see the component.
           Extra bottom padding on the footer so the bar never covers the
@@ -95,7 +97,7 @@ export default function MarketingLayout({
           Fictional demo. Synthetic data only. Not affiliated with any real
           organization.
         </p>
-        <p className="mt-1 text-[11px] text-muted-foreground/70">
+        <p className="mt-1 text-xs text-muted-foreground">
           {FRAMEWORK_DISCLAIMER}
         </p>
         <nav

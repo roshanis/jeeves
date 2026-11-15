@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq, sql } from "drizzle-orm";
 import { closeTestDb, createTestDb, type TestDb } from "../db/test-client";
-import { runBudget, sessions } from "../db/schema";
+import { rateLimitBuckets, runBudget, sessions } from "../db/schema";
 import { reserve } from "../security/budget";
 import { DbTokenBucketRateLimiter } from "../security/db-rate-limit";
 import {
@@ -11,6 +11,7 @@ import {
   getBudgetStoreForTests,
   issueDemoSession,
   issuePublicSession,
+  pruneStaleState,
   resolveSession,
   resolveSessionActor,
   runMutationGuard,
@@ -433,5 +434,92 @@ describe("clientKeyFor — JEEVES_TRUSTED_PROXY_HOPS", () => {
     clientKeyFor(withXff("1.1.1.1"));
     clientKeyFor(withXff("1.1.1.1"));
     expect(warn).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("client addresses in rate-limit buckets", () => {
+  beforeEach(async () => {
+    testDb = await createTestDb();
+    vi.stubEnv("JEEVES_COOKIE_SECRET", "rate-limit-key-test-secret");
+  });
+
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+    await closeTestDb(testDb);
+  });
+
+  it("does not store the client address in clear in any bucket key", async () => {
+    await issuePublicSession("10.0.0.1");
+    await checkSessionAttempt("10.0.0.1");
+    await checkSessionAttempt("10.0.0.1", true);
+    const session = (await issueDemoSession("priya-raman"))!;
+    await runMutationGuard(reqWithBearer(session.token, "10.0.0.1"), undefined);
+    const keys = (await testDb.select().from(rateLimitBuckets)).map((row) => row.key);
+    expect(keys.length).toBeGreaterThanOrEqual(4);
+    for (const key of keys) expect(key).not.toContain("10.0.0.1");
+    expect(keys.some((key) => key.startsWith("public-session:"))).toBe(true);
+    expect(keys.some((key) => key.startsWith("mutation:"))).toBe(true);
+  });
+
+  it("keys the same client to the same bucket, so limits still apply", async () => {
+    const first = await checkSessionAttempt("10.0.0.2");
+    for (let i = 0; i < 5; i++) await checkSessionAttempt("10.0.0.2");
+    expect(first.allowed).toBe(true);
+    expect((await checkSessionAttempt("10.0.0.2")).allowed).toBe(false);
+    expect((await checkSessionAttempt("10.0.0.3")).allowed).toBe(true);
+  });
+
+  it("prunes stale clear-text buckets left by earlier versions, and expired sessions, but not fresh rows", async () => {
+    const now = Date.now();
+    const day = 24 * 60 * 60 * 1000;
+    await testDb.insert(rateLimitBuckets).values([
+      { key: "session:10.0.0.9", tokens: 4, lastRefillMs: now - day, lastTouchedMs: now - day },
+      { key: "session:10.0.0.10", tokens: 0, lastRefillMs: now, lastTouchedMs: now },
+    ]);
+    await testDb.insert(sessions).values([
+      { token: "expired-token", personaKey: "priya-raman", workspaceId: "w1", expiresAt: now - 1000 },
+      { token: "live-token", personaKey: "priya-raman", workspaceId: "w2", expiresAt: now + 60_000 },
+    ]);
+    await pruneStaleState();
+    expect((await testDb.select().from(rateLimitBuckets)).map((row) => row.key)).toEqual(["session:10.0.0.10"]);
+    expect((await testDb.select().from(sessions)).map((row) => row.token)).toEqual(["live-token"]);
+  });
+
+  it("runs the pruning opportunistically from the request path", async () => {
+    const now = Date.now();
+    await testDb.insert(rateLimitBuckets).values({ key: "session:10.0.0.11", tokens: 5, lastRefillMs: now - 86_400_000, lastTouchedMs: now - 86_400_000 });
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    await checkSessionAttempt("10.0.0.12");
+    expect((await testDb.select().from(rateLimitBuckets)).map((row) => row.key)).not.toContain("session:10.0.0.11");
+  });
+
+  it("does not prune on most requests", async () => {
+    const now = Date.now();
+    await testDb.insert(rateLimitBuckets).values({ key: "session:10.0.0.13", tokens: 5, lastRefillMs: now - 86_400_000, lastTouchedMs: now - 86_400_000 });
+    vi.spyOn(Math, "random").mockReturnValue(0.5);
+    await checkSessionAttempt("10.0.0.14");
+    expect((await testDb.select().from(rateLimitBuckets)).map((row) => row.key)).toContain("session:10.0.0.13");
+  });
+});
+
+describe("public role is denied by default", () => {
+  beforeEach(async () => {
+    testDb = await createTestDb();
+  });
+
+  afterEach(async () => {
+    await closeTestDb(testDb);
+  });
+
+  it("answers 403 to a public session without allowPublic and passes with it", async () => {
+    const issued = await issuePublicSession("10.1.0.1");
+    if (!("token" in issued)) throw new Error("expected a public session");
+    const denied = await runMutationGuard(reqWithBearer(issued.token, "10.1.0.2"), undefined);
+    expect(denied.ok).toBe(false);
+    if (denied.ok) throw new Error("unreachable");
+    expect(denied.failure.status).toBe(403);
+    const allowed = await runMutationGuard(reqWithBearer(issued.token, "10.1.0.3"), undefined, { allowPublic: true });
+    expect(allowed).toMatchObject({ ok: true, actor: { role: "public" } });
   });
 });

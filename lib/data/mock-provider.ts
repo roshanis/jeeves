@@ -913,6 +913,10 @@ export class MockDataProvider implements DataProvider {
     return SUMMARIES.filter((s) => isVisibleToViewer(s.slug, opts));
   }
 
+  async listInitiativeIndex(opts?: WorkspaceScopedReadOptions): Promise<Array<{ slug: string; title: string }>> {
+    return (await this.listInitiatives(opts)).map((s) => ({ slug: s.slug, title: s.title }));
+  }
+
   async getInitiativeDetail(
     slug: string,
     opts?: WorkspaceScopedReadOptions,

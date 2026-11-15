@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ControlCatalog } from "@/components/jeeves/control-catalog";
 import { MockDataProvider } from "@/lib/data/mock-provider";
 import { renderWithProviders } from "./helpers";
@@ -112,5 +112,25 @@ describe("ControlCatalog", () => {
       '[data-slot="evidence-freshness"]',
     );
     expect(freshnessBadges.length).toBeGreaterThan(0);
+  });
+});
+
+describe("ControlCatalog evidence freshness clock (ui-shell-F4)", () => {
+  it("judges freshness against the server-supplied as-of time, not the wall clock", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-11-15T00:00:00Z"));
+    try {
+      const [base] = await new MockDataProvider().controlCatalog();
+      const controls = [
+        { ...base!, id: "A-1", evidenceAt: "2026-07-01T00:00:00Z" },
+        { ...base!, id: "A-2", evidenceAt: "2025-05-07T00:00:00Z" },
+      ];
+      const asOfMs = Date.parse("2026-07-15T00:00:00Z");
+      const { container } = renderWithProviders(<ControlCatalog controls={controls} asOfMs={asOfMs} />);
+      const badges = [...container.querySelectorAll('[data-slot="evidence-freshness"]')].map((b) => b.getAttribute("data-freshness"));
+      expect(badges).toEqual(["fresh", "stale"]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

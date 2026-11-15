@@ -17,6 +17,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render as rtlRender } from "@testing-library/react";
 import { LandingPage } from "@/components/jeeves/landing-page";
 import { CONTACT_URL } from "@/lib/marketing/site-config";
+import { buttonVariants } from "@/components/ui/button";
 
 // LandingPage needs no providers (pure server component), so this doesn't
 // use tests/ui/helpers.tsx's renderWithProviders — but RTL cleanup still
@@ -78,6 +79,14 @@ describe("LandingPage", () => {
     const diagram = getByRole("img", { name: /governance loop diagram/i });
     expect(diagram).toBeDefined();
     expect(diagram.tagName.toLowerCase()).toBe("svg");
+  });
+
+  it("keeps a solid focus ring (3:1) and remaps it inside the fixed-dark bands", () => {
+    const classes = buttonVariants();
+    expect(classes).toContain("focus-visible:ring-ring");
+    expect(classes).not.toMatch(/focus-visible:ring-ring\/\d+/);
+    const { container } = render(<LandingPage />);
+    expect(container.querySelectorAll('.bg-sidebar[data-surface="dark"]').length).toBeGreaterThanOrEqual(2);
   });
 });
 

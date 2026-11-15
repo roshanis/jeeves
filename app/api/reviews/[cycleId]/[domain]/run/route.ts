@@ -1,5 +1,5 @@
 /** Reviewer execution shares the fan-out claim, deadline, and reservation policy. */
-import { randomUUID } from "node:crypto";
+import { logUnexpectedError } from "@/lib/http/log-error";
 import { z } from "zod";
 import { draftBudgetPolicy } from "@/lib/workflow/draft-execution-policy";
 import { resolveAgentRuntimeConfig, reviewInvocationLimits } from "@/lib/agents/runtime";
@@ -13,6 +13,8 @@ import {
   runReviewAgent,
 } from "@/lib/services/initiative-service";
 import { runMutationGuard } from "@/lib/services/route-guard";
+import { isRouteId, notFoundResponse } from "@/lib/http/route-id";
+import { BodyReadError, DEFAULT_BODY_MAX_BYTES, readBodyText } from "@/lib/http/read-json-body";
 import type { Domain } from "@/lib/domain/types";
 import { agentInitializationResponse } from "@/lib/services/agent-error-response";
 
@@ -39,14 +41,18 @@ export async function POST(
   }
 
   const { cycleId, domain } = await context.params;
+  if (!isRouteId(cycleId) || !isRouteId(domain)) return notFoundResponse();
   if (!(DOMAINS as readonly string[]).includes(domain)) {
     return Response.json({ error: "unknown domain" }, { status: 400 });
   }
 
   // Older clients send no body; any provided revision is still checked atomically.
   let json: unknown;
-  try { const text = await req.text(); json = text ? JSON.parse(text) : {}; }
-  catch { return Response.json({ error: "invalid draft request" }, { status: 400 }); }
+  try { const text = await readBodyText(req, DEFAULT_BODY_MAX_BYTES); json = text ? JSON.parse(text) : {}; }
+  catch (error) {
+    if (error instanceof BodyReadError) return Response.json({ error: error.message }, { status: error.status });
+    return Response.json({ error: "invalid draft request" }, { status: 400 });
+  }
   const parsed = bodySchema.safeParse(json);
   if (!parsed.success) return Response.json({ error: "invalid draft request" }, { status: 400 });
   const db = getDb();
@@ -74,6 +80,6 @@ export async function POST(
     if (err instanceof ReviewIntegrityError) {
       return Response.json({ error: err.message }, { status: err.kind === "not_found" ? 404 : 409 });
     }
-    return Response.json({ error: "Draft execution could not be completed. Refresh its status before retrying.", requestId: randomUUID() }, { status: 500 });
+    return Response.json({ error: "Draft execution could not be completed. Refresh its status before retrying.", requestId: logUnexpectedError("Draft execution failed", err) }, { status: 500 });
   }
 }

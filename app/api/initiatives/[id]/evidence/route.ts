@@ -5,6 +5,7 @@ import { requireViewerForRequest } from '@/lib/services/require-viewer';
 import { getEvidence, uploadEvidence, saveEvidenceDraft, submitEvidence, assessEvidence } from '@/lib/services/evidence-service';
 import { evidenceResponseError, privateHeaders, readEvidenceJson } from '@/lib/evidence/http';
 import { EvidenceError } from '@/lib/evidence/files';
+import { isRouteId } from '@/lib/http/route-id';
 import { isSameOriginRequest } from '@/lib/security/same-origin';
 export const runtime='nodejs';
 const id=z.string().min(1).max(150);
@@ -22,7 +23,9 @@ export async function GET(req:Request,context:Context):Promise<Response> {
   if(!gate.ok)return gate.response;
   const viewer=gate.viewer;
   if(!viewer.actor)throw new EvidenceError(401,'Start the demo to view private evidence.');
-  return Response.json(await getEvidence(getDb(),(await context.params).id,{actor:viewer.actor,workspaceId:viewer.workspaceId}),{headers:privateHeaders});
+  const ref=(await context.params).id;
+  if(!isRouteId(ref))throw new EvidenceError(404,'Evidence not found.');
+  return Response.json(await getEvidence(getDb(),ref,{actor:viewer.actor,workspaceId:viewer.workspaceId}),{headers:privateHeaders});
  }catch(error){return evidenceResponseError(error);}
 }
 export async function POST(req:Request,context:Context):Promise<Response> {
@@ -34,6 +37,7 @@ export async function POST(req:Request,context:Context):Promise<Response> {
   const parsed=schema.safeParse(await readEvidenceJson(req));
   if(!parsed.success)throw new EvidenceError(400,'Invalid evidence request. Check the fields and file size.');
   const input=parsed.data,ref=(await context.params).id,db=getDb();
+  if(!isRouteId(ref))throw new EvidenceError(404,'Evidence not found.');
   let result:unknown;
   switch(input.action) {
    case 'upload':result=await uploadEvidence(db,ref,guard,input);break;

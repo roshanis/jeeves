@@ -83,8 +83,10 @@ export function DisableWithTooltip({
 }: GatedActionProps) {
   const live = useLiveSessionOptional();
   const session = live?.session ?? null;
+  const reasonId = React.useId();
 
-  const roleSatisfied = !requiresRole || session?.role === requiresRole;
+  // A public (real request) session satisfies no live action.
+  const roleSatisfied = session?.role !== "public" && (!requiresRole || session?.role === requiresRole);
   const enabled = Boolean(session && onAction && roleSatisfied);
 
   if (enabled) {
@@ -104,29 +106,60 @@ export function DisableWithTooltip({
   }
 
   const tooltip =
-    session && requiresRole && !roleSatisfied
+    session?.role === "public"
+      ? "Not available for a real request"
+      : session && requiresRole && !roleSatisfied
       ? `Requires the ${requiresRole} role — choose a persona in the header`
       : DEMO_SESSION_TOOLTIP;
 
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <span className={cn("inline-flex", className)} tabIndex={0}>
+    <DisabledAction
+      label={label}
+      className={className}
+      variant={variant}
+      dataSlot={dataSlot}
+      reason={tooltip}
+      reasonId={reasonId}
+    />
+  );
+}
+
+/**
+ * aria-disabled (not disabled) keeps the button focusable and named. The reason is linked with
+ * aria-describedby for screen readers; sighted hover/focus users get the tooltip, and a tap or
+ * click opens the same tooltip (controlled) so touch users see it too, without layout shift.
+ */
+function DisabledAction({ label, className, variant, dataSlot, reason, reasonId }: {
+  label: string;
+  className?: string;
+  variant?: React.ComponentProps<typeof Button>["variant"];
+  dataSlot?: string;
+  reason: string;
+  reasonId: string;
+}) {
+  const [open, setOpen] = React.useState(false);
+  return (
+    <span className={cn("inline-flex", className)}>
+      <Tooltip open={open} onOpenChange={setOpen}>
+        <TooltipTrigger
+          render={
             <Button
               type="button"
-              disabled
+              aria-disabled="true"
+              aria-describedby={reasonId}
               variant={variant}
-              className="pointer-events-none w-full"
+              className="w-full cursor-not-allowed opacity-50"
               data-slot={dataSlot ?? "button"}
+              onClick={() => setOpen(true)}
             >
               {label}
             </Button>
-          </span>
-        }
-      />
-      <TooltipContent>{tooltip}</TooltipContent>
-    </Tooltip>
+          }
+        />
+        <TooltipContent>{reason}</TooltipContent>
+      </Tooltip>
+      <span id={reasonId} className="sr-only">{reason}</span>
+    </span>
   );
 }
 

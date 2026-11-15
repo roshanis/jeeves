@@ -1,8 +1,8 @@
 "use client";
 
 // Control-exception workflow surface (M4). Read-only for the public; an
-// accountable approver/admin session gets Approve/Reject on a requested
-// exception and Revoke/Renew on an approved one. Every action requires a
+// accountable approver session gets Approve/Reject on a requested
+// exception and Revoke/Renew on an approved one; an admin gets Revoke/Renew only (Renew files a request an approver must still decide). Every action requires a
 // reason and writes an audit event server-side (separation of duties enforced
 // by the API — the requester can never decide their own exception).
 import * as React from "react";
@@ -64,7 +64,9 @@ export function ExceptionsPanel({ exceptions }: { exceptions: ExceptionRow[] }) 
   // A live session's `role` is the persona's actor role (approver/admin/…),
   // not the derived UI RoleKey. Only an approver/admin sees the action buttons;
   // the server independently authorizes (and enforces SoD) on the actual role.
-  const canDecide = session?.role === "approver" || session?.role === "admin";
+  const canApprove = session?.role === "approver";
+  // Admin keeps Revoke/Renew (a safety action and a request); it never approves or rejects.
+  const canDecide = canApprove || session?.role === "admin";
 
   const [dialog, setDialog] = React.useState<{ kind: ActionKind; id: string; controlId: string } | null>(null);
   const [reason, setReason] = React.useState("");
@@ -139,7 +141,7 @@ export function ExceptionsPanel({ exceptions }: { exceptions: ExceptionRow[] }) 
                       <td className="px-4 py-2.5">
                         {e.isShared && canDecide ? (
                           <span className="text-xs text-muted-foreground">Sample data — read-only</span>
-                        ) : canDecide && e.status === "requested" ? (
+                        ) : canApprove && e.status === "requested" ? (
                           <div className="flex gap-1.5">
                             <Button size="sm" onClick={() => openDialog("approve", e.id, e.controlId)}>
                               Approve

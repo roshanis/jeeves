@@ -16,7 +16,7 @@ import { ConflictError } from "@/lib/services/initiative-service";
 const context = { params: Promise.resolve({ cycleId: "cycle", domain: "privacy-hipaa" }) };
 const actor = { role: "reviewer", name: "Marcus Webb" };
 function request(body: unknown) { return new Request("http://localhost/api/reviews/cycle/privacy-hipaa/sign", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }); }
-beforeEach(() => { vi.clearAllMocks(); mocks.guard.mockResolvedValue({ ok: true, actor, workspaceId: "workspace" }); mocks.sign.mockResolvedValue({ status: "signed" }); mocks.returnReview.mockResolvedValue({ status: "returned" }); });
+beforeEach(() => { vi.clearAllMocks(); mocks.guard.mockImplementation(async (req: Request, body?: unknown) => ({ ok: true, actor, workspaceId: "workspace", json: typeof body === "function" ? await req.json().catch(() => ({})) : undefined })); mocks.sign.mockResolvedValue({ status: "signed" }); mocks.returnReview.mockResolvedValue({ status: "returned" }); });
 describe("review mutation version requirements", () => {
   it.each([{}, { expectedRevision: 0 }, { expectedEvidencePacketId: null }, { expectedRevision: -1, expectedEvidencePacketId: null }, { expectedRevision: 0.5, expectedEvidencePacketId: null }])("rejects a missing or invalid signature snapshot: %j", async (body) => {
     expect((await sign(request(body), context)).status).toBe(400);

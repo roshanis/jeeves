@@ -229,8 +229,10 @@ function ControlRowCard({ control, nowMs }: { control: ControlRow; nowMs: number
   );
 }
 
-export function ControlCatalog({ controls }: { controls: ControlRow[] }) {
-  const nowMs = useCatalogNow();
+export function ControlCatalog({ controls, asOfMs }: { controls: ControlRow[]; asOfMs?: number }) {
+  const clientNowMs = useCatalogNow();
+  // The server-supplied as-of time (the demo timeline's clock) wins over the wall clock.
+  const nowMs = asOfMs ?? clientNowMs;
   const [domainFilter, setDomainFilter] = React.useState<Domain | "runtime" | "all">("all");
   const [statusFilter, setStatusFilter] = React.useState<ControlRow["status"] | "all">("all");
 

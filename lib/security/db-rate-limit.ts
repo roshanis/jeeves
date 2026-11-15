@@ -76,21 +76,25 @@ export class DbTokenBucketRateLimiter {
    * Evict buckets that are both full and untouched for `staleAfterMs`.
    * Only full buckets qualify, so state is never dropped for a client that
    * is still partially throttled — same rule as the in-memory limiter.
+   * `limit` bounds how many rows one call removes (unbounded when omitted).
    * Returns the number of rows removed.
    */
-  async prune(staleAfterMs: number): Promise<number> {
+  async prune(staleAfterMs: number, limit?: number): Promise<number> {
     const db = this.getDb();
     const nowMs = this.now();
     const { capacity, refillPerSecond } = this.config;
 
     const rows = await db.execute(sql`
-      delete from "rate_limit_buckets"
-      where ${nowMs}::bigint - "last_touched_ms" >= ${staleAfterMs}::bigint
-        and least(
-          ${capacity}::double precision,
-          "tokens" + ((${nowMs}::bigint - "last_refill_ms")::double precision / 1000.0)
-            * ${refillPerSecond}::double precision
-        ) >= ${capacity}::double precision
+      delete from "rate_limit_buckets" where "key" in (
+        select "key" from "rate_limit_buckets"
+        where ${nowMs}::bigint - "last_touched_ms" >= ${staleAfterMs}::bigint
+          and least(
+            ${capacity}::double precision,
+            "tokens" + ((${nowMs}::bigint - "last_refill_ms")::double precision / 1000.0)
+              * ${refillPerSecond}::double precision
+          ) >= ${capacity}::double precision
+        limit ${limit ?? null}::integer
+      )
       returning "key"
     `);
     return this.rowCount(rows);

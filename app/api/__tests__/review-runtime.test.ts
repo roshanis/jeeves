@@ -18,7 +18,7 @@ import { ReviewIntegrityError } from "@/lib/services/review-integrity";
 
 beforeEach(() => {
   vi.resetAllMocks();
-  mocks.guard.mockResolvedValue({ ok: true, actor: { role: "requester" }, workspaceId: "visitor-workspace" });
+  mocks.guard.mockImplementation(async (req: Request, body?: unknown) => ({ ok: true, actor: { role: "requester" }, workspaceId: "visitor-workspace", json: typeof body === "function" ? await req.json().catch(() => ({})) : undefined }));
   mocks.db.select.mockReturnValue({ from: () => ({ where: async () => [{ workspaceId: "visitor-workspace" }] }) });
   mocks.startDraftRun.mockResolvedValue({ outcomes: [{ domain: "legal", status: "drafted" }] });
   mocks.runReviewAgent.mockResolvedValue({ status: "drafted" });
@@ -52,7 +52,7 @@ describe("review route runtime reservations", () => {
       method: "POST", body: JSON.stringify({ domains: ["legal", "security"] }), signal: controller.signal,
     });
     expect((await fanOut(fanOutRequest, { params: Promise.resolve({ id: "i" }) })).status).toBe(200);
-    expect(mocks.guard).toHaveBeenLastCalledWith(fanOutRequest, undefined);
+    expect(mocks.guard).toHaveBeenLastCalledWith(fanOutRequest, expect.any(Function), { bodyOptional: true });
     expect(mocks.startDraftRun).toHaveBeenLastCalledWith(mocks.db, "i", ["legal", "security"], undefined, {
       actor: { role: "requester" }, sessionWorkspaceId: "visitor-workspace", signal: fanOutRequest.signal,
       budget: expect.objectContaining({ tokensPerAttempt: tokens, dailyCap: 500_000 }),
@@ -79,5 +79,21 @@ describe("review route runtime reservations", () => {
       expect(response.status).toBe(409);
       expect(await response.json()).toEqual({ error: message });
     }
+  });
+});
+
+describe("unexpected draft errors are logged with their request reference", () => {
+  it.each([
+    ["fan-out", () => mocks.startDraftRun.mockRejectedValue(new Error("secret provider detail")), () => fanOut(new Request("http://localhost/api/initiatives/i/draft-run", { method: "POST", body: JSON.stringify({ domains: ["legal"] }) }), { params: Promise.resolve({ id: "i" }) })],
+    ["single", () => mocks.runReviewAgent.mockRejectedValue(new Error("secret provider detail")), () => single(new Request("http://localhost/api/reviews/c/legal/run", { method: "POST" }), { params: Promise.resolve({ cycleId: "c", domain: "legal" }) })],
+  ])("%s logs name and message with the returned requestId and keeps the body generic", async (_name, arrange, call) => {
+    arrange();
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const response = await call();
+    const body = await response.json();
+    expect(response.status).toBe(500);
+    expect(JSON.stringify(body)).not.toContain("secret provider detail");
+    expect(log).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ requestId: body.requestId, errorName: "Error", errorMessage: "secret provider detail" }));
+    log.mockRestore();
   });
 });

@@ -32,7 +32,7 @@
  * demo/test can replay history deterministically and idempotently.
  */
 import { randomUUID } from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import type { Db } from "../db/client";
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import type * as schema from "../db/schema";
@@ -53,7 +53,6 @@ import { evaluateControl, resolveThreshold, type EffectiveControl } from "../con
 import { transition, IllegalTransitionError, type AuditEventPayload } from "../lifecycle/transitions";
 import { currentControlRevisions } from "../controls/current-revisions";
 import { SYSTEM_ACTOR } from "./actors";
-import { mutationWorkspaceMismatch } from "./workspace-guard";
 import { ConflictError } from "./initiative-service";
 
 /**
@@ -196,34 +195,26 @@ async function loadDeployedCandidates(
     tier: Tier;
   }>
 > {
-  const deployments = await tx
-    .select()
+  // One joined query with the workspace predicate in SQL. For a scoped run it
+  // mirrors mutationWorkspaceMismatch: only rows whose workspace equals the
+  // scope (null scope -> null rows), never other workspaces' deployments.
+  const workspacePredicate =
+    workspaceScope === UNSCOPED_WORKSPACE
+      ? undefined
+      : workspaceScope === null
+        ? isNull(initiatives.workspaceId)
+        : eq(initiatives.workspaceId, workspaceScope);
+  const rows = await tx
+    .select({ deployment: deploymentVersions, initiative: initiatives })
     .from(deploymentVersions)
-    .where(eq(deploymentVersions.status, "deployed"));
+    .innerJoin(initiatives, eq(initiatives.id, deploymentVersions.initiativeId))
+    .where(and(eq(deploymentVersions.status, "deployed"), isNotNull(initiatives.tier), workspacePredicate));
 
-  const result: Array<{
-    deployment: typeof deploymentVersions.$inferSelect;
-    initiative: typeof initiatives.$inferSelect;
-    tier: Tier;
-  }> = [];
-
-  for (const deployment of deployments) {
-    const initRows = await tx
-      .select()
-      .from(initiatives)
-      .where(eq(initiatives.id, deployment.initiativeId));
-    const initiative = initRows[0];
-    if (!initiative || !initiative.tier) continue;
-    if (
-      workspaceScope !== UNSCOPED_WORKSPACE &&
-      mutationWorkspaceMismatch(initiative.workspaceId, workspaceScope)
-    ) {
-      continue;
-    }
-    result.push({ deployment, initiative, tier: initiative.tier as Tier });
-  }
-
-  return result;
+  return rows.map(({ deployment, initiative }) => ({
+    deployment,
+    initiative,
+    tier: initiative.tier as Tier,
+  }));
 }
 
 /** Narration is a deterministic rendering of an already detected breach. */
@@ -256,26 +247,38 @@ export async function runMonitor(
   let incidentsCreated = 0;
   let alreadyKnown = 0;
 
-  for (const { deployment, initiative, tier } of candidates) {
-    // Load Q-01 effective control (may not exist for initiatives without an
-    // eval_hallucination series, e.g. seed #10/#5/#6/#12 profiles).
-    const ecRows = await db
+  // Read once, outside the loop: the Q-01 definition and every candidate's
+  // Q-01 effective-control revisions.
+  const defRows = await db
+    .select()
+    .from(controlDefinitions)
+    .where(eq(controlDefinitions.id, RUNTIME_CONTROL_ID));
+  const def = defRows[0];
+  const ecByDeployment = new Map<string, Array<typeof effectiveControls.$inferSelect>>();
+  if (candidates.length > 0) {
+    const allEcRows = await db
       .select()
       .from(effectiveControls)
       .where(
         and(
-          eq(effectiveControls.deploymentId, deployment.id),
+          inArray(effectiveControls.deploymentId, candidates.map((c) => c.deployment.id)),
           eq(effectiveControls.controlId, RUNTIME_CONTROL_ID),
         ),
       );
+    for (const row of allEcRows) {
+      const list = ecByDeployment.get(row.deploymentId) ?? [];
+      list.push(row);
+      ecByDeployment.set(row.deploymentId, list);
+    }
+  }
+
+  for (const { deployment, initiative, tier } of candidates) {
+    // Q-01 effective control (may not exist for initiatives without an
+    // eval_hallucination series, e.g. seed #10/#5/#6/#12 profiles).
+    const ecRows = ecByDeployment.get(deployment.id) ?? [];
     if (ecRows.length === 0) continue;
     const ec = currentControlRevisions(ecRows)[0]!;
 
-    const defRows = await db
-      .select()
-      .from(controlDefinitions)
-      .where(eq(controlDefinitions.id, RUNTIME_CONTROL_ID));
-    const def = defRows[0];
     if (!def || !def.tierDefaultThresholds || def.sustainedWindow === null) continue;
 
     evaluated += 1;
@@ -426,10 +429,20 @@ export async function runMonitor(
             triggeredBy: { id: actor.id, role: actor.role },
           },
         );
-        await tx
+        // Compare-and-set on the scanned status (as admin-service's
+        // pauseDeployment does): a promotion or rollback that retired this
+        // version since the scan must not leave it 'paused' while the live
+        // version stays deployed. 0 rows rolls the whole transaction back.
+        const pausedDeployment = await tx
           .update(deploymentVersions)
           .set({ status: "paused", pausedAt: new Date(wallTs) })
-          .where(eq(deploymentVersions.id, deployment.id));
+          .where(and(eq(deploymentVersions.id, deployment.id), eq(deploymentVersions.status, "deployed")))
+          .returning();
+        if (pausedDeployment.length === 0) {
+          throw new ConflictError(
+            `deployment ${deployment.id} changed concurrently (expected status 'deployed')`,
+          );
+        }
 
         // 2. Open reassessment review cycle (paused -> re_review).
         const reassessResult = transition(

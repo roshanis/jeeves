@@ -8,6 +8,7 @@ import {
   resumeReview,
 } from "@/lib/services/initiative-service";
 import { runMutationGuard } from "@/lib/services/route-guard";
+import { isRouteId, notFoundResponse } from "@/lib/http/route-id";
 import type { Domain } from "@/lib/domain/types";
 
 const bodySchema = z.object({
@@ -18,16 +19,11 @@ export async function POST(
   req: Request,
   context: { params: Promise<{ cycleId: string; domain: string }> },
 ): Promise<Response> {
-  let json: unknown;
-  try {
-    json = await req.json();
-  } catch {
-    json = {};
-  }
-  const guard = await runMutationGuard(req, {});
+  const guard = await runMutationGuard(req, () => undefined, { bodyOptional: true });
   if (!guard.ok) {
     return Response.json({ error: guard.failure.message }, { status: guard.failure.status });
   }
+  const json = guard.json;
 
   const parsed = bodySchema.safeParse(json);
   if (!parsed.success) {
@@ -35,6 +31,7 @@ export async function POST(
   }
 
   const { cycleId, domain } = await context.params;
+  if (!isRouteId(cycleId) || !isRouteId(domain)) return notFoundResponse();
   const db = getDb();
 
   try {

@@ -108,6 +108,69 @@ describe("lib/services/monitor-service", () => {
       expect(owner.incidentsCreated).toBe(1);
     });
 
+    it("scoped run never queries other workspaces' deployments and reads the Q-01 definition at most once", async () => {
+      const { init } = await memberChatCopilot(db);
+      const { init: other } = await fwaAnomalyDetector(db);
+      await db.update(initiatives).set({ workspaceId: "ws-A" }).where(eq(initiatives.id, init.id));
+      const calls: Array<{ sql: string; params: unknown[] }> = [];
+      const client = db.$client as unknown as {
+        query: (...a: unknown[]) => Promise<unknown>;
+        transaction: (cb: (t: { query: (...a: unknown[]) => Promise<unknown> }) => Promise<unknown>) => Promise<unknown>;
+      };
+      const record = (a: unknown[]) => calls.push({ sql: String(a[0]), params: (a[1] as unknown[]) ?? [] });
+      const origQuery = client.query.bind(client);
+      const origTx = client.transaction.bind(client);
+      const spy = vi.spyOn(client, "query").mockImplementation((...a: unknown[]) => {
+        record(a);
+        return origQuery(...a);
+      });
+      const txSpy = vi.spyOn(client, "transaction").mockImplementation((cb) =>
+        origTx(async (t) => {
+          const tq = t.query.bind(t);
+          t.query = (...a: unknown[]) => {
+            record(a);
+            return tq(...a);
+          };
+          return cb(t);
+        }),
+      );
+      try {
+        await runMonitor(db, RAY_CHEN, PLUS_14D, "ws-A");
+      } finally {
+        spy.mockRestore();
+        txSpy.mockRestore();
+      }
+      expect(calls.length).toBeGreaterThan(0);
+      const initiativeLookups = calls.filter((c) => /from "initiatives"/.test(c.sql));
+      expect(initiativeLookups.some((c) => c.params.includes(other.id))).toBe(false);
+      expect(calls.filter((c) => /from "control_definitions"/.test(c.sql)).length).toBeLessThanOrEqual(1);
+    });
+
+    it("does not pause a deployment that a concurrent promotion retired after the scan", async () => {
+      const { init, dep } = await memberChatCopilot(db);
+      const origTx = db.transaction.bind(db) as (cb: unknown, cfg?: unknown) => Promise<unknown>;
+      let n = 0;
+      const spy = vi.spyOn(db, "transaction").mockImplementation((async (cb: unknown, cfg?: unknown) => {
+        n += 1;
+        // 1st call is the candidate scan; the 2nd is the monitor's own per-candidate transaction.
+        if (n === 2) await db.update(deploymentVersions).set({ status: "retired" }).where(eq(deploymentVersions.id, dep.id));
+        return origTx(cb, cfg);
+      }) as never);
+      let result;
+      try {
+        result = await runMonitor(db, SYSTEM_ACTOR, PLUS_14D, UNSCOPED_WORKSPACE);
+      } finally {
+        spy.mockRestore();
+      }
+      expect(result.errors.some((e) => e.deploymentId === dep.id)).toBe(true);
+      expect(result.incidentsCreated).toBe(0);
+      expect(await db.select().from(incidents)).toHaveLength(0);
+      const [afterInit] = await db.select().from(initiatives).where(eq(initiatives.id, init.id));
+      const [afterDep] = await db.select().from(deploymentVersions).where(eq(deploymentVersions.id, dep.id));
+      expect(afterInit!.state).toBe("deployed");
+      expect(afterDep!.status).toBe("retired");
+    });
+
     it("does not breach #4 member-chat-copilot at nowTs=base+8d (before the sustained window)", async () => {
       const result = await runMonitor(db, SYSTEM_ACTOR, PLUS_8D, UNSCOPED_WORKSPACE);
       const chatCopilotBreach = result.breaches.find((b) => b.deploymentId);

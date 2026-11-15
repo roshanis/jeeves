@@ -5,6 +5,7 @@ import { demoDoorClosed, demoDoorFallbacks } from "@/lib/config/demo-doors";
 import { checkReadOnlyMode, checkSessionAttempt, clientKeyFor, issueDemoSession, extractSessionToken, resolveSession } from "@/lib/services/route-guard";
 import { isPersonaKey, resolveActor } from "@/lib/services/actors";
 import { safeDriverCode } from "@/lib/db/driver-error";
+import { BodyReadError, PRE_SESSION_BODY_MAX_BYTES, readJsonBody } from "@/lib/http/read-json-body";
 import {
   resolveWorkspaceCookieSecret,
   signWorkspaceId,
@@ -85,9 +86,10 @@ export async function POST(req: Request): Promise<Response> {
   // Parse and validate the public input before any database-backed guards.
   let json: unknown;
   try {
-    json = await req.json();
-  } catch {
-    return Response.json({ error: "invalid JSON body" }, { status: 400 });
+    json = await readJsonBody(req, PRE_SESSION_BODY_MAX_BYTES);
+  } catch (error) {
+    if (error instanceof BodyReadError) return Response.json({ error: error.message }, { status: error.status });
+    throw error;
   }
 
   const parsed = bodySchema.safeParse(json);

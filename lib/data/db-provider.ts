@@ -397,6 +397,12 @@ export class DbDataProvider implements DataProvider {
     return visibleInitiatives.map((init) => this.summaryOf(snap, init));
   }
 
+  async listInitiativeIndex(opts?: WorkspaceScopedReadOptions): Promise<Array<{ slug: string; title: string }>> {
+    const filter = this.workspaceFilterSql(opts);
+    const query = this.db.select({ slug: initiatives.slug, title: initiatives.title }).from(initiatives);
+    return (filter ? query.where(filter) : query).orderBy(asc(initiatives.slug));
+  }
+
   async getInitiativeDetail(
     slug: string,
     opts?: WorkspaceScopedReadOptions,

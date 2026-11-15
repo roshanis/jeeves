@@ -26,6 +26,7 @@ import { getDb } from "@/lib/db/client";
 import { ConflictError, NotFoundError, ValidationError, triage } from "@/lib/services/initiative-service";
 import { IllegalTransitionError } from "@/lib/lifecycle/transitions";
 import { runMutationGuard } from "@/lib/services/route-guard";
+import { isRouteId, notFoundResponse } from "@/lib/http/route-id";
 import { SYSTEM_ACTOR } from "@/lib/services/actors";
 
 export async function POST(
@@ -42,6 +43,7 @@ export async function POST(
   }
 
   const { id } = await context.params;
+  if (!isRouteId(id)) return notFoundResponse();
   const db = getDb();
 
   try {

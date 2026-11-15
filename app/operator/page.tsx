@@ -28,7 +28,7 @@ export default function OperatorPage() {
   if (isProductionMode()) notFound();
 
   return (
-    <main className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-12">
+    <main id="main-content" tabIndex={-1} className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-12">
       <div className="flex flex-col gap-1.5">
         <span className="kicker">Operator</span>
         <h1 className="text-2xl font-semibold tracking-tight">Real requests</h1>

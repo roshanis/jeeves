@@ -46,8 +46,14 @@ beforeAll(async () => {
 });
 afterAll(async () => closeTestDb(testDb));
 
+// Like the real guard, the stand-in reads the JSON body only when the route
+// hands it an extractor, and returns it as `json` for the route to validate.
+async function guardSuccess(actorId: string, role: string, req: Request, body: unknown) {
+  const json = typeof body === "function" ? await req.json().catch(() => ({})) : undefined;
+  return { ok: true, actor: { id: actorId, role }, workspaceId: WORKSPACE, json };
+}
 function signedInAs(actorId: string, role: string): void {
-  guard.runMutationGuard.mockResolvedValue({ ok: true, actor: { id: actorId, role }, workspaceId: WORKSPACE });
+  guard.runMutationGuard.mockImplementation((req: Request, body: unknown) => guardSuccess(actorId, role, req, body));
 }
 beforeEach(() => {
   guard.runMutationGuard.mockReset();
@@ -146,9 +152,9 @@ describe("chat routes reserve no tokens when the install has no LLM", () => {
   const CHAT_ROUTES = ROUTES.filter((route) => route.name.startsWith("POST /api/chat/"));
 
   function guardThatReservesLikeTheRealOne(actorId: string, role: string): void {
-    guard.runMutationGuard.mockImplementation(async (_req: Request, _body: unknown, options: { requiresBudget?: boolean; estimatedTokens?: number } = {}) => {
+    guard.runMutationGuard.mockImplementation(async (req: Request, body: unknown, options: { requiresBudget?: boolean; estimatedTokens?: number } = {}) => {
       if (options.requiresBudget) await reserve(getBudgetStoreForTests(), "2026-09-19", options.estimatedTokens ?? 0, 500_000);
-      return { ok: true, actor: { id: actorId, role }, workspaceId: WORKSPACE };
+      return guardSuccess(actorId, role, req, body);
     });
   }
 

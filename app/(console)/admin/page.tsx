@@ -50,15 +50,19 @@ export default async function AdminPage() {
   ]);
 
   const q01 = catalog.find((c) => c.id === "Q-01");
-  const initiatives = details.map((detail) => detail.summary);
   const incidents = incidentResult.incidents ?? [];
 
   // Project-override options for the threshold dialog: only initiatives whose
   // DB id is resolvable and whose records belong to this visitor. Shared
   // defaults remain viewable; only workspace overrides can be edited.
-  const initiativeOptions: ThresholdInitiativeOption[] = initiatives
-    .filter((i) => !!i.initiativeId && !i.isSeeded)
-    .map((i) => ({ initiativeId: i.initiativeId as string, title: i.title, slug: i.slug }));
+  const initiativeOptions: ThresholdInitiativeOption[] = details
+    .filter((d) => !!d.summary.initiativeId && !d.summary.isSeeded)
+    .map((d) => ({
+      initiativeId: d.summary.initiativeId as string,
+      title: d.summary.title,
+      slug: d.summary.slug,
+      currentThreshold: d.controls.find((c) => c.id === "Q-01")?.threshold ?? null,
+    }));
 
   const deploymentRows = details.flatMap((detail) =>
     detail
@@ -79,7 +83,7 @@ export default async function AdminPage() {
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Admin console</h1>
         <p className="text-sm text-muted-foreground">
-          Narrow by design: threshold edits and pause/resume, both logged.
+          Narrow by design: threshold edits, pause/resume, rollback and exception revoke, all logged, plus filing requests like any other role.
           Admin never approves, signs, or returns — anywhere.
         </p>
       </div>

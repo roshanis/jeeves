@@ -115,7 +115,7 @@ describe("IntakeForm — read-only public mode (no live session)", () => {
       document.querySelectorAll<HTMLButtonElement>("button"),
     ).find((b) => b.textContent === "Submit intake");
     expect(submit).toBeTruthy();
-    expect(submit!.disabled).toBe(true);
+    expect(submit!.getAttribute("aria-disabled")).toBe("true");
   });
 
   it("disables the form fields and shows the read-only banner", () => {

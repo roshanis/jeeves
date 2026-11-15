@@ -20,9 +20,11 @@ import { SESSION_COOKIE_NAME } from "../security/session-cookie-name";
 import { validateInputSize, type FieldLimit, type InputGap } from "../security/input-limits";
 import { PUBLIC_PERSONA_PREFIX, isPersonaKey, resolveActor } from "./actors";
 import type { Actor } from "../domain/types";
-import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import { eq, sql } from "drizzle-orm";
+import { resolveWorkspaceCookieSecret } from "../security/workspace-cookie";
 import { getDb } from "../db/client";
+import { BodyReadError, DEFAULT_BODY_MAX_BYTES, readJsonBody } from "../http/read-json-body";
 import { redactDbError } from "../db/redact-error";
 import { sessions } from "../db/schema";
 import { READ_ONLY_PREVIEW_MESSAGE, resolveDataProviderMode } from "../data/provider-mode";
@@ -43,6 +45,43 @@ const rateLimiter = new DbTokenBucketRateLimiter(
   getDb,
   () => Date.now(),
 );
+
+/**
+ * Bucket key for a policy and client. The client address is keyed by a
+ * truncated HMAC under the server secret so addresses are not stored in
+ * clear. With no secret configured (local development) the address is kept.
+ */
+function bucketKey(policy: string, clientKey: string): string {
+  const secret = resolveWorkspaceCookieSecret();
+  if (!secret) return `${policy}:${clientKey}`;
+  return `${policy}:${createHmac("sha256", secret).update(`rate-limit-client:${clientKey}`).digest("hex").slice(0, 32)}`;
+}
+
+/** Longer than any policy needs to refill from empty (slowest: 10 tokens at 1/min), so a bucket untouched this long is full. */
+const STALE_BUCKET_MS = 60 * 60 * 1000;
+const HOUSEKEEPING_BATCH = 500;
+const HOUSEKEEPING_ODDS = 0.01;
+
+/** Delete stale rate-limit buckets and expired sessions, a bounded batch of each. */
+export async function pruneStaleState(): Promise<void> {
+  await rateLimiter.prune(STALE_BUCKET_MS, HOUSEKEEPING_BATCH);
+  await getDb().execute(sql`
+    delete from "sessions" where "token" in (
+      select "token" from "sessions" where "expires_at" <= ${Date.now()}::bigint limit ${HOUSEKEEPING_BATCH}
+    )
+  `);
+}
+
+/** Roughly one request in a hundred pays for housekeeping; it never fails the request. */
+async function maybePruneStaleState(): Promise<void> {
+  if (Math.random() >= HOUSEKEEPING_ODDS) return;
+  try {
+    await pruneStaleState();
+  } catch (err) {
+    console.error("Housekeeping failed", { errorName: redactDbError(err).name });
+  }
+}
+
 const budgetStore: BudgetStore = new DbBudgetStore(getDb);
 const DAILY_TOKEN_CAP = 500_000;
 
@@ -96,7 +135,8 @@ export async function issuePublicSession(
 
   // Namespaced like every other limiter here: the buckets share one table, and
   // an un-prefixed key would share a balance with another policy.
-  const attempt = await publicSessionLimiter.checkAndConsume(`public-session:${clientKey}`);
+  await maybePruneStaleState();
+  const attempt = await publicSessionLimiter.checkAndConsume(bucketKey("public-session", clientKey));
   if (!attempt.allowed) {
     return { rateLimited: true, retryAfterSeconds: attempt.retryAfterSeconds };
   }
@@ -138,9 +178,10 @@ export async function checkSessionAttempt(
   clientKey: string,
   switching = false,
 ): Promise<{ allowed: boolean; retryAfterSeconds: number }> {
+  await maybePruneStaleState();
   return switching
-    ? personaSwitchLimiter.checkAndConsume(`persona-switch:${clientKey}`)
-    : sessionAttemptLimiter.checkAndConsume(`session:${clientKey}`);
+    ? personaSwitchLimiter.checkAndConsume(bucketKey("persona-switch", clientKey))
+    : sessionAttemptLimiter.checkAndConsume(bucketKey("session", clientKey));
 }
 
 /* -------------------------------------------------------------------------
@@ -187,14 +228,14 @@ const operatorAttemptLimiter = new DbTokenBucketRateLimiter(
 export async function checkOperatorAttempt(
   clientKey: string,
 ): Promise<{ allowed: boolean; retryAfterSeconds: number }> {
-  return operatorAttemptLimiter.checkAndConsume(`operator:${clientKey}`);
+  return operatorAttemptLimiter.checkAndConsume(bucketKey("operator", clientKey));
 }
 
-export type GuardFailureKind = "unauthorized" | "rate_limited" | "invalid_input" | "budget_exhausted" | "read_only";
+export type GuardFailureKind = "unauthorized" | "rate_limited" | "invalid_input" | "budget_exhausted" | "read_only" | "payload_too_large";
 
 export interface GuardFailure {
   kind: GuardFailureKind;
-  status: 401 | 403 | 429 | 400;
+  status: 401 | 403 | 429 | 400 | 413;
   message: string;
   gaps?: InputGap[];
   retryAfterSeconds?: number;
@@ -331,7 +372,9 @@ export async function resolveSessionActor(token: string | null): Promise<Actor |
 export function extractSessionToken(req: Request): string | null {
   const auth = req.headers.get("authorization");
   if (auth && /^bearer /i.test(auth)) {
-    return auth.slice("Bearer ".length).trim();
+    const bearer = auth.slice("Bearer ".length).trim();
+    // U+0000 cannot be stored in Postgres text: such a token is signed out, not a 500.
+    return bearer.includes("\u0000") ? null : bearer;
   }
   const cookieHeader = req.headers.get("cookie");
   if (cookieHeader) {
@@ -342,7 +385,8 @@ export function extractSessionToken(req: Request): string | null {
     if (match) {
       // A stray "%" must read as "no session", not throw into a 500.
       try {
-        return decodeURIComponent(match.slice(SESSION_COOKIE_NAME.length + 1));
+        const cookie = decodeURIComponent(match.slice(SESSION_COOKIE_NAME.length + 1));
+        return cookie.includes("\u0000") ? null : cookie;
       } catch {
         return null;
       }
@@ -438,6 +482,10 @@ export interface MutationGuardOptions {
    * submit intake.
    */
   allowPublic?: boolean;
+  /** Byte cap for the JSON body the guard reads (default 1 MiB). */
+  maxBodyBytes?: number;
+  /** An empty or malformed body reads as `{}` instead of failing 400. */
+  bodyOptional?: boolean;
   /** Field-level input caps to validate `body` against (skipped if omitted). */
   inputLimits?: FieldLimit[];
   inputTotalCap?: number;
@@ -452,7 +500,12 @@ export interface MutationGuardSuccess {
   actor: Actor;
   /** The session's bound workspace (M2.5 inc.2a). Null if somehow absent. */
   workspaceId: string | null;
+  /** The parsed JSON body, read only after the session, rate limit and cap passed. Undefined when the route gave no extractor. */
+  json?: unknown;
 }
+
+/** Maps the parsed JSON body to the flat string fields that `inputLimits` check. */
+export type BodyExtractor = (json: unknown) => Record<string, string> | undefined;
 
 export type MutationGuardResult = MutationGuardSuccess | { ok: false; failure: GuardFailure };
 
@@ -461,14 +514,14 @@ function todayUtc(): string {
 }
 
 /**
- * Rejects static preview mode, then runs session -> rate-limit ->
- * input-validation -> (optional) budget in order, short-circuiting on the first failure — matching the task brief's
+ * Rejects static preview mode, then runs session -> rate-limit -> (when `body`
+ * is an extractor) capped body read -> input-validation -> (optional) budget in order, short-circuiting on the first failure — matching the task brief's
  * required precedence ("401 with no side effects" happens before rate
  * limiting/budget can be consumed by an unauthenticated caller).
  */
 export async function runMutationGuard(
   req: Request,
-  body: Record<string, string> | undefined,
+  body: Record<string, string> | BodyExtractor | undefined,
   options: MutationGuardOptions = {},
 ): Promise<MutationGuardResult> {
   const readOnlyFailure = checkReadOnlyMode();
@@ -496,7 +549,8 @@ export async function runMutationGuard(
 
   const clientKey = clientKeyFor(req);
   // Independent policies must not share a persisted token balance.
-  const rl = await rateLimiter.checkAndConsume(`mutation:${clientKey}`);
+  const rl = await rateLimiter.checkAndConsume(bucketKey("mutation", clientKey));
+  await maybePruneStaleState();
   if (!rl.allowed) {
     return {
       ok: false,
@@ -509,8 +563,24 @@ export async function runMutationGuard(
     };
   }
 
-  if (options.inputLimits && body) {
-    const validation = validateInputSize(body, options.inputLimits, options.inputTotalCap ?? 100_000);
+  let json: unknown;
+  let fields: Record<string, string> | undefined;
+  if (typeof body === "function") {
+    try {
+      json = await readJsonBody(req, options.maxBodyBytes ?? DEFAULT_BODY_MAX_BYTES, { optional: options.bodyOptional });
+    } catch (err) {
+      if (!(err instanceof BodyReadError)) throw err;
+      return err.status === 413
+        ? { ok: false, failure: { kind: "payload_too_large", status: 413, message: err.message } }
+        : { ok: false, failure: { kind: "invalid_input", status: 400, message: err.message } };
+    }
+    fields = body(json);
+  } else {
+    fields = body;
+  }
+
+  if (options.inputLimits && fields) {
+    const validation = validateInputSize(fields, options.inputLimits, options.inputTotalCap ?? 100_000);
     if (!validation.ok) {
       return {
         ok: false,
@@ -530,7 +600,7 @@ export async function runMutationGuard(
     }
   }
 
-  return { ok: true, actor, workspaceId };
+  return { ok: true, actor, workspaceId, json };
 }
 
 /**

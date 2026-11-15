@@ -37,7 +37,7 @@ const STEPS = [
 export default function ThankYouPage() {
   guardDemoPage();
   return (
-    <main className="mx-auto flex w-full max-w-2xl flex-col gap-8 px-4 py-16">
+    <div className="mx-auto flex w-full max-w-2xl flex-col gap-8 px-4 py-16">
       <div className="flex flex-col gap-3">
         <span
           className="grid size-11 place-items-center rounded-full bg-status-good-bg text-status-good-fg"
@@ -92,6 +92,6 @@ export default function ThankYouPage() {
           Try the demo while you wait
         </Link>
       </div>
-    </main>
+    </div>
   );
 }

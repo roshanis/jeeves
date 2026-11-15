@@ -24,6 +24,7 @@ import {
   decide,
 } from "@/lib/services/initiative-service";
 import { runMutationGuard } from "@/lib/services/route-guard";
+import { isRouteId, notFoundResponse } from "@/lib/http/route-id";
 
 const bodySchema = z.object({
   decision: z.enum(["approved", "conditionally_approved", "rejected"]),
@@ -37,24 +38,18 @@ export async function POST(
   req: Request,
   context: { params: Promise<{ id: string }> },
 ): Promise<Response> {
-  const guard = await runMutationGuard(req, undefined);
+  const guard = await runMutationGuard(req, () => undefined);
   if (!guard.ok) {
     return Response.json({ error: guard.failure.message }, { status: guard.failure.status });
   }
 
-  let json: unknown;
-  try {
-    json = await req.json();
-  } catch {
-    return Response.json({ error: "invalid JSON body" }, { status: 400 });
-  }
-
-  const parsed = bodySchema.safeParse(json);
+  const parsed = bodySchema.safeParse(guard.json);
   if (!parsed.success) {
     return Response.json({ error: "invalid request body" }, { status: 400 });
   }
 
   const { id } = await context.params;
+  if (!isRouteId(id)) return notFoundResponse();
   const db = getDb();
 
   try {

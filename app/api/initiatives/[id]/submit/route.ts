@@ -30,6 +30,7 @@ import {
   submitIntake,
 } from "@/lib/services/initiative-service";
 import { runMutationGuard } from "@/lib/services/route-guard";
+import { isRouteId, notFoundResponse } from "@/lib/http/route-id";
 import { INTAKE_AUTHOR_ROLES } from "@/lib/services/intake-author-roles";
 
 export async function POST(
@@ -45,6 +46,7 @@ export async function POST(
   }
 
   const { id } = await context.params;
+  if (!isRouteId(id)) return notFoundResponse();
   const db = getDb();
 
   try {

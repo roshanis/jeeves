@@ -1,6 +1,6 @@
 /** Draft review commands reserve estimated capacity only after authorization and a database claim. */
 import { z } from "zod";
-import { randomUUID } from "node:crypto";
+import { logUnexpectedError } from "@/lib/http/log-error";
 import { draftBudgetPolicy } from "@/lib/workflow/draft-execution-policy";
 import { resolveAgentRuntimeConfig, reviewInvocationLimits } from "@/lib/agents/runtime";
 import { ReviewIntegrityError } from "@/lib/services/review-integrity";
@@ -9,6 +9,7 @@ import { getDb } from "@/lib/db/client";
 import { initiatives, reviewCycles } from "@/lib/db/schema";
 import { startDraftRun, getRunProgress } from "@/lib/workflow/review-run";
 import { runMutationGuard } from "@/lib/services/route-guard";
+import { isRouteId, notFoundResponse } from "@/lib/http/route-id";
 import { workspaceMismatch, mutationWorkspaceMismatch } from "@/lib/services/workspace-guard";
 import { requireViewerForRequest } from "@/lib/services/require-viewer";
 import type { Domain } from "@/lib/domain/types";
@@ -36,18 +37,11 @@ export async function POST(
   req: Request,
   context: { params: Promise<{ id: string }> },
 ): Promise<Response> {
-  let json: unknown;
-  try {
-    json = await req.json();
-  } catch {
-    json = {};
-  }
-  const parsed = bodySchema.safeParse(json);
-
-  const guard = await runMutationGuard(req, undefined);
+  const guard = await runMutationGuard(req, () => undefined, { bodyOptional: true });
   if (!guard.ok) {
     return Response.json({ error: guard.failure.message }, { status: guard.failure.status });
   }
+  const parsed = bodySchema.safeParse(guard.json);
 
   // Finding #6 (partial): role restriction — see file-level comment for the
   // evidence behind this allowed set.
@@ -60,6 +54,7 @@ export async function POST(
   }
 
   const { id } = await context.params;
+  if (!isRouteId(id)) return notFoundResponse();
   const db = getDb();
 
   // Finding #1: workspace authorization — load the initiative first so a
@@ -89,7 +84,7 @@ export async function POST(
     if (error instanceof ReviewIntegrityError) {
       return Response.json({ error: error.message }, { status: error.kind === "not_found" ? 404 : 409 });
     }
-    return Response.json({ error: "Draft execution could not be completed. Refresh its status before retrying.", requestId: randomUUID() }, { status: 500 });
+    return Response.json({ error: "Draft execution could not be completed. Refresh its status before retrying.", requestId: logUnexpectedError("Draft execution failed", error) }, { status: 500 });
   }
 }
 

@@ -309,6 +309,8 @@ export interface PromotionListItem {
   feedbackProvenanceSignedOff: boolean;
   deployedAt: string;
   supersedesVersion: string | null;
+  /** True when this viewer cannot act on the row (shared sample data), so it is shown read-only. */
+  isShared?: boolean;
 }
 
 /** Result shape of POST /api/deployments/promotions/[id]/promote (mirrors promotion-service.ts#PromoteCheckpointResult). */

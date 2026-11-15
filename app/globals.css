@@ -278,9 +278,15 @@
   --sidebar-ring: oklch(0.68 0.10 197);
 }
 
+/* Fixed-dark bands (bg-sidebar) inside a light page: --ring #0b6b77 is 1.63:1 on
+   #0b1418, so use the sidebar ring there (#21d4c2 is 9.99:1). */
+[data-surface="dark"] {
+  --ring: var(--sidebar-ring);
+}
+
 @layer base {
   * {
-    @apply border-border outline-ring/50;
+    @apply border-border outline-ring;
   }
   body {
     @apply bg-background text-foreground;

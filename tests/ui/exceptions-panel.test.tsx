@@ -81,6 +81,22 @@ describe("ExceptionsPanel", () => {
     expect(screen.getByRole("button", { name: "Reject" })).toBeDefined();
   });
 
+  it("offers an admin no Approve/Reject (Admin never approves); Revoke and Renew stay", () => {
+    mocks.session.mockReturnValue({ session: { token: "t", role: "admin" }, logout: vi.fn() });
+    renderWithProviders(
+      <ExceptionsPanel
+        exceptions={[
+          { ...requested, id: "exc-r", isShared: false },
+          { ...requested, id: "exc-a", status: "approved", isShared: false },
+        ]}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Reject" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Renew" })).toBeDefined();
+    expect(screen.getByRole("button", { name: "Revoke" })).toBeDefined();
+  });
+
   it("explains a 404 instead of the generic failure message", () => {
     expect(apiErrorToMessage(new ApiError(404, "controlException not found: exc-seed-hr-r01"))).toMatch(/no longer available/i);
   });
