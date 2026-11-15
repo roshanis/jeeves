@@ -13,7 +13,7 @@ import { runtimeDatabaseUrl } from "../db/runtime-config";
  */
 import { DbTokenBucketRateLimiter } from "../security/db-rate-limit";
 import { issueSession } from "../security/session";
-import { DbBudgetStore, reserve, type BudgetStore } from "../security/budget";
+import { DAILY_TOKEN_CAP, DbBudgetStore, reserve, type BudgetStore } from "../security/budget";
 import { validateInputSize, type FieldLimit, type InputGap } from "../security/input-limits";
 import { PUBLIC_PERSONA_PREFIX, isPersonaKey, resolveActor } from "./actors";
 import type { Actor } from "../domain/types";
@@ -31,10 +31,10 @@ const SESSION_TTL_MS = 60 * 60 * 1000; // 1 hour demo session
 /** Long enough to fill in one intake form, short enough not to be a handle. */
 const PUBLIC_SESSION_TTL_MS = 30 * 60 * 1000;
 /**
- * Marks a workspace as belonging to a public submitter. Read-scoping uses
- * this to let the Program Office see public submissions; mutation does NOT
- * (workspaceMismatch stays an exact match), so visitors stay isolated from
- * each other.
+ * Marks a workspace as belonging to a public submitter. Only the operator
+ * queue (behind OPERATOR_TOKEN), the public-session mint and the installation
+ * check use it; no persona role may read public submissions, and mutation
+ * stays an exact workspace match, so visitors stay isolated from each other.
  */
 export const PUBLIC_WORKSPACE_PREFIX = "public-";
 const rateLimiter = new DbTokenBucketRateLimiter(
@@ -91,7 +91,6 @@ async function maybePruneStaleState(): Promise<void> {
 }
 
 const budgetStore: BudgetStore = new DbBudgetStore(getDb);
-const DAILY_TOKEN_CAP = 500_000;
 
 // Anonymous workspace creation stays bounded separately from business actions.
 const sessionAttemptLimiter = new DbTokenBucketRateLimiter(
@@ -533,7 +532,7 @@ export async function runMutationGuard(
     if (!result.granted) {
       return {
         ok: false,
-        failure: { kind: "budget_exhausted", status: 429, message: "demo token budget exhausted for today" },
+        failure: { kind: "budget_exhausted", status: 429, message: "daily model budget reached" },
       };
     }
   }
@@ -549,7 +548,7 @@ export async function runMutationGuard(
 export async function reserveDailyBudget(tokens: number, day: string = todayUtc()): Promise<GuardFailure | null> {
   const result = await reserve(budgetStore, day, tokens, DAILY_TOKEN_CAP);
   if (result.granted) return null;
-  return { kind: "budget_exhausted", status: 429, message: "demo token budget exhausted for today" };
+  return { kind: "budget_exhausted", status: 429, message: "daily model budget reached" };
 }
 
 /** Exposed for tests that want to exhaust/reset the shared budget deterministically. */

@@ -292,6 +292,7 @@ describe("lib/services/route-guard", () => {
       if (result.ok) throw new Error("unreachable");
       expect(result.failure.status).toBe(429);
       expect(result.failure.kind).toBe("budget_exhausted");
+      expect(result.failure.message).toBe("daily model budget reached");
     });
 
     it("budget reserve costs 0 tokens for the mock adapter but still exercises the reserve path", async () => {

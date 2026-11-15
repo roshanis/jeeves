@@ -198,7 +198,7 @@ async function executeClaim(db: Db, claim: Claim, port: AgentPort | undefined, o
     if(reserved==="superseded")return {outcome:{cycleId:claim.row.cycleId,domain:claim.row.domain as Domain,status:"skipped",reason:"superseded"}};
     if(reserved==="cancelled"){result={ok:false,error:cancelled()};break;}
     if(reserved==="timed-out"){result={ok:false,error:timeout(bounded(options.runTimeoutMs,90_000,180_000))};break;}
-    if(reserved==="budget-exhausted"){result={ok:false,error:{kind:"budget-exhausted",message:"Demo token reservation budget exhausted for today."}};break;}
+    if(reserved==="budget-exhausted"){result={ok:false,error:{kind:"budget-exhausted",message:"Daily model budget reached."}};break;}
     // Lock acquisition and reservation can consume the remaining run time.
     const dispatchRemaining = deadline-Date.now();
     if (dispatchRemaining<=0) {result={ok:false,error:timeout(bounded(options.runTimeoutMs,90_000,180_000))};break;}

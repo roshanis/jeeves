@@ -75,7 +75,7 @@ export async function POST(
       runTimeoutMs: limits.timeoutMs, attemptTimeoutMs: limits.attemptTimeoutMs,
     });
     if (result.outcomes.every((outcome) => outcome.error?.kind === "budget-exhausted")) {
-      return Response.json({ ...result, error: "Demo token reservation budget exhausted for today." }, { status: 429 });
+      return Response.json({ ...result, error: "Daily model budget reached." }, { status: 429 });
     }
     return Response.json(result, { status: 200 });
   } catch (error) {
