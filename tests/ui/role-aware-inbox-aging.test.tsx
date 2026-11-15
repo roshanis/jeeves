@@ -10,6 +10,7 @@ import { useRole } from "@/components/jeeves/role-context";
 import type { InitiativeSummary } from "@/lib/data/dto";
 import type { OverlayFlags } from "@/lib/domain/types";
 import { reviewDecisionReadiness } from "@/lib/approval/review-readiness";
+import { positionedInside } from "./containing-block";
 
 const OLD = "2020-01-01T00:00:00.000Z"; // far past -> "overdue"
 
@@ -118,6 +119,22 @@ describe("Role-aware Inbox reviewer queue aging", () => {
     // ...and the queue header shows the oldest-waiting aging pill.
     const oldest = screen.getAllByTitle("Oldest review waiting in this queue");
     expect(oldest.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("keeps the queue table's screen-reader text inside its scroll region", () => {
+    renderWithProviders(
+      <PersonaHarness personaKey="marcus-webb">
+        <RoleAwareInbox {...baseProps} />
+      </PersonaHarness>,
+    );
+    fireEvent.click(screen.getByText("switch-persona"));
+
+    const table = screen.getByRole("table", { name: "Reviews awaiting your signature" });
+    const scroller = table.closest('[data-slot="initiative-table"]')!;
+    expect(scroller.textContent).toContain("(overdue)");
+    for (const el of Array.from(scroller.querySelectorAll(".sr-only"))) {
+      expect(positionedInside(el, scroller), `"${el.textContent}" is positioned outside the region`).toBe(true);
+    }
   });
 });
 
