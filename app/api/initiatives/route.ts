@@ -35,7 +35,7 @@ export async function POST(req: Request): Promise<Response> {
     const raw = await readBodyText(req, 64_000);
     json = JSON.parse(raw);
   } catch (error) {
-    if (error instanceof BodyReadError) return Response.json({ error: "request body exceeds 64000 bytes" }, { status: 413 });
+    if (error instanceof BodyReadError && error.status === 413) return Response.json({ error: "request body exceeds 64000 bytes" }, { status: 413 });
     return Response.json({ error: "invalid JSON body" }, { status: 400 });
   }
 

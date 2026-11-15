@@ -98,6 +98,7 @@ export async function GET(req: Request): Promise<Response> {
   if (!cycleId) {
     return Response.json({ error: "cycleId query param is required" }, { status: 400 });
   }
+  if (!isRouteId(cycleId)) return Response.json({ error: "invalid cycleId" }, { status: 400 });
 
   const db = getDb();
   const viewerWorkspaceId = gate.viewer.workspaceId;

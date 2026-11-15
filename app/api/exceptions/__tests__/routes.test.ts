@@ -280,6 +280,31 @@ describe("POST /api/exceptions/[id]/decide", () => {
   });
 });
 
+describe("POST /api/exceptions/[id]/decide as admin", () => {
+  it("403s an admin on approve and on reject, and the exception stays requested", async () => {
+    const requesterToken = await issueSessionFor("marcus-webb", "40.0.4.1");
+    const workspaceId = await sessionWorkspace(requesterToken);
+    const ecId = await anEffectiveControlId(workspaceId);
+    const { id } = await (await request(requesterToken, ecId, "40.0.4.1")).json();
+
+    const { POST: decidePost } = await import("../[id]/decide/route");
+    const adminToken = await issueSessionFor("ray-chen", "40.0.4.2", workspaceId);
+    for (const approve of [true, false]) {
+      const res = await decidePost(
+        new Request(`http://localhost/api/exceptions/${id}/decide`, {
+          method: "POST",
+          headers: bearer(adminToken, "40.0.4.2"),
+          body: JSON.stringify({ approve, reason: "admin decides" }),
+        }),
+        { params: Promise.resolve({ id }) },
+      );
+      expect(res.status).toBe(403);
+    }
+    const row = (await exceptionService.listExceptions(testDb)).find((e) => e.id === id);
+    expect(row?.status).toBe("requested");
+  });
+});
+
 describe("POST /api/exceptions/[id]/revoke", () => {
   it("revokes an approved exception", async () => {
     const requesterToken = await issueSessionFor("marcus-webb", "40.0.4.1");

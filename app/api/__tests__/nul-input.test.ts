@@ -25,6 +25,19 @@ function auth(token: string, ip = "7.7.7.7"): Record<string, string> {
 }
 
 describe("NUL bytes at the boundary", () => {
+  it("answers 400 to a NUL or oversized cycleId on the draft-run progress GET", async () => {
+    const { GET } = await import("../initiatives/[id]/draft-run/route");
+    const call = (cycleId: string) =>
+      GET(new Request(`http://localhost/api/initiatives/x/draft-run?cycleId=${cycleId}`));
+    const nul = await call("%00");
+    expect(nul.status).toBe(400);
+    expect(await nul.json()).toEqual({ error: "invalid cycleId" });
+    expect((await call("a".repeat(201))).status).toBe(400);
+    const unknown = await call("cycle-unknown");
+    expect(unknown.status).toBe(200);
+    expect((await unknown.json()).rows).toEqual([]);
+  });
+
   it("answers 404 to a NUL in a route id (GET intake)", async () => {
     const session = (await issueDemoSession("priya-raman"))!;
     const { GET } = await import("../initiatives/[id]/intake/route");

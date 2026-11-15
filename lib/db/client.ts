@@ -15,6 +15,7 @@ import { postgresPoolConfig } from "./connection-config";
 import { assertRuntimeDatabaseConfigured, runtimeDatabaseUrl } from "./runtime-config";
 import ws from "ws";
 import * as schema from "./schema";
+import { redactTransactionErrors } from "./redact-error";
 import { selectDriver } from "./driver-select";
 import type { DbDriver } from "./driver-select";
 
@@ -102,7 +103,7 @@ export function getDb(): Db {
   if (driver === "neon") {
     neonConfig.webSocketConstructor = ws;
     dbSlot.pool ??= createNeonPool(databaseUrl!);
-    dbSlot.db = drizzleNeon({ client: dbSlot.pool, schema });
+    dbSlot.db = redactTransactionErrors(drizzleNeon({ client: dbSlot.pool, schema }));
     handleDrivers.set(dbSlot.db, "neon");
     return dbSlot.db;
   }
@@ -112,7 +113,7 @@ export function getDb(): Db {
     // the right driver for any long-lived process (a container), and the only
     // one that works against a non-Neon server.
     dbSlot.pgPool ??= createPgPool(databaseUrl!);
-    dbSlot.db = drizzleNodePg({ client: dbSlot.pgPool, schema });
+    dbSlot.db = redactTransactionErrors(drizzleNodePg({ client: dbSlot.pgPool, schema }));
     handleDrivers.set(dbSlot.db, "pg");
     return dbSlot.db;
   }
@@ -127,7 +128,7 @@ export function getDb(): Db {
     ]);
   }
   const client = new PGlite(localPgliteDirectory());
-  dbSlot.db = drizzlePglite({ client, schema });
+  dbSlot.db = redactTransactionErrors(drizzlePglite({ client, schema }));
   handleDrivers.set(dbSlot.db, "pglite");
   return dbSlot.db;
 }

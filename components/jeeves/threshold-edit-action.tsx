@@ -26,10 +26,8 @@ import {
 } from "./threshold-edit-dialog";
 
 export function ThresholdEditAction({
-  currentThreshold,
   initiativeOptions,
 }: {
-  currentThreshold: number | null;
   initiativeOptions: ThresholdInitiativeOption[];
 }) {
   const router = useRouter();
@@ -80,7 +78,6 @@ export function ThresholdEditAction({
       <ThresholdEditDialog
         open={open}
         onOpenChange={setOpen}
-        currentThreshold={currentThreshold}
         initiativeOptions={initiativeOptions}
         pending={pending}
         error={error}

@@ -134,3 +134,45 @@ describe("routes that read before a session exists", () => {
     expect(state.pulled).toBeLessThan(1024 * 1024);
   });
 });
+
+describe("byte order mark and failed streams", () => {
+  const BOM_BODY = "\uFEFF" + '{"a":1}';
+  const failingStream = () =>
+    new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.error(new Error("aborted"));
+      },
+    });
+
+  it("reads a JSON body that starts with a byte order mark", async () => {
+    const { readJsonBody } = await import("@/lib/http/read-json-body");
+    expect(await readJsonBody(post("http://localhost/x", BOM_BODY), 1024)).toEqual({ a: 1 });
+    expect(await readJsonBody(post("http://localhost/x", BOM_BODY), 1024, { optional: true })).toEqual({ a: 1 });
+  });
+
+  it("accepts a byte order mark on POST /api/initiatives", async () => {
+    const session = (await issueDemoSession("priya-raman"))!;
+    const { POST } = await import("../initiatives/route");
+    const res = await POST(
+      post("http://localhost/api/initiatives", BOM_BODY, { authorization: `Bearer ${session.token}` }),
+    );
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).not.toBe("invalid JSON body");
+  });
+
+  it("turns a failed body stream into a 400 BodyReadError", async () => {
+    const { readBodyText, BodyReadError } = await import("@/lib/http/read-json-body");
+    const err = await readBodyText(post("http://localhost/x", failingStream()), 1024).catch((e) => e);
+    expect(err).toBeInstanceOf(BodyReadError);
+    expect(err.status).toBe(400);
+  });
+
+  it("answers 400 (not 413, not a throw) on POST /api/initiatives and a guarded route", async () => {
+    const session = (await issueDemoSession("priya-raman"))!;
+    const auth = { authorization: `Bearer ${session.token}` };
+    const { POST } = await import("../initiatives/route");
+    expect((await POST(post("http://localhost/api/initiatives", failingStream(), auth))).status).toBe(400);
+    const { POST: chat } = await import("../chat/auditor/route");
+    expect((await chat(post("http://localhost/api/chat/auditor", failingStream(), auth))).status).toBe(400);
+  });
+});

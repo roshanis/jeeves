@@ -8,6 +8,7 @@ interface PgErrorFields {
 
 const SQLSTATE = /^[0-9A-Z]{5}$/;
 const MAX_REASON_CHARS = 200;
+const MAX_STATEMENT_CHARS = 120;
 
 /**
  * Sanitized copy of a failed-query error: SQLSTATE and constraint only, never
@@ -31,9 +32,36 @@ export function redactDbError(err: unknown): Error {
     const reason = e.cause.message.replace(/\s*[\r\n]+\s*/g, " ").slice(0, MAX_REASON_CHARS);
     if (reason) message += `: ${reason}`;
   }
-  const out = new Error(message) as Error & PgErrorFields & { cause?: PgErrorFields };
+  const out = new Error(message) as Error & PgErrorFields & { cause?: PgErrorFields; statement?: string };
   out.code = rawCode;
   out.constraint = constraint;
   out.cause = { code: rawCode, constraint };
+  // The statement holds placeholders only (no sql.raw in the sources): it names the table and operation for the operator.
+  if (typeof e.query === "string") out.statement = e.query.replace(/\s+/g, " ").trim().slice(0, MAX_STATEMENT_CHARS);
   return out;
+}
+
+const WRAPPED = Symbol.for("jeeves.db.transactionRedacted");
+
+/**
+ * Makes `db.transaction` on this instance rethrow failed-statement errors
+ * through redactDbError, so a route or page that lets one escape never logs
+ * the bound parameters. Other rejections pass through as the same object.
+ * Statements run outside a transaction are not covered. Idempotent.
+ */
+export function redactTransactionErrors<T extends { transaction: (...args: never[]) => Promise<unknown> }>(db: T): T {
+  const target = db as T & { [WRAPPED]?: true };
+  if (target[WRAPPED]) return db;
+  const original = db.transaction.bind(db) as (...args: unknown[]) => Promise<unknown>;
+  (db as { transaction: unknown }).transaction = async (...args: unknown[]) => {
+    try {
+      return await original(...args);
+    } catch (err) {
+      const e = err as { query?: unknown; params?: unknown } | null;
+      if (e && typeof e === "object" && "query" in e && "params" in e) throw redactDbError(err);
+      throw err;
+    }
+  };
+  target[WRAPPED] = true;
+  return db;
 }

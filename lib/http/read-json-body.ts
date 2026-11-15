@@ -22,8 +22,9 @@ export class BodyReadError extends Error {
   constructor(
     readonly status: 400 | 413,
     message: string,
+    options?: { cause?: unknown },
   ) {
-    super(message);
+    super(message, options);
     this.name = "BodyReadError";
   }
 }
@@ -38,7 +39,9 @@ export async function readBodyText(req: Request, maxBytes: number): Promise<stri
   let size = 0;
   try {
     while (true) {
-      const { done, value } = await reader.read();
+      const { done, value } = await reader.read().catch((err: unknown) => {
+        throw new BodyReadError(400, "request body could not be read", { cause: err });
+      });
       if (done) break;
       size += value.byteLength;
       if (size > maxBytes) {
@@ -50,7 +53,7 @@ export async function readBodyText(req: Request, maxBytes: number): Promise<stri
   } finally {
     reader.releaseLock();
   }
-  return Buffer.concat(chunks).toString("utf8");
+  return new TextDecoder().decode(Buffer.concat(chunks)); // strips a leading byte order mark, as req.json() does
 }
 
 /**

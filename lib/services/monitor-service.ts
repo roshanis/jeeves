@@ -51,6 +51,7 @@ import {
 import type { Actor, LifecycleState, Observation, Tier } from "../domain/types";
 import { evaluateControl, resolveThreshold, type EffectiveControl } from "../controls/evaluate";
 import { transition, IllegalTransitionError, type AuditEventPayload } from "../lifecycle/transitions";
+import { redactDbError } from "../db/redact-error";
 import { currentControlRevisions } from "../controls/current-revisions";
 import { SYSTEM_ACTOR } from "./actors";
 import { ConflictError } from "./initiative-service";
@@ -570,7 +571,7 @@ export async function runMonitor(
         reviewCycleId: outcome.reviewCycleId,
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = redactDbError(err).message;
       // P1 fix (external-review — a failed detection pass rendered
       // identically to a clean run): a real deployment must leave a trace
       // in the server logs even when nothing else observes this run.

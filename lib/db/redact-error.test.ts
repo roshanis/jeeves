@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { redactDbError } from "./redact-error";
+import { redactDbError, redactTransactionErrors } from "./redact-error";
+import { createTestDb, closeTestDb } from "./test-client";
+import { sql } from "drizzle-orm";
 
 const SECRET = "SECRET-TOKEN-abc123";
 
@@ -62,5 +64,51 @@ describe("redactDbError", () => {
   it("passes a non-query error through unchanged", () => {
     const err = new Error("boom");
     expect(redactDbError(err)).toBe(err);
+  });
+});
+
+describe("redactTransactionErrors", () => {
+  it("rewrites a failed statement inside a transaction, keeping SQLSTATE and the statement placeholders only", async () => {
+    const db = redactTransactionErrors(await createTestDb());
+    try {
+      const err = (await db
+        .transaction(async (tx) => {
+          await tx.execute(sql`insert into initiatives (id) values (${"marker-4f1c"})`);
+        })
+        .then(
+          () => null,
+          (e: unknown) => e,
+        )) as (Error & { code?: string; statement?: string }) | null;
+      expect(err).toBeInstanceOf(Error);
+      expect(err!.message).not.toContain("marker-4f1c");
+      expect(JSON.stringify(err, Object.getOwnPropertyNames(err))).not.toContain("marker-4f1c");
+      expect(err!.code).toMatch(/^[0-9A-Z]{5}$/);
+      expect(err!.statement).toContain("insert into initiatives");
+    } finally {
+      await closeTestDb(db);
+    }
+  });
+
+  it("rethrows an application error as the very same object and returns a resolved value", async () => {
+    const db = redactTransactionErrors(await createTestDb());
+    try {
+      const mine = new Error("conflict");
+      await expect(db.transaction(async () => { throw mine; })).rejects.toBe(mine);
+      await expect(db.transaction(async () => 42)).resolves.toBe(42);
+    } finally {
+      await closeTestDb(db);
+    }
+  });
+
+  it("is idempotent", async () => {
+    const db = await createTestDb();
+    try {
+      redactTransactionErrors(db);
+      const once = db.transaction;
+      redactTransactionErrors(db);
+      expect(db.transaction).toBe(once);
+    } finally {
+      await closeTestDb(db);
+    }
   });
 });

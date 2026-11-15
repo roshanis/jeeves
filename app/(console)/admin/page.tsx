@@ -28,7 +28,7 @@ export function generateMetadata(): Metadata {
     title: "Administration",
     description: `Threshold edits and deployment pause/resume${
       isProductionMode() ? "" : " for Meridian Health's AI governance demo"
-    } — both logged, and deliberately narrow: Admin never approves, signs, or returns.`,
+    } — both logged, and deliberately narrow: Admin never approves or rejects, and never signs or returns a review.`,
   };
 }
 
@@ -83,8 +83,7 @@ export default async function AdminPage() {
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Admin console</h1>
         <p className="text-sm text-muted-foreground">
-          Narrow by design: threshold edits, pause/resume, rollback and exception revoke, all logged, plus filing requests like any other role.
-          Admin never approves, signs, or returns — anywhere.
+          Narrow by design: threshold edits, pause/resume, rollback and exception revoke, all logged. Admin can also run the intake quality check and file exception requests, as the other roles that hold those rights can. Admin never approves or rejects, and never signs or returns a review.
         </p>
       </div>
 
@@ -149,7 +148,6 @@ export default async function AdminPage() {
                 Every edit requires a reason. Recorded changes appear in the control-change audit log below.
               </p>
               <ThresholdEditAction
-                currentThreshold={q01?.threshold ?? null}
                 initiativeOptions={initiativeOptions}
               />
             </div>

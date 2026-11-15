@@ -382,6 +382,38 @@ describe("lib/services/monitor-service", () => {
   });
 
   describe("runMonitor — per-candidate error isolation (external-review P2-5b/P2-7)", () => {
+    it("does not return or log a failed statement's bound parameters", async () => {
+      await memberChatCopilot(db);
+      /* eslint-disable @typescript-eslint/no-explicit-any */
+      const dbAny = db as any;
+      const realTransaction = dbAny.transaction.bind(dbAny);
+      let n = 0;
+      const spy = vi.spyOn(dbAny, "transaction").mockImplementation((cb: any) => {
+        n += 1;
+        if (n !== 2) return realTransaction(cb);
+        return Promise.reject(
+          Object.assign(new Error("Failed query: insert into incidents\nparams: marker-9a2b"), {
+            query: "insert into incidents",
+            params: ["marker-9a2b"],
+            cause: Object.assign(new Error("x"), { code: "23505" }),
+          }),
+        );
+      });
+      const log = vi.spyOn(console, "error").mockImplementation(() => {});
+      /* eslint-enable @typescript-eslint/no-explicit-any */
+      try {
+        const result = await runMonitor(db, SYSTEM_ACTOR, PLUS_14D, UNSCOPED_WORKSPACE);
+        expect(result.errors.length).toBeGreaterThan(0);
+        for (const text of [JSON.stringify(result.errors), JSON.stringify(log.mock.calls)]) {
+          expect(text).not.toContain("marker-9a2b");
+          expect(text).not.toContain("params");
+        }
+      } finally {
+        spy.mockRestore();
+        log.mockRestore();
+      }
+    });
+
     it("a concurrent write that changes the initiative's state before the breach-pause CAS update is recorded in result.errors and does not abort the run (no partial write for that candidate)", async () => {
       const { init, dep } = await memberChatCopilot(db);
 

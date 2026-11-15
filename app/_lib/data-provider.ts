@@ -10,8 +10,15 @@ import { requireViewer } from "@/lib/services/require-viewer";
 
 /** Keep app callers on the same provider factory as API read callers. */
 export function getAppProvider(): DataProvider {
-  return getProvider();
+  return getProvider({ snapshotHolder: requestSnapshotHolder });
 }
+
+/**
+ * One snapshot holder per server render: React `cache` is request-scoped in a
+ * render and a passthrough outside one, so route handlers and scripts get a
+ * fresh holder per call and share nothing. Never replace with module state.
+ */
+const requestSnapshotHolder = cache(() => ({}));
 
 /**
  * The workspace id the current page request reads as, behind the viewer gate
