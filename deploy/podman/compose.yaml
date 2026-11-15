@@ -48,7 +48,7 @@ services:
       # driver would try to open a WebSocket to :443 here and fail.
       DATABASE_URL: postgres://${POSTGRES_USER:-jeeves}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-jeeves}
       DATA_PROVIDER: db
-      DEMO_PASSCODE: ${DEMO_PASSCODE:?set DEMO_PASSCODE in .env}
+      JEEVES_COOKIE_SECRET: ${JEEVES_COOKIE_SECRET:?set JEEVES_COOKIE_SECRET in .env (openssl rand -hex 32)}
       # Unset by default: with no key the app uses the deterministic keyless
       # mock adapter and cannot generate spend. Set it only for a controlled
       # live session.

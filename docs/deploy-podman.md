@@ -24,7 +24,7 @@ Podman-specific.
 
 ```bash
 cd deploy/podman
-cp env.example .env          # then edit: set POSTGRES_PASSWORD and DEMO_PASSCODE
+cp env.example .env          # then edit: set POSTGRES_PASSWORD and JEEVES_COOKIE_SECRET
 podman compose up -d --build
 podman compose run --rm migrate      # create the schema
 podman compose run --rm seed         # load the synthetic demo data
@@ -105,7 +105,7 @@ podman build -f deploy/podman/Containerfile --target migrator \
 mkdir -p ~/.config/containers/systemd
 cp deploy/podman/quadlet/* ~/.config/containers/systemd/
 cp deploy/podman/env.example ~/.config/containers/systemd/jeeves.env
-chmod 600 ~/.config/containers/systemd/jeeves.env    # it holds both passwords
+chmod 600 ~/.config/containers/systemd/jeeves.env    # it holds the database password and the cookie key
 $EDITOR ~/.config/containers/systemd/jeeves.env
 
 systemctl --user daemon-reload
@@ -206,7 +206,8 @@ podman compose up -d
 
 ## 6. What this does not give you
 
-- **Authentication.** Unchanged by containerisation: a shared passcode, and
+- **Authentication.** Unchanged by containerisation: there is no sign-in
+  (visitors get any persona passwordlessly in their own workspace), and
   the caller picks their own persona, so the named accountable approver is
   self-asserted. See `production-readiness.md` §1.1. Do not put this on a
   public address and treat the approvals as real.
