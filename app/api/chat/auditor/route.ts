@@ -227,7 +227,7 @@ export async function POST(req: Request): Promise<Response> {
   }
   const result = await port.auditorAnswer(
     { question: parsed.data.question, groundingRows: rows, queryUsed },
-    { timeoutMs: AGENT_TIMEOUT_MS },
+    { signal: req.signal, timeoutMs: AGENT_TIMEOUT_MS },
   );
 
   if (!result.ok) {

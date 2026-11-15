@@ -184,7 +184,7 @@ export async function POST(req: Request): Promise<Response> {
       conversation: parsed.data.conversation,
       partialPayload: parsed.data.partialPayload,
     },
-    { timeoutMs: AGENT_TIMEOUT_MS },
+    { signal: req.signal, timeoutMs: AGENT_TIMEOUT_MS },
   );
 
   if (!result.ok) {

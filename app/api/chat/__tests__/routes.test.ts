@@ -100,6 +100,52 @@ describe("agent initialization failures", () => {
   });
 });
 
+describe("chat routes abort and citation handling", () => {
+  it("passes the request abort signal to the intake agent call (agents-F6)", async () => {
+    const token = await issueSessionFor("priya-raman", "42.0.0.1");
+    const { POST } = await import("../intake/route");
+    let seen: AbortSignal | undefined;
+    const spy = vi.spyOn(agentsModule, "getAgentPort").mockReturnValue({
+      intakeInterview: async (_i: unknown, options?: { signal?: AbortSignal }) => {
+        seen = options?.signal;
+        return { ok: false, error: { kind: "cancelled" } };
+      },
+    } as unknown as ReturnType<typeof agentsModule.getAgentPort>);
+    try {
+      const controller = new AbortController();
+      const req = new Request("http://localhost/api/chat/intake", {
+        method: "POST", headers: bearer(token, "42.0.0.1"), signal: controller.signal,
+        body: JSON.stringify({ conversation: [], partialPayload: EMPTY_INTAKE_PAYLOAD }),
+      });
+      const res = await POST(req);
+      expect(seen).toBe(req.signal);
+      expect(res.status).toBe(499);
+    } finally { spy.mockRestore(); }
+  });
+
+  it("passes the request abort signal to the auditor agent call (agents-F6)", async () => {
+    const token = await issueSessionFor("priya-raman", "42.0.0.2");
+    const { POST } = await import("../auditor/route");
+    let seen: AbortSignal | undefined;
+    const spy = vi.spyOn(agentsModule, "getAgentPort").mockReturnValue({
+      auditorAnswer: async (_i: unknown, options?: { signal?: AbortSignal }) => {
+        seen = options?.signal;
+        return { ok: false, error: { kind: "cancelled" } };
+      },
+    } as unknown as ReturnType<typeof agentsModule.getAgentPort>);
+    try {
+      const controller = new AbortController();
+      const req = new Request("http://localhost/api/chat/auditor", {
+        method: "POST", headers: bearer(token, "42.0.0.2"), signal: controller.signal,
+        body: JSON.stringify({ question: "Which initiatives are member-facing and touch PHI?" }),
+      });
+      const res = await POST(req);
+      expect(seen).toBe(req.signal);
+      expect(res.status).toBe(499);
+    } finally { spy.mockRestore(); }
+  });
+});
+
 describe("POST /api/chat/auditor", () => {
   it("401s an unauthenticated request", async () => {
     const { POST } = await import("../auditor/route");
