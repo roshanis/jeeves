@@ -17,8 +17,9 @@ import { DbBudgetStore, reserve, type BudgetStore } from "../security/budget";
 import { validateInputSize, type FieldLimit, type InputGap } from "../security/input-limits";
 import { PUBLIC_PERSONA_PREFIX, isPersonaKey, resolveActor } from "./actors";
 import type { Actor } from "../domain/types";
-import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import { eq, sql } from "drizzle-orm";
+import { resolveWorkspaceCookieSecret } from "../security/workspace-cookie";
 import { getDb } from "../db/client";
 import { BodyReadError, DEFAULT_BODY_MAX_BYTES, readJsonBody } from "../http/read-json-body";
 import { redactDbError } from "../db/redact-error";
@@ -41,6 +42,43 @@ const rateLimiter = new DbTokenBucketRateLimiter(
   getDb,
   () => Date.now(),
 );
+
+/**
+ * Bucket key for a policy and client. The client address is keyed by a
+ * truncated HMAC under the server secret so addresses are not stored in
+ * clear. With no secret configured (local development) the address is kept.
+ */
+function bucketKey(policy: string, clientKey: string): string {
+  const secret = resolveWorkspaceCookieSecret();
+  if (!secret) return `${policy}:${clientKey}`;
+  return `${policy}:${createHmac("sha256", secret).update(`rate-limit-client:${clientKey}`).digest("hex").slice(0, 32)}`;
+}
+
+/** Longer than any policy needs to refill from empty (slowest: 10 tokens at 1/min), so a bucket untouched this long is full. */
+const STALE_BUCKET_MS = 60 * 60 * 1000;
+const HOUSEKEEPING_BATCH = 500;
+const HOUSEKEEPING_ODDS = 0.01;
+
+/** Delete stale rate-limit buckets and expired sessions, a bounded batch of each. */
+export async function pruneStaleState(): Promise<void> {
+  await rateLimiter.prune(STALE_BUCKET_MS, HOUSEKEEPING_BATCH);
+  await getDb().execute(sql`
+    delete from "sessions" where "token" in (
+      select "token" from "sessions" where "expires_at" <= ${Date.now()}::bigint limit ${HOUSEKEEPING_BATCH}
+    )
+  `);
+}
+
+/** Roughly one request in a hundred pays for housekeeping; it never fails the request. */
+async function maybePruneStaleState(): Promise<void> {
+  if (Math.random() >= HOUSEKEEPING_ODDS) return;
+  try {
+    await pruneStaleState();
+  } catch (err) {
+    console.error("Housekeeping failed", { errorName: redactDbError(err).name });
+  }
+}
+
 const budgetStore: BudgetStore = new DbBudgetStore(getDb);
 const DAILY_TOKEN_CAP = 500_000;
 
@@ -89,7 +127,8 @@ export async function issuePublicSession(
 
   // Namespaced like every other limiter here: the buckets share one table, and
   // an un-prefixed key would share a balance with another policy.
-  const attempt = await publicSessionLimiter.checkAndConsume(`public-session:${clientKey}`);
+  await maybePruneStaleState();
+  const attempt = await publicSessionLimiter.checkAndConsume(bucketKey("public-session", clientKey));
   if (!attempt.allowed) {
     return { rateLimited: true, retryAfterSeconds: attempt.retryAfterSeconds };
   }
@@ -131,9 +170,10 @@ export async function checkSessionAttempt(
   clientKey: string,
   switching = false,
 ): Promise<{ allowed: boolean; retryAfterSeconds: number }> {
+  await maybePruneStaleState();
   return switching
-    ? personaSwitchLimiter.checkAndConsume(`persona-switch:${clientKey}`)
-    : sessionAttemptLimiter.checkAndConsume(`session:${clientKey}`);
+    ? personaSwitchLimiter.checkAndConsume(bucketKey("persona-switch", clientKey))
+    : sessionAttemptLimiter.checkAndConsume(bucketKey("session", clientKey));
 }
 
 /* -------------------------------------------------------------------------
@@ -180,7 +220,7 @@ const operatorAttemptLimiter = new DbTokenBucketRateLimiter(
 export async function checkOperatorAttempt(
   clientKey: string,
 ): Promise<{ allowed: boolean; retryAfterSeconds: number }> {
-  return operatorAttemptLimiter.checkAndConsume(`operator:${clientKey}`);
+  return operatorAttemptLimiter.checkAndConsume(bucketKey("operator", clientKey));
 }
 
 export type GuardFailureKind = "unauthorized" | "rate_limited" | "invalid_input" | "budget_exhausted" | "read_only" | "payload_too_large";
@@ -436,7 +476,8 @@ export async function runMutationGuard(
 
   const clientKey = clientKeyFor(req);
   // Independent policies must not share a persisted token balance.
-  const rl = await rateLimiter.checkAndConsume(`mutation:${clientKey}`);
+  const rl = await rateLimiter.checkAndConsume(bucketKey("mutation", clientKey));
+  await maybePruneStaleState();
   if (!rl.allowed) {
     return {
       ok: false,
