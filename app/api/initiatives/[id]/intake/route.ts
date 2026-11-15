@@ -33,7 +33,7 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
   try {
     body = JSON.parse(await readBodyText(req, 64_000));
   } catch (error) {
-    if (error instanceof BodyReadError) return Response.json({ error: "request body exceeds 64000 bytes" }, { status: 413 });
+    if (error instanceof BodyReadError && error.status === 413) return Response.json({ error: "request body exceeds 64000 bytes" }, { status: 413 });
     return Response.json({ error: "invalid JSON body" }, { status: 400 }); }
   if (!body || typeof body !== "object" || Array.isArray(body) || hasNul(body)) return Response.json({ error: "invalid request body" }, { status: 400 });
   const candidate = body as { payload?: unknown; expectedVersion?: unknown };
