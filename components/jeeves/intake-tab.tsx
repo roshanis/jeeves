@@ -30,6 +30,8 @@ const FIELD_LABEL: Record<string, string> = {
   humanInLoop: "5. Does a qualified human review each output before it takes effect?",
   individualImpact: "6. Does it affect individuals' opportunities, rights, or services?",
   "data.retentionIntent": "Data retention",
+  "data.sourceSystems": "Data sources",
+  evidenceAttachments: "Evidence attached at intake",
   "basics.title": "Title",
   "basics.sponsorOrg": "Sponsor organization",
   "basics.requesterName": "Requester name",
@@ -56,6 +58,8 @@ const FIELD_LABEL: Record<string, string> = {
   "overlay.memberFacing": "2. Do members interact with or receive its output directly?",
   "overlay.careCoverageInfluence": "3. Does it influence care or coverage decisions?",
   "overlay.vendorHosted": "4. Is the model vendor-hosted?",
+  "overlay.phi": "1. Does it access PHI?",
+  "overlay.humanInLoop": "5. Does a qualified human review each output before it takes effect?",
   "overlay.humanInTheLoop": "5. Does a qualified human review each output before it takes effect?",
   "overlay.individualImpact": "6. Does it affect individuals' opportunities, rights, or services (members, providers, or employees)?",
 };
@@ -160,7 +164,7 @@ export function IntakeTab({ intake, summary, events }: {
                 <TableCell className="whitespace-normal font-medium">
                   {ADDITIONAL_FIELD_LABELS[key] ?? FIELD_LABEL[key] ?? key}
                 </TableCell>
-                <TableCell className="whitespace-pre-wrap">{renderValue(value, key in ADDITIONAL_FIELD_LABELS)}</TableCell>
+                <TableCell className="whitespace-pre-wrap">{key === "evidenceAttachments" && value === "" ? <span className="text-muted-foreground">None</span> : renderValue(value, key in ADDITIONAL_FIELD_LABELS)}</TableCell>
               </TableRow>
             ))}
           </TableBody>
