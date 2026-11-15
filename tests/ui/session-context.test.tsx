@@ -134,6 +134,21 @@ describe("session expiry notice (ui-intake-F31)", () => {
     expect(screen.queryByText(/session expired/i)).toBeNull();
   });
 
+  it("does not bring a persona notice back after a real request's session is dropped by a 401", async () => {
+    seed("marcus-webb", "reviewer", Date.now() + 1000);
+    mountForm();
+    act(() => { vi.advanceTimersByTime(1500); });
+    expect(probe.api.expired).toEqual({ kind: "persona" });
+    fetchMock.mockResolvedValueOnce(Response.json({ token: "p2", workspaceId: "public-w2", expiresAt: Date.now() + 60_000, expiresInMs: 60_000 }));
+    await act(async () => { await probe.api.startPublicSession(); });
+    expect(probe.api.session?.role).toBe("public");
+    fetchMock.mockResolvedValueOnce(Response.json({ error: "session expired or invalid" }, { status: 401 }));
+    await act(async () => { await probe.api.login("priya-raman").catch(() => {}); });
+    expect(probe.api.session).toBeNull();
+    expect(probe.api.expired).toBeNull();
+    expect(screen.queryByText(/session expired/i)).toBeNull();
+  });
+
   it("shows no notice on a first visit or after a deliberate logout", () => {
     mountForm();
     expect(screen.queryByText(/session expired/i)).toBeNull();
