@@ -243,6 +243,19 @@ export interface GuardFailure {
   retryAfterSeconds?: number;
 }
 
+/** The JSON response for a failed guard: keeps `gaps` and `retryAfterSeconds` and sets Retry-After on a 429. */
+export function guardFailureResponse(failure: GuardFailure, headers: Record<string, string> = {}): Response {
+  const retry: Record<string, string> = failure.retryAfterSeconds !== undefined ? { "Retry-After": String(failure.retryAfterSeconds) } : {};
+  return Response.json(
+    {
+      error: failure.message,
+      ...(failure.retryAfterSeconds !== undefined ? { retryAfterSeconds: failure.retryAfterSeconds } : {}),
+      ...(failure.gaps ? { gaps: failure.gaps } : {}),
+    },
+    { status: failure.status, headers: { ...headers, ...retry } },
+  );
+}
+
 /** Static preview reads cannot reflect writes, so reject before any DB access. */
 export function checkReadOnlyMode(): GuardFailure | null {
   return resolveDataProviderMode(process.env.DATA_PROVIDER, !!runtimeDatabaseUrl()) === "mock"

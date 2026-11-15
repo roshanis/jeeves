@@ -296,6 +296,9 @@ describe("POST /api/initiatives — auth + role-from-session", () => {
       );
     }
     expect(last!.status).toBe(429);
+    expect(Number(last!.headers.get("retry-after"))).toBeGreaterThan(0);
+    const body = (await last!.json()) as { error: string; retryAfterSeconds?: number };
+    expect(body.retryAfterSeconds).toBe(Number(last!.headers.get("retry-after")));
   });
 });
 
