@@ -245,6 +245,13 @@ It needs a finished build and never builds: run
 `next-start` forces the server command. The run is repeatable on the same
 database and exits 1 if any check fails.
 
+A production image is built with `JEEVES_DEMO_ENABLED=0`, which compiles demo
+mode out. To check such a build, add `SMOKE_DEMO_LOCKED=1`: the server is then
+started with `JEEVES_MODE=demo` set, and every production check must still
+pass, which is the proof that the flag cannot open the demo on that build. Run
+against a build that is not locked, the same command fails, because the server
+enters demo mode and refuses the production-stamped database.
+
 ### 2.3 No staging environment — DOCUMENTED 2026-09-12, not built
 
 `docs/deploy.md` §5 now describes the cheap version — a second Vercel project

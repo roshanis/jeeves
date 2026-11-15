@@ -17,6 +17,11 @@
  *
  * Needs a finished build (it never builds). SMOKE_PORT (default 3217) picks the
  * port; SMOKE_SERVER=standalone|next-start forces the server command.
+ *
+ * SMOKE_DEMO_LOCKED=1 is for a build made with JEEVES_DEMO_ENABLED=0 (what a
+ * production image is built with). Such a build has demo mode compiled out, so
+ * the server is started WITH JEEVES_MODE=demo and every production check must
+ * still pass: that is the proof the flag cannot open the demo doors.
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -283,6 +288,8 @@ export interface BootRefusalCase {
   expectText: string;
 }
 
+const DEMO_MODE_REFUSAL = "demo mode on a production-stamped database";
+
 export const bootRefusalCases: BootRefusalCase[] = [
   {
     name: "missing cookie secret",
@@ -294,7 +301,7 @@ export const bootRefusalCases: BootRefusalCase[] = [
     expectText: "JEEVES_COOKIE_SECRET is required",
   },
   {
-    name: "demo mode on a production-stamped database",
+    name: DEMO_MODE_REFUSAL,
     modify: (env) => ({ ...env, JEEVES_MODE: "demo" }),
     expectText: 'stamped "production"',
   },
@@ -309,6 +316,20 @@ export const bootRefusalCases: BootRefusalCase[] = [
     expectText: "APP_BASE_URL must be an absolute https URL",
   },
 ];
+
+/**
+ * A demo-locked build (JEEVES_DEMO_ENABLED=0) never enters demo mode, so it has
+ * nothing to refuse when JEEVES_MODE=demo is set: that case is replaced by
+ * runtimeEnvFor() starting the real server with the flag set.
+ */
+export function bootRefusalCasesFor(demoLocked: boolean): BootRefusalCase[] {
+  return demoLocked ? bootRefusalCases.filter((c) => c.name !== DEMO_MODE_REFUSAL) : bootRefusalCases;
+}
+
+/** The environment the checked server runs with: the good one, plus JEEVES_MODE=demo on a locked build. */
+export function runtimeEnvFor(good: Record<string, string>, demoLocked: boolean): Record<string, string> {
+  return demoLocked ? { ...good, JEEVES_MODE: "demo" } : good;
+}
 
 // ---------------------------------------------------------------------------
 // Output hygiene
@@ -513,7 +534,13 @@ async function main(): Promise<void> {
 
   const secrets = databaseSecrets(databaseUrl);
   const cmd = serverCommand(port, process.env.SMOKE_SERVER);
+  const demoLocked = process.env.SMOKE_DEMO_LOCKED === "1";
   console.log(`Server: ${cmd.label}, port ${port}`);
+  console.log(
+    demoLocked
+      ? "Build: demo-locked (JEEVES_DEMO_ENABLED=0). The server runs WITH JEEVES_MODE=demo and must still behave as production."
+      : "Build: demo-capable. The server runs without JEEVES_MODE.",
+  );
 
   console.log("Migrating and stamping the smoke database...");
   await migrateAndStamp(databaseUrl);
@@ -528,14 +555,16 @@ async function main(): Promise<void> {
     for (const line of detail) console.log(`      ${line}`);
   };
 
-  for (const c of bootRefusalCases) {
+  for (const c of bootRefusalCasesFor(demoLocked)) {
     const problems = await runBootRefusal(c, cmd, good, secrets);
     record(problems.length === 0, `boot refusal: ${c.name}`, problems);
   }
 
-  const { child, output } = spawnServer(cmd, good);
+  const { child, output } = spawnServer(cmd, runtimeEnvFor(good, demoLocked));
   try {
     if (!(await waitForHealth(port, child))) {
+      // On a locked run this is also what a build that is NOT locked looks like:
+      // it enters demo mode and refuses the production-stamped database.
       console.error(`Server did not become healthy. Output:\n${redact(output(), secrets)}`);
       process.exitCode = 1;
       return;
