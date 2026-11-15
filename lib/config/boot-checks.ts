@@ -139,7 +139,7 @@ export async function runBootChecks(deps: BootCheckDeps = {}): Promise<void> {
           "which a caller can forge unless the proxy in front overwrites it. Set it (none with no proxy in front, 1 behind an AWS ALB or an appending proxy).",
       );
     }
-    if (!runtimeDatabaseUrl(env) && env.DATA_PROVIDER !== "db") return;
+    if (!runtimeDatabaseUrl(env) && env.DATA_PROVIDER?.trim().toLowerCase() !== "db") return;
   }
 
   const delays = mode === "demo" ? DEMO_CHECK_RETRY_DELAYS_MS : [];
