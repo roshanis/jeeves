@@ -32,6 +32,7 @@ function workspace(slug = "case-one") {
   </ReviewEvidenceWorkspace>;
 }
 beforeEach(() => {
+  window.sessionStorage.clear();
   mocks.session.mockReturnValue({ session, logout: vi.fn(), startDemo: vi.fn() });
   mocks.request.mockResolvedValue(fixture());
   mocks.mutate.mockResolvedValue({ status: "signed" });
@@ -320,6 +321,7 @@ describe("evidence-led review", () => {
     fireEvent.click(screen.getByRole("button", { name: "Load new review" }));
     await screen.findByRole("heading", { name: "retention-v2.pdf" });
     expect((screen.getByLabelText("Assessment text") as HTMLTextAreaElement).value).toBe("New cycle draft");
+    expect(screen.queryByRole("region", { name: "Unsaved work from an earlier session" })).toBeNull();
   });
 
   it("keeps public visitors read-only and makes no private evidence request", () => {
