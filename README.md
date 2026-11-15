@@ -340,6 +340,10 @@ lib/
   data/                 The DataProvider swap point (db vs mock), env-selected
   db/                   Drizzle schema + the Neon-or-PGlite client factory
   client/               Client-safe persona/session mirrors for UI components
+  format/               Pure date and queue-aging formatting helpers
+  http/                 Route-handler helpers: capped JSON body reader, route-id check, redacted error logging
+  marketing/            Marketing-site config and the NIST AI RMF / EU AI Act control crosswalk
+agents/                 Agent prompt instructions and output contracts (Markdown, no code)
 components/jeeves/      App-specific UI: workbench, case-file tabs, chats,
                         portfolio table, audit console, admin controls, etc.
 deploy/                 Container deploy templates (Podman: Containerfile, compose, Quadlet)

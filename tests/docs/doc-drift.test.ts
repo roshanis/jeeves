@@ -142,10 +142,13 @@ describe("README drift (docs-F31)", () => {
   });
   it("does not give Luna completeness checks or triage narration", () => {
     expect(readme).not.toMatch(/triage narration/);
-    expect(readme).not.toMatch(/Luna[^.]*completeness checks/);
+    // Luna's duties are the text up to the first em dash; the model id holds dots, so a [^.] span never reached it.
+    const lunaDuties = /\*\*Luna\*\*[^—]*/.exec(readme)?.[0] ?? "";
+    expect(lunaDuties).toContain("intake turns");
+    expect(lunaDuties).not.toContain("completeness");
   });
   it("lists the lib directories and scripts that exist", () => {
-    for (const p of ["  demo/ ", "  evidence/ ", "  reviews/ ", "  telemetry/ ", "  deployments/ ", "\ndeploy/ ", "migrate.ts", "reset-demo.ts"]) {
+    for (const p of ["  demo/ ", "  evidence/ ", "  reviews/ ", "  telemetry/ ", "  deployments/ ", "  format/ ", "  http/ ", "  marketing/ ", "\nagents/ ", "\ndeploy/ ", "migrate.ts", "reset-demo.ts"]) {
       expect(readme, p).toContain(p);
     }
   });
