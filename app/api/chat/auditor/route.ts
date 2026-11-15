@@ -74,11 +74,15 @@ function scoreQuery(question: string, keywords: string[]): number {
 /**
  * Caps the grounding set by row count and per-field size (long strings and
  * serialized nested values are truncated) before it reaches the model.
+ * Rows ordered oldest first (an initiative's events) keep their newest
+ * entries; other rows keep the first ones.
  */
 function boundGroundingRows(
   rows: readonly Readonly<Record<string, unknown>>[],
+  keepNewest = false,
 ): Readonly<Record<string, unknown>>[] {
-  return rows.slice(0, MAX_GROUNDING_ROWS).map((row) => {
+  const kept = keepNewest ? rows.slice(-MAX_GROUNDING_ROWS) : rows.slice(0, MAX_GROUNDING_ROWS);
+  return kept.map((row) => {
     const bounded: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(row)) {
       const text = typeof value === "string" ? value : value !== null && typeof value === "object" ? JSON.stringify(value) : null;
@@ -90,6 +94,10 @@ function boundGroundingRows(
 }
 
 /** Kebab-case tokens in the question that might name an initiative slug (live slugs carry a hex suffix). */
+function isSlugLike(token: string): boolean {
+  return token.split("-").length >= 3;
+}
+
 function slugCandidates(question: string): string[] {
   const matches = question.toLowerCase().match(/\b[a-z0-9]+(?:-[a-z0-9]+){1,8}\b/g) ?? [];
   return [...new Set(matches)].slice(0, MAX_SLUG_CANDIDATES);
@@ -166,6 +174,7 @@ export async function POST(req: Request): Promise<Response> {
 
   let rows: readonly Readonly<Record<string, unknown>>[];
   let queryUsed: string;
+  let keepNewest = false;
 
   // Ground only on rows the caller's workspace may see (external-review
   // finding #2): seeded/shared rows plus the session's own workspace — never
@@ -184,14 +193,18 @@ export async function POST(req: Request): Promise<Response> {
   if (detail) {
     rows = detail.events as unknown as Readonly<Record<string, unknown>>[];
     queryUsed = `initiative-events:${detail.summary.slug}`;
+    keepNewest = true;
   } else {
     const normalized = parsed.data.question.toLowerCase();
     const canned = QUERY_KEYWORDS.some((q) => scoreQuery(normalized, q.keywords) > 0);
-    if (!canned && candidates.length > 0) {
-      // The question names something slug-shaped that is not a visible
-      // initiative: say so rather than grounding on an unrelated query.
+    const unknownSlug = candidates.find(isSlugLike);
+    if (!canned && unknownSlug) {
+      // The question names something slug-shaped (three or more segments)
+      // that is not a visible initiative: say so rather than grounding on an
+      // unrelated query. An ordinary hyphenated word such as "re-review"
+      // takes the canned-query path instead.
       rows = [];
-      queryUsed = `initiative-not-found:${candidates[0]}`;
+      queryUsed = `initiative-not-found:${unknownSlug}`;
     } else {
       const id = pickCannedQuery(parsed.data.question);
       const auditRows: AuditQueryRow[] = await provider.auditQuery(id, scope);
@@ -200,7 +213,7 @@ export async function POST(req: Request): Promise<Response> {
     }
   }
 
-  rows = boundGroundingRows(rows);
+  rows = boundGroundingRows(rows, keepNewest);
 
   // Reserve from what is actually sent to the model, after grounding.
   const budget = await reserveDailyBudget(

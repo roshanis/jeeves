@@ -250,6 +250,72 @@ describe("POST /api/chat/auditor", () => {
     }
   });
 
+  it("does not report initiative-not-found for an ordinary hyphenated word with no keyword (api-initiatives-F7)", async () => {
+    const token = await issueSessionFor("angela-torres", "40.1.0.4");
+    const { POST } = await import("../auditor/route");
+    const res = await POST(
+      new Request("http://localhost/api/chat/auditor", {
+        method: "POST",
+        headers: bearer(token, "40.1.0.4"),
+        body: JSON.stringify({ question: "Is a re-review expected soon?" }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.queryUsed).toBe("member-facing-phi");
+    expect(json.rows.length).toBeGreaterThan(0);
+  });
+
+  it("still reports initiative-not-found for an unknown three-segment slug (api-initiatives-F7)", async () => {
+    const token = await issueSessionFor("angela-torres", "40.1.0.5");
+    const { POST } = await import("../auditor/route");
+    const res = await POST(
+      new Request("http://localhost/api/chat/auditor", {
+        method: "POST",
+        headers: bearer(token, "40.1.0.5"),
+        body: JSON.stringify({ question: "Show the history of no-such-initiative please" }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.queryUsed).toBe("initiative-not-found:no-such-initiative");
+    expect(json.rows).toEqual([]);
+  });
+
+  it("keeps the newest events when an initiative's history exceeds the grounding bound (api-initiatives-F7)", async () => {
+    const token = await issueSessionFor("angela-torres", "40.1.0.6");
+    const events = Array.from({ length: 60 }, (_, i) => ({ id: `e${i}`, detail: `event ${i}` }));
+    const realProvider = dataModule.getProvider();
+    const providerSpy = vi.spyOn(dataModule, "getProvider").mockReturnValue(
+      Object.assign(Object.create(realProvider), {
+        getInitiativeDetail: async () => ({ summary: { slug: "member-chat-copilot" }, events }),
+      }),
+    );
+    const auditorAnswer = vi.fn(async (input: { queryUsed: string }) => ({
+      ok: true as const,
+      value: { answerMd: "ok", citedEvents: [], queryUsed: input.queryUsed },
+    }));
+    const portSpy = vi.spyOn(agentsModule, "getAgentPort").mockReturnValue({ auditorAnswer } as never);
+    try {
+      const { POST } = await import("../auditor/route");
+      const res = await POST(
+        new Request("http://localhost/api/chat/auditor", {
+          method: "POST",
+          headers: bearer(token, "40.1.0.6"),
+          body: JSON.stringify({ question: "Show the audit history of member-chat-copilot" }),
+        }),
+      );
+      expect(res.status).toBe(200);
+      const sent = auditorAnswer.mock.calls[0]![0] as unknown as { groundingRows: { id: string }[] };
+      expect(sent.groundingRows).toHaveLength(50);
+      expect(sent.groundingRows.map((r) => r.id)).toContain("e59");
+      expect(sent.groundingRows.map((r) => r.id)).not.toContain("e0");
+    } finally {
+      portSpy.mockRestore();
+      providerSpy.mockRestore();
+    }
+  });
+
   it("400s a question longer than the input-size cap", async () => {
     const token = await issueSessionFor("priya-raman", "40.0.0.6");
     const { POST } = await import("../auditor/route");
