@@ -60,6 +60,10 @@ export async function POST(req: Request): Promise<Response> {
   if (Number.isNaN(nowTs)) {
     return Response.json({ error: "nowTs must be a valid ISO-8601 timestamp" }, { status: 400 });
   }
+  // Same replay window as the cron route: never stamp rows outside the demo's time range.
+  if (nowTs < BASE_DATE_MS || nowTs > Date.now() + 24 * 60 * 60 * 1000) {
+    return Response.json({ error: "nowTs is outside the allowed replay window" }, { status: 400 });
+  }
 
   const db = getDb();
   const result = await runMonitor(db, guard.actor, nowTs, guard.workspaceId);

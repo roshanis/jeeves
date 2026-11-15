@@ -21,7 +21,7 @@
  *
  * 200: { ranAt, nowTs, ...RunMonitorResult }
  * 401: missing/invalid bearer.  503: CRON_SECRET not configured.
- * 400: nowTs not a valid ISO-8601 timestamp.
+ * 400: nowTs not a valid ISO-8601 timestamp, or outside [base date, now + 1 day].
  */
 import { timingSafeEqual } from "node:crypto";
 import { getDb } from "@/lib/db/client";
@@ -36,6 +36,7 @@ import { checkReadOnlyMode } from "@/lib/services/route-guard";
 // Kept in sync with app/api/monitor/run/route.ts#DEFAULT_MONITOR_NOW_TS (a
 // literal here rather than a cross-route import — same rationale as that file).
 const BASE_DATE_MS = Date.parse("2026-07-01T00:00:00Z");
+const MAX_FUTURE_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_MONITOR_NOW_TS = BASE_DATE_MS + 14 * 24 * 60 * 60 * 1000;
 
 /** Constant-time bearer check against CRON_SECRET. Returns false if the secret is unset (caller maps to 503). */
@@ -68,6 +69,11 @@ export async function GET(req: Request): Promise<Response> {
   const nowTs = nowParam ? Date.parse(nowParam) : DEFAULT_MONITOR_NOW_TS;
   if (Number.isNaN(nowTs)) {
     return Response.json({ error: "nowTs must be a valid ISO-8601 timestamp" }, { status: 400 });
+  }
+  // The replay point stamps append-only audit rows: keep it inside the demo's
+  // time range so a mistyped or hostile value cannot plant far-future rows.
+  if (nowTs < BASE_DATE_MS || nowTs > Date.now() + MAX_FUTURE_MS) {
+    return Response.json({ error: "nowTs is outside the allowed replay window" }, { status: 400 });
   }
 
   const db = getDb();

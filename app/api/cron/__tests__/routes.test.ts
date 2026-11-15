@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { createTestDb, closeTestDb, type TestDb } from "@/lib/db/test-client";
 import { seedDatabase } from "@/scripts/seed";
-import { initiatives } from "@/lib/db/schema";
+import { auditEvents, initiatives } from "@/lib/db/schema";
 
 let testDb: TestDb;
 
@@ -85,5 +85,20 @@ describe("GET /api/cron/monitor", () => {
       }),
     );
     expect(res.status).toBe(400);
+  });
+
+  it("400s a nowTs outside the replay window and writes no audit rows", async () => {
+    const { GET } = await import("../monitor/route");
+    const before = (await testDb.select().from(auditEvents)).length;
+    for (const nowTs of ["9999-01-01T00:00:00Z", "1970-01-01T00:00:00Z"]) {
+      const res = await GET(
+        new Request(`http://localhost/api/cron/monitor?nowTs=${nowTs}`, {
+          method: "GET",
+          headers: { authorization: `Bearer ${CRON_SECRET}` },
+        }),
+      );
+      expect(res.status).toBe(400);
+    }
+    expect((await testDb.select().from(auditEvents)).length).toBe(before);
   });
 });
