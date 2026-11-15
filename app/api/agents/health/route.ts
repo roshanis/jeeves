@@ -10,7 +10,9 @@
  * 200: ConnectorHealth
  * 401/429: no/invalid session, rate limit, or budget exhausted.
  * 503: `llm_not_configured` — a production install with no OPENAI_API_KEY has
- *      no mock to report on (demo answers 200 with the mock adapter).
+ *      no mock to report on (demo answers 200 with the mock adapter). Not
+ *      reachable yet: production has no valid session until customer sign-in
+ *      exists, so the guard answers 401 first.
  */
 import { runMutationGuard } from "@/lib/services/route-guard";
 import { PROBE_MAX_OUTPUT_TOKENS, probeConnector } from "@/lib/agents/health";
