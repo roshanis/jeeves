@@ -202,6 +202,17 @@ podman compose run --rm migrate     # only if drizzle/ changed
 podman compose up -d
 ```
 
+**Upgrading an older `.env`.** The compose stack now requires a non-empty
+`JEEVES_COOKIE_SECRET`, and `DEMO_PASSCODE` is gone from the template. A `.env`
+that only sets `DEMO_PASSCODE` makes `podman compose` stop with a clear error.
+Set `JEEVES_COOKIE_SECRET` instead, for example with `openssl rand -hex 32`.
+
+The new secret is not the old derived one. The app signs the workspace cookie
+with `JEEVES_COOKIE_SECRET` whenever it is set, and a cookie signed under the
+previous `DEMO_PASSCODE`-derived secret no longer verifies. On read requests
+such a cookie is treated as no workspace, so a returning visitor sees only the
+seeded data until they get a new cookie.
+
 ---
 
 ## 6. What this does not give you
