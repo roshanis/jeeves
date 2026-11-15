@@ -20,6 +20,7 @@ import { cn } from "@/lib/utils";
 import { TierBadge } from "./tier-badge";
 import { EvidenceLink } from "./evidence-link";
 import { DOMAIN_LABEL } from "./domain-labels";
+import { DEPLOYMENT_STATUS_LABEL } from "./deployments-tab";
 import { PRE_REVIEW_STATES } from "./initiative-blockers-rail";
 
 /**
@@ -85,17 +86,17 @@ const DOMAIN_STATUS_META: Record<
   },
 };
 
-const QUICK_LINKS: { tab: "reviews" | "decisions" | "controls" | "operate" | "audit"; label: string; icon: LucideIcon }[] = [
+const QUICK_LINKS: { tab: "reviews" | "decisions" | "controls" | "evals" | "audit"; label: string; icon: LucideIcon }[] = [
   { tab: "reviews", label: "Reviews", icon: ClipboardList },
   { tab: "decisions", label: "Decisions", icon: Gavel },
   { tab: "controls", label: "Controls", icon: ShieldCheck },
-  { tab: "operate", label: "Operate", icon: Activity },
+  { tab: "evals", label: "Evals", icon: Activity },
   { tab: "audit", label: "Audit trail", icon: History },
 ];
 
 export function OverviewTab({ detail }: { detail: InitiativeDetail }) {
   const { summary, reviews, deployments } = detail;
-  const activeDeployment = deployments.find((d) => d.status === "deployed") ?? deployments[0];
+  const activeDeployment = deployments.find((d) => d.status === "deployed") ?? deployments[deployments.length - 1];
 
   return (
     <div
@@ -129,7 +130,7 @@ export function OverviewTab({ detail }: { detail: InitiativeDetail }) {
               <p className="text-sm text-muted-foreground">
                 Current deployment:{" "}
                 <Badge variant="secondary">
-                  {activeDeployment.version} ({activeDeployment.status})
+                  {activeDeployment.version} ({DEPLOYMENT_STATUS_LABEL[activeDeployment.status]})
                 </Badge>
               </p>
             ) : (
