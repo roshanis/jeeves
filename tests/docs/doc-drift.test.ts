@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const read = (p: string) => readFileSync(p, "utf8");
@@ -58,5 +58,17 @@ describe("the QC gate is documented (docs-F18)", () => {
   });
   it("ARCHITECTURE.md describes the QC gate", () => {
     expect(read("docs/ARCHITECTURE.md")).toMatch(/QC gate/);
+  });
+});
+
+describe("audit-log protection claims match the migrations (docs-F21)", () => {
+  const migrations = readdirSync("drizzle").filter((f) => f.endsWith(".sql")).map((f) => read(`drizzle/${f}`)).join("\n");
+  it("README does not claim revoked privileges unless a migration revokes them", () => {
+    if (!/^\s*REVOKE\s/im.test(migrations)) expect(read("README.md")).not.toMatch(/revoked privileges/i);
+  });
+  it("production-readiness lists the owner/runtime role split as a prerequisite", () => {
+    const doc = read("docs/production-readiness.md");
+    expect(doc).toMatch(/runtime role/i);
+    expect(doc).not.toMatch(/regardless of which role issues the\s+statement/);
   });
 });

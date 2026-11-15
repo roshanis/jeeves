@@ -291,8 +291,9 @@ conditional approval — against a real (mocked-LLM) run.
 - **Security headers** set at the framework level, and input-length caps on
   every mutating request.
 - **DB-level append-only audit log** — `AuditEvent` rows cannot be updated
-  or deleted at the database level (revoked privileges + trigger, not just
-  application-code discipline), and every synthetic telemetry panel is
+  or deleted at the database level (a trigger on UPDATE and DELETE, not
+  just application-code discipline; the runtime role currently owns the
+  table, so it is not yet a privilege-level guarantee), and every synthetic telemetry panel is
   explicitly labeled as synthetic.
 
 See `docs/deploy.md` §3 for the current, explicitly-documented gaps (e.g.

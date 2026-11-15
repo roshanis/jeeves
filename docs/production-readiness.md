@@ -176,6 +176,17 @@ nothing to compress.
 
 ## 2. Should fix before a pilot
 
+### 2.0 The audit log is trigger-enforced, not privilege-enforced
+
+The append-only guarantee is a trigger (`drizzle/0002_audit_events_append_only.sql`),
+not a `REVOKE`/`GRANT` split: no migration revokes privileges. The runtime
+role is the table owner and the migrator uses the same role, so anyone holding
+the application's database credentials can `ALTER TABLE audit_events DISABLE
+TRIGGER` and rewrite history (`scripts/seed.ts` does exactly that for the
+reseed). **Production prerequisite:** a separate owner/migrator role, and a
+runtime role without ownership that holds only INSERT and SELECT on
+`audit_events`, the evidence tables and any other append-only table. Not built.
+
 ### 2.1 No backup or restore procedure — DOCUMENTED 2026-09-12, not yet exercised
 
 `docs/deploy.md` §4 now covers it: set a PITR retention window on the Neon
@@ -268,8 +279,9 @@ weigh against it.
   `neon-http`, whose `transaction()` is a stub; that was found and fixed.
 - **The audit log is append-only at the database level**, not in application
   code — `drizzle/0002_audit_events_append_only.sql` installs triggers that
-  raise on UPDATE and DELETE, enforced regardless of which role issues the
-  statement. `lib/db/schema.test.ts` tests it at the DB level.
+  raise on UPDATE and DELETE for every role, but the table owner can disable them.
+  `lib/db/schema.test.ts` tests it at the DB level. See the prerequisite
+  below: the runtime role currently owns the table.
 - **Security response headers are thorough**: a real CSP pinning every
   fetchable resource to same-origin, HSTS with preload, `X-Frame-Options:
   DENY`, nosniff, Referrer-Policy, Permissions-Policy. `next/image` is
