@@ -90,7 +90,7 @@ npm run start        # next start (after build)
    | `DATABASE_SSL_CA` | Optional | Optional CA (PEM). Applies to every PostgreSQL host reached through node-postgres, not to Neon, which uses its own driver and public certificates. When set, the connection uses TLS and verifies the server against this CA (for Amazon RDS, the RDS CA bundle). It cannot be combined with `sslmode=disable` or `no-verify`, or with `sslrootcert`, `sslcert` or `sslkey` in the URL. Supabase hosts additionally always verify and use a pool of one. |
    | `DATABASE_POOL_MAX` | Optional | Largest number of connections one app instance opens through node-postgres (its default is 10). Not used for Neon hosts (own driver) or Supabase hosts (always one connection). |
    | `DATABASE_STATEMENT_TIMEOUT_MS`, `DATABASE_IDLE_IN_TRANSACTION_TIMEOUT_MS` | Optional | Server-side limits, in milliseconds, for one statement and for a transaction left idle (default `60000` each). node-postgres sends them as startup parameters. `0` turns one off and sends nothing: use that behind a pooler that refuses startup parameters it does not track (PgBouncer without `ignore_startup_parameters`), and set the limits on the database role instead. Not sent to Neon or Supabase hosts. |
-   | `DATABASE_MIGRATION_LOCK_TIMEOUT_MS` | Optional | How long `npm run db:migrate` waits for a lock before it fails and can be retried, in milliseconds (default `10000`; `0` turns it off). Migrations have no statement timeout. On a node-postgres host it also bounds the wait for the migration advisory lock, so an overlapping `db:migrate` fails after this time (SQLSTATE 55P03) instead of waiting. Neon pooled (`-pooler`) endpoints take no advisory lock. Not sent to Neon or Supabase hosts. |
+   | `DATABASE_MIGRATION_LOCK_TIMEOUT_MS` | Optional | How long `npm run db:migrate` waits for a lock before it fails and can be retried, in milliseconds (default `10000`; `0` turns it off). Migrations have no statement timeout. On other node-postgres hosts it also bounds the wait for the migration advisory lock, so an overlapping `db:migrate` fails after this time (SQLSTATE 55P03) instead of waiting. Supabase and direct Neon endpoints wait for the lock without a limit, and Neon pooled (`-pooler`) endpoints take no advisory lock. Not sent to Neon or Supabase hosts. |
    | `DATA_PROVIDER` | Optional | Defaults to DB when either runtime URL exists. `db` makes this explicit; `mock` deliberately shows the read-only preview dataset. |
    | `JEEVES_COOKIE_SECRET` | Yes for new deployments | Random server-only signing key for browser workspace continuity. Visitor entry is passwordless. Existing DEMO_PASSCODE can serve only as a deprecated signing fallback. |
    | `OPERATOR_TOKEN` | Optional | At least 32 characters (for example `openssl rand -hex 32`). Opens the "Send a real request" door and unlocks the `/operator` queue where those requests are read, sent as `Authorization: Bearer <token>`. While it is unset or shorter than 32 characters the real-request door is closed (`POST /api/public-session` answers 404 and the intake form does not offer it), because nobody could read what a visitor sent. |
@@ -301,9 +301,12 @@ database, check it as below, then repoint `DATABASE_URL` (and
 The same rule gives the per-platform recipes:
 
 - **Neon:** branch from a timestamp (above); the branch is the new database.
-- **Supabase:** restore a dump into a new project. The dashboard's backup and
-  point-in-time recovery restore in place over the live project, so use them only
-  as a last resort, after taking a fresh dump to keep the current rows. The transaction
+- **Supabase:** restore into a new project, never in place. On a paid plan
+  with physical backups, use the dashboard's "Restore to a New Project" for a
+  daily backup or, with the PITR add-on, a point in time; otherwise restore a
+  dump into a new project. The in-place backup restore and point-in-time
+  recovery replace the live project's database, so do not use them for Jeeves.
+  The transaction
   pooler cannot restore or migrate: use the direct or session connection
   string for the restore and the checks below.
 - **AWS RDS for PostgreSQL:** turn on automated backups with a retention
@@ -315,8 +318,9 @@ The same rule gives the per-platform recipes:
   holds the bad data:
   `podman compose exec -T db createdb -U jeeves jeeves_restored`, then
   `podman compose exec -T db psql -U jeeves -d jeeves_restored < backup.sql`
-  for a plain `.sql` file, or `pg_restore -U jeeves --no-owner -d
-  jeeves_restored` for a `pg_dump -Fc` file.
+  for a plain `.sql` file, or
+  `podman compose exec -T db pg_restore -U jeeves --no-owner -d jeeves_restored < backup.dump`
+  for a `pg_dump -Fc` file.
 
 After any restore, before sending traffic to it:
 

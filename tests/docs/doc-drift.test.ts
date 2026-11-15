@@ -112,7 +112,9 @@ describe("docs/deploy.md section 4 backups (docs-F28)", () => {
   });
   it("says to restore into a new database because of the append-only triggers", () => {
     expect(section).toMatch(/new database/);
-    expect(section).toMatch(/discards/);
+    expect(section).toMatch(/drops and recreates every\s+table/);
+    expect(section).not.toMatch(/TRUNCATE/);
+    expect(section).toMatch(/Restore to a New Project/i);
   });
   it("checks the migration journal and health after a restore", () => {
     expect(section).toMatch(/__drizzle_migrations/);
