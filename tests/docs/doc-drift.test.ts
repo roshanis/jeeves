@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
@@ -7,6 +8,20 @@ const read = (p: string) => readFileSync(p, "utf8");
 describe("README claims about .env.example (docs-F13)", () => {
   it("does not call .env.example the full variable list", () => {
     expect(read("README.md")).not.toMatch(/full variable list/i);
+  });
+  it("only names extra env vars that the code reads", () => {
+    const line = read("README.md").split("\n").find((l) => /not an exhaustive list/.test(l)) ?? "";
+    const names = [...line.matchAll(/`([A-Z][A-Z0-9_]{3,})`/g)].map((m) => m[1]);
+    expect(names.length).toBeGreaterThan(0);
+    for (const name of names) {
+      let hits = "";
+      try {
+        hits = execFileSync("git", ["grep", "-l", "-w", name, "--", "app", "lib", "scripts", ".env.example"], { encoding: "utf8" });
+      } catch {
+        hits = "";
+      }
+      expect(hits, `${name} is not referenced by the code`).not.toBe("");
+    }
   });
 });
 
