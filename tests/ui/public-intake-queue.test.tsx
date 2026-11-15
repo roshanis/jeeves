@@ -161,4 +161,21 @@ describe("PublicIntakeQueue (operator)", () => {
     fireEvent.click(screen.getByRole("button", { name: /refresh/i }));
     await waitFor(() => expect(mocks.listPublicSubmissions).toHaveBeenCalledWith("the-operator-token"));
   });
+
+  it("ignores a refresh that resolves after Lock", async () => {
+    renderWithProviders(<PublicIntakeQueue />);
+    unlockWith("the-operator-token");
+    await waitFor(() => expect(screen.getByText("Appointment Reminder Summarizer")).toBeDefined());
+
+    let resolve!: (rows: unknown[]) => void;
+    mocks.listPublicSubmissions.mockReturnValueOnce(new Promise((r) => { resolve = r; }));
+    fireEvent.click(screen.getByRole("button", { name: /refresh/i }));
+    fireEvent.click(screen.getByRole("button", { name: /lock/i }));
+    resolve([ROW]);
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(screen.queryByText("Appointment Reminder Summarizer")).toBeNull();
+    expect(document.querySelector('[data-slot="operator-token-input"]')).not.toBeNull();
+    expect(window.sessionStorage.getItem("jeeves_operator_token")).toBeNull();
+  });
 });

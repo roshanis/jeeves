@@ -141,9 +141,15 @@ export function PublicIntakeQueue() {
   // Reloads the list in place with the token already accepted, so the queue
   // stays on screen instead of dropping back to the token form.
   async function refresh() {
+    // Lock may be pressed while this is in flight; a stale result must not
+    // re-open the queue or resurrect an error after the token is gone.
+    const token = tokenRef.current;
     try {
-      setState({ kind: "open", rows: await listPublicSubmissions(tokenRef.current) });
+      const rows = await listPublicSubmissions(token);
+      if (tokenRef.current !== token) return;
+      setState({ kind: "open", rows });
     } catch (err) {
+      if (tokenRef.current !== token) return;
       if (tokenRejected(err)) writeStoredToken(null);
       setState({ kind: "locked", error: errorMessage(err) });
     }
