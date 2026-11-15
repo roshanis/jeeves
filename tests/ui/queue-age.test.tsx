@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, screen } from "@testing-library/react";
 import { renderWithProviders } from "./helpers";
-import { InitiativeAgeCell, useClientNow } from "@/components/jeeves/queue-age";
+import { InitiativeAgeCell, QueueAgeCell, QueueAgingBadge, useClientNow } from "@/components/jeeves/queue-age";
 
 function Probe({ updatedAt, state = "in_review" }: { updatedAt: string; state?: "in_review" | "in_qc" }) {
   const nowMs = useClientNow();
@@ -29,5 +29,19 @@ describe("queue age clock", () => {
     renderWithProviders(<Probe updatedAt="2026-11-01T11:55:00.000Z" state="in_qc" />);
     const title = document.querySelector("[title]")?.getAttribute("title") ?? "";
     expect(title).not.toContain("in_qc");
+  });
+
+  it("exposes the SLA bucket as text, not only as colour", () => {
+    const now = Date.parse("2026-11-15T12:00:00.000Z");
+    const twelveDays = 12 * 24 * 3600 * 1000;
+    const { container } = renderWithProviders(
+      <>
+        <QueueAgeCell createdAt={new Date(now - twelveDays).toISOString()} status="pending" nowMs={now} />
+        <QueueAgingBadge ageMs={twelveDays} />
+        <InitiativeAgeCell updatedAt={new Date(now - twelveDays).toISOString()} state="in_review" nowMs={now} />
+      </>,
+    );
+    const hits = container.textContent!.match(/overdue/g) ?? [];
+    expect(hits).toHaveLength(3);
   });
 });

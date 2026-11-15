@@ -51,6 +51,12 @@ function AgeDot({ bucket }: { bucket: AgeBucket }) {
   );
 }
 
+// The bucket as text for assistive technology: colour alone must not carry SLA
+// severity (WCAG 1.4.1). "fresh" is the unremarkable default and stays silent.
+function AgeBucketWord({ bucket }: { bucket: AgeBucket }) {
+  return bucket === "fresh" ? null : <span className="sr-only"> ({bucket})</span>;
+}
+
 // Hydration-safe "current time": null on the server (so SSR + first client
 // render match and show the placeholder), then a cached client clock. Cached
 // so useSyncExternalStore sees a stable snapshot; refreshed every minute and
@@ -122,6 +128,7 @@ export function QueueAgingBadge({ ageMs }: { ageMs: number | null }) {
     >
       <AgeDot bucket={bucket} />
       {formatAge(ageMs)}
+      <AgeBucketWord bucket={bucket} />
     </span>
   );
 }
@@ -164,6 +171,7 @@ export function InitiativeAgeCell({
         <AgeDot bucket={bucket} />
       )}
       {formatAge(ageMs)}
+      {settled ? null : <AgeBucketWord bucket={bucket} />}
     </span>
   );
 }
@@ -195,6 +203,7 @@ export function QueueAgeCell({
     >
       <AgeDot bucket={bucket} />
       {formatAge(ageMs)}
+      <AgeBucketWord bucket={bucket} />
     </span>
   );
 }
