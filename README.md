@@ -246,6 +246,10 @@ It re-seeds to the canonical state, clears live session + budget state, and
 prints a pre-flight checklist (workspace signing, agent/telemetry connector status,
 cron secret, build SHA, and a 12-initiative smoke count).
 
+Run it on a fresh or disposable database only: it refuses once evidence exists,
+and while real inbound requests (public- workspaces) are present unless
+`ALLOW_DISCARD_PUBLIC_REQUESTS=<count>` confirms discarding them.
+
 See `docs/deploy.md` for the full Vercel + Neon deployment runbook, known
 gaps, and a demo-day checklist. Use `npm run db:migrate` (non-destructive) to
 apply schema changes — `npm run db:seed` wipes every table, audit log

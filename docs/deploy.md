@@ -330,7 +330,12 @@ Run through this the morning of a demo, in order:
    ```bash
    JEEVES_MODE=demo DATABASE_URL="<Neon pooled connection string>" npm run db:seed
    ```
-   Confirms a clean, deterministic 12-initiative dataset.
+   Confirms a clean, deterministic 12-initiative dataset. Do this only on a
+   fresh or disposable database: a seed wipes every initiative and the audit
+   log. It refuses when the database holds evidence, and when it holds real
+   inbound requests (public- workspaces) unless
+   `ALLOW_DISCARD_PUBLIC_REQUESTS=<count>` names how many to discard. A live
+   demo is not reseeded; use a new database.
 
 2. **Verify `/audit` queries.** Visit `/audit` and run all four canned
    queries (`lib/data/dto.ts` → `CannedAuditQueryId`):

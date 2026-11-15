@@ -10,6 +10,7 @@ import { ACTORS, BASE_DATE_MS, CONTROL_SEEDS, INITIATIVE_SEEDS, type InitiativeS
 import { reviewerNameForDomain } from "../lib/demo/personas";
 export { ACTORS, BASE_DATE_MS, CONTROL_SEEDS, INITIATIVE_SEEDS } from "../lib/demo/reference-data";
 
+import { sql } from "drizzle-orm";
 import { assertDemoMode, DemoOnlyError } from "../lib/config/demo-doors";
 import { assertDemoDatabase, refuseProductionDatabase } from "../lib/demo/bootstrap";
 import { deriveTier } from "../lib/triage/rules";
@@ -300,6 +301,20 @@ async function seedInTransaction(db: SeedDb): Promise<RowCounts> {
   const packets = await db.select({ id: evidencePackets.id }).from(evidencePackets).limit(1);
   if (documents.length || packets.length) {
     throw new Error("Refusing reset to preserve evidence history. Use a fresh disposable database.");
+  }
+  // Real requests (initiatives in a `public-` workspace, listed in /operator)
+  // go with the wipe below, audit events included. Refuse unless the operator
+  // names exactly how many they mean to discard.
+  const realRequests = await db.execute(
+    sql`SELECT count(*)::int AS n FROM initiatives WHERE starts_with(workspace_id, 'public-')`,
+  );
+  const realCount = Number((((Array.isArray(realRequests) ? realRequests : realRequests.rows) as { n: number }[])[0]?.n) ?? 0);
+  if (realCount > 0 && process.env.ALLOW_DISCARD_PUBLIC_REQUESTS !== String(realCount)) {
+    throw new Error(
+      `Refusing reset: this database holds ${realCount} real inbound request${realCount === 1 ? "" : "s"} (public- workspaces) ` +
+        `that the wipe would delete with their audit events. Use a fresh database, or set ALLOW_DISCARD_PUBLIC_REQUESTS=${realCount} ` +
+        "to confirm discarding them.",
+    );
   }
   resetIdCounters();
   const now = new Date(BASE_DATE_MS);
