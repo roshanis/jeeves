@@ -43,18 +43,29 @@ function genericConfig(base: PoolConfig, databaseUrl: string, url: URL, sslCa?: 
   return { ...base, connectionString: url.toString(), ssl: { rejectUnauthorized: true, ca: sslCa } };
 }
 
-/** A positive integer from an environment value, else the fallback. */
-function positiveInt(value: string | undefined, fallback: number | undefined): number | undefined {
-  const n = Number(value?.trim());
-  return value?.trim() && Number.isSafeInteger(n) && n > 0 ? n : fallback;
+/** A positive integer from an environment value, else undefined. */
+function positiveInt(value: string | undefined): number | undefined {
+  const text = value?.trim() ?? "";
+  return /^[0-9]+$/.test(text) && Number.isSafeInteger(Number(text)) && Number(text) > 0 ? Number(text) : undefined;
+}
+
+/**
+ * A timeout in milliseconds from an environment value. An explicit 0 turns the
+ * timeout off: the parameter is then not sent at all, which an install behind
+ * a pooler that refuses startup parameters it does not track (PgBouncer) needs
+ * in order to connect. Anything else that is not whole milliseconds keeps the default.
+ */
+function timeoutMs(value: string | undefined, fallback: number): number | undefined {
+  if (/^0+$/.test(value?.trim() ?? "")) return undefined;
+  return positiveInt(value) ?? fallback;
 }
 
 /**
  * Bounded node-postgres pool; Supabase endpoints always use verifying TLS.
  * Generic hosts also get server-side statement and idle-in-transaction
- * timeouts (generous defaults, env-overridable) so a stuck statement cannot
- * hold a pooled connection forever. Supabase keeps its pool of one and its
- * startup parameters unchanged: its poolers may reject unknown ones.
+ * timeouts (generous defaults, env-overridable, 0 turns one off) so a stuck
+ * statement cannot hold a pooled connection forever. Supabase keeps its pool
+ * of one and its startup parameters unchanged: its poolers may reject unknown ones.
  */
 export function postgresPoolConfig(
   databaseUrl: string,
@@ -64,14 +75,16 @@ export function postgresPoolConfig(
   const url = parsePostgresUrl(databaseUrl);
   const base = { connectionTimeoutMillis: 10_000, idleTimeoutMillis: 10_000 };
   if (!isSupabase(url)) {
-    const max = positiveInt(env.DATABASE_POOL_MAX, undefined);
+    const max = positiveInt(env.DATABASE_POOL_MAX);
+    const statementMs = timeoutMs(env.DATABASE_STATEMENT_TIMEOUT_MS, 60_000);
+    const idleInTransactionMs = timeoutMs(env.DATABASE_IDLE_IN_TRANSACTION_TIMEOUT_MS, 60_000);
     return genericConfig({
       ...base,
       ...(max ? { max } : {}),
       keepAlive: true,
       application_name: "jeeves",
-      statement_timeout: positiveInt(env.DATABASE_STATEMENT_TIMEOUT_MS, 60_000),
-      idle_in_transaction_session_timeout: positiveInt(env.DATABASE_IDLE_IN_TRANSACTION_TIMEOUT_MS, 60_000),
+      ...(statementMs ? { statement_timeout: statementMs } : {}),
+      ...(idleInTransactionMs ? { idle_in_transaction_session_timeout: idleInTransactionMs } : {}),
     }, databaseUrl, url, sslCa);
   }
 
@@ -93,7 +106,8 @@ export function postgresPoolConfig(
 /**
  * One connection for migrations. No statement_timeout (a migration may run
  * long), but a lock_timeout so a migration queued behind an open transaction
- * fails fast and can be retried instead of waiting while holding locks.
+ * fails fast and can be retried instead of waiting while holding locks (0
+ * turns it off). Like the runtime pool, Supabase gets no new startup parameter.
  */
 export function migrationPoolConfig(
   databaseUrl: string,
@@ -103,8 +117,12 @@ export function migrationPoolConfig(
   const config = { ...postgresPoolConfig(databaseUrl, sslCa, env) };
   delete config.statement_timeout;
   delete config.idle_in_transaction_session_timeout;
-  const lockMs = positiveInt(env.DATABASE_MIGRATION_LOCK_TIMEOUT_MS, 10_000);
-  return { ...config, max: 1, options: `-c lock_timeout=${lockMs}` };
+  const lockMs = isSupabase(parsePostgresUrl(databaseUrl))
+    ? undefined
+    : timeoutMs(env.DATABASE_MIGRATION_LOCK_TIMEOUT_MS, 10_000);
+  // Its own key rather than `options`: a URL may carry options of its own, and
+  // node-postgres lets the URL's value replace the one given here.
+  return { ...config, max: 1, ...(lockMs ? { lock_timeout: lockMs } : {}) };
 }
 
 /** Transaction pooling is unsuitable for migrations that need session state. */

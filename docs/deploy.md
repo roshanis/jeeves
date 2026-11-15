@@ -87,6 +87,9 @@ npm run start        # next start (after build)
    | `DATABASE_URL` or `POSTGRES_URL` | Yes | Explicit nonblank `DATABASE_URL` wins; otherwise the Vercel integration `POSTGRES_URL` is used consistently for runtime, pages and incident reads. Neon hosts use the Neon driver; other PostgreSQL hosts use `pg`. Vercel refuses local PGlite fallback. |
    | `DATABASE_MIGRATION_URL` | For Supabase migrations | Direct or session-pooler connection on port 5432. Runtime transaction-pooler URLs on port 6543 cannot run migrations. |
    | `DATABASE_SSL_CA` | Optional | Optional CA (PEM). Applies to every PostgreSQL host reached through node-postgres, not to Neon, which uses its own driver and public certificates. When set, the connection uses TLS and verifies the server against this CA (for Amazon RDS, the RDS CA bundle). It cannot be combined with `sslmode=disable` or `no-verify`, or with `sslrootcert`, `sslcert` or `sslkey` in the URL. Supabase hosts additionally always verify and use a pool of one. |
+   | `DATABASE_POOL_MAX` | Optional | Largest number of connections one app instance opens through node-postgres (its default is 10). Not used for Neon hosts (own driver) or Supabase hosts (always one connection). |
+   | `DATABASE_STATEMENT_TIMEOUT_MS`, `DATABASE_IDLE_IN_TRANSACTION_TIMEOUT_MS` | Optional | Server-side limits, in milliseconds, for one statement and for a transaction left idle (default `60000` each). node-postgres sends them as startup parameters. `0` turns one off and sends nothing: use that behind a pooler that refuses startup parameters it does not track (PgBouncer without `ignore_startup_parameters`), and set the limits on the database role instead. Not sent to Neon or Supabase hosts. |
+   | `DATABASE_MIGRATION_LOCK_TIMEOUT_MS` | Optional | How long `npm run db:migrate` waits for a lock before it fails and can be retried, in milliseconds (default `10000`; `0` turns it off). Migrations have no statement timeout. Not sent to Neon or Supabase hosts. |
    | `DATA_PROVIDER` | Optional | Defaults to DB when either runtime URL exists. `db` makes this explicit; `mock` deliberately shows the read-only preview dataset. |
    | `JEEVES_COOKIE_SECRET` | Yes for new deployments | Random server-only signing key for browser workspace continuity. Visitor entry is passwordless. Existing DEMO_PASSCODE can serve only as a deprecated signing fallback. |
    | `OPENAI_API_KEY` | Optional | Only set this if you want **live** LLM-drafted reviews during the demo. Omit it and the app runs entirely on the keyless mock adapter — safe default for a public URL. |
@@ -112,6 +115,12 @@ npm run start        # next start (after build)
      the selected connection. `DATABASE_MIGRATION_URL` selects a separate
      operator connection; absent that, the runtime URL precedence applies.
      Supabase transaction-pooler connections on port 6543 are rejected for migrations.
+   - **checked** — after migrating it confirms that every migration in
+     `drizzle/meta/_journal.json` is recorded as applied, and fails naming any
+     that is not (drizzle silently skips a migration that is older than the
+     newest applied one). A database already migrated by a newer build is
+     reported and left alone, so an older build's migrate step does not fail
+     on a rollback.
 
    This is the command to use against a database that holds real data, and
    it is the only one on this page that is safe to point at production.

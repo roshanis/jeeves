@@ -28,22 +28,36 @@ function driverForHandle(db: Db): DbDriver {
 /**
  * drizzle runs an entry only if its `when` exceeds the newest applied one, so
  * a migration merged with an equal or lower `when` is skipped silently and
- * forever. Compare what is applied with the journal, in order, and fail loudly.
+ * forever. After migrating, every journal entry must be recorded as applied;
+ * fail loudly, naming the ones that are not.
+ *
+ * A database that is AHEAD of this build's journal is not an error here: that
+ * is a rollback to an older build, nothing of this build's was skipped, and
+ * refusing would make the older build's migrate step fail. It is reported.
  */
-async function assertAppliedMatchesJournal(db: Db): Promise<void> {
+async function assertJournalApplied(db: Db): Promise<void> {
   const journal = JSON.parse(readFileSync(`${MIGRATIONS_FOLDER}/meta/_journal.json`, "utf8")) as
     { entries: { tag: string; when: number }[] };
   const result = await (db as { execute: (q: unknown) => Promise<{ rows: Record<string, unknown>[] }> })
-    .execute(sql`select created_at from drizzle.__drizzle_migrations order by id`);
-  const applied = result.rows.map((row) => Number(row.created_at));
-  const length = Math.max(applied.length, journal.entries.length);
-  for (let i = 0; i < length; i++) {
-    if (applied[i] !== journal.entries[i]?.when) {
-      throw new Error(
-        `Applied migrations diverge from the journal at position ${i} (${journal.entries[i]?.tag ?? "no journal entry"}): ` +
-        `${applied.length} applied, ${journal.entries.length} in the journal. A migration was skipped or the journal changed; do not continue.`,
-      );
-    }
+    .execute(sql`select created_at from drizzle.__drizzle_migrations`);
+  const applied = new Set(result.rows.map((row) => Number(row.created_at)));
+
+  const missing = journal.entries.filter((entry) => !applied.has(entry.when));
+  if (missing.length > 0) {
+    throw new Error(
+      `${missing.length} ${missing.length === 1 ? "migration in the journal is" : "migrations in the journal are"} ` +
+      `not applied to this database: ${missing.map((entry) => entry.tag).join(", ")}. ` +
+      "drizzle only runs an entry that is newer than the newest applied one, so these will never run on their own; do not continue.",
+    );
+  }
+
+  const known = new Set(journal.entries.map((entry) => entry.when));
+  const unknown = [...applied].filter((when) => !known.has(when)).length;
+  if (unknown > 0) {
+    console.warn(
+      `This database has ${unknown} applied ${unknown === 1 ? "migration" : "migrations"} that this build does not know: ` +
+      "it was migrated by a newer build. Nothing was changed.",
+    );
   }
 }
 
@@ -70,7 +84,7 @@ export async function applyMigrations(
     const { migrate } = await import("drizzle-orm/pglite/migrator");
     await migrate(db as Parameters<typeof migrate>[0], { migrationsFolder: MIGRATIONS_FOLDER });
   }
-  await assertAppliedMatchesJournal(db);
+  await assertJournalApplied(db);
 }
 
 /** Use a dedicated migration connection when configured; never borrow the runtime transaction pool. */
