@@ -89,11 +89,7 @@ describe("lib/services/route-guard", () => {
     it("rejects an unknown persona without creating a session", async () => {
       const result = await issueDemoSession("unknown-persona");
       expect(result).toBeNull();
-    });
-
-    it("returns null for an unknown persona key", async () => {
-      const result = await issueDemoSession("not-a-real-persona");
-      expect(result).toBeNull();
+      expect(await testDb.select().from(sessions)).toEqual([]);
     });
   });
 
@@ -226,11 +222,13 @@ describe("lib/services/route-guard", () => {
 
   describe("runMutationGuard", () => {
     it("401s an unauthenticated request with no side effects (no rate-limit consumption)", async () => {
+      const check = vi.spyOn(DbTokenBucketRateLimiter.prototype, "checkAndConsume");
       const req = reqWithBearer("bogus-token", "5.5.5.5");
       const result = await runMutationGuard(req, undefined);
       expect(result.ok).toBe(false);
       if (result.ok) throw new Error("unreachable");
       expect(result.failure.status).toBe(401);
+      expect(check).not.toHaveBeenCalled();
     });
 
     it("200s (ok) with a valid session and resolves the actor from the session, not the body", async () => {
