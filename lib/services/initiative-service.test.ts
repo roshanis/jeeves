@@ -15,6 +15,7 @@ import {
   riskAssessments,
 } from "../db/schema";
 import { and, eq, sql } from "drizzle-orm";
+import { PgSelectBase } from "drizzle-orm/pg-core";
 import { createHash } from "node:crypto";
 import { CONTROL_SEEDS } from "../../scripts/seed";
 import { ConflictError, IllegalTransitionError, NotFoundError, ValidationError } from "./initiative-service";
@@ -2229,6 +2230,25 @@ describe("lib/services/initiative-service", () => {
         .from(reviewCycles)
         .where(eq(reviewCycles.initiativeId, draft.initiativeId));
       expect(cycleRows).toHaveLength(0);
+    });
+  });
+
+  describe("triage() row lock (domain-F27)", () => {
+    it("takes the initiative row lock like the sibling transitions", async () => {
+      const draft = await svc.createDraft(db, {
+        payload: CHAMPION_PREFILL_PAYLOAD,
+        requesterActor: REQUESTER,
+        requesterName: "Priya Raman",
+      });
+      await svc.submitIntake(db, draft.initiativeId, REQUESTER);
+      await svc.startQc(db, draft.initiativeId, PROGRAM);
+      const forSpy = vi.spyOn(PgSelectBase.prototype, "for");
+      try {
+        await svc.triage(db, draft.initiativeId);
+        expect(forSpy).toHaveBeenCalledWith("update");
+      } finally {
+        forSpy.mockRestore();
+      }
     });
   });
 });

@@ -722,7 +722,7 @@ export async function triage(
   passedBy?: Actor,
 ): Promise<TriageFastLaneResult | TriageReviewResult> {
   return db.transaction(async (tx) => {
-    const initiative = await loadInitiativeOrThrow(tx, initiativeId);
+    const initiative = await loadInitiativeOrThrow(tx, initiativeId, true);
     assertWorkspaceAccess(initiative.workspaceId, sessionWorkspaceId, "initiative", initiativeId);
     const intake = await latestIntakeVersion(tx, initiativeId);
     if (!intake) {
