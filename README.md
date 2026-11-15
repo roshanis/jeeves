@@ -68,7 +68,7 @@ governance, end to end:
 ## Key features
 
 - **Governance operations console** — a left-nav ops shell (Inbox,
-  Portfolio, Reviews, Monitoring, Controls, Audit, Promotions,
+  Portfolio, Reviews, Agents, Monitoring, Controls, Audit, Promotions,
   Administration) in a restrained enterprise UI, not a marketing site.
 - **3-column Review Workbench** as the central review-signing experience,
   and each initiative renders as a case file (overview, evidence/blockers
@@ -122,8 +122,9 @@ governance domain, covering all 8 required review domains.
 ## Tech stack
 
 - **Next.js (App Router) + TypeScript**, Tailwind + shadcn/ui, Recharts
-- **Neon Postgres + Drizzle ORM** — the pooled `neon-serverless` driver in
-  production, or a persistent local **PGlite** instance as a zero-setup
+- **Neon Postgres + Drizzle ORM** — the pooled `neon-serverless` driver on
+  Neon hosts, node-postgres (`pg`) for Supabase and any other Postgres host,
+  or a persistent local **PGlite** instance as a zero-setup
   fallback for local dev and tests (same schema, same Drizzle API either
   way)
 - **Vercel AI SDK**, with an optional OpenAI Agents SDK adapter, behind the
@@ -146,12 +147,20 @@ Use `DATA_PROVIDER=db` for an interactive local demo; without `DATABASE_URL`,
 it uses local PGlite. Pages and mutation endpoints must use the same mode.
 
 
-**Prerequisites:** Node.js (see `package.json`/`next` 16 for the supported
-range) and npm. No Docker, no external services required for local dev.
+**Prerequisites:** Node.js 22 (the version CI runs; Next.js 16 needs a
+recent Node) and npm. No Docker, no external services required for local dev.
 
 ```bash
 npm install
 ```
+
+Visitor session entry requires a server-side `JEEVES_COOKIE_SECRET` for signed
+browser continuity. Existing `DEMO_PASSCODE` configuration is accepted only as
+a deprecated signing fallback to sign new cookies and verify existing ones; it is never checked
+as a visitor password. New deployments should use an independent random key.
+With neither signing source configured, entry returns 503 without creating a
+session. Anonymous entry and authenticated persona changes have separate,
+persistent rate limits; all existing model-budget limits still apply.
 
 ### Zero-setup local run (no `DATABASE_URL` → PGlite)
 
@@ -214,8 +223,9 @@ which one you get is decided in one place (`lib/agents/index.ts`):
   structured round trip per call.
 - **`agents-sdk`** (`JEEVES_AGENT_RUNTIME=agents-sdk`) — OpenAI Agents SDK,
   with per-method model routing: **Luna** (`gpt-5.6-luna`) handles
-  completeness checks, intake turns, triage narration, and grounded audit
-  answers — high-volume, latency-sensitive work — while **Terra**
+  intake turns and grounded audit answers — high-volume, latency-sensitive
+  work (completeness checks and triage are deterministic code, not model
+  calls) — while **Terra**
   (`gpt-5.6-terra`) drafts domain reviews, where policy-grounded nuance
   matters more than time-to-first-token.
 
@@ -265,8 +275,8 @@ npm run lint          # eslint
 npm run typecheck     # tsc --noEmit
 ```
 
-The full suite runs several hundred Vitest unit/integration tests (targeting
->80% coverage on `lib/`) plus 8 Playwright end-to-end tests. The Playwright
+The full suite runs the Vitest unit/integration tests (targeting
+>80% coverage on `lib/`) plus the Playwright end-to-end specs in `tests/e2e`. The Playwright
 suite is the **required golden path**: it walks the read-only portfolio and
 audit views, then a full live loop across requester, reviewer, and approver
 personas — intake, QC, triage, an all-8-domain drafted review, sign-off, and
@@ -322,17 +332,24 @@ lib/
   services/             Transactional use cases + the route-guard pipeline
                         (session -> rate-limit -> budget -> authz)
   security/             Session/workspace signing, rate limiting, token budget, input caps
+  demo/                 Fictional personas and reference data
+  evidence/             Evidence file storage and upload/download handling
+  reviews/              Review helpers (abstention)
+  telemetry/            Synthetic telemetry connector
+  deployments/          Deployment selection
   data/                 The DataProvider swap point (db vs mock), env-selected
   db/                   Drizzle schema + the Neon-or-PGlite client factory
   client/               Client-safe persona/session mirrors for UI components
 components/jeeves/      App-specific UI: workbench, case-file tabs, chats,
                         portfolio table, audit console, admin controls, etc.
+deploy/                 Container deploy templates (Podman: Containerfile, compose, Quadlet)
 drizzle/                Generated SQL migrations, incl. the append-only audit trigger
 docs/                   plan.md-adjacent specs: seed-spec, intake-spec, ui-spec,
                         demo-script, deploy runbook, per-domain policy corpus
 tests/                  Component tests, port compile-tripwire tests, and the
                         required Playwright golden-path spec
-scripts/                seed.ts — the deterministic seed script
+scripts/                seed.ts (deterministic seed), migrate.ts (db:migrate),
+                        reset-demo.ts (demo reset)
 ```
 
 ---
@@ -360,11 +377,3 @@ and no real integration
 MIT — see [LICENSE](LICENSE). The license covers the code; it makes no claim
 over the fictional scenario, the framework names referenced in the mapping
 pages, or any third-party dependency, each of which carries its own terms.
-
-Visitor session entry requires a server-side `JEEVES_COOKIE_SECRET` for signed
-browser continuity. Existing `DEMO_PASSCODE` configuration is accepted only as
-a deprecated signing fallback to sign new cookies and verify existing ones; it is never checked
-as a visitor password. New deployments should use an independent random key.
-With neither signing source configured, entry returns 503 without creating a
-session. Anonymous entry and authenticated persona changes have separate,
-persistent rate limits; all existing model-budget limits still apply.

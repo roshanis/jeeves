@@ -119,3 +119,35 @@ describe("docs/deploy.md section 4 backups (docs-F28)", () => {
     expect(section).toMatch(/\/api\/health/);
   });
 });
+
+describe("README drift (docs-F31)", () => {
+  const readme = read("README.md");
+  it("hard-codes no Playwright or unit-test counts", () => {
+    expect(readme).not.toMatch(/\b8 Playwright/);
+    expect(readme).not.toMatch(/several hundred/i);
+  });
+  it("lists Agents in the left-nav sentence", () => {
+    const i = readme.indexOf("a left-nav ops shell");
+    expect(readme.slice(i, i + 250)).toMatch(/Agents/);
+  });
+  it("says node-postgres serves non-Neon hosts, not neon-serverless 'in production'", () => {
+    expect(readme).not.toMatch(/neon-serverless`? driver in\s+production/);
+    expect(readme).toMatch(/node-postgres/);
+  });
+  it("names Node 22 instead of pointing at a package.json range that does not exist", () => {
+    expect(readme).not.toMatch(/see `package\.json`\/`next` 16/);
+    expect(readme).toMatch(/Node\.js 22/);
+  });
+  it("does not give Luna completeness checks or triage narration", () => {
+    expect(readme).not.toMatch(/triage narration/);
+    expect(readme).not.toMatch(/Luna[^.]*completeness checks/);
+  });
+  it("lists the lib directories and scripts that exist", () => {
+    for (const p of ["  demo/ ", "  evidence/ ", "  reviews/ ", "  telemetry/ ", "  deployments/ ", "\ndeploy/ ", "migrate.ts", "reset-demo.ts"]) {
+      expect(readme, p).toContain(p);
+    }
+  });
+  it("ends with the License section", () => {
+    expect(readme.trimEnd().endsWith("each of which carries its own terms.")).toBe(true);
+  });
+});
