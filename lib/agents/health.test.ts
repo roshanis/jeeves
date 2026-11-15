@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { probeConnector } from "./health";
+import { PROBE_MAX_OUTPUT_TOKENS, probeConnector } from "./health";
 import { getAgentPort } from "./index";
 import { agentRuntimeStatus } from "./registry";
 import { createOpenAIAgentPort } from "./openai-adapter";
@@ -48,6 +48,14 @@ describe("probeConnector", () => {
     expect(generateText).toHaveBeenCalledTimes(1);
     expect(getAgentPort).toHaveBeenCalledTimes(1);
     expect(health.detail).not.toContain("will run live");
+  });
+
+  it("caps the probe's output tokens", async () => {
+    process.env.OPENAI_API_KEY = "sk-test-key";
+    await probeConnector();
+    const options = generateText.mock.calls[0]![0] as { maxOutputTokens?: number };
+    expect(options.maxOutputTokens).toBeGreaterThan(0);
+    expect(options.maxOutputTokens).toBeLessThanOrEqual(PROBE_MAX_OUTPUT_TOKENS);
   });
 
   it("reports configured-but-unreachable when the probe call throws", async () => {
