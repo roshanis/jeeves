@@ -3,6 +3,7 @@
 // (live tier preview + completeness meter recompute on every change / chat
 // state); this page provides the static shell.
 import { IntakeModeToggle } from "@/components/jeeves/intake-mode-toggle";
+import { configuredOperatorToken } from "@/lib/services/route-guard";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
@@ -23,7 +24,7 @@ export default function NewInitiativePage() {
           triage (tier + required review domains) the moment you answer them.
         </p>
       </div>
-      <IntakeModeToggle />
+      <IntakeModeToggle realRequestsEnabled={configuredOperatorToken() !== null} />
     </div>
   );
 }

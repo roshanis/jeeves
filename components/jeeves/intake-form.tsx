@@ -301,12 +301,14 @@ const GAP_LEVEL_CLASS: Record<CompletenessGap["level"], string> = {
  * The form
  * ---------------------------------------------------------------------- */
 
-export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: initialInitiativeId, initialVersion, initialSlug }: {
+export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: initialInitiativeId, initialVersion, initialSlug, realRequestsEnabled = true }: {
   initialPayload?: IntakePayload;
   onPayloadChange?: (payload: IntakePayload) => void;
   initiativeId?: string;
   initialVersion?: number;
   initialSlug?: string;
+  /** False when no operator queue is configured: nobody could read a real request, so that door is not offered. */
+  realRequestsEnabled?: boolean;
 } = {}) {
   const router = useRouter();
   const { session, logout, startDemo, startPublicSession, pending } = useLiveSession();
@@ -460,11 +462,13 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
       <div className="flex flex-col gap-4">
         {!session ? (
           <Alert>
-            <AlertTitle>Try it, or send a real request</AlertTitle>
+            <AlertTitle>{realRequestsEnabled ? "Try it, or send a real request" : "Try the demo"}</AlertTitle>
             <AlertDescription className="flex flex-col items-start gap-2.5">
-              <span>
-                There are two ways in, and they go to different places.
-              </span>
+              {realRequestsEnabled ? (
+                <span>
+                  There are two ways in, and they go to different places.
+                </span>
+              ) : null}
               <div className="flex flex-col gap-1.5">
                 <span>
                   <span className="font-medium text-foreground">Try the demo</span>{" "}
@@ -472,11 +476,13 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
                   and approve it yourself. It stays in your own sandbox;
                   nobody else sees it.
                 </span>
-                <span>
-                  <span className="font-medium text-foreground">Send a real request</span>{" "}
-                  — it goes to the team running this site, who read every one
-                  and reply by email to the address you give.
-                </span>
+                {realRequestsEnabled ? (
+                  <span>
+                    <span className="font-medium text-foreground">Send a real request</span>{" "}
+                    — it goes to the team running this site, who read every one
+                    and reply by email to the address you give.
+                  </span>
+                ) : null}
               </div>
               {/* Said plainly because strangers are about to type into a form
                   themed as a healthcare payer's intake. This is a synthetic
@@ -495,16 +501,18 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
                 >
                   Start the demo
                 </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  onClick={() => void handleStartPublic()}
-                  disabled={pending}
-                  data-slot="start-public-request"
-                >
-                  Send a real request
-                </Button>
+                {realRequestsEnabled ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => void handleStartPublic()}
+                    disabled={pending}
+                    data-slot="start-public-request"
+                  >
+                    Send a real request
+                  </Button>
+                ) : null}
               </div>
             </AlertDescription>
           </Alert>
