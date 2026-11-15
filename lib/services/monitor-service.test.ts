@@ -271,6 +271,29 @@ describe("lib/services/monitor-service", () => {
    * deployment. Now isolated per-candidate: recorded in `result.errors`,
    * the run completes, and other candidates are unaffected.
    * -------------------------------------------------------------------- */
+  describe("runMonitor — wall-clock stamps", () => {
+    it("stamps audit events and incident rows with the wall clock and keeps nowTs as metadata.evaluatedAt", async () => {
+      const { init, dep } = await memberChatCopilot(db);
+      const before = Date.now();
+      // Replay point far in the future: observations all precede it.
+      const nowTs = Date.parse("9999-01-01T00:00:00Z");
+      const result = await runMonitor(db, SYSTEM_ACTOR, nowTs, UNSCOPED_WORKSPACE);
+      expect(result.incidentsCreated).toBe(1);
+      const after = Date.now() + 1000;
+      const [inc] = await db.select().from(incidents).where(eq(incidents.deploymentId, dep.id));
+      expect(inc!.detectedAt.getTime()).toBeGreaterThanOrEqual(before);
+      expect(inc!.detectedAt.getTime()).toBeLessThanOrEqual(after);
+      const events = (await db.select().from(auditEvents).where(eq(auditEvents.initiativeId, init.id)))
+        .filter((e) => e.action === "pause");
+      expect(events.length).toBeGreaterThan(0);
+      for (const e of events) {
+        expect(e.ts.getTime()).toBeGreaterThanOrEqual(before);
+        expect(e.ts.getTime()).toBeLessThanOrEqual(after);
+        expect(e.metadata).toMatchObject({ evaluatedAt: new Date(nowTs).toISOString() });
+      }
+    });
+  });
+
   describe("runMonitor — repeat breach after resume", () => {
     it("creates a second incident and pauses again when a new sustained breach follows a resume", async () => {
       const { init, dep } = await memberChatCopilot(db);
