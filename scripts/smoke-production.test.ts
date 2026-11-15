@@ -5,7 +5,9 @@ import {
   bootRefusalCases,
   buildServerEnv,
   buildSmokeChecks,
+  databaseSecrets,
   evaluateCheck,
+  parsePort,
   redact,
   type Observed,
   type SmokeCheck,
@@ -16,6 +18,7 @@ import {
   MARKETING_PATH_PREFIXES,
   SIGN_IN_PATH,
 } from "../lib/config/production-routes";
+import { SESSION_COOKIE_NAME } from "../lib/security/session-cookie-name";
 
 afterEach(() => vi.unstubAllEnvs());
 
@@ -135,7 +138,11 @@ describe("buildSmokeChecks", () => {
 
   it("covers the foreign Host header and the garbage cookie", () => {
     expect(checks.some((c) => c.headers?.Host === "attacker.example" && c.expect.location === SIGN_IN_PATH)).toBe(true);
-    expect(checks.some((c) => /garbage cookie leaks no data/.test(c.name))).toBe(true);
+    const garbage = checks.find((c) => /garbage cookie leaks no data/.test(c.name));
+    // The real cookie name, so the request reaches the page the way a stale session would.
+    expect(garbage?.headers?.cookie).toBe(`${SESSION_COOKIE_NAME}=garbage`);
+    // Present-but-invalid credentials currently render a streamed redirect (200), so no status is pinned.
+    expect(garbage?.expect.status).toBeUndefined();
   });
 });
 
@@ -190,6 +197,12 @@ describe("evaluateCheck", () => {
     expect(evaluateCheck(check, { status: 200, headers: { "x-frame-options": "DENY", "strict-transport-security": "max-age=1" }, body: "" })).toEqual([]);
     expect(evaluateCheck(check, { status: 200, headers: { "x-frame-options": "SAMEORIGIN" }, body: "" })).toHaveLength(2);
   });
+  it("leaves the status unasserted when the check names none", () => {
+    const check: SmokeCheck = { name: "s", method: "GET", path: "/x", expect: { bodyExcludes: ["Meridian"] } };
+    expect(evaluateCheck(check, { status: 200, headers: {}, body: "ok" })).toEqual([]);
+    expect(evaluateCheck(check, { status: 500, headers: {}, body: "ok" })).toEqual([]);
+    expect(evaluateCheck(check, { status: 200, headers: {}, body: "Meridian" })).toHaveLength(1);
+  });
   it("reports an X-Powered-By header", () => {
     const problems = evaluateCheck(redirect, { ...good, headers: { ...good.headers, "X-Powered-By": "Next.js" } });
     expect(problems.join(" ")).toMatch(/x-powered-by/i);
@@ -219,5 +232,24 @@ describe("redact", () => {
   });
   it("leaves text alone when there is nothing to hide", () => {
     expect(redact("hello", ["not a url"])).toBe("hello");
+  });
+});
+
+describe("databaseSecrets", () => {
+  it("lists the URL and the password in both its written and decoded forms", () => {
+    expect(databaseSecrets("postgres://u:p%40ss@h/jeeves_smoke_a")).toEqual(["postgres://u:p%40ss@h/jeeves_smoke_a", "p%40ss", "p@ss"]);
+  });
+  it("lists only the URL when it carries no password", () => {
+    expect(databaseSecrets("postgres://u@h/jeeves_smoke_a")).toEqual(["postgres://u@h/jeeves_smoke_a"]);
+  });
+});
+
+describe("parsePort", () => {
+  it("defaults to 3217 and accepts a valid port", () => {
+    expect(parsePort(undefined)).toBe(3217);
+    expect(parsePort("3218")).toBe(3218);
+  });
+  it.each(["", "abc", "0", "70000", "3217.5", "-1"])("rejects %j", (value) => {
+    expect(() => parsePort(value)).toThrow(/SMOKE_PORT/);
   });
 });

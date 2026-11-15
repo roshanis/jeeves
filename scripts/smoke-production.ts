@@ -30,6 +30,7 @@ import {
   MARKETING_PATH_PREFIXES,
   SIGN_IN_PATH,
 } from "../lib/config/production-routes";
+import { SESSION_COOKIE_NAME } from "../lib/security/session-cookie-name";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -104,7 +105,8 @@ export interface SmokeCheck {
   headers?: Record<string, string>;
   body?: string;
   expect: {
-    status: number;
+    /** Omit to leave the status unasserted (only the other expectations apply). */
+    status?: number;
     /** Exact raw Location header value. */
     location?: string;
     /** Cache-Control must contain "no-store". */
@@ -130,7 +132,9 @@ export function evaluateCheck(check: SmokeCheck, observed: Observed): string[] {
   for (const [k, v] of Object.entries(observed.headers)) headers[k.toLowerCase()] = v;
   const want = check.expect;
 
-  if (observed.status !== want.status) problems.push(`status ${observed.status}, expected ${want.status}`);
+  if (want.status !== undefined && observed.status !== want.status) {
+    problems.push(`status ${observed.status}, expected ${want.status}`);
+  }
   if (want.location !== undefined && headers["location"] !== want.location) {
     problems.push(`location ${headers["location"] === undefined ? "missing" : JSON.stringify(headers["location"])}, expected ${JSON.stringify(want.location)}`);
   }
@@ -177,9 +181,11 @@ export function buildSmokeChecks(): SmokeCheck[] {
     name: "garbage cookie leaks no data",
     method: "GET",
     path: "/inbox",
-    headers: { cookie: "jeeves_session=garbage" },
-    // The proxy only checks that a credential is present, so the status is not asserted.
-    expect: { status: -1, bodyExcludes: ["Meridian", "Synthetic data"] },
+    headers: { cookie: `${SESSION_COOKIE_NAME}=garbage` },
+    // The proxy only checks that a credential is PRESENT, so this request reaches
+    // the page, which today answers with a streamed redirect inside a 200. The
+    // status is therefore not pinned; what must hold is that no data comes back.
+    expect: { bodyExcludes: ["Meridian", "Synthetic data"] },
   });
 
   // B. Marketing pages do not exist in production.
@@ -308,22 +314,42 @@ export const bootRefusalCases: BootRefusalCase[] = [
 // Output hygiene
 // ---------------------------------------------------------------------------
 
-/** Replaces each secret URL, and the password inside it, with [redacted]. */
+/**
+ * What must never appear in output: the database URL, and its password both as
+ * written in the URL and decoded (a driver error may quote either form).
+ */
+export function databaseSecrets(databaseUrl: string): string[] {
+  const secrets = [databaseUrl];
+  try {
+    const raw = new URL(databaseUrl).password;
+    if (raw) {
+      secrets.push(raw);
+      const decoded = decodeURIComponent(raw);
+      if (decoded !== raw) secrets.push(decoded);
+    }
+  } catch {
+    // Not a URL (or a malformed escape): the string itself is the only secret.
+  }
+  return secrets;
+}
+
+/** Replaces each secret, and the password inside a secret URL, with [redacted]. */
 export function redact(text: string, secrets: string[]): string {
   let out = text;
-  for (const secret of secrets) {
-    const pieces = [secret];
-    try {
-      const password = decodeURIComponent(new URL(secret).password);
-      if (password) pieces.push(password);
-      const raw = new URL(secret).password;
-      if (raw && raw !== password) pieces.push(raw);
-    } catch {
-      // Not a URL: redact it verbatim.
-    }
-    for (const piece of pieces) if (piece) out = out.split(piece).join("[redacted]");
+  for (const piece of secrets.flatMap(databaseSecrets)) {
+    if (piece) out = out.split(piece).join("[redacted]");
   }
   return out;
+}
+
+/** SMOKE_PORT, or 3217. A typo must fail here, not as an unreadable spawn error. */
+export function parsePort(value: string | undefined): number {
+  if (value === undefined) return 3217;
+  const port = Number(value);
+  if (!/^\d+$/.test(value) || port < 1 || port > 65_535) {
+    throw new Error("SMOKE_PORT must be a whole number between 1 and 65535");
+  }
+  return port;
 }
 
 // ---------------------------------------------------------------------------
@@ -443,7 +469,7 @@ async function runBootRefusal(c: BootRefusalCase, cmd: ServerCommand, good: Reco
     await stopChild(child);
   } else if (exit !== 1) problems.push(`exit code ${exit}, expected 1`);
   if (!text.includes(c.expectText)) problems.push(`output lacks ${JSON.stringify(c.expectText)}`);
-  for (const secret of secrets) if (text.includes(secret)) problems.push("output contains a database credential");
+  if (secrets.some((secret) => text.includes(secret))) problems.push("output contains a database credential");
   if (problems.length) problems.push(`output was: ${redact(text, secrets).trim().slice(0, 600)}`);
   return problems;
 }
@@ -471,14 +497,21 @@ async function main(): Promise<void> {
     process.exitCode = 2;
     return;
   }
-  const port = Number(process.env.SMOKE_PORT ?? 3217);
+  let port: number;
+  try {
+    port = parsePort(process.env.SMOKE_PORT);
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : "invalid SMOKE_PORT");
+    process.exitCode = 2;
+    return;
+  }
   if (!existsSync(path.join(REPO_ROOT, ".next/BUILD_ID"))) {
     console.error("No production build found. Run: DATA_PROVIDER=mock JEEVES_MODE=demo npm run build");
     process.exitCode = 2;
     return;
   }
 
-  const secrets = [databaseUrl];
+  const secrets = databaseSecrets(databaseUrl);
   const cmd = serverCommand(port, process.env.SMOKE_SERVER);
   console.log(`Server: ${cmd.label}, port ${port}`);
 
@@ -510,8 +543,7 @@ async function main(): Promise<void> {
     for (const check of buildSmokeChecks()) {
       try {
         const observed = await request(port, check);
-        // status -1 means "do not assert a status".
-        const problems = evaluateCheck(check.expect.status === -1 ? { ...check, expect: { ...check.expect, status: observed.status } } : check, observed);
+        const problems = evaluateCheck(check, observed);
         record(problems.length === 0, check.name, problems.length ? [...problems, `observed status ${observed.status}, location ${observed.headers.location ?? "none"}`] : []);
       } catch (err) {
         record(false, check.name, [`request failed: ${err instanceof Error ? err.message : "unknown error"}`]);
