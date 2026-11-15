@@ -123,6 +123,11 @@ export function ReviewWorkbench({ rows, selection, onSelectionChange }: {
   // Queue aging clock — null on server/first render (placeholder), then the
   // cached client time. See useClientNow above for the hydration rationale.
   const nowMs = useClientNow();
+  // Focus handoff after the focused control unmounts (WCAG 2.4.3): set only by
+  // explicit user actions so deep links and Back/Forward never steal focus.
+  const rootRef = React.useRef<HTMLDivElement>(null);
+  const headingRef = React.useRef<HTMLHeadingElement>(null);
+  const pendingFocus = React.useRef<"review" | "queue" | null>(null);
 
   const effectiveFilter = selected?.domain ?? override ?? reviewerDomain ?? "all";
   const isPersonaDefault = !selected && override === null && reviewerDomain !== null;
@@ -148,12 +153,24 @@ export function ReviewWorkbench({ rows, selection, onSelectionChange }: {
     ? `${sessionKey}:${visibleSelected.slug}:${visibleSelected.review.domain}:${visibleSelected.review.cycleId ?? visibleSelected.review.createdAt}`
     : "";
 
+  const selectedSlug = visibleSelected?.slug;
+  const selectedDomain = visibleSelected?.review.domain;
+  React.useEffect(() => {
+    if (pendingFocus.current === "review" && !queueOpen && headingRef.current) {
+      headingRef.current.focus();
+      pendingFocus.current = null;
+    } else if (pendingFocus.current === "queue" && queueOpen) {
+      rootRef.current?.querySelector<HTMLElement>('[data-selected="true"] button')?.focus();
+      pendingFocus.current = null;
+    }
+  }, [queueOpen, selectedSlug, selectedDomain]);
+
   return (
-    <div className="flex flex-col gap-6" data-slot="review-workbench">
+    <div ref={rootRef} className="flex flex-col gap-6" data-slot="review-workbench">
       {visibleSelected && !queueOpen ? (
         <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
           <p className="text-muted-foreground">Reviewer queue · {filteredRows.length} reviews in this view</p>
-          <button type="button" onClick={() => setQueueOpen(true)} className="touch-min rounded-md border bg-card px-3 py-2 font-medium hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">Change review</button>
+          <button type="button" onClick={() => { pendingFocus.current = "queue"; setQueueOpen(true); }} className="touch-min rounded-md border bg-card px-3 py-2 font-medium hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">Change review</button>
         </div>
       ) : <Card>
         <CardHeader>
@@ -250,9 +267,16 @@ export function ReviewWorkbench({ rows, selection, onSelectionChange }: {
                     <button
                       type="button"
                       onClick={() => {
+                        pendingFocus.current = "review";
                         selectReview({ slug: row.slug, domain: row.review.domain });
                         setQueueOpen(false);
                       }}
+                      aria-current={
+                        visibleSelected?.slug === row.slug &&
+                        visibleSelected?.review.domain === row.review.domain
+                          ? "true"
+                          : undefined
+                      }
                       aria-label={`Open ${DOMAIN_LABEL[row.review.domain]} review for ${row.title}`}
                       className="text-left hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     >
@@ -296,7 +320,7 @@ export function ReviewWorkbench({ rows, selection, onSelectionChange }: {
       {visibleSelected ? (
         <div>
           <div className="mb-5 flex flex-wrap items-center gap-2 text-sm">
-            <h2 className="flex items-center gap-2 text-xl font-semibold">
+            <h2 ref={headingRef} tabIndex={-1} className="flex items-center gap-2 text-xl font-semibold focus-visible:outline-none">
               <DomainIcon domain={visibleSelected.review.domain} className="size-4 shrink-0 text-muted-foreground" />
               {DOMAIN_LABEL[visibleSelected.review.domain]} review
             </h2>
