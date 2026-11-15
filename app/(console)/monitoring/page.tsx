@@ -117,6 +117,13 @@ export default async function MonitoringPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
+                  {operating.length === 0 ? (
+                    <TableRow>
+                      <TableCell className="text-sm text-muted-foreground" colSpan={6}>
+                        No deployments are being monitored yet.
+                      </TableCell>
+                    </TableRow>
+                  ) : null}
                   {operating.map((d) => {
                     const evalSeries = d.telemetry.find((t) => t.kind === "eval_hallucination");
                     const costSeries = d.telemetry.find((t) => t.kind === "cost_tokens_usd_day");

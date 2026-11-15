@@ -157,6 +157,7 @@ export function RunMonitorPanel({
                 ? "text-xs tabular-nums font-medium text-status-warning-fg"
                 : "text-xs tabular-nums text-muted-foreground"
             }
+            role="status"
             data-slot="monitor-result"
           >
             Evaluated {result.evaluated} · breaches {result.breaches.length} ·

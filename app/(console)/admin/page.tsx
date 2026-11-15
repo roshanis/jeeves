@@ -233,6 +233,13 @@ export default async function AdminPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
+              {deploymentRows.length === 0 ? (
+                <TableRow>
+                  <TableCell className="text-sm text-muted-foreground" colSpan={5}>
+                    No deployments to pause or resume yet.
+                  </TableCell>
+                </TableRow>
+              ) : null}
               {deploymentRows.map((row) => (
                 <TableRow key={`${row.slug}-${row.deployment.version}`}>
                   <TableCell>
@@ -282,6 +289,13 @@ export default async function AdminPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
+              {q01Changes.length === 0 ? (
+                <TableRow>
+                  <TableCell className="text-sm text-muted-foreground" colSpan={3}>
+                    No control changes recorded yet.
+                  </TableCell>
+                </TableRow>
+              ) : null}
               {q01Changes.map((row, i) => (
                 <TableRow key={i}>
                   <TableCell className="text-xs text-muted-foreground">
