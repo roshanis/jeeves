@@ -188,7 +188,8 @@ export async function setEvalThreshold(
         .from(controlDefinitions)
         .where(eq(controlDefinitions.id, input.controlId))
         .for("update");
-      const currentDefaults = (lockedDef?.tierDefaultThresholds ?? {}) as Record<string, number>;
+      if (!lockedDef) throw new NotFoundError("controlDefinition", input.controlId);
+      const currentDefaults = (lockedDef.tierDefaultThresholds ?? {}) as Record<string, number>;
       const before = currentDefaults[input.tier] ?? null;
       const nextDefaults = { ...currentDefaults, [input.tier]: input.newValue };
 
@@ -219,17 +220,17 @@ export async function setEvalThreshold(
     }
 
     // Project/deployment override.
-    // FOR UPDATE serialises concurrent edits of one deployment's override (read-modify-write below).
-    const initiativeRows = await tx.select().from(initiatives).where(eq(initiatives.id, input.initiativeId)).for("update");
-    const initiative = initiativeRows[0];
-    if (!initiative) throw new NotFoundError("initiative", input.initiativeId);
+    // Authorize on an unlocked read first, so a foreign caller never takes a lock on a shared row.
+    const [visibleInitiative] = await tx.select().from(initiatives).where(eq(initiatives.id, input.initiativeId));
     // Workspace authorization (P1 fix, see doc comment above) — BEFORE any
     // further business-logic lookups, same NotFoundError shape as an
     // unknown initiative id on mismatch (never leaks that the initiative
     // exists in a different workspace).
-    if (mutationWorkspaceMismatch(initiative.workspaceId, sessionWorkspaceId)) {
+    if (!visibleInitiative || mutationWorkspaceMismatch(visibleInitiative.workspaceId, sessionWorkspaceId)) {
       throw new NotFoundError("initiative", input.initiativeId);
     }
+    // FOR UPDATE serialises concurrent edits of one deployment's override (read-modify-write below).
+    await tx.select({ id: initiatives.id }).from(initiatives).where(eq(initiatives.id, input.initiativeId)).for("update");
 
     const depRows = await tx
       .select()

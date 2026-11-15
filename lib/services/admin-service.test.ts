@@ -110,6 +110,72 @@ describe("lib/services/admin-service", () => {
       expect(lock).toBeLessThan(events.indexOf("from:effective_controls"));
     });
 
+    it("issues no FOR UPDATE on the initiative row for a caller from another workspace", async () => {
+      const initiativeId = await memberChatCopilotId(db); // seeded, workspace null
+      const { events, spy } = recordLocks();
+      try {
+        await expect(setEvalThreshold(db, RAY_CHEN, "ws-visitor", {
+          controlId: "Q-01", initiativeId, newValue: 0.06, reason: "Foreign lock check.",
+        })).rejects.toThrow(NotFoundError);
+      } finally {
+        spy.mockRestore();
+      }
+      expect(events).toContain("from:initiatives");
+      expect(events).not.toContain("lock:initiatives");
+    });
+
+    it("locks the initiative row for the owning workspace's edit", async () => {
+      const initiativeId = await memberChatCopilotId(db);
+      await db.update(initiatives).set({ workspaceId: "ws-owner" }).where(eq(initiatives.id, initiativeId));
+      const { events, spy } = recordLocks();
+      try {
+        await setEvalThreshold(db, RAY_CHEN, "ws-owner", {
+          controlId: "Q-01", initiativeId, newValue: 0.06, reason: "Owner lock check.",
+        });
+      } finally {
+        spy.mockRestore();
+      }
+      expect(events).toContain("lock:initiatives");
+    });
+
+    it("throws NotFoundError instead of auditing a tier-default change when the locked definition row is gone", async () => {
+      /* eslint-disable @typescript-eslint/no-explicit-any */
+      const dbAny = db as any;
+      const realTransaction = dbAny.transaction.bind(dbAny);
+      const spy = vi.spyOn(dbAny, "transaction").mockImplementation((cb: any) =>
+        realTransaction(async (tx: any) => {
+          const realSelect = tx.select.bind(tx);
+          tx.select = (...a: unknown[]) => {
+            // The locked re-read finds no row (deleted between the two reads).
+            const wrap = (b: any): any =>
+              new Proxy(b, {
+                get(t, k) {
+                  const v = t[k];
+                  if (typeof v !== "function") return v;
+                  if (k === "for") return () => Promise.resolve([]);
+                  return (...args: unknown[]) => {
+                    const r = v.apply(t, args);
+                    return r && typeof r === "object" && k !== "then" ? wrap(r) : r;
+                  };
+                },
+              });
+            return wrap(realSelect(...a));
+          };
+          return cb(tx);
+        }),
+      );
+      /* eslint-enable @typescript-eslint/no-explicit-any */
+      const beforeEvents = await db.select().from(auditEvents);
+      try {
+        await expect(setEvalThreshold(db, RAY_CHEN, null, {
+          controlId: "Q-01", initiativeId: null, tier: "high", newValue: 0.05, reason: "Vanished definition.",
+        })).rejects.toThrow(NotFoundError);
+      } finally {
+        spy.mockRestore();
+      }
+      expect(await db.select().from(auditEvents)).toHaveLength(beforeEvents.length);
+    });
+
     it("locks the control definition row before reading the tier defaults on the tier-default branch", async () => {
       const { events, spy } = recordLocks();
       try {
