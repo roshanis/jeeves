@@ -44,8 +44,9 @@ JEEVES_MODE=demo DATA_PROVIDER=db JEEVES_COOKIE_SECRET=<server-signing-key> npm 
 Notes on each step:
 
 - `npm install` — installs from `package-lock.json` (npm is the toolchain in
-  use here; there is no `pnpm-lock.yaml` in the repo despite `AGENTS.md`
-  mentioning `pnpm` — use `npm run <script>` from `package.json`).
+  use here; there is no `pnpm-lock.yaml` in the repo, so ignore the `pnpm`
+  commands in `.claude/CLAUDE.md` — use `npm run <script>` from
+  `package.json`).
 - `JEEVES_MODE=demo` is required locally: the mode defaults to production,
   which refuses the local PGlite store, the mock data provider and the mock
   LLM (`lib/db/client.ts`, `lib/data/index.ts`, `lib/agents/index.ts`).
@@ -182,12 +183,18 @@ npm run start        # next start (after build)
    to run unless `JEEVES_MODE=demo` (the mode defaults to production), even
    when `DATABASE_URL` is set, so a seed can never stamp an unprepared
    database `demo`. `scripts/seed.ts` also refuses to run when
-   `NODE_ENV=production` unless you set `ALLOW_SEED=1`. Treat that prompt as
-   the question it is, not a formality. Seeding also assumes the schema
-   already exists (including the append-only trigger in
-   `drizzle/0002_audit_events_append_only.sql`), which is why step 4 comes
-   first. Do not seed against a database that is currently serving a live demo
-   audience mid-session.
+   `NODE_ENV=production` unless you set `ALLOW_SEED=1`; that guard does not
+   apply from a laptop, where `NODE_ENV` is unset. The refusals that always
+   hold are `JEEVES_MODE=demo`, the database's `production` stamp, the
+   evidence-history check (the seed will not wipe a database that holds
+   evidence documents or packets) and the real-request count, which
+   `ALLOW_DISCARD_PUBLIC_REQUESTS` must match. Check `DATABASE_URL` yourself
+   before every run. The seed applies the migrations itself before it wipes
+   (the same `applyMigrations` as `npm run db:migrate`), so step 4 first is
+   good practice, not a precondition. It migrates over `DATABASE_URL` and
+   does not read `DATABASE_MIGRATION_URL`: for Supabase, run it with a direct
+   or session-pooler URL on port 5432. Do not seed against a database that is
+   currently serving a live demo audience mid-session.
 
 6. **Playwright is NOT run on Vercel.** `npm run test:e2e` boots its own
    production build/server on a fixed local port (3117) and is a local/CI-only
@@ -212,13 +219,14 @@ current code, not hypothetical ones.
 > `transaction()` is a stub with no `BEGIN`/`COMMIT`/`ROLLBACK`. That swap
 > has since been made: `lib/db/client.ts` now uses
 > `drizzle-orm/neon-serverless` over a pooled `@neondatabase/serverless`
-> WebSocket `Pool` whenever `DATABASE_URL` is set, which supports real
+> WebSocket `Pool` when `DATABASE_URL` points at a `.neon.tech` host (other
+> hosts use node-postgres; `lib/db/driver-select.ts`), which supports real
 > interactive transactions. Every state-changing service call
 > (`lib/services/initiative-service.ts`, `monitor-service.ts`,
 > `admin-service.ts`, `promotion-service.ts`, `exception-service.ts`) goes
 > through `db.transaction(fn)`, and that is a genuine rollback-on-throw
-> transaction under both PGlite (tests, local dev) and pooled Neon
-> (production) — including the compare-and-set predicates those services
+> transaction under PGlite (tests, local dev), pooled Neon and
+> node-postgres — including the compare-and-set predicates those services
 > rely on.
 
 > **(b) Rate limiting, sessions and budgets are persisted.**
@@ -260,7 +268,7 @@ current code, not hypothetical ones.
 >   Changing signing material invalidates old browser workspace cookies; it does
 >   not revoke existing session tokens before their normal expiry.
 > - Don't seed against a database that's serving a live public demo (see
->   §2 step 4).
+>   §2 step 5).
 
 ---
 
@@ -308,6 +316,34 @@ Restore is a Neon operation, not an application one: branch from a timestamp
 before the bad write and repoint `DATABASE_URL` at the new branch. There is
 no application-level undo, and there deliberately is no "delete audit events"
 path to undo *with* — the trigger rejects `DELETE` from the app entirely.
+
+### Upgrades and rollback
+
+Order for every release that adds a migration (see `drizzle/meta/_journal.json`
+for what a release contains): **back up, migrate, deploy the app, verify.**
+
+1. **Back up.** Take the Neon branch from "Take a branch before any
+   migration" above, or your platform's snapshot.
+2. **Migrate** with `npm run db:migrate` as in section 2 step 4, using
+   `DATABASE_MIGRATION_URL` for a separate operator connection (Supabase
+   needs one: its transaction pooler cannot migrate).
+   The app never migrates itself on boot.
+3. **Deploy the app**, then check `/api/health` and that your own rows are
+   still there.
+
+Migrate before deploying: the new code can expect tables or columns that the
+old schema lacks. Between the two steps the previous release runs against the
+newer schema, which is safe when the migrations only add. Do not deploy first
+and migrate afterwards.
+
+There are no down migrations. To roll back, read the release's SQL under
+`drizzle/`. If every migration only adds (new tables, or new columns that are
+nullable or have a default), redeploy the previous app version against the
+migrated database. Otherwise restore the pre-migration backup as described
+under Restore and redeploy the previous version against it. A restore
+discards everything written since the backup, `audit_events` rows included,
+and brings the append-only triggers back with it; it is never a way to edit
+or delete audit history.
 
 ### Not covered
 

@@ -578,24 +578,27 @@ describe("deep-review budget multiplier on draft-run", () => {
         body: JSON.stringify({ payload: CHAMPION_PAYLOAD, requestId: `routes-helper-${ip.replaceAll(".", "-")}` }),
       }),
     );
+    expect(createRes.status).toBe(200);
     const { initiativeId } = await createRes.json();
     const { POST: submitPost } = await import("../initiatives/[id]/submit/route");
-    await submitPost(
+    const submitRes = await submitPost(
       new Request(`http://localhost/api/initiatives/${initiativeId}/submit`, {
         method: "POST",
         headers: bearer(token, ip),
       }),
       { params: Promise.resolve({ id: initiativeId }) },
     );
+    expect(submitRes.status).toBe(200);
     const programToken = await passQcOverHttp(initiativeId, workspaceCookie, ip);
     const { POST: triagePost } = await import("../initiatives/[id]/triage/route");
-    await triagePost(
+    const triageRes = await triagePost(
       new Request(`http://localhost/api/initiatives/${initiativeId}/triage`, {
         method: "POST",
         headers: bearer(programToken, ip),
       }),
       { params: Promise.resolve({ id: initiativeId }) },
     );
+    expect(triageRes.status).toBe(200);
     return { id: initiativeId, token };
   }
 
@@ -626,7 +629,7 @@ describe("deep-review budget multiplier on draft-run", () => {
     vi.stubEnv("JEEVES_DEEP_REVIEW", "0");
     await leaveHeadroom(STANDARD_RESERVE);
     const { id, token } = await triagedInitiative("11.5.0.1");
-    expect(await draftRun(id, token, "11.5.0.1")).not.toBe(429);
+    expect(await draftRun(id, token, "11.5.0.1")).toBe(200);
   });
 
   it("returns a safe 503 for missing agent assets while keeping unknown IDs private", async () => {

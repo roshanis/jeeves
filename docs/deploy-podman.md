@@ -28,9 +28,10 @@ Podman-specific.
 ```bash
 cd deploy/podman
 cp env.example .env          # then edit: set POSTGRES_PASSWORD and JEEVES_COOKIE_SECRET
-podman compose up -d --build
-podman compose run --rm migrate      # create the schema
+podman compose --profile tools build   # the app and the migrate/seed image
+podman compose run --rm migrate      # create the schema, before the app takes traffic
 podman compose run --rm seed         # load the synthetic demo data
+podman compose up -d
 ```
 
 Then open `http://localhost:3000`.
@@ -244,6 +245,17 @@ podman exec jeeves-db psql -U jeeves jeeves -c 'select count(*) from initiatives
 The same caveat as `deploy.md` §4 applies: nobody has restored from one of
 these. A backup you have not restored from is a hypothesis.
 
+### Stopping during a draft run
+
+Draft runs execute inside the HTTP request. One run may take up to 60 s, or
+120 s with deep review (`JEEVES_DEEP_REVIEW=1`). Podman sends SIGKILL 10 s
+after the stop signal by default, which cuts a live run off. Give the app
+longer than one run: `podman compose stop -t 130 app` (and `up -d -t 130`
+when an upgrade replaces the container) for compose, and for Quadlet a drop-in
+`~/.config/containers/systemd/jeeves-app.container.d/stop.conf` containing
+`[Container]` and `StopTimeout=130`. The server stops as soon as its open
+requests finish, so the longer limit costs nothing when nothing is running.
+
 ### Upgrading
 
 ```bash
@@ -251,7 +263,7 @@ git pull
 podman compose exec db pg_dump -U jeeves jeeves > jeeves-$(date +%F).sql   # back up first
 podman compose --profile tools build    # also rebuilds the migrator image
 podman compose run --rm migrate         # always run it: idempotent
-podman compose up -d
+podman compose up -d -t 130             # lets a running draft finish
 ```
 
 Plain `podman compose build` skips the `tools` profile, so `migrate` would run
