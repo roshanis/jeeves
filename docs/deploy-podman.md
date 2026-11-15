@@ -4,6 +4,9 @@ Self-hosted deployment with Podman: the app plus its own Postgres, no Neon and
 no Vercel. Companion to [`deploy.md`](./deploy.md), which covers the Vercel +
 Neon path.
 
+Every variable is described in
+[`environment-reference.md`](./environment-reference.md).
+
 Everything here also works with Docker (`docker` for `podman`,
 `Containerfile` is a Dockerfile) except the Quadlet units, which are
 Podman-specific.

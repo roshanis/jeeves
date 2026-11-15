@@ -99,7 +99,7 @@ npm run start        # next start (after build)
 2. **Connect a hosted PostgreSQL database.** Neon remains supported; the Vercel
    Supabase integration supplies `POSTGRES_URL`. Use the transaction pooler for
    serverless runtime traffic and a direct/session connection for migrations.
-3. **Set environment variables** in the Vercel project settings:
+3. **Set environment variables** in the Vercel project settings (every variable the code reads, with its demo/production behaviour, is in [`environment-reference.md`](./environment-reference.md)):
 
    | Variable | Required | Notes |
    |---|---|---|

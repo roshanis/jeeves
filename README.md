@@ -186,7 +186,7 @@ An explicit nonblank `DATABASE_URL` takes precedence. On Vercel, a hosted databa
 and signing key are required; local PGlite is not a serverless fallback. Keep
 `DATA_PROVIDER=mock` only for an intentional read-only preview, and
 set `OPENAI_API_KEY` (+ optionally `OPENAI_MODEL`) only if you want genuinely
-live-generated draft text — see `.env.example` for the full variable list.
+live-generated draft text — see [`docs/environment-reference.md`](docs/environment-reference.md) for every variable the code reads (`.env.example` is only a template).
 
 Note: `scripts/seed.ts` refuses to run when `NODE_ENV=production` unless
 `ALLOW_SEED=1` is explicitly set, to prevent an accidental reseed of a live
