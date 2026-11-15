@@ -22,7 +22,7 @@ export function LegalPage({
   children: React.ReactNode;
 }) {
   return (
-    <main className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-12 sm:py-16">
+    <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-12 sm:py-16">
       <div className="flex flex-col gap-1.5">
         <span className="kicker">Legal</span>
         <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">{title}</h1>
@@ -70,7 +70,7 @@ export function LegalPage({
           Back to home
         </Link>
       </div>
-    </main>
+    </div>
   );
 }
 

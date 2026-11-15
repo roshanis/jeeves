@@ -17,6 +17,10 @@ import { CONTACT_URL } from "@/lib/marketing/site-config";
 import { DEMO_BANNER_TEXT } from "@/lib/demo-banner";
 import PilotPage from "@/app/(marketing)/pilot/page";
 import MarketingLayout from "@/app/(marketing)/layout";
+import ThankYouPage from "@/app/(marketing)/thank-you/page";
+import OperatorPage from "@/app/operator/page";
+import NotFound from "@/app/not-found";
+import { LegalPage } from "@/components/jeeves/legal-page";
 
 // The real bar stays hidden until the visitor scrolls, so expose its label.
 vi.mock("@/components/jeeves/sticky-mobile-cta", () => ({
@@ -26,6 +30,29 @@ vi.mock("@/components/jeeves/sticky-mobile-cta", () => ({
 // vitest globals are off in this repo — register RTL cleanup explicitly
 // (see tests/ui/landing-page.test.tsx's comment for why).
 afterEach(cleanup);
+
+vi.mock("@/components/jeeves/public-intake-queue", () => ({ PublicIntakeQueue: () => <p>queue</p> }));
+
+describe("skip-link target (#main-content)", () => {
+  function mains(c: HTMLElement) { return Array.from(c.querySelectorAll("main")); }
+  it("marketing pages sit in exactly one focusable main#main-content", () => {
+    for (const page of [<PilotPage key="p" />, <ThankYouPage key="t" />, <LegalPage key="l" title="Privacy" lastUpdated="now"><p>x</p></LegalPage>]) {
+      const { container, unmount } = render(<MarketingLayout>{page}</MarketingLayout>);
+      const found = mains(container);
+      expect(found).toHaveLength(1);
+      expect(found[0].id).toBe("main-content");
+      expect(found[0].getAttribute("tabindex")).toBe("-1");
+      unmount();
+    }
+  });
+  it("the operator page and the 404 page expose the target themselves", () => {
+    for (const page of [<OperatorPage key="o" />, <NotFound key="n" />]) {
+      const { container, unmount } = render(page);
+      expect(mains(container).map((m) => m.id)).toEqual(["main-content"]);
+      unmount();
+    }
+  });
+});
 
 describe("MarketingLayout", () => {
   it("shows the exact demo banner string (moved here from LandingPage)", () => {

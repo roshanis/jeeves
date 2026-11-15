@@ -25,7 +25,7 @@ const DESTINATIONS = [
 
 export default function NotFound() {
   return (
-    <main className="mx-auto flex min-h-dvh max-w-2xl flex-col items-center justify-center gap-6 px-4 py-16 text-center">
+    <main id="main-content" tabIndex={-1} className="mx-auto flex min-h-dvh max-w-2xl flex-col items-center justify-center gap-6 px-4 py-16 text-center">
       <div className="flex flex-col gap-2">
         <p className="kicker">404 — not found</p>
         <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
