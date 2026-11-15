@@ -90,6 +90,7 @@ describe("buildServerEnv", () => {
       JEEVES_COOKIE_SECRET: "ab".repeat(32),
       APP_BASE_URL: "https://jeeves.example.com",
       JEEVES_TENANT_ID: "smoke-tenant",
+      JEEVES_TRUSTED_PROXY_HOPS: "0",
     });
   });
 

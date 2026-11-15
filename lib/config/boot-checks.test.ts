@@ -15,6 +15,7 @@ const COMPLETE_PRODUCTION: Record<string, string> = {
   JEEVES_COOKIE_SECRET: SECRET,
   APP_BASE_URL: "https://jeeves.example.com",
   JEEVES_TENANT_ID: "tenant-acme",
+  JEEVES_TRUSTED_PROXY_HOPS: "1",
 };
 
 function deps(env: Record<string, string | undefined>) {
@@ -240,10 +241,10 @@ describe("runBootChecks", () => {
   });
 
   describe("in demo mode", () => {
-    const DEMO_DB = { JEEVES_MODE: "demo", DATA_PROVIDER: "db" };
+    const DEMO_DB = { JEEVES_MODE: "demo", DATA_PROVIDER: "db", JEEVES_TRUSTED_PROXY_HOPS: "1" };
 
     it("does nothing, even with none of the production variables set", async () => {
-      const d = deps({ JEEVES_MODE: "demo", DATA_PROVIDER: "mock" });
+      const d = deps({ JEEVES_MODE: "demo", DATA_PROVIDER: "mock", JEEVES_TRUSTED_PROXY_HOPS: "0" });
       await runBootChecks(d);
       expect(d.exit).not.toHaveBeenCalled();
       expect(d.log).not.toHaveBeenCalled();
@@ -265,6 +266,38 @@ describe("runBootChecks", () => {
     // Routes such as /api/exceptions, /api/monitor/incidents and /api/health call
     // getDb() whatever DATA_PROVIDER says, so a configured database is in play
     // even when the page read-model is the mock fixture.
+    describe("JEEVES_TRUSTED_PROXY_HOPS", () => {
+      it("fails the boot on a malformed value, naming the variable", async () => {
+        const d = deps({ ...DEMO_DB, JEEVES_TRUSTED_PROXY_HOPS: "two" });
+        await runBootChecks(d);
+        expect(d.exit).toHaveBeenCalledWith(1);
+        expect(bootFailure()).toContain("JEEVES_TRUSTED_PROXY_HOPS");
+        expect(d.getDb).not.toHaveBeenCalled();
+      });
+
+      it("fails the boot on a malformed value even with no database in play", async () => {
+        const d = deps({ JEEVES_MODE: "demo", JEEVES_TRUSTED_PROXY_HOPS: "-1" });
+        await runBootChecks(d);
+        expect(d.exit).toHaveBeenCalledWith(1);
+      });
+
+      it("warns loudly, but boots, when unset off Vercel", async () => {
+        const d = deps({ JEEVES_MODE: "demo" });
+        await runBootChecks(d);
+        expect(d.exit).not.toHaveBeenCalled();
+        expect(d.log.mock.calls.flat().join(" ")).toMatch(/JEEVES_TRUSTED_PROXY_HOPS is not set/);
+      });
+
+      it("stays quiet on Vercel, which overwrites the header, and when set", async () => {
+        for (const env of [{ JEEVES_MODE: "demo", VERCEL: "1" }, { JEEVES_MODE: "demo", JEEVES_TRUSTED_PROXY_HOPS: "0" }]) {
+          const d = deps(env);
+          await runBootChecks(d);
+          expect(d.exit).not.toHaveBeenCalled();
+          expect(d.log).not.toHaveBeenCalled();
+        }
+      });
+    });
+
     describe("mock data with a database URL configured", () => {
       const MOCK_WITH_URL = [
         { JEEVES_MODE: "demo", DATA_PROVIDER: "mock", DATABASE_URL: "postgres://u:p@db.internal:5432/jeeves" },

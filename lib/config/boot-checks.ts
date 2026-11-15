@@ -8,7 +8,7 @@ import type { InstallationDb } from "../db/installation";
 import { safeDriverCode } from "../db/driver-error";
 import { runtimeDatabaseUrl } from "../db/runtime-config";
 import { markBootFailed } from "./boot-state";
-import { assertProductionConfig, deploymentMode, ProductionConfigError } from "./deployment-mode";
+import { assertProductionConfig, deploymentMode, ProductionConfigError, trustedProxyHopsState } from "./deployment-mode";
 import { InstallationCheckError, verifyInstallation } from "./installation-check";
 
 export interface BootCheckDeps {
@@ -118,8 +118,22 @@ export async function runBootChecks(deps: BootCheckDeps = {}): Promise<void> {
       // An invalid configuration may name no database at all; never go on to open one.
       return;
     }
-  } else if (!runtimeDatabaseUrl(env) && env.DATA_PROVIDER !== "db") {
-    return;
+  } else {
+    // Production reports this in assertProductionConfig. In demo a malformed
+    // value would silently put every caller in one rate-limit bucket, so it
+    // fails the boot; unset is only a warning (Vercel overwrites the header).
+    const hops = trustedProxyHopsState(env);
+    if (hops === "malformed") {
+      fail("JEEVES_TRUSTED_PROXY_HOPS must be a non-negative integer (0 on Vercel, 1 behind an AWS ALB)");
+      return;
+    }
+    if (hops === "unset" && !env.VERCEL) {
+      log(
+        "[boot] JEEVES_TRUSTED_PROXY_HOPS is not set: rate limits key on the leftmost X-Forwarded-For entry, " +
+          "which a caller can forge unless the proxy in front overwrites it. Set it (1 behind an AWS ALB or an appending proxy).",
+      );
+    }
+    if (!runtimeDatabaseUrl(env) && env.DATA_PROVIDER !== "db") return;
   }
 
   const delays = mode === "demo" ? DEMO_CHECK_RETRY_DELAYS_MS : [];

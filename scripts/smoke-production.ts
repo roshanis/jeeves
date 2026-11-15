@@ -96,6 +96,8 @@ export function buildServerEnv(opts: { databaseUrl: string; port: number; cookie
     JEEVES_COOKIE_SECRET: opts.cookieSecret,
     APP_BASE_URL: "https://jeeves.example.com",
     JEEVES_TENANT_ID: "smoke-tenant",
+    // Loopback, no proxy in front: nothing appends to X-Forwarded-For.
+    JEEVES_TRUSTED_PROXY_HOPS: "0",
   };
 }
 

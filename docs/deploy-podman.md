@@ -246,6 +246,21 @@ podman compose up -d
 - **TLS.** The app serves plain HTTP on 3000. Put it behind a reverse proxy
   (Caddy, nginx, Traefik) that terminates TLS. The app already sends HSTS,
   which is only meaningful once something is actually serving HTTPS.
+- **Client addresses and rate limits.** Rate limits (sessions, mutations, the
+  operator-token attempt limiter) key on the client address taken from
+  `X-Forwarded-For`, and `JEEVES_TRUSTED_PROXY_HOPS` says how to read it: the
+  number of reverse proxies in front that *append* to the header. Both stacks
+  here publish the port directly, so they set it to `9007199254740991`: the
+  app ignores the header entirely, because anything a caller sends is forged
+  (a random `X-Forwarded-For` per request would otherwise get a fresh bucket
+  every time). The cost is that every caller shares one bucket, so a handful
+  of visitors can hit 429 together. Behind a proxy that appends the client
+  address (Caddy, nginx with `$proxy_add_x_forwarded_for`, an AWS ALB) set `1`
+  (`2` for CloudFront then ALB) in `.env` or the Quadlet unit and stop
+  publishing the port to the network. `0` is only for a platform that
+  overwrites the header (Vercel). Production boot refuses to start without the
+  variable; a malformed value fails boot in both modes; demo off Vercel warns
+  when it is unset.
 - **Horizontal scale.** Sessions, the token budget and the rate-limit buckets
   are all in Postgres, so multiple replicas are *correct* — but nothing here
   sets up a load balancer, and the single published port assumes one app

@@ -58,6 +58,7 @@ beforeEach(() => {
   getDb = vi.fn<() => Promise<TestDb>>();
   vi.stubEnv("NEXT_RUNTIME", "nodejs");
   vi.stubEnv("NEXT_PHASE", "phase-production-server");
+  vi.stubEnv("JEEVES_TRUSTED_PROXY_HOPS", "1");
 });
 
 afterEach(async () => {
