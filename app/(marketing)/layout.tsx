@@ -5,6 +5,7 @@ import { DEMO_BANNER_TEXT } from "@/lib/demo-banner";
 import { FRAMEWORK_DISCLAIMER } from "@/lib/marketing/framework-mappings";
 import { CookieNotice } from "@/components/jeeves/cookie-notice";
 import { StickyMobileCta } from "@/components/jeeves/sticky-mobile-cta";
+import { configuredOperatorToken } from "@/lib/services/route-guard";
 
 // Shared marketing chrome for the public site (app/(marketing)/*: "/",
 // "/frameworks", "/frameworks/[slug]", "/pilot") — NOT the operations
@@ -71,12 +72,14 @@ export default function MarketingLayout({
       {/* Sticky only on phones, and only past the hero — see the component.
           Extra bottom padding on the footer so the bar never covers the
           last line of it. */}
-      {/* To the intake page, not straight into a session: it offers both
-          ways in — try the demo, or send a real request — and someone who
-          came to do the second should not be dropped into the first. */}
+      {/* To the intake page, not straight into a session: it offers the demo
+          and, when an operator token is configured, a real request too. The
+          label only promises a request while that second door is open, the
+          same check the intake page uses. The root layout is force-dynamic,
+          so reading the environment at render time is correct. */}
       <StickyMobileCta
         href="/initiatives/new"
-        label="Try the demo or send a request"
+        label={configuredOperatorToken() !== null ? "Try the demo or send a request" : "Try the demo"}
         hint="No sign-up needed"
       />
 
