@@ -54,8 +54,8 @@ export class DbTokenBucketRateLimiter {
 
     // The refill stamp only moves forward (greatest below). If an instance
     // whose clock runs ahead wrote it, the bucket keeps its tokens and does not
-    // refill until real time catches up; before 7ef6f2a the negative elapsed
-    // time denied every request outright.
+    // refill until real time catches up. Without the clamp in `refilled`, the
+    // negative elapsed time would deny every request outright.
     const rows = await db.execute(sql`
       insert into "rate_limit_buckets" ("key", "tokens", "last_refill_ms", "last_touched_ms")
       values (${key}, ${capacity - 1}::double precision, ${nowMs}::bigint, ${nowMs}::bigint)
@@ -73,7 +73,8 @@ export class DbTokenBucketRateLimiter {
       return { allowed: true, retryAfterSeconds: 0 };
     }
 
-    return { allowed: false, retryAfterSeconds: await this.retryAfter(key, nowMs) };
+    // No row here means the bucket was removed in between: the next call starts a fresh one.
+    return { allowed: false, retryAfterSeconds: (await this.read(key, nowMs))?.waitSeconds ?? 0 };
   }
 
   /**
@@ -81,20 +82,10 @@ export class DbTokenBucketRateLimiter {
    * A key with no row is allowed.
    */
   async peek(key: string): Promise<RateLimitResult> {
-    const nowMs = this.now();
-    const { capacity, refillPerSecond } = this.config;
-    const rows = await this.getDb().execute(sql`
-      select least(
-        ${capacity}::double precision,
-        "tokens" + (greatest(${nowMs}::bigint - "last_refill_ms", 0)::double precision / 1000.0)
-          * ${refillPerSecond}::double precision
-      ) as "balance"
-      from "rate_limit_buckets" where "key" = ${key}
-    `);
-    const row = this.firstRow(rows);
-    if (!row || Number(row.balance) >= 1) return { allowed: true, retryAfterSeconds: 0 };
-    if (refillPerSecond <= 0) return { allowed: false, retryAfterSeconds: Number.POSITIVE_INFINITY };
-    return { allowed: false, retryAfterSeconds: Math.max(0, (1 - Number(row.balance)) / refillPerSecond) };
+    const bucket = await this.read(key, this.now());
+    return !bucket || bucket.balance >= 1
+      ? { allowed: true, retryAfterSeconds: 0 }
+      : { allowed: false, retryAfterSeconds: bucket.waitSeconds };
   }
 
   /**
@@ -125,22 +116,34 @@ export class DbTokenBucketRateLimiter {
     return this.rowCount(rows);
   }
 
-  /** Seconds until one token is available, for the Retry-After header. */
-  private async retryAfter(key: string, nowMs: number): Promise<number> {
+  /**
+   * The bucket as `checkAndConsume` would see it now: the refilled balance, and
+   * the wait until one token is available. The wait is in whole seconds,
+   * rounded up, because that is what a Retry-After header carries. It includes
+   * the time until a refill stamp written by a faster clock is reached, since
+   * the bucket does not refill before then. Null when the key has no row.
+   */
+  private async read(key: string, nowMs: number): Promise<{ balance: number; waitSeconds: number } | null> {
     const { capacity, refillPerSecond } = this.config;
-    if (refillPerSecond <= 0) return Number.POSITIVE_INFINITY;
-
     const rows = await this.getDb().execute(sql`
-      select least(
-        ${capacity}::double precision,
-        "tokens" + ((${nowMs}::bigint - "last_refill_ms")::double precision / 1000.0)
-          * ${refillPerSecond}::double precision
-      ) as "balance"
+      select
+        least(
+          ${capacity}::double precision,
+          "tokens" + (greatest(${nowMs}::bigint - "last_refill_ms", 0)::double precision / 1000.0)
+            * ${refillPerSecond}::double precision
+        ) as "balance",
+        greatest("last_refill_ms" - ${nowMs}::bigint, 0)::double precision / 1000.0 as "ahead"
       from "rate_limit_buckets" where "key" = ${key}
     `);
+    const row = this.firstRow(rows);
+    if (!row) return null;
 
-    const balance = Number(this.firstRow(rows)?.balance ?? 0);
-    return Math.max(0, (1 - balance) / refillPerSecond);
+    const balance = Number(row.balance);
+    if (balance >= 1) return { balance, waitSeconds: 0 };
+    if (refillPerSecond <= 0) return { balance, waitSeconds: Number.POSITIVE_INFINITY };
+    const seconds = Number(row.ahead) + (1 - balance) / refillPerSecond;
+    // To the millisecond first, so 9.000000000000002 does not become 10.
+    return { balance, waitSeconds: Math.ceil(Math.round(seconds * 1000) / 1000) };
   }
 
   // drizzle's execute() returns a driver-shaped result: neon-serverless gives

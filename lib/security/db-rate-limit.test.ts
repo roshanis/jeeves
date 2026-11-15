@@ -117,6 +117,30 @@ describe("DbTokenBucketRateLimiter", () => {
     expect(denied.retryAfterSeconds).toBeLessThanOrEqual(2);
   });
 
+  it("reports the wait in whole seconds, rounded up, the same from a denied consume and a peek", async () => {
+    const rl = limiter(1, 1 / 30); // one token per 30s
+    await rl.checkAndConsume("whole");
+
+    clock += 7_300; // 22.7s still to wait
+    expect(await rl.checkAndConsume("whole")).toEqual({ allowed: false, retryAfterSeconds: 23 });
+    expect(await rl.peek("whole")).toEqual({ allowed: false, retryAfterSeconds: 23 });
+
+    // 9s to wait, which the arithmetic gives as 9.000000000000002: still 9, not 10.
+    clock += 13_700;
+    expect(await rl.checkAndConsume("whole")).toEqual({ allowed: false, retryAfterSeconds: 9 });
+    expect(await rl.peek("whole")).toEqual({ allowed: false, retryAfterSeconds: 9 });
+  });
+
+  it("counts the time until a refill stamp written by a faster clock is reached", async () => {
+    const rl = limiter(1, 1 / 30);
+    await rl.checkAndConsume("ahead"); // empty, stamped at 1_000_000
+    clock -= 10_000; // this instance's clock runs 10s behind the one that wrote the stamp
+
+    // No refill happens for 10s, then one token takes 30s more.
+    expect(await rl.checkAndConsume("ahead")).toEqual({ allowed: false, retryAfterSeconds: 40 });
+    expect(await rl.peek("ahead")).toEqual({ allowed: false, retryAfterSeconds: 40 });
+  });
+
   it("does not consume a token on a denied request", async () => {
     const rl = limiter(1, 1);
 
