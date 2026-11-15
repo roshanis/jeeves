@@ -20,6 +20,26 @@ vi.mock("drizzle-orm/node-postgres", () => ({ drizzle: vi.fn((opts: { client: un
   execute: async () => ({ rows: JSON.parse(readFileSync("./drizzle/meta/_journal.json", "utf8")).entries
     .map((e: { when: number }) => ({ created_at: e.when })) }) })) }));
 vi.mock("drizzle-orm/node-postgres/migrator", () => ({ migrate: state.migrated }));
+vi.mock("@neondatabase/serverless", () => ({
+  neonConfig: {},
+  Pool: class {
+    on() { return this; }
+    query = async (text: string) => { state.calls.push(`pool:${text}`); return { rows: [] }; };
+    connect = async () => {
+      const client = {
+        query: async (text: string) => { state.calls.push(text); return { rows: [] }; },
+        release: () => { state.calls.push("release"); },
+      };
+      state.client = client;
+      return client;
+    };
+    end = state.end;
+  },
+}));
+vi.mock("drizzle-orm/neon-serverless", () => ({ drizzle: vi.fn((opts: { client: unknown }) => ({ mocked: true, client: (state.drizzleClient = opts.client),
+  execute: async () => ({ rows: JSON.parse(readFileSync("./drizzle/meta/_journal.json", "utf8")).entries
+    .map((e: { when: number }) => ({ created_at: e.when })) }) })) }));
+vi.mock("drizzle-orm/neon-serverless/migrator", () => ({ migrate: state.migrated }));
 
 import { runMigrations } from "./migrate";
 
@@ -79,5 +99,29 @@ describe("runMigrations", () => {
 
     await expect(runMigrations()).rejects.toThrow(/DATABASE_MIGRATION_URL/);
     expect(state.config).toBeUndefined();
+  });
+
+  it("locks, migrates, unlocks and releases on one client for a direct Neon URL", async () => {
+    process.env.DATABASE_URL = "postgresql://u:p@ep-cool-123.eu-central-1.aws.neon.tech/neondb";
+    delete process.env.DATABASE_MIGRATION_URL;
+    state.migrated.mockImplementation(async () => { state.calls.push("migrate"); });
+
+    await runMigrations();
+
+    expect(state.calls).toEqual([expect.stringMatching(/pg_advisory_lock/), "migrate", expect.stringMatching(/pg_advisory_unlock/), "release"]);
+    expect(state.drizzleClient).toBe(state.client);
+    expect(state.end).toHaveBeenCalledTimes(1);
+  });
+
+  it("takes no advisory lock through a Neon pooled (-pooler) endpoint", async () => {
+    process.env.DATABASE_URL = "postgresql://u:p@ep-cool-123-pooler.eu-central-1.aws.neon.tech/neondb";
+    delete process.env.DATABASE_MIGRATION_URL;
+    state.migrated.mockImplementation(async () => { state.calls.push("migrate"); });
+
+    await runMigrations();
+
+    expect(state.calls).toEqual(["migrate"]);
+    expect(state.calls.join()).not.toMatch(/advisory/);
+    expect(state.end).toHaveBeenCalledTimes(1);
   });
 });

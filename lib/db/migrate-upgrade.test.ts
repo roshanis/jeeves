@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { cpSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -16,8 +16,10 @@ import * as schema from "./schema";
  * apply the real, current journal on top. migrate.test.ts only ever migrates an
  * empty database.
  */
+const tempFolders: string[] = [];
 function olderMigrationsFolder(keep: number): string {
   const dir = mkdtempSync(join(tmpdir(), "jeeves-migrations-"));
+  tempFolders.push(dir);
   cpSync("./drizzle", dir, { recursive: true });
   const path = join(dir, "meta/_journal.json");
   const journal = JSON.parse(readFileSync(path, "utf8")) as { entries: unknown[] };
@@ -32,7 +34,10 @@ const insertInitiative = (db: ReturnType<typeof drizzle>, id: string) =>
 
 describe("lib/db/migrate — upgrading a populated database", () => {
   const open: PGlite[] = [];
-  afterEach(async () => { await Promise.all(open.splice(0).map((c) => c.close())); });
+  afterEach(async () => {
+    await Promise.all(open.splice(0).map((c) => c.close()));
+    for (const dir of tempFolders.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
 
   async function dbAt(keep: number) {
     const client = new PGlite();
