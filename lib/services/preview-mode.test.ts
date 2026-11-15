@@ -49,15 +49,26 @@ describe.each([
     expect(getDb).not.toHaveBeenCalled();
   });
 
-  it("rejects authenticated scheduled writes before database access while preserving cron authentication", async () => {
+  // The preview runs nothing, so it gives every caller the same answer before
+  // the secret is compared. A compare would need the failed-attempt limiter,
+  // which lives in the database the preview must not touch; without it the
+  // preview would be an unthrottled oracle for a CRON_SECRET that a production
+  // deployment may share.
+  it("answers every scheduled call with the read-only 403 before comparing the secret or opening the database", async () => {
     vi.stubEnv("CRON_SECRET", "preview-cron-test-only");
-    const unauthorized = await runScheduledMonitor(new Request("http://localhost/api/cron/monitor"));
-    expect(unauthorized.status).toBe(401);
-    const authorized = await runScheduledMonitor(new Request("http://localhost/api/cron/monitor", {
-      headers: { authorization: "Bearer preview-cron-test-only" },
-    }));
-    expect(authorized.status).toBe(403);
-    expect(await authorized.json()).toMatchObject({ error: expect.stringContaining("preview is read-only") });
+    for (const authorization of [undefined, "Bearer wrong-guess", "Bearer preview-cron-test-only"]) {
+      const response = await runScheduledMonitor(new Request("http://localhost/api/cron/monitor", {
+        headers: authorization ? { authorization } : {},
+      }));
+      expect(response.status).toBe(403);
+      expect(await response.json()).toMatchObject({ error: expect.stringContaining("preview is read-only") });
+    }
+    expect(getDb).not.toHaveBeenCalled();
+  });
+
+  it("still reports scheduled monitoring as not configured when CRON_SECRET is unset", async () => {
+    vi.stubEnv("CRON_SECRET", "");
+    expect((await runScheduledMonitor(new Request("http://localhost/api/cron/monitor"))).status).toBe(503);
     expect(getDb).not.toHaveBeenCalled();
   });
 });
