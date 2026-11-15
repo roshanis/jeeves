@@ -10,7 +10,9 @@
  *      the one seeded pending control-exception; clears any live-created data).
  *   2. Clears live session, budget and rate-limit state (invalidates
  *      outstanding demo sessions; resets the daily token budget and the
- *      limiter buckets) — these live outside the seed's own reset scope.
+ *      limiter buckets). Sessions and rate-limit buckets live outside the
+ *      seed's own reset scope; the seed re-inserts a run_budget row for its
+ *      base day, which the reset deletes so the daily budget starts empty.
  *      Steps 1 and 2 run in ONE transaction with lock_timeout 10 s: if
  *      anything fails (including a lock not granted in time), everything
  *      rolls back and the old seed and sessions stay as they were.
