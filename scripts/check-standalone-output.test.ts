@@ -3,7 +3,8 @@ import { createRequire } from "node:module";
 import { describe, expect, it } from "vitest";
 
 const require_ = createRequire(import.meta.url);
-const { findUnexpectedEntries, findMissingRequired, deriveRequired } = require_("./check-standalone-output.cjs") as {
+const { findUnexpectedEntries, findMissingRequired, deriveRequired, assertRequiredDerivable } = require_("./check-standalone-output.cjs") as {
+  assertRequiredDerivable: (required: string[]) => string[];
   findUnexpectedEntries: (paths: string[]) => string[];
   findMissingRequired: (paths: string[], required: string[]) => string[];
   deriveRequired: (repoRoot: string) => string[];
@@ -66,5 +67,23 @@ describe("findMissingRequired", () => {
     const without = required.filter((p) => p !== "agents/reviewer/instructions.md");
     expect(findMissingRequired(without, required)).toEqual(["agents/reviewer/instructions.md"]);
     expect(findMissingRequired(["server.js"], required)).toEqual(required);
+  });
+});
+
+describe("assertRequiredDerivable", () => {
+  it("names agents when the derived list has no agent file", () => {
+    const problems = assertRequiredDerivable(["docs/policies/INDEX.md"]);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain("agents/");
+  });
+
+  it("names the policies when the derived list has no policy file", () => {
+    const problems = assertRequiredDerivable(["agents/reviewer/schema.md"]);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain("docs/policies/");
+  });
+
+  it("reports nothing for the real repository", () => {
+    expect(assertRequiredDerivable(deriveRequired(process.cwd()))).toEqual([]);
   });
 });

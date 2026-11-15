@@ -65,6 +65,14 @@ function deriveRequired(repoRoot) {
   return out.sort();
 }
 
+/** Problems that make the derived required list vacuous (source tree without agent or policy files). */
+function assertRequiredDerivable(required) {
+  const problems = [];
+  if (!required.some((rel) => rel.startsWith("agents/"))) problems.push("no agents/**/*.md file found in the source tree; cannot verify the agent instructions ship");
+  if (!required.some((rel) => rel.startsWith("docs/policies/"))) problems.push("no docs/policies/*.md file found in the source tree; cannot verify the policy corpus ships");
+  return problems;
+}
+
 function walk(dir, base, out) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const abs = path.join(dir, entry.name);
@@ -100,7 +108,13 @@ function main() {
     console.error("Only .next, node_modules, package.json, server.js, agents/**/*.md and docs/policies/**/*.md may ship.");
     process.exit(1);
   }
-  const missing = findMissingRequired(entries, deriveRequired(path.resolve(__dirname, "..")));
+  const required = deriveRequired(path.resolve(__dirname, ".."));
+  const problems = assertRequiredDerivable(required);
+  if (problems.length > 0) {
+    for (const p of problems) console.error(`check-standalone-output: ${p}`);
+    process.exit(1);
+  }
+  const missing = findMissingRequired(entries, required);
   if (missing.length > 0) {
     console.error(`check-standalone-output: ${missing.length} run-time file(s) missing from ${dir}:`);
     for (const p of missing.slice(0, 30)) console.error(`  ${p}`);
@@ -111,5 +125,5 @@ function main() {
   console.log(`check-standalone-output: OK (${entries.length} entries, allowlist respected, run-time files present)`);
 }
 
-module.exports = { findUnexpectedEntries, findMissingRequired, deriveRequired };
+module.exports = { findUnexpectedEntries, findMissingRequired, deriveRequired, assertRequiredDerivable };
 if (require.main === module) main();
