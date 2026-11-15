@@ -87,6 +87,34 @@ export async function applyMigrations(
   await assertJournalApplied(db);
 }
 
+/** Arbitrary constant key of the session advisory lock that serialises concurrent migrate runs. */
+const MIGRATION_LOCK_KEY = 7_426_113_005;
+
+/**
+ * Check out ONE client, hold a session advisory lock on it and run `migrate`
+ * through that same client, so overlapping `db:migrate` runs (two CI jobs, a
+ * retried deploy hook) wait for each other instead of failing with "already
+ * exists". Only for the dedicated direct migration connection, never the pooled
+ * runtime URL, where session locks are unreliable.
+ */
+async function withMigrationLock<C extends { query: (text: string) => Promise<unknown>; release: () => void }>(
+  pool: { connect: () => Promise<C> },
+  migrate: (client: C) => Promise<void>,
+): Promise<void> {
+  const client = await pool.connect();
+  try {
+    await client.query(`select pg_advisory_lock(${MIGRATION_LOCK_KEY})`);
+    try {
+      await migrate(client);
+    } finally {
+      // A broken connection drops the session lock anyway; never mask the migrate error.
+      await client.query(`select pg_advisory_unlock(${MIGRATION_LOCK_KEY})`).catch(() => undefined);
+    }
+  } finally {
+    client.release();
+  }
+}
+
 /** Use a dedicated migration connection when configured; never borrow the runtime transaction pool. */
 export async function runMigrations(): Promise<void> {
   const url = migrationDatabaseUrl(runtimeDatabaseUrl(), process.env.DATABASE_MIGRATION_URL);
@@ -103,7 +131,8 @@ export async function runMigrations(): Promise<void> {
     neonConfig.webSocketConstructor = ws;
     pool = createNeonPool(url!);
     try {
-      await applyMigrations(drizzleNeon({ client: pool as NeonPool, schema }), "neon", url);
+      await withMigrationLock(pool as NeonPool, (client) =>
+        applyMigrations(drizzleNeon({ client: client as unknown as NeonPool, schema }), "neon", url));
     } finally {
       await pool.end();
     }
@@ -111,7 +140,8 @@ export async function runMigrations(): Promise<void> {
     pool = new Pool(migrationPoolConfig(url!, process.env.DATABASE_SSL_CA));
     pool.on("error", () => console.error("PostgreSQL migration connection error."));
     try {
-      await applyMigrations(drizzleNodePg({ client: pool as Pool, schema }), "pg", url);
+      await withMigrationLock(pool as Pool, (client) =>
+        applyMigrations(drizzleNodePg({ client: client as unknown as Pool, schema }), "pg", url));
     } finally {
       await pool.end();
     }

@@ -1,13 +1,22 @@
 import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const state = vi.hoisted(() => ({ config: undefined as unknown, end: vi.fn(), migrated: vi.fn() }));
+const state = vi.hoisted(() => ({ config: undefined as unknown, end: vi.fn(), migrated: vi.fn(),
+  calls: [] as string[], drizzleClient: undefined as unknown, client: undefined as unknown }));
 vi.mock("pg", () => ({ Pool: class {
   constructor(config: unknown) { state.config = config; }
   on() { return this; }
+  connect = async () => {
+    const client = {
+      query: async (text: string) => { state.calls.push(text); return { rows: [] }; },
+      release: () => { state.calls.push("release"); },
+    };
+    state.client = client;
+    return client;
+  };
   end = state.end;
 } }));
-vi.mock("drizzle-orm/node-postgres", () => ({ drizzle: vi.fn(() => ({ mocked: true,
+vi.mock("drizzle-orm/node-postgres", () => ({ drizzle: vi.fn((opts: { client: unknown }) => ({ mocked: true, client: (state.drizzleClient = opts.client),
   execute: async () => ({ rows: JSON.parse(readFileSync("./drizzle/meta/_journal.json", "utf8")).entries
     .map((e: { when: number }) => ({ created_at: e.when })) }) })) }));
 vi.mock("drizzle-orm/node-postgres/migrator", () => ({ migrate: state.migrated }));
@@ -26,6 +35,9 @@ afterEach(() => {
   state.config = undefined;
   state.end.mockReset();
   state.migrated.mockReset();
+  state.calls = [];
+  state.drizzleClient = undefined;
+  state.client = undefined;
 });
 
 describe("runMigrations", () => {
@@ -38,6 +50,26 @@ describe("runMigrations", () => {
     expect(state.config).toMatchObject({ max: 1, connectionString: process.env.DATABASE_MIGRATION_URL,
       ssl: { rejectUnauthorized: true }, connectionTimeoutMillis: 10_000, idleTimeoutMillis: 10_000 });
     expect(state.migrated).toHaveBeenCalledTimes(1);
+    expect(state.end).toHaveBeenCalledTimes(1);
+  });
+
+  it("holds an advisory lock on the one client drizzle migrates through, and unlocks it", async () => {
+    process.env.DATABASE_MIGRATION_URL = "postgresql://u:p@db.example.supabase.co:5432/postgres";
+    state.migrated.mockImplementation(async () => { state.calls.push("migrate"); });
+
+    await runMigrations();
+
+    expect(state.calls).toEqual([expect.stringMatching(/pg_advisory_lock/), "migrate", expect.stringMatching(/pg_advisory_unlock/), "release"]);
+    expect(state.drizzleClient).toBe(state.client);
+  });
+
+  it("unlocks and releases even when the migration throws", async () => {
+    process.env.DATABASE_MIGRATION_URL = "postgresql://u:p@db.example.supabase.co:5432/postgres";
+    state.migrated.mockRejectedValue(new Error("boom"));
+
+    await expect(runMigrations()).rejects.toThrow("boom");
+
+    expect(state.calls).toEqual([expect.stringMatching(/pg_advisory_lock/), expect.stringMatching(/pg_advisory_unlock/), "release"]);
     expect(state.end).toHaveBeenCalledTimes(1);
   });
 
