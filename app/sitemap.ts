@@ -1,5 +1,5 @@
 import type { MetadataRoute } from "next";
-import { SITE_URL } from "@/lib/marketing/site-config";
+import { LEGAL_LAST_UPDATED, MARKETING_LAST_MODIFIED, SITE_URL } from "@/lib/marketing/site-config";
 
 type Change = NonNullable<MetadataRoute.Sitemap[number]["changeFrequency"]>;
 
@@ -18,11 +18,13 @@ export default function sitemap(): MetadataRoute.Sitemap {
     { path: "/terms", priority: 0.3, changeFrequency: "yearly" },
   ];
 
-  const lastModified = new Date();
-
+  // Fixed dates, not the request time: a lastmod that always says "now" teaches
+  // crawlers to ignore it.
   return routes.map(({ path, priority, changeFrequency }) => ({
     url: `${SITE_URL}${path}`,
-    lastModified,
+    lastModified: new Date(
+      path === "/privacy" || path === "/terms" ? LEGAL_LAST_UPDATED : MARKETING_LAST_MODIFIED,
+    ),
     changeFrequency,
     priority,
   }));
