@@ -431,6 +431,17 @@ export async function runMutationGuard(
   return { ok: true, actor, workspaceId };
 }
 
+/**
+ * Reserve daily LLM budget after a route has authenticated, role-checked and
+ * validated the request and sized the real prompt, so refused or malformed
+ * calls never spend the shared cap. Returns a failure when the cap is spent.
+ */
+export async function reserveDailyBudget(tokens: number, day: string = todayUtc()): Promise<GuardFailure | null> {
+  const result = await reserve(budgetStore, day, tokens, DAILY_TOKEN_CAP);
+  if (result.granted) return null;
+  return { kind: "budget_exhausted", status: 429, message: "demo token budget exhausted for today" };
+}
+
 /** Exposed for tests that want to exhaust/reset the shared budget deterministically. */
 export function getBudgetStoreForTests(): BudgetStore {
   return budgetStore;

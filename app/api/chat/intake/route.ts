@@ -29,7 +29,7 @@ import { agentInitializationResponse } from "@/lib/services/agent-error-response
 import { evaluateCompleteness } from "@/lib/intake/completeness";
 import type { IntakePayload } from "@/lib/intake/types";
 import { EMPTY_INTAKE_PAYLOAD } from "@/lib/intake/defaults";
-import { runMutationGuard } from "@/lib/services/route-guard";
+import { reserveDailyBudget, runMutationGuard } from "@/lib/services/route-guard";
 
 const MAX_MESSAGES = 50;
 const MAX_MESSAGE_CHARS = 4000;
@@ -156,8 +156,6 @@ export async function POST(req: Request): Promise<Response> {
       { field: "partialPayload", maxChars: MAX_PARTIAL_PAYLOAD_CHARS },
     ],
     inputTotalCap: MAX_MESSAGES * MAX_MESSAGE_CHARS + MAX_PARTIAL_PAYLOAD_CHARS,
-    requiresBudget: true,
-    estimatedTokens,
   });
   if (!guard.ok) {
     return Response.json({ error: guard.failure.message }, { status: guard.failure.status });
@@ -174,6 +172,11 @@ export async function POST(req: Request): Promise<Response> {
   if (!parsed.success) {
     return Response.json({ error: "invalid request body" }, { status: 400 });
   }
+
+  // Reserve only now that the caller is authenticated, is a requester and
+  // sent a valid body: a refused call never spends the shared daily cap.
+  const budget = await reserveDailyBudget(estimatedTokens);
+  if (budget) return Response.json({ error: budget.message }, { status: budget.status });
 
   let port: AgentPort;
   try {

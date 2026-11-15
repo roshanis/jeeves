@@ -11,6 +11,7 @@ import { createTestDb, closeTestDb, type TestDb } from "@/lib/db/test-client";
 import { seedDatabase } from "@/scripts/seed";
 import * as agentsModule from "@/lib/agents";
 import { AgentInitializationError } from "@/lib/agents/initialization-error";
+import { getBudgetStoreForTests } from "@/lib/services/route-guard";
 
 let testDb: TestDb;
 
@@ -279,6 +280,32 @@ describe("POST /api/chat/intake", () => {
     expect(json.gaps.some((g: { ruleId: string }) => g.ruleId === "BLK-05")).toBe(false);
     expect(json.gaps.some((g: { ruleId: string }) => g.ruleId === "BLK-01")).toBe(true);
     expect(json.done).toBe(false);
+  });
+
+  it("does not reserve budget for a refused (403) or schema-invalid (400) call (auth-F4)", async () => {
+    const day = new Date().toISOString().slice(0, 10);
+    const reviewer = await issueSessionFor("elena-vasquez", "41.1.0.1");
+    const requester = await issueSessionFor("priya-raman", "41.1.0.2");
+    const { POST } = await import("../intake/route");
+    const before = await getBudgetStoreForTests().getUsed(day);
+    const conversation = Array.from({ length: 10 }, () => ({ role: "user", content: "x".repeat(4000) }));
+    const forbidden = await POST(
+      new Request("http://localhost/api/chat/intake", {
+        method: "POST",
+        headers: bearer(reviewer, "41.1.0.1"),
+        body: JSON.stringify({ conversation, partialPayload: EMPTY_INTAKE_PAYLOAD }),
+      }),
+    );
+    expect(forbidden.status).toBe(403);
+    const invalid = await POST(
+      new Request("http://localhost/api/chat/intake", {
+        method: "POST",
+        headers: bearer(requester, "41.1.0.2"),
+        body: JSON.stringify({ conversation, partialPayload: "not-an-object" }),
+      }),
+    );
+    expect(invalid.status).toBe(400);
+    expect(await getBudgetStoreForTests().getUsed(day)).toBe(before);
   });
 
   it("400s a conversation entry longer than the per-message cap", async () => {
