@@ -29,7 +29,7 @@ import {
   NotFoundError,
   submitIntake,
 } from "@/lib/services/initiative-service";
-import { runMutationGuard } from "@/lib/services/route-guard";
+import { guardFailureResponse, runMutationGuard } from "@/lib/services/route-guard";
 import { isRouteId, notFoundResponse } from "@/lib/http/route-id";
 import { INTAKE_AUTHOR_ROLES } from "@/lib/services/intake-author-roles";
 
@@ -39,7 +39,7 @@ export async function POST(
 ): Promise<Response> {
   const guard = await runMutationGuard(req, undefined, { allowPublic: true });
   if (!guard.ok) {
-    return Response.json({ error: guard.failure.message }, { status: guard.failure.status });
+    return guardFailureResponse(guard.failure);
   }
   if (!INTAKE_AUTHOR_ROLES.has(guard.actor.role)) {
     return Response.json({ error: "only requesters may submit an intake" }, { status: 403 });

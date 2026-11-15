@@ -1,7 +1,7 @@
 import { getDb } from "@/lib/db/client";
 import { intakePayloadSchema } from "@/lib/services/intake-payload-schema";
 import { ConflictError, IllegalTransitionError, NotFoundError, getIntakeDraft, updateIntakeDraft } from "@/lib/services/initiative-service";
-import { extractSessionToken, resolveSession, runMutationGuard } from "@/lib/services/route-guard";
+import { extractSessionToken, guardFailureResponse, resolveSession, runMutationGuard } from "@/lib/services/route-guard";
 import { BodyReadError, hasNul, readBodyText } from "@/lib/http/read-json-body";
 import { isRouteId, notFoundResponse } from "@/lib/http/route-id";
 import { INTAKE_AUTHOR_ROLES } from "@/lib/services/intake-author-roles";
@@ -25,7 +25,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 
 export async function PUT(req: Request, { params }: { params: Promise<{ id: string }> }): Promise<Response> {
   const guard = await runMutationGuard(req, undefined, { allowPublic: true });
-  if (!guard.ok) return Response.json({ error: guard.failure.message }, { status: guard.failure.status });
+  if (!guard.ok) return guardFailureResponse(guard.failure);
   if (!INTAKE_AUTHOR_ROLES.has(guard.actor.role)) return Response.json({ error: "only requesters may edit an intake draft" }, { status: 403 });
   const { id } = await params;
   if (!isRouteId(id)) return notFoundResponse();
