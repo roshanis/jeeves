@@ -55,15 +55,28 @@ describe("IntakeForm accessibility semantics", () => {
     expect(sources.getAttribute("aria-describedby")!.split(" ")).toContain("intake-gap-BLK-11");
   });
 
-  it("marks each overlay Yes/No group required and points it at its open gap row", () => {
+  it("renders six overlay Yes/No groups", () => {
+    const { container } = render(<IntakeForm />);
+    expect(container.querySelectorAll('fieldset[data-slot="overlay-question"]')).toHaveLength(6);
+  });
+
+  it.each([
+    [/does it access PHI/i, "BLK-05"],
+    [/do members interact with or receive its output directly/i, "BLK-06"],
+    [/does it influence care or coverage decisions/i, "BLK-07"],
+    [/is the model vendor-hosted/i, "BLK-08"],
+    [/does a qualified human review each output/i, "BLK-09"],
+    [/does it affect individuals' opportunities, rights, or services/i, "BLK-10"],
+  ])("marks the overlay group %s required and points it at its open gap row %s", (name, ruleId) => {
     render(<IntakeForm />);
-    const group = screen.getByRole("group", { name: /does it access PHI/i });
+    const group = screen.getByRole("group", { name });
     const radios = Array.from(group.querySelectorAll<HTMLInputElement>('input[type="radio"]'));
     expect(radios).toHaveLength(2);
     expect(radios.every((r) => r.required)).toBe(true);
     expect(group.getAttribute("aria-describedby")).toBeNull();
     fireEvent.change(screen.getByRole("textbox", { name: "Initiative title" }), { target: { value: "x" } });
-    expect(group.getAttribute("aria-describedby")!.split(" ")).toContain("intake-gap-BLK-05");
+    expect(group.getAttribute("aria-describedby")!.split(" ")).toContain(`intake-gap-${ruleId}`);
+    expect(document.getElementById(`intake-gap-${ruleId}`)).not.toBeNull();
     fireEvent.click(radios[0]);
     expect(group.getAttribute("aria-describedby")).toBeNull();
   });
