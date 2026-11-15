@@ -11,6 +11,7 @@ import {
   resetLiveSessionForTests,
   useLiveSession,
 } from "@/lib/client/session-context";
+import { DEMO_SESSION_TOOLTIP } from "@/components/jeeves/role-gate";
 import { AuditorChat } from "@/components/jeeves/auditor-chat";
 
 function jsonResponse(status: number, body: unknown): Response {
@@ -52,6 +53,20 @@ describe("AuditorChat — no live session", () => {
     ) as HTMLButtonElement;
     expect(input.disabled).toBe(true);
     expect(submit.disabled).toBe(true);
+  });
+
+  it("explains the disabled input in visible text linked to the controls", () => {
+    renderChat();
+    const reason = screen.getByText(DEMO_SESSION_TOOLTIP);
+    expect(reason.closest(".sr-only")).toBeNull();
+    for (const slot of ["auditor-question-input", "auditor-submit"]) {
+      const el = document.querySelector(`[data-slot="${slot}"]`) as HTMLElement;
+      expect(el.hasAttribute("disabled")).toBe(true);
+      const id = el.getAttribute("aria-describedby");
+      expect(id).toBeTruthy();
+      expect(document.getElementById(id!)?.textContent).toBe(DEMO_SESSION_TOOLTIP);
+    }
+    expect(document.querySelector('[data-slot="auditor-chat"] div[tabindex="0"]')).toBeNull();
   });
 });
 

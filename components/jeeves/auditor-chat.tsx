@@ -8,12 +8,10 @@
  * Session-gated for ANY authenticated persona (the route's own doc comment:
  * "an auditor question is a read/explain action, not a role-restricted
  * mutation"). Without a live session, the input + submit are disabled with
- * the standard demo-entry messaging; `DisableWithTooltip` only renders
- * a `<Button>` though, so for a text input this component wraps the
- * input+button pair directly in `Tooltip`/`TooltipTrigger`/`TooltipContent`
- * using the same exact tooltip copy (`DEMO_SESSION_TOOLTIP`) rather than
- * reusing `DisableWithTooltip` itself (judgment call — documented here and
- * in the task report).
+ * the standard demo-entry messaging (`DEMO_SESSION_TOOLTIP`). The reason is
+ * visible text linked with aria-describedby, not a tooltip: a disabled input
+ * cannot be focused or tapped, so a tooltip never reaches touch or
+ * screen-reader users (`DisableWithTooltip` only renders a `<Button>`).
  *
  * SECURITY: `answerMd` is untrusted model output and MUST be rendered as
  * escaped plain text only (a `whitespace-pre-wrap` text node) — never
@@ -25,7 +23,6 @@ import { askAuditor, isApiError, apiErrorToMessage } from "@/lib/client/api";
 import { useLiveSession } from "@/lib/client/session-context";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { DEMO_SESSION_TOOLTIP } from "./role-gate";
 
 interface ChatTurn {
@@ -41,6 +38,7 @@ export function AuditorChat() {
   const [transcript, setTranscript] = React.useState<ChatTurn[]>([]);
   const [pending, setPending] = React.useState(false);
 
+  const reasonId = React.useId();
   const disabled = !session;
 
   async function handleSubmit() {
@@ -129,25 +127,24 @@ export function AuditorChat() {
         </div>
 
         {disabled ? (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <div className="flex items-center gap-2" tabIndex={0}>
-                  <input
-                    disabled
-                    aria-label="Audit question"
-                    placeholder="Ask a question about audit history…"
-                    data-slot="auditor-question-input"
-                    className="h-8 flex-1 rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none disabled:cursor-not-allowed disabled:opacity-60"
-                  />
-                  <Button type="button" disabled data-slot="auditor-submit">
-                    Ask
-                  </Button>
-                </div>
-              }
-            />
-            <TooltipContent>{DEMO_SESSION_TOOLTIP}</TooltipContent>
-          </Tooltip>
+          <div className="flex flex-col gap-1.5">
+            <div className="flex items-center gap-2">
+              <input
+                disabled
+                aria-label="Audit question"
+                aria-describedby={reasonId}
+                placeholder="Ask a question about audit history…"
+                data-slot="auditor-question-input"
+                className="h-8 flex-1 rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none disabled:cursor-not-allowed disabled:opacity-60"
+              />
+              <Button type="button" disabled aria-describedby={reasonId} data-slot="auditor-submit">
+                Ask
+              </Button>
+            </div>
+            <p id={reasonId} data-slot="auditor-disabled-reason" className="text-xs text-muted-foreground">
+              {DEMO_SESSION_TOOLTIP}
+            </p>
+          </div>
         ) : (
           <div className="flex items-center gap-2">
             <input
