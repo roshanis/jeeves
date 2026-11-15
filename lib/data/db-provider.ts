@@ -91,11 +91,21 @@ function flagsFromRecord(record: Record<string, boolean>): OverlayFlags {
   };
 }
 
+export type SnapshotHolder = () => { current?: Promise<PortfolioSnapshot> };
+
 export class DbDataProvider implements DataProvider {
   private readonly db: Db;
+  private readonly snapshotHolder?: SnapshotHolder;
 
-  constructor(db?: Db) {
+  /**
+   * `snapshotHolder` lets one server render share one snapshot read: it must
+   * return request-scoped storage (React `cache`), never module state. The
+   * snapshot is unfiltered and visibility is applied per call, so sharing it
+   * within a request changes nothing a viewer sees. Treat it as immutable.
+   */
+  constructor(db?: Db, options?: { snapshotHolder?: SnapshotHolder }) {
     this.db = db ?? getDb();
+    this.snapshotHolder = options?.snapshotHolder;
   }
 
   /* ---------------------------------------------------------------- */
@@ -181,7 +191,14 @@ export class DbDataProvider implements DataProvider {
     };
   }
 
-  private async loadSnapshot(): Promise<PortfolioSnapshot> {
+  // A rejected snapshot stays rejected for the rest of that render (same request, same error).
+  private loadSnapshot(): Promise<PortfolioSnapshot> {
+    const holder = this.snapshotHolder?.();
+    if (!holder) return this.readSnapshot();
+    return (holder.current ??= this.readSnapshot());
+  }
+
+  private async readSnapshot(): Promise<PortfolioSnapshot> {
     const [
       initiativeRows,
       raRows,

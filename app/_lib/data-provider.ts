@@ -12,8 +12,15 @@ const WORKSPACE_COOKIE = "jeeves_workspace";
 
 /** Keep app callers on the same provider factory as API read callers. */
 export function getAppProvider(): DataProvider {
-  return getProvider();
+  return getProvider({ snapshotHolder: requestSnapshotHolder });
 }
+
+/**
+ * One snapshot holder per server render: React `cache` is request-scoped in a
+ * render and a passthrough outside one, so route handlers and scripts get a
+ * fresh holder per call and share nothing. Never replace with module state.
+ */
+const requestSnapshotHolder = cache(() => ({}));
 
 /**
  * The current browser's demo workspace id, or null for a public/no-session
