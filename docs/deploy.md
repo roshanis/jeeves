@@ -5,7 +5,9 @@ demo locally, deploying it to Vercel with Neon Postgres, the known gaps you
 should be honest about if you show this to anyone, and a demo-day checklist.
 
 Jeeves is a **fictional demo**: "Meridian Health" is not a real organization,
-all data is synthetic, and no LLM call ever touches real PHI. See the top of
+seeded and playground data is synthetic, and no LLM call touches real PHI.
+The separate real-request door is the exception: it stores submitter contact
+data (see "Personal data" in section 5). See the top of
 [`README.md`](../README.md) for the full disclaimer.
 
 Deploy itself is **not executed by any agent** in this repo — this document
@@ -289,8 +291,20 @@ The cheap version, if a pilot happens:
    bill.
 
 Note that a Neon branch shares the parent's data at the moment of branching,
-including anything sensitive. In this demo everything is synthetic, so it is
-moot — but that stops being true the moment it is not a demo.
+including anything sensitive. Seeded and playground data is synthetic, but the
+real-request door is not: `initiatives.requester` and the intake version's
+`basics` (`requesterEmail`, `businessProblem` and other free text) for
+`public-` workspaces hold real names, e-mail addresses and whatever
+strangers typed, and a branch copies them. Delete or exclude the `public-`
+workspace rows from a staging branch, and do not reseed over a live database
+just because "it is all synthetic".
+
+**Personal data.** Who can read it: operators holding `OPERATOR_TOKEN`
+through `/operator` and `GET /api/public-intake`. `audit_events` is
+append-only, so the application cannot delete the audit rows that refer to
+those initiatives. There is no retention or deletion procedure for these
+rows yet; defining one (and whether audit rows may be purged) is an open
+product decision.
 
 ---
 

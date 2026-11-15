@@ -72,3 +72,18 @@ describe("audit-log protection claims match the migrations (docs-F21)", () => {
     expect(doc).not.toMatch(/regardless of which role issues the\s+statement/);
   });
 });
+
+describe("data disclaimers cover the real-request door (docs-F23)", () => {
+  it("README does not claim no real PII anywhere", () => {
+    expect(read("README.md")).not.toMatch(/No real PHI, PII, or production data is used/);
+  });
+  it("deploy.md does not claim all data is synthetic and names the contact data", () => {
+    const doc = read("docs/deploy.md");
+    expect(doc).not.toMatch(/all data is synthetic/);
+    expect(doc).not.toMatch(/everything is synthetic, so it is\s+moot/);
+    expect(doc).toMatch(/real-request door/i);
+  });
+  it("ARCHITECTURE.md qualifies the no-real-data claim", () => {
+    expect(read("docs/ARCHITECTURE.md")).not.toMatch(/no real PHI,\s+PII, or production data exists anywhere/);
+  });
+});

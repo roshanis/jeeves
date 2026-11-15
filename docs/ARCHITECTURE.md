@@ -12,7 +12,9 @@ current state; where this document and an earlier doc (e.g. `docs/deploy.md`,
 Jeeves is a **fictional demo**: "Meridian Health" is not a real organization,
 every actor/initiative/approval/control/telemetry series is synthetic and
 produced by a deterministic seed script (`scripts/seed.ts`), and no real PHI,
-PII, or production data exists anywhere in this repository.
+PII, or production data exists in this repository. The runtime exception is
+the real-request door (§6.8), which stores submitter names, e-mail addresses
+and free text in `public-` workspaces.
 
 ---
 
