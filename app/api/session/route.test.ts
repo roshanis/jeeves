@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTestDb, closeTestDb, type TestDb } from "@/lib/db/test-client";
 import { sessions } from "@/lib/db/schema";
 import { issuePublicSession, resetHousekeepingCounterForTests } from "@/lib/services/route-guard";
-import { POST } from "./route";
+import { DELETE, POST } from "./route";
 
 let db: TestDb;
 const getDbMock = vi.fn(() => db);
@@ -178,5 +178,26 @@ describe("cross-site session requests (auth-F10)", () => {
     expect(form.status).toBe(415);
     const ok = await publicPost(new Request("http://localhost/api/public-session", { method: "POST", headers: { origin: "http://localhost" } }));
     expect(ok.status).toBe(200);
+  });
+  describe("DELETE (server-side exit)", () => {
+    const exit = (token?: string) => DELETE(new Request("http://localhost/api/session", {
+      method: "DELETE", headers: token ? { authorization: `Bearer ${token}` } : {},
+    }));
+
+    it("removes exactly the presented token and answers 204 (auth-F19)", async () => {
+      const a = await (await enter()).json();
+      const b = await (await enter("marcus-webb", { authorization: `Bearer ${a.token}` })).json();
+      expect((await exit(a.token)).status).toBe(204);
+      const left = await db.select().from(sessions);
+      expect(left.map((r) => r.token)).toEqual([b.token]);
+      expect((await exit(a.token)).status).toBe(401);
+    });
+
+    it("refuses a missing token and a public session, deleting nothing", async () => {
+      expect((await exit()).status).toBe(401);
+      const pub = await issuePublicSession();
+      expect((await exit(pub.token)).status).toBe(403);
+      expect(await db.select().from(sessions)).toHaveLength(1);
+    });
   });
 });
