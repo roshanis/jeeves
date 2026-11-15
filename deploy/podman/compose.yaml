@@ -55,6 +55,8 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-}
       CRON_SECRET: ${CRON_SECRET:-}
+      # Optional. Opens the "Send a real request" door and the /operator queue.
+      OPERATOR_TOKEN: ${OPERATOR_TOKEN:-}
     ports:
       - "${APP_PORT:-3000}:3000"
     depends_on:
