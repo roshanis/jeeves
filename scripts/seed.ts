@@ -35,6 +35,7 @@ import {
   riskAssessments,
   runBudget,
 } from "../lib/db/schema";
+import { isMain } from "./is-main";
 
 /* -------------------------------------------------------------------------
  * Deterministic PRNG — mulberry32, keyed by a string seed.
@@ -2237,7 +2238,7 @@ async function main() {
 }
 
 // Only run when executed directly (not when imported by tests).
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isMain(import.meta.url, process.argv[1])) {
   // Production guard: this CLI wipes and repopulates every seeded table
   // (see the DISABLE/ENABLE TRIGGER dance in seedDatabase above), so it
   // must never fire against a real deployment by accident. Refuse to run

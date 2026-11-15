@@ -36,6 +36,7 @@ import {
   SIGN_IN_PATH,
 } from "../lib/config/production-routes";
 import { SESSION_COOKIE_NAME } from "../lib/security/session-cookie-name";
+import { isMain } from "./is-main";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -588,7 +589,7 @@ async function main(): Promise<void> {
   if (failed > 0) process.exitCode = 1;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isMain(import.meta.url, process.argv[1])) {
   main().catch((err) => {
     console.error(`Smoke test failed: ${err instanceof Error ? err.message : "unknown error"}`);
     process.exitCode = 1;
