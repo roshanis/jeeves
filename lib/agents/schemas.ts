@@ -19,6 +19,7 @@ const ASSESSMENT_MD_MAX_LENGTH = 6000;
 
 // Generous backstops against runaway generations, well above any real draft.
 const CONTROL_ID_MAX_LENGTH = 64;
+const CITED_EVENT_MAX_LENGTH = 256;
 const REVIEWER_TEXT_MAX_LENGTH = 2000;
 const REVIEWER_LIST_MAX_ITEMS = 50;
 const CONFIDENCE_NOTES_MAX_LENGTH = 4000;
@@ -73,7 +74,7 @@ export const auditorAnswerOutputSchema = z.object({
   answerMd: z.string().min(1).max(AUDITOR_ANSWER_MAX_LENGTH),
   // instructions.md: every row timestamp (eventTs or ts) or row-N label relied on.
   // Empty is valid and expected on a refusal (nothing was relied upon).
-  citedEvents: z.array(z.string().max(CONTROL_ID_MAX_LENGTH * 4)).max(AUDITOR_CITED_EVENTS_MAX_ITEMS),
+  citedEvents: z.array(z.string().max(CITED_EVENT_MAX_LENGTH)).max(AUDITOR_CITED_EVENTS_MAX_ITEMS),
   // instructions.md: "the CannedAuditQueryId used... as supplied in the
   // input" — explicitly allowed to be an empty string per that wording, so
   // no min(1) here (unlike answerMd).
