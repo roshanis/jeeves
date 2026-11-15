@@ -63,7 +63,7 @@ export function AuditorChat() {
     } catch (err) {
       // Drop the unanswered turn and give the text back so it need not be retyped.
       setTranscript((prev) => prev.slice(0, -1));
-      setQuestion(trimmed);
+      setQuestion((q) => (q === "" ? trimmed : q));
       if (isApiError(err)) {
         toast.error(apiErrorToMessage(err));
         if (err.status === 401) {

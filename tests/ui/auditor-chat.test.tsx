@@ -202,4 +202,19 @@ describe("AuditorChat — live session", () => {
     fireEvent.click(document.querySelector('[data-slot="auditor-submit"]') as HTMLButtonElement);
     await waitFor(() => expect(within(screen.getByRole("log")).getByText("Answer text")).toBeTruthy());
   });
+
+  it("keeps newer text typed while the request was pending when it fails", async () => {
+    await renderLoggedIn();
+    fetchMock.mockResolvedValueOnce(jsonResponse(429, { error: "rate_limited" }));
+    const input = document.querySelector('[data-slot="auditor-question-input"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "who touches PHI?" } });
+    fireEvent.click(document.querySelector('[data-slot="auditor-submit"]') as HTMLButtonElement);
+    fireEvent.change(input, { target: { value: "next question" } });
+    await waitFor(() => {
+      expect(
+        (document.querySelector('[data-slot="auditor-submit"]') as HTMLButtonElement).textContent,
+      ).toBe("Ask");
+    });
+    expect((document.querySelector('[data-slot="auditor-question-input"]') as HTMLInputElement).value).toBe("next question");
+  });
 });
