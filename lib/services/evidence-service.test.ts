@@ -35,6 +35,12 @@ async function signLoadedEvidenceReview() {
   });
 }
 describe('versioned evidence workflow',()=>{
+  it('replays a retried upload whose name has a lone surrogate',async()=>{
+    const input={requestId:'surrogate-request-001',fileName:'lone\ud800.pdf',mediaType:'application/pdf',contentBase64:bytes.toString('base64')};
+    const first=await uploadEvidence(db,'i',owner,input);
+    expect(first.fileName).toBe('lone\ufffd.pdf');
+    await expect(uploadEvidence(db,'i',owner,input)).resolves.toMatchObject({id:first.id});
+  });
   it('replays a retried upload whose name is not in NFC form',async()=>{
     const input={requestId:'nfc-request-0000001',fileName:'cafe\u0301.pdf',mediaType:'application/pdf',contentBase64:bytes.toString('base64')};
     const first=await uploadEvidence(db,'i',owner,input);

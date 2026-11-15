@@ -24,6 +24,9 @@ describe('evidence filename characters', () => {
     for (const name of ['doc\u202Egpj.pdf', 'doc\u200Bx.pdf', 'doc\u2066x.pdf', 'ctl\u0085x.pdf', 'a\u2028b.pdf', 'a\u2029b.pdf'])
       expect(() => validateDocument(name, 'application/pdf', pdf), JSON.stringify(name)).toThrow(/plain filename/);
   });
+  it('replaces a lone surrogate so the stored name equals what is echoed', () => {
+    expect(validateDocument('lone\ud800.pdf', 'application/pdf', pdf).fileName).toBe('lone\ufffd.pdf');
+  });
   it('stores the NFC form of the name', () => {
     expect(validateDocument('cafe\u0301.pdf', 'application/pdf', pdf).fileName).toBe('caf\u00e9.pdf');
   });
