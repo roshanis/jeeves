@@ -9,6 +9,8 @@ import {
   type ReviewNotificationRow,
 } from "@/lib/services/notification-service";
 import { getDb } from "@/lib/db/client";
+import { runtimeDatabaseUrl } from "@/lib/db/runtime-config";
+import { resolveDataProviderMode } from "@/lib/data/provider-mode";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
@@ -29,7 +31,7 @@ export default async function ReviewsPage() {
   // each ask names its initiative, so an unscoped queue would show every
   // playground visitor everyone else's titles.
   let requests: ReviewNotificationRow[] = [];
-  const dbMode = process.env.DATA_PROVIDER === "db" || !!process.env.DATABASE_URL;
+  const dbMode = resolveDataProviderMode(process.env.DATA_PROVIDER, !!runtimeDatabaseUrl()) === "db";
   if (dbMode) {
     try {
       requests = await undeliveredNotificationsForViewer(getDb(), viewerWorkspaceId);
