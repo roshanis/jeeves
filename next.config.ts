@@ -104,6 +104,13 @@ const nextConfig: NextConfig = {
           { key: "Vary", value: "Authorization, Cookie" },
         ],
       })),
+      // Listed after the catch-all so it replaces the app-wide CSP: an
+      // uploaded document is untrusted bytes and must never run scripts, even
+      // if something other than the attachment disposition ever renders it.
+      {
+        source: "/api/initiatives/:id/evidence/:documentId",
+        headers: [{ key: "Content-Security-Policy", value: "sandbox; default-src 'none'" }],
+      },
     ];
   },
 };
