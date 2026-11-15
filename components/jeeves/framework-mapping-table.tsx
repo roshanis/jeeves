@@ -38,7 +38,7 @@ function groupByRequirement(refKey: "nistAiRmf" | "euAiAct"): RequirementGroup[]
     }
   }
 
-  return [...groups.values()].sort((a, b) => a.ref.localeCompare(b.ref));
+  return [...groups.values()].sort((a, b) => a.ref.localeCompare(b.ref, undefined, { numeric: true }));
 }
 
 /**
