@@ -151,3 +151,11 @@ describe("README drift (docs-F31)", () => {
     expect(readme.trimEnd().endsWith("each of which carries its own terms.")).toBe(true);
   });
 });
+
+describe("docs/deploy-podman.md image healthcheck (deploy-F16)", () => {
+  it("says an OCI-format build drops the image HEALTHCHECK and names --format docker", () => {
+    const doc = read("docs/deploy-podman.md");
+    expect(doc).toMatch(/--format docker/);
+    expect(doc).toMatch(/HEALTHCHECK/);
+  });
+});

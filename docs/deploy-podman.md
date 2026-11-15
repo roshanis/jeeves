@@ -103,6 +103,12 @@ anything you care about.
 Quadlet is Podman's native systemd integration: you write `.container` files
 and systemd generates the units.
 
+Health probes: `podman build` produces an OCI-format image by default, and
+that format ignores the Containerfile's `HEALTHCHECK` (Podman warns about it).
+The probes that count here are the ones in `compose.yaml` and the Quadlet
+`.container` files. Only add `--format docker` to the build commands below if
+you want the image to carry its own probe for a bare `podman run`.
+
 ```bash
 # Build both images first — Quadlet does not build.
 podman build -f deploy/podman/Containerfile -t localhost/jeeves:latest .
