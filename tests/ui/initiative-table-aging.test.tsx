@@ -76,4 +76,9 @@ describe("InitiativeTable next action and owner", () => {
     expect(screen.getAllByText("Promote / deploy")).toHaveLength(2);
     expect(screen.getByText("Meet conditions, then promote")).toBeDefined();
   });
+
+  it("exposes the owner full name as text, not only a title", () => {
+    renderWithProviders(<InitiativeTable initiatives={[summary({ slug: "o", state: "in_review" })]} caption="test" />);
+    expect(screen.getByText("Priya Raman")).toBeDefined();
+  });
 });

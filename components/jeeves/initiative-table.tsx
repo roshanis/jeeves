@@ -75,8 +75,9 @@ function OwnerCell({ name }: { name: string }) {
   return (
     <span className="inline-flex items-center" title={name}>
       <Avatar size="sm">
-        <AvatarFallback>{initials(name)}</AvatarFallback>
+        <AvatarFallback aria-hidden>{initials(name)}</AvatarFallback>
       </Avatar>
+      <span className="sr-only">{name}</span>
     </span>
   );
 }
