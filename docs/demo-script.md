@@ -27,7 +27,7 @@
 
 **Anticipated question:** *"Are these real initiatives or synthetic?"*
 
-**Answer:** "All synthetic data — this is a demo on fictional Meridian Health. The portfolio shows patterns we see in real payers: a healthy baseline (call-center QA scorer), some mature models that deployed smoothly, some rejected for policy reasons, and some in-flight waiting for sign-off. The important part is the mechanics: you'll watch how a new request flows through intake → triage → multi-domain review → conditional approval → deployment → live monitoring."
+**Answer:** "All synthetic data — this is a demo on fictional Meridian Health. The portfolio shows patterns we see in real payers: a healthy baseline (call-center QA scorer), some mature models that deployed smoothly, some rejected for policy reasons, and some in-flight waiting for sign-off. The important part is the mechanics: you'll watch how a new request flows through intake → QC → triage → multi-domain review → conditional approval → deployment → live monitoring."
 
 ---
 
@@ -42,6 +42,14 @@
 **Anticipated question:** *"Why not a conversational chat instead of a form?"*
 
 **Answer:** "Forms are deterministic. Chat is fluid and comfortable, but it makes triage non-reproducible — an agent might extract different risk flags depending on how the question was phrased. We do plan conversational intake in M2, but for the governance loop to work, the triage classifier must see the same facts every time. Forms enforce that discipline."
+
+---
+
+### Step 1b: QC Gate (0.25 min)
+**On screen:** Switch to Nia Okafor (Program Office). The submitted initiative shows "Open QC" (the table action reads "Start QC").
+
+**Presenter talk track:**
+"A submitted intake does not go straight to review. Nothing reaches triage except through a QC gate, opened by a human in the Program Office (or Admin) — an agent cannot open it. Nia opens QC, checks the intake is complete enough to spend eight reviewers' time on, and routes it on. If it were not, she would return it to the requester with a written reason, and Priya would fix and resubmit."
 
 ---
 

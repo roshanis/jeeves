@@ -41,3 +41,22 @@ describe("docs/ARCHITECTURE.md (docs-F17)", () => {
     expect(doc).not.toMatch(/twelve[- ]state/i);
   });
 });
+
+describe("the QC gate is documented (docs-F18)", () => {
+  it("demo-script.md has a QC step run by the Program Office persona", () => {
+    const doc = read("docs/demo-script.md");
+    expect(doc).toMatch(/QC/);
+    expect(doc).toMatch(/Nia Okafor/);
+  });
+  it("README.md describes QC between intake and triage", () => {
+    expect(read("README.md")).toMatch(/\bQC\b/);
+  });
+  it("deploy.md champion loop includes QC and drafts 8 reviews", () => {
+    const doc = read("docs/deploy.md");
+    expect(doc).toMatch(/\bQC\b/);
+    expect(doc).not.toMatch(/4 drafted reviews/);
+  });
+  it("ARCHITECTURE.md describes the QC gate", () => {
+    expect(read("docs/ARCHITECTURE.md")).toMatch(/QC gate/);
+  });
+});

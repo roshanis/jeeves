@@ -319,7 +319,7 @@ Run through this the morning of a demo, in order:
 
 3. **Run the champion loop once on the mock adapter.** With
    `OPENAI_API_KEY` unset, walk the champion storyline end-to-end
-   (intake → triage → 4 drafted reviews → sign-off → conditional approval
+   (intake → QC (Program Office) → triage → 8 drafted reviews → sign-off → conditional approval
    → effective controls) to confirm the live loop works without any
    external LLM dependency. This is also what CI/Playwright exercises.
 

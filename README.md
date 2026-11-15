@@ -30,30 +30,33 @@ governance, end to end:
    is, plus a healthcare risk overlay (PHI access? member-facing? influences
    care/coverage? vendor-hosted? human-in-the-loop? individual impact?). A
    completeness check flags missing answers without blocking submission.
-2. **Deterministic risk triage** — the overlay answers are run through fixed
+2. **QC gate** — a submitted intake waits for a Program Office or Admin
+   persona to open QC, then to route it on or return it to the requester
+   with a reason. Nothing reaches triage without passing QC.
+3. **Deterministic risk triage** — the overlay answers are run through fixed
    rules (`lib/triage/rules.ts`) to assign a tier: **Low / Medium / High /
    Critical**. No LLM is involved in the tier decision itself.
-3. **All-8-domain agent-drafted review** — the tier determines which
+4. **All-8-domain agent-drafted review** — the tier determines which
    governance domains are required (up to all 8: Legal, Procurement, Tech
    Architecture, Responsible AI, Security, Privacy/HIPAA, Clinical Safety,
    Data Governance). A bounded-concurrency workflow fans a draft-review
    request out to every required domain in parallel, with per-domain retry,
    resumability, and progress visibility.
-4. **Human sign-off** — a domain-scoped reviewer edits and signs (or
+5. **Human sign-off** — a domain-scoped reviewer edits and signs (or
    returns) each draft. Agents never sign.
-5. **Conditional approval** — a named, accountable human approver decides:
+6. **Conditional approval** — a named, accountable human approver decides:
    approve, conditionally approve (with conditions linked to controls), or
    reject. Low-risk initiatives can instead take a deterministic **fast
    lane** under a pre-approved policy — which still names an accountable
    approver, never an agent.
-6. **Versioned effective controls** — approval generates a versioned set of
+7. **Versioned effective controls** — approval generates a versioned set of
    effective controls for the deployment, drawn from a per-domain control
    catalog (owner, cadence, evidence, enforcement mode).
-7. **Post-deploy monitoring** — synthetic eval-quality telemetry is
+8. **Post-deploy monitoring** — synthetic eval-quality telemetry is
    evaluated against a threshold; a sustained breach pauses the deployment
    and opens a reassessment review cycle, recording an incident. Re-running
    the monitor is idempotent — no duplicate incidents.
-8. **Structured, evidence-linked audit queries** — canned queries (e.g.
+9. **Structured, evidence-linked audit queries** — canned queries (e.g.
    "member-facing initiatives touching PHI, with approver and current
    control status") return rows that link back to the decisions, signatures,
    and audit events that produced them.
@@ -264,7 +267,7 @@ The full suite runs several hundred Vitest unit/integration tests (targeting
 >80% coverage on `lib/`) plus 8 Playwright end-to-end tests. The Playwright
 suite is the **required golden path**: it walks the read-only portfolio and
 audit views, then a full live loop across requester, reviewer, and approver
-personas — intake, triage, an all-8-domain drafted review, sign-off, and
+personas — intake, QC, triage, an all-8-domain drafted review, sign-off, and
 conditional approval — against a real (mocked-LLM) run.
 
 ---
