@@ -195,7 +195,8 @@ describe("cross-site session requests (auth-F10)", () => {
 
     it("refuses a missing token and a public session, deleting nothing", async () => {
       expect((await exit()).status).toBe(401);
-      const pub = await issuePublicSession();
+      const pub = await issuePublicSession("203.0.113.51");
+      if (!("token" in pub)) throw new Error("expected a public session");
       expect((await exit(pub.token)).status).toBe(403);
       expect(await db.select().from(sessions)).toHaveLength(1);
     });
