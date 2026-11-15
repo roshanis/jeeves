@@ -39,7 +39,6 @@ import {
   isApiError,
   apiErrorToMessage,
 } from "@/lib/client/api";
-import { rememberInitiative } from "@/lib/client/live-registry";
 import { useLiveSession } from "@/lib/client/session-context";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -433,7 +432,6 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
       setSlug(created.slug);
       setVersion(created.version);
       setSavedPayload(payload);
-      rememberInitiative(created.slug, created.initiativeId);
       const submitted = await submitIntake(session.token, created.initiativeId);
       if (submitted.submitted) {
         // A public submitter goes to the confirmation page, not the case

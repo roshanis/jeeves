@@ -17,9 +17,7 @@
  * context, keeping visible identity, reviewer domain, and API authorization
  * aligned. The persona picker exchanges sessions to explore each role in the same workspace.
  *
- * `logout()` returns the app to read-only mode; it intentionally does NOT
- * clear the live-initiative registry (lib/client/live-registry.ts) — see
- * that module's header.
+ * `logout()` returns the app to read-only mode.
  *
  * The root layout owns one provider with runtime liveModeAvailable, preserving
  * pending entry across route groups. Previews neither read stored session data
