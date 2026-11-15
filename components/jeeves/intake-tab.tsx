@@ -171,7 +171,11 @@ export function IntakeTab({ intake, summary, events }: {
         session?.role === "requester" && session.personaLabel === summary?.requester && summary?.isSeeded === false ? (
           <Link className={buttonVariants({ variant: "outline" })} href={`/initiatives/${summary.slug}/edit`}>Continue intake</Link>
         ) : (
-          <GatedActionButton label={summary?.isSeeded ? "Example draft — read only" : "Continue intake"} variant="outline" />
+          <GatedActionButton
+            label={summary?.isSeeded ? "Example draft — read only" : "Continue intake"}
+            variant="outline"
+            disabledReason={summary?.isSeeded ? "This is a seeded example draft and cannot be edited" : "Only the requester who owns this draft can continue it"}
+          />
         )
       ) : null}
     </div>
