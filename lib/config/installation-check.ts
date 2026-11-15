@@ -5,9 +5,8 @@
 // is how a demo process ends up serving passwordless personas on a customer's
 // data, or a production process ends up serving a database full of seeded demo
 // rows, so every boot compares them and refuses on any mismatch.
-import { readFile } from "node:fs/promises";
-import path from "node:path";
 import { sql } from "drizzle-orm";
+import journal from "../../drizzle/meta/_journal.json";
 import { ensureDemoInstallation } from "../demo/bootstrap";
 import {
   installationTableExists,
@@ -25,10 +24,10 @@ export type InstallationCheckCode =
   | "mode_mismatch"
   /** Production, and the database holds demo rows. */
   | "demo_data"
-  /** Production, and the applied migrations do not cover the bundled journal. */
+  /** Production, and the applied migrations do not cover the bundled journal (or the history table is missing). */
   | "schema_behind"
-  /** Production, and the bundled migration journal could not be read. */
-  | "journal_unreadable"
+  /** Production, and the database role cannot read the migration history. */
+  | "migrations_unreadable"
   /** Production, and an append-only trigger on audit_events or installation is missing or disabled. */
   | "audit_triggers";
 
@@ -94,41 +93,65 @@ async function countDemoData(db: InstallationDb): Promise<DemoDataCounts> {
 }
 
 /**
- * The `when` of every entry in the bundled drizzle/meta/_journal.json; drizzle
- * stores it as created_at in drizzle.__drizzle_migrations. The literal
- * path.join(process.cwd(), ...) and the outputFileTracingIncludes entry in
- * next.config.ts are what put the file into the standalone output.
+ * The `when` of every migration this build was compiled with. drizzle stores
+ * it as created_at in drizzle.__drizzle_migrations. The journal is imported,
+ * not read from disk at boot: it is then part of the server bundle wherever
+ * the process runs (standalone image, serverless function, `next start`), and
+ * a missing file can never be what refuses a boot.
  */
-async function bundledMigrationTimes(): Promise<number[]> {
-  const raw = await readFile(path.join(process.cwd(), "drizzle/meta/_journal.json"), "utf8");
-  const journal = JSON.parse(raw) as { entries?: { when: number }[] };
-  return (journal.entries ?? []).map((e) => Number(e.when));
+const BUNDLED_MIGRATION_TIMES: readonly number[] = journal.entries.map((entry) => Number(entry.when));
+
+function rowsOf<T>(result: unknown): T[] {
+  return (Array.isArray(result) ? result : (result as { rows: unknown[] }).rows) as T[];
 }
 
-/** How many bundled migrations the database has not applied. */
+/**
+ * How many bundled migrations the database has not applied.
+ *
+ * The history table is probed through the catalog first. Naming it in a query
+ * fails outright when it is missing, and a runtime role that is not the schema
+ * owner (the split docs/production-readiness.md asks for) has no access to the
+ * `drizzle` schema unless it is granted; both must end in a message that says
+ * what to do, not in a raw driver error.
+ */
 async function countUnappliedMigrations(db: InstallationDb): Promise<number> {
-  let bundled: number[];
-  try {
-    bundled = await bundledMigrationTimes();
-  } catch {
+  const probe = rowsOf<{ access: string }>(
+    await db.execute(sql`
+      SELECT CASE
+        WHEN to_regnamespace('drizzle') IS NULL THEN 'missing'
+        WHEN NOT has_schema_privilege('drizzle', 'USAGE') THEN 'denied'
+        WHEN to_regclass('drizzle.__drizzle_migrations') IS NULL THEN 'missing'
+        WHEN NOT has_table_privilege('drizzle.__drizzle_migrations', 'SELECT') THEN 'denied'
+        ELSE 'ok' END AS access
+    `),
+  )[0]?.access;
+  if (probe === "denied") {
     throw new InstallationCheckError(
-      "journal_unreadable",
-      "The bundled migration journal (drizzle/meta/_journal.json) could not be read, so the database schema cannot be " +
-        "checked against this build. Refusing to start.",
+      "migrations_unreadable",
+      "The database role this server connects as cannot read the migration history, so the schema cannot be checked " +
+        "against this build. As the schema owner run: GRANT USAGE ON SCHEMA drizzle TO <role>; " +
+        "GRANT SELECT ON drizzle.__drizzle_migrations TO <role>; then restart. Refusing to start.",
     );
   }
-  const result = await db.execute(sql`
-    SELECT CASE WHEN to_regclass('drizzle.__drizzle_migrations') IS NULL THEN NULL
-      ELSE (SELECT json_agg(created_at) FROM drizzle.__drizzle_migrations) END AS applied
-  `);
-  const rows = (Array.isArray(result) ? result : result.rows) as { applied: unknown }[];
-  const applied = new Set(((rows[0]?.applied as (string | number)[] | null) ?? []).map(Number));
-  return bundled.filter((when) => !applied.has(when)).length;
+  if (probe !== "ok") {
+    throw new InstallationCheckError(
+      "schema_behind",
+      "The migration history (drizzle.__drizzle_migrations) is missing, so the schema cannot be checked against this build. " +
+        "A restore must include the `drizzle` schema; otherwise run `npm run db:migrate` against a fresh database. Refusing to start.",
+    );
+  }
+  const applied = new Set(
+    rowsOf<{ created_at: string | number }>(await db.execute(sql`SELECT created_at FROM drizzle.__drizzle_migrations`)).map((row) =>
+      Number(row.created_at),
+    ),
+  );
+  return BUNDLED_MIGRATION_TIMES.filter((when) => !applied.has(when)).length;
 }
 
 /**
  * The triggers that make audit_events and installation append-only
- * (drizzle/0002, 0014, 0015). Each must exist and be enabled ('O', origin):
+ * (drizzle/0002, 0014, 0015). Each must exist and fire for the app's sessions
+ * ('O', the default, or 'A', always; not 'D' disabled or 'R' replica only):
  * the app role owns these tables, so a DISABLE TRIGGER leaves the server
  * answering health checks with the audit log silently rewritable.
  */
@@ -147,7 +170,7 @@ async function findBrokenAppendOnlyTriggers(db: InstallationDb): Promise<string[
     SELECT c.relname AS table_name, t.tgname AS trigger_name
     FROM pg_trigger t
     JOIN pg_class c ON c.oid = t.tgrelid
-    WHERE NOT t.tgisinternal AND t.tgenabled = 'O'
+    WHERE NOT t.tgisinternal AND t.tgenabled IN ('O', 'A')
       AND c.relnamespace = to_regnamespace(current_schema())
       AND c.relname IN ('audit_events', 'installation')
   `);
@@ -236,7 +259,7 @@ export async function verifyInstallation(db: InstallationDb, mode: DeploymentMod
     if (unapplied > 0) {
       throw new InstallationCheckError(
         "schema_behind",
-        `The database schema is behind this build: ${unapplied} of ${(await bundledMigrationTimes()).length} migrations are not applied. ` +
+        `The database schema is behind this build: ${unapplied} of ${BUNDLED_MIGRATION_TIMES.length} migrations are not applied. ` +
           "Run `npm run db:migrate` against this database, then restart. Refusing to start.",
       );
     }

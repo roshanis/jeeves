@@ -1,5 +1,8 @@
 // @vitest-environment node
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { count, sql } from "drizzle-orm";
 import { clearInstallationFixtures, createTestDb, closeTestDb, type TestDb } from "../db/test-client";
 import { initiatives, installation, sessions } from "../db/schema";
@@ -149,6 +152,70 @@ describe("verifyInstallation", () => {
       }
     }, LAGGING_DB_TIMEOUT_MS);
 
+    it("checks against the journal compiled into the build, not a file beside the working directory", async () => {
+      // A serverless function or a trimmed image has no drizzle/ folder on
+      // disk: the check must not turn that into a refused boot.
+      await stamp(db, "production");
+      const cwd = vi.spyOn(process, "cwd").mockReturnValue(mkdtempSync(path.join(tmpdir(), "jeeves-no-drizzle-")));
+      try {
+        await expect(verifyInstallation(db, "production")).resolves.toBeUndefined();
+      } finally {
+        cwd.mockRestore();
+      }
+    });
+
+    it("says so when the migration history table itself is missing", async () => {
+      const lagging = await createTestDb();
+      try {
+        await lagging.insert(installation).values({ deployMode: "production", installId: "inst-production" });
+        // A dump restored without the `drizzle` schema, or a schema pushed without the migrator.
+        await lagging.execute(sql`DROP TABLE drizzle.__drizzle_migrations`);
+        const err = await failure(verifyInstallation(lagging, "production"));
+        expect(err.code).toBe("schema_behind");
+        expect(err.message).toMatch(/migration history/);
+      } finally {
+        await closeTestDb(lagging);
+      }
+    }, LAGGING_DB_TIMEOUT_MS);
+
+    describe("a runtime role that is not the schema owner", () => {
+      // docs/production-readiness.md asks for this split; the boot check has to work with it.
+      async function asAppRole<T>(target: TestDb, grants: string[], run: () => Promise<T>): Promise<T> {
+        await target.execute(sql.raw("CREATE ROLE jeeves_app_probe"));
+        try {
+          for (const grant of ["GRANT USAGE ON SCHEMA public TO jeeves_app_probe", "GRANT SELECT ON ALL TABLES IN SCHEMA public TO jeeves_app_probe", ...grants]) {
+            await target.execute(sql.raw(grant));
+          }
+          await target.execute(sql.raw("SET ROLE jeeves_app_probe"));
+          try {
+            return await run();
+          } finally {
+            await target.execute(sql.raw("RESET ROLE"));
+          }
+        } finally {
+          await target.execute(sql.raw("DROP OWNED BY jeeves_app_probe"));
+          await target.execute(sql.raw("DROP ROLE jeeves_app_probe"));
+        }
+      }
+
+      it("names the grant it needs instead of failing on a permission error", async () => {
+        await stamp(db, "production");
+        const err = await asAppRole(db, [], () => failure(verifyInstallation(db, "production")));
+        expect(err.code).toBe("migrations_unreadable");
+        expect(err.message).toContain("GRANT USAGE ON SCHEMA drizzle");
+        expect(err.message).toContain("GRANT SELECT ON drizzle.__drizzle_migrations");
+      });
+
+      it("passes once the role can read the migration history", async () => {
+        await stamp(db, "production");
+        await asAppRole(
+          db,
+          ["GRANT USAGE ON SCHEMA drizzle TO jeeves_app_probe", "GRANT SELECT ON drizzle.__drizzle_migrations TO jeeves_app_probe"],
+          () => expect(verifyInstallation(db, "production")).resolves.toBeUndefined(),
+        );
+      });
+    });
+
     it("leaves a demo database alone when migrations lag: demo tolerates a deploy that outruns its migration", async () => {
       const lagging = await createTestDb();
       try {
@@ -191,6 +258,27 @@ describe("verifyInstallation", () => {
           expect(err.message).toMatch(/Refusing to start/);
         } finally {
           await db.execute(sql.raw(`ALTER TABLE ${table} ENABLE TRIGGER ${trigger}`));
+        }
+      });
+
+      it("accepts a trigger a DBA enabled ALWAYS: it fires in every session", async () => {
+        await stamp(db, "production");
+        await db.execute(sql`ALTER TABLE audit_events ENABLE ALWAYS TRIGGER audit_events_no_update`);
+        try {
+          await expect(verifyInstallation(db, "production")).resolves.toBeUndefined();
+        } finally {
+          await db.execute(sql`ALTER TABLE audit_events ENABLE TRIGGER audit_events_no_update`);
+        }
+      });
+
+      it("refuses a trigger enabled for replica sessions only: it does not fire for the app", async () => {
+        await stamp(db, "production");
+        await db.execute(sql`ALTER TABLE audit_events ENABLE REPLICA TRIGGER audit_events_no_update`);
+        try {
+          const err = await failure(verifyInstallation(db, "production"));
+          expect(err.code).toBe("audit_triggers");
+        } finally {
+          await db.execute(sql`ALTER TABLE audit_events ENABLE TRIGGER audit_events_no_update`);
         }
       });
 
