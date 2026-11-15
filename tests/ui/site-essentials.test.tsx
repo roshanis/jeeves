@@ -88,9 +88,12 @@ describe("legal pages", () => {
   it("privacy lists every browser storage key the app writes and scopes the cookie to the demo", () => {
     const { container } = renderWithProviders(<PrivacyPage />);
     const text = container.textContent ?? "";
-    for (const key of ["jeeves_live_session", "jeeves_live_registry", "jeeves-theme", "jeeves_cookie_notice_ack", "localStorage"]) {
+    for (const key of ["jeeves_live_session", "jeeves-theme", "jeeves_cookie_notice_ack", "localStorage"]) {
       expect(text, key).toContain(key);
     }
+    // Nothing writes this key any more (the registry module was deleted), so
+    // the page must not list it.
+    expect(text).not.toContain("jeeves_live_registry");
     expect(text).toContain("A real request sets no cookie");
   });
 
