@@ -41,7 +41,7 @@
 
 **Anticipated question:** *"Why not a conversational chat instead of a form?"*
 
-**Answer:** "Forms are deterministic. Chat is fluid and comfortable, but it makes triage non-reproducible — an agent might extract different risk flags depending on how the question was phrased. We do plan conversational intake in M2, but for the governance loop to work, the triage classifier must see the same facts every time. Forms enforce that discipline."
+**Answer:** "Forms are deterministic. Chat is fluid and comfortable, but it makes triage non-reproducible — an agent might extract different risk flags depending on how the question was phrased. So the conversational intake assistant we ship — the 'Chat with intake assistant' tab on this same page — fills this same structured form, and triage only ever reads the form's answers. For the governance loop to work, the triage classifier must see the same facts every time. Forms enforce that discipline."
 
 ---
 
@@ -94,7 +94,7 @@
 
 ---
 
-### Step 5: Versioned Effective Controls Generated (0.5 min)
+### Step 4b: Versioned Effective Controls Generated (0.5 min)
 **On screen:** Control assignment table showing the three linked controls (C-01, H-01, R-01) with evidence links, signatures, and deployment version number.
 
 **Presenter talk track:**
@@ -106,37 +106,39 @@
 
 ---
 
-## The Loop: Live Breach, Pause, Reassessment (3 min)
+## The Loop: Breach, Pause, Reassessment (3 min)
 
-### Step 5: Admin Monitor → Breach Detected (1 min)
-**On screen:** Different initiative (Member Services Chat Copilot, #4, already deployed). Show telemetry panel (hallucination-rate trend line), synthetic data labeled. Ray Chen (Admin) clicks "Run Monitor" button. Synchronous result: evaluation shows hallucination rate crossed 0.08 threshold on day 9, sustained for 3+ days. Breach triggered.
+> **Before you present (not on stage):** open `/initiatives/member-chat-copilot`. The header badge should read **Reassessment**, with a red **Deployment paused** banner below it. Only the scheduled monitor (`GET /api/cron/monitor`, every six hours on the hosted demo when `CRON_SECRET` is set) evaluates the shared examples, and it pauses #4 for every visitor at once. If the badge still reads **Deployed**, whoever holds `CRON_SECRET` calls that endpoint once with `Authorization: Bearer $CRON_SECRET` (a repeat run opens no second incident). If the endpoint does not answer 200 (503: no `CRON_SECRET` on this host; 403: a read-only preview with no database), show Step 5's chart and Step 7's audit-log entry and tell the rest in words. Do not click **Run monitor** on stage: in the playground it evaluates only your own workspace, which has no live deployment, and answers "No new breaches detected."
+
+### Step 5: The Scheduled Monitor Catches a Breach (1 min)
+**On screen:** Switch to Ray Chen (Admin). His home page, "Operations & controls," counts Member Services Chat Copilot (#4) under Paused deployments. Open #4 and its **Evals** tab: the hallucination-rate line, labelled "Synthetic data — demo," is flat through June, starts climbing on Jul 1, rises above the 0.08 Q-01 threshold line on Jul 12 and stays above it; the chart is marked "Threshold exceeded."
 
 **Presenter talk track:**
-"Member Services Chat Copilot has been deployed for weeks. It's high-tier, member-facing. We monitor its hallucination rate daily — the control Q-01 (Eval Quality Floor) enforces a 0.08 threshold. Watch what happens when Ray Chen, our platform admin, runs the monitor. The rate trend shows a climb starting around day 9, and by day 12 it's sustained above the threshold. Breach detected."
+"Member Services Chat Copilot has been deployed for weeks. It's high-tier, member-facing. Control Q-01, the eval quality floor, holds its hallucination rate under 0.08. Nobody clicked anything to get here. Jeeves's scheduled monitor evaluates every deployment on a timer; it saw the rate cross the line on July 12, eleven days after the ramp began, and stay above it for three consecutive observations, and it acted on its own. Breach detected — and the pause is recorded by the system, with the rule it applied, not a judgment call at 2 a.m."
 
-**Anticipated question:** *"Could this have been caught earlier with scheduled monitoring?"*
+**Anticipated question:** *"Could this have been caught earlier?"*
 
-**Answer:** "Yes — that's M3. Right now, Ray runs the monitor on demand. In production, you'd have continuous feeds from your LLM observability stack (Arize, Phoenix) flowing in automatically. For this demo, we show the on-demand check to keep the story compact. The important part: the breach is detected, audit-logged with a timestamp and Ray's user ID, and the deployment is paused automatically."
+**Answer:** "It's already caught on a schedule — the monitor runs unattended, every six hours on this demo. There's also a Run monitor button, on this tab and on the Admin console, for an on-demand check; in this shared playground it only evaluates your own workspace. In production you'd feed it from your LLM observability stack (Arize, Phoenix) instead of this synthetic series — the demo never fakes that connection. The breach is detected, audit-logged, and the deployment paused automatically."
 
 ---
 
 ### Step 6: Deployment Paused, Incident Recorded, Reassessment Opened (1 min)
-**On screen:** Initiative card for #4 transitions: state changes to "Paused," incident row appears in audit log showing the breach, a new ReviewCycle opens labeled "Reassessment" (not intake).
+**On screen:** Same initiative. The red **Deployment paused** banner quotes the recorded reason (Q-01 eval-quality breach, threshold 0.08, three consecutive observations). **Audit** tab: events recorded by `system` — pause, reassessment opened, incident recorded. **Reviews** tab: the new reassessment cycle, one pending review per required domain. On `/admin`, **Open incidents** lists the Q-01 incident and its reassessment, and the deployments table marks #4 "Read-only example."
 
 **Presenter talk track:**
-"Deployment paused — users of the chat model see a graceful hold-message. An incident is recorded in the audit trail: 'Hallucination rate 0.09 sustained 3 days, control Q-01 threshold 0.08 exceeded.' A new ReviewCycle opens, not for approval, but for reassessment. The team that originally approved it now sees a flag: 'Your model is breaching. What happens next?' They can request a new eval, tighten the threshold, retrain, or withdraw the model. Ray can also manually pause and resume deployment with a reason field — both actions audit-log. Admins cannot approve or sign reviews (separation of duties); they can only pause, resume, and change eval thresholds."
+"Deployment paused. The incident is in the audit trail: control Q-01, threshold 0.08, exceeded three observations running. And a new review cycle has opened — not for approval, for reassessment. Every domain that signed this model off is asked again; those pending reviews are right here. The way back runs through that reassessment: the domain reviewers re-sign, Angela Torres approves the reassessment, and then Ray puts the paused release back into service — the resume is recorded against that approved reassessment. This one is a shared example, so in the playground we look rather than click; any deployment the scheduled monitor finds in breach goes through this same cycle."
 
 **Anticipated question:** *"If an incident fires, who gets notified?"*
 
-**Answer:** "In this demo, the incident appears in the audit trail and the state change is visible on the dashboard. In M2 or M3, you'd wire alerts — email to the Initiative Owner, Slack to the governance channel, ticket to the team. For now, we show the mechanics: pause is idempotent, re-running the monitor doesn't create duplicate incidents, and the audit trail is immutable (append-only at the DB level)."
+**Answer:** "In this demo, the incident appears in the audit trail, in the Admin console's open incidents, and on the dashboard, and each required reviewer has a recorded request in the Review requests panel on the Reviews page. Nothing is emailed or posted: no email or Slack transport is configured, and Jeeves never pretends one is — wiring alerts to the Initiative Owner, the governance channel and your ticketing is integration work for a real deployment. What we show is the mechanics: pause is idempotent, re-running the monitor doesn't create duplicate incidents, and the audit trail is immutable (append-only at the DB level)."
 
 ---
 
-### Step 7: Admin Actions — Threshold Tightening (1 min)
-**On screen:** Admin view showing the eval-quality control Q-01. Ray Chen changes the threshold for this initiative from 0.08 → 0.06. A reason field: "Post-breach tightening, high member visibility." An audit event is logged.
+### Step 7: Admin Actions — The Threshold Story (1 min)
+**On screen:** Ray's `/admin` console. The Q-01 card shows the High-tier default (global): 0.08. The **Control-change audit log** at the bottom holds Ray's own change, dated 2026-06-01 (a month before the ramp): 0.10 → 0.08 for the High tier, reason "Q2 quality initiative." (On `/audit`, "What changed on Q-01 and who changed it" lands on the same event.)
 
 **Presenter talk track:**
-"Ray tightens the eval threshold from 0.08 to 0.06, reasoning 'Post-breach tightening, high member visibility.' This is one of two live admin actions in the demo. The change is logged with Ray's ID and timestamp. If the model resumes and hallucination rate drifts above 0.06, it will breach again — stricter standard. The other live action: pause/resume deployment, which we showed earlier. That's the admin scope: changing control thresholds and stopping/starting deployments when governance requires it. Admins do not approve initiatives or sign reviews."
+"Here's the causal chain. A month before the rate started climbing, Ray tightened Q-01 from 0.10 to 0.08 for High-tier models, reason logged: 'Q2 quality initiative.' Under the old threshold this model would not have tripped yet. Stricter standard, real breach about six weeks later — the audit log shows both ends. Going further, say 0.06 for this one model, would be a per-initiative override with a mandatory reason. In this shared playground the example's controls and the global defaults are read-only, so we don't change them on stage. That's the admin scope: thresholds, pause and resume, rollback. Admins do not approve initiatives or sign reviews."
 
 **Anticipated question:** *"What prevents an admin from loosening thresholds to let a bad model through?"*
 
@@ -190,7 +192,7 @@ Each row links to approver decision, control status, and audit events.
 
 **Anticipated final question:** *"Is this real member data?"*
 
-**Answer:** "No. All synthetic, fictional Meridian Health, deterministic PRNG seed. For a real deployment, you'd connect your actual model observability stack (Arize, Phoenix, or your LLM provider's built-in telemetry), swap in your real initiatives and actors, and keep the same governance logic. The demo is a template; the governance skeleton is production-ready."
+**Answer:** "No. All synthetic, fictional Meridian Health, deterministic PRNG seed. For a real deployment, you'd connect your actual model observability stack (Arize, Phoenix, or your LLM provider's built-in telemetry), swap in your real initiatives and actors, and keep the same governance logic. The demo is a template. The same code runs as a single-tenant install, but it is not production-ready yet: customer sign-in is still to be built."
 
 ---
 
@@ -206,7 +208,7 @@ Each row links to approver decision, control status, and audit events.
 
 | Question | Answer |
 |---|---|
-| **Is this a real system?** | Real governance design, synthetic data, fictional payer. Production-ready logic; you'd wire your live data. |
+| **Is this a real system?** | Real governance design, synthetic data, fictional payer. Not production-ready yet: the same code runs a single-tenant install, but customer sign-in is still to be built; you'd wire your live data. |
 | **What if an agent drafts badly?** | Humans review, sign, or return. Agents advise; humans decide. Accountable approvers sign off. |
 | **Who's accountable?** | Named accountable approver on every approval (Angela Torres in this demo). Audit trail logs every action and actor. |
 | **Can users exploit the fast-lane?** | Only if the policy is wrong. Triage rules are hardcoded and non-negotiable; policies are business-owned and tunable. |
@@ -217,4 +219,4 @@ Each row links to approver decision, control status, and audit events.
 
 ---
 
-**End of script. Approximate word count: 2,250 words.**
+**End of script. Approximate word count: 3,700 words.**

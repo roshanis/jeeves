@@ -76,6 +76,8 @@ No route requires a role parameter. The current server-issued session determines
 
 **Demo money-shot:** the pipeline board visibly containing all 12 initiatives in different real lifecycle states (not a mockup — actual seeded diversity), plus the outcome-metrics strip proving this is about outcomes, not vanity activity counts. The moment the breach fires later in the demo and the presenter returns to `/`, initiative #4's card visibly flips state live — that's the "it's a real system, not slides" beat.
 
+> **Playground note (2026-11-15):** in the visitor playground this beat is not played live. Shared examples are read-only, and "Run monitor" evaluates only the visitor's own workspace, which has no live deployment, so it answers "No new breaches detected." The breach on #4 is fired by the scheduled monitor (`GET /api/cron/monitor`, behind `CRON_SECRET`), so the walkthrough opens on #4 already paused in reassessment — see "The Loop" in `docs/demo-script.md`. Giving each visitor workspace its own deployed copy, so the click works again, is a later feature.
+
 ---
 
 ## 3. Initiative detail — `/initiatives/[slug]`
@@ -127,6 +129,8 @@ Chronological `AuditEvent` timeline for this initiative only: intake submitted �
 - *Breach:* the specific moment-of-crossing state — Operate tab's eval chart shows the reference-line crossing annotated in red, plus a banner "Eval quality floor breached (Q-01): hallucination rate 0.081 ≥ 0.08 sustained 3 points" that appears immediately after "Run monitor" fires, before the page-level Paused state is even reflected elsewhere — this is intentionally the most detailed state in the whole spec since it's the demo's climax.
 
 **Demo money-shot:** watching the *same* Operate tab, on the *same* initiative, go from a normal-looking eval line chart to a red-annotated breach banner to a "Paused" header badge to a new reassessment ReviewCycle appearing on the Reviews tab — all from one click of "Run monitor" — proving state transitions are real and connected, not staged screens.
+
+> **Playground note (2026-11-15):** in the visitor playground this beat is not played live. Shared examples are read-only, and "Run monitor" evaluates only the visitor's own workspace, which has no live deployment, so it answers "No new breaches detected." The breach on #4 is fired by the scheduled monitor (`GET /api/cron/monitor`, behind `CRON_SECRET`), so the walkthrough opens on #4 already paused in reassessment — see "The Loop" in `docs/demo-script.md`. Giving each visitor workspace its own deployed copy, so the click works again, is a later feature.
 
 ---
 
@@ -258,6 +262,8 @@ Chronological `AuditEvent` timeline for this initiative only: intake submitted �
 - *Breach:* immediately after "Run monitor" detects a breach, this page shows a success/alert toast ("Breach detected on member-chat-copilot — deployment paused, incident #… opened, reassessment cycle #… created") and the pause/resume card updates live to reflect the new paused state without a full page reload.
 
 **Demo money-shot:** clicking "Run monitor" and watching the toast announce the full cascade (breach → pause → incident → reassessment) in one sentence, then the audit log at the bottom of the same page immediately showing the new event rows — the whole governance consequence of a threshold crossing, visible on one screen, with zero approve/sign buttons anywhere in sight.
+
+> **Playground note (2026-11-15):** in the visitor playground this beat is not played live. Shared examples are read-only, and "Run monitor" evaluates only the visitor's own workspace, which has no live deployment, so it answers "No new breaches detected." The breach on #4 is fired by the scheduled monitor (`GET /api/cron/monitor`, behind `CRON_SECRET`), so the walkthrough opens on #4 already paused in reassessment — see "The Loop" in `docs/demo-script.md`. Giving each visitor workspace its own deployed copy, so the click works again, is a later feature.
 
 ---
 
