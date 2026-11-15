@@ -79,6 +79,18 @@ describe("AuditConsole — useful on arrival", () => {
 
     // An empty dataset is a legitimate state — show the query and its empty
     // result, not a prompt to click something.
-    expect(screen.getByText(/no records match this query/i)).toBeDefined();
+    expect(screen.getByText(/no records match this canned query/i)).toBeDefined();
+    expect(screen.queryByText(/filters/i)).toBeNull();
+  });
+
+  it("renders the lifecycle label, not the raw state enum", () => {
+    const results = emptyResults();
+    results["member-facing-phi"] = [
+      { slug: "x", title: "X", tier: null, state: "conditionally_approved", approver: null, detail: "d", eventTs: null },
+    ];
+    const { container } = renderWithProviders(<AuditConsole results={results} />);
+
+    expect(container.querySelector('[data-slot="lifecycle-badge"][data-state="conditionally_approved"]')).not.toBeNull();
+    expect(screen.queryByText("conditionally_approved")).toBeNull();
   });
 });
