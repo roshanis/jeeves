@@ -24,6 +24,7 @@ import {
   runMonitor,
   listIncidents,
   UNSCOPED_WORKSPACE,
+  ConflictError,
 } from "./monitor-service";
 import { SYSTEM_ACTOR } from "./actors";
 import { resumeDeployment } from "./admin-service";
@@ -426,6 +427,42 @@ describe("lib/services/monitor-service", () => {
         spy.mockRestore();
         log.mockRestore();
       }
+    });
+
+    it("a CAS conflict against an incident another run just recorded is reported as already known, not as a failure", async () => {
+      const { dep } = await memberChatCopilot(db);
+
+      /* eslint-disable @typescript-eslint/no-explicit-any */
+      const dbAny = db as any;
+      const realTransaction = dbAny.transaction.bind(dbAny);
+      let txCallCount = 0;
+      const spy = vi.spyOn(dbAny, "transaction").mockImplementation((cb: any) => {
+        txCallCount += 1;
+        if (txCallCount !== 2) return realTransaction(cb);
+        // The overlapping run committed the incident; this run's transaction
+        // then loses its state CAS and throws ConflictError.
+        return realTransaction(cb).then(() => {
+          throw new ConflictError("initiative changed concurrently (expected state 'deployed')");
+        });
+      });
+      /* eslint-enable @typescript-eslint/no-explicit-any */
+      const log = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      let result;
+      try {
+        result = await runMonitor(db, SYSTEM_ACTOR, PLUS_14D, UNSCOPED_WORKSPACE);
+      } finally {
+        spy.mockRestore();
+        log.mockRestore();
+      }
+
+      expect(result.errors.find((e) => e.deploymentId === dep.id)).toBeUndefined();
+      const breach = result.breaches.find((b) => b.deploymentId === dep.id)!;
+      expect(breach.failed).toBeUndefined();
+      expect(breach.isNew).toBe(false);
+      expect(breach.incidentId).not.toBe("");
+      expect(result.alreadyKnown).toBe(1);
+      expect(result.incidentsCreated).toBe(0);
     });
 
     it("a concurrent write that changes the initiative's state before the breach-pause CAS update is recorded in result.errors and does not abort the run (no partial write for that candidate)", async () => {

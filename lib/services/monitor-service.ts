@@ -582,6 +582,31 @@ export async function runMonitor(
         reviewCycleId: outcome.reviewCycleId,
       });
     } catch (err) {
+      // An overlapping run (cron retry vs manual) lost the state CAS because
+      // the other run just committed this very incident: re-read it outside
+      // the failed transaction and report it as already known, not a failure.
+      if (err instanceof ConflictError) {
+        const [recorded] = await db
+          .select()
+          .from(incidents)
+          .where(eq(incidents.identityKey, evalResult.identityKey!));
+        if (recorded) {
+          alreadyKnown += 1;
+          breaches.push({
+            initiativeId: initiative.id,
+            deploymentId: deployment.id,
+            controlId: RUNTIME_CONTROL_ID,
+            windowStartTs: evalResult.windowStartTs,
+            identityKey: evalResult.identityKey,
+            threshold,
+            breachingValues: evalResult.breachingObservations.map((o) => o.value),
+            isNew: false,
+            incidentId: recorded.id,
+            reviewCycleId: recorded.reviewCycleId,
+          });
+          continue;
+        }
+      }
       const message = redactDbError(err).message;
       // P1 fix (external-review — a failed detection pass rendered
       // identically to a clean run): a real deployment must leave a trace
