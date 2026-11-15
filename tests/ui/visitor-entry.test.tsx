@@ -85,7 +85,7 @@ describe("visitor entry", () => {
   });
   it("announces a start failure once when several entry buttons are mounted", async () => {
     fetchMock.mockResolvedValue(new Response(JSON.stringify({ error: "rate limited" }), { status: 429 }));
-    render(<RoleProvider><LiveSessionProvider liveModeAvailable><TryDemoButton showStatus={false} /><TryDemoButton /></LiveSessionProvider></RoleProvider>);
+    render(<DeploymentModeProvider mode="demo"><RoleProvider><LiveSessionProvider liveModeAvailable><TryDemoButton showStatus={false} /><TryDemoButton /></LiveSessionProvider></RoleProvider></DeploymentModeProvider>);
     fireEvent.click(screen.getAllByRole("button", { name: "Try the demo" })[0]!);
     await waitFor(() => expect(screen.getAllByRole("alert")).toHaveLength(1));
   });

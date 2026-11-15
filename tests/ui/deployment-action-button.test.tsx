@@ -3,6 +3,7 @@ import { fireEvent, screen } from "@testing-library/react";
 import { renderWithProviders } from "./helpers";
 import { RoleProvider } from "@/components/jeeves/role-context";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { DeploymentModeProvider } from "@/lib/client/deployment-mode-context";
 
 const mocks = vi.hoisted(() => ({ session: vi.fn(), pause: vi.fn(), refresh: vi.fn(), logout: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: mocks.refresh }) }));
@@ -30,7 +31,7 @@ describe("DeploymentActionButton", () => {
     fireEvent.change(screen.getByRole("textbox"), { target: { value: "A long reason typed before expiry" } });
     mocks.session.mockReturnValue({ session: null, logout: mocks.logout });
     view.rerender(
-      <RoleProvider><TooltipProvider><DeploymentActionButton title="Model" initiativeId="case" status="deployed" /></TooltipProvider></RoleProvider>,
+      <DeploymentModeProvider mode="demo"><RoleProvider><TooltipProvider><DeploymentActionButton title="Model" initiativeId="case" status="deployed" /></TooltipProvider></RoleProvider></DeploymentModeProvider>,
     );
     fireEvent.click(screen.getByRole("button", { name: "Pause deployment" }));
     expect(screen.getByRole("alert").textContent).toMatch(/Session expired/);
