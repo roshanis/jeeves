@@ -89,41 +89,41 @@ export function AuditorChat() {
         </p>
 
         <div role="log" aria-live="polite" aria-relevant="additions">
-        {transcript.length > 0 ? (
-          <div className="flex flex-col gap-3" data-slot="auditor-transcript">
-            {transcript.map((turn, i) =>
-              turn.role === "user" ? (
-                <div key={i} className="text-sm font-medium">
-                  <span className="text-muted-foreground">You: </span>
-                  {turn.content}
-                </div>
-              ) : (
-                <div key={i} className="flex flex-col gap-1.5 rounded-lg border p-3">
-                  <div
-                    data-slot="auditor-answer"
-                    className="whitespace-pre-wrap text-sm"
-                  >
+          {transcript.length > 0 ? (
+            <div className="flex flex-col gap-3" data-slot="auditor-transcript">
+              {transcript.map((turn, i) =>
+                turn.role === "user" ? (
+                  <div key={i} className="text-sm font-medium">
+                    <span className="text-muted-foreground">You: </span>
                     {turn.content}
                   </div>
-                  {turn.citedEvents && turn.citedEvents.length > 0 ? (
-                    <ul data-slot="auditor-cited-events" className="flex flex-col gap-0.5">
-                      {turn.citedEvents.map((eventId, j) => (
-                        <li key={j} className="font-mono text-xs text-muted-foreground">
-                          {eventId}
-                        </li>
-                      ))}
-                    </ul>
-                  ) : null}
-                  {turn.queryUsed ? (
-                    <p data-slot="auditor-query-used" className="text-xs text-muted-foreground">
-                      Query used: {turn.queryUsed}
-                    </p>
-                  ) : null}
-                </div>
-              ),
-            )}
-          </div>
-        ) : null}
+                ) : (
+                  <div key={i} className="flex flex-col gap-1.5 rounded-lg border p-3">
+                    <div
+                      data-slot="auditor-answer"
+                      className="whitespace-pre-wrap text-sm"
+                    >
+                      {turn.content}
+                    </div>
+                    {turn.citedEvents && turn.citedEvents.length > 0 ? (
+                      <ul data-slot="auditor-cited-events" className="flex flex-col gap-0.5">
+                        {turn.citedEvents.map((eventId, j) => (
+                          <li key={j} className="font-mono text-xs text-muted-foreground">
+                            {eventId}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                    {turn.queryUsed ? (
+                      <p data-slot="auditor-query-used" className="text-xs text-muted-foreground">
+                        Query used: {turn.queryUsed}
+                      </p>
+                    ) : null}
+                  </div>
+                ),
+              )}
+            </div>
+          ) : null}
         </div>
 
         {disabled ? (
