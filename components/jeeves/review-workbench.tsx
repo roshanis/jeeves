@@ -469,7 +469,12 @@ function AssessmentPane({
     : row.review.status === "signed" ? "Already signed"
     : row.review.status === "abstained" ? "Resume the review before signing"
     : row.review.status === "pending" ? "Run the agent to draft this review before signing"
-    : "This is a read-only example; open a live review to sign";
+    : row.isSeeded === true ? "This is a read-only example; open a live review to sign"
+    : cycleChanged ? "Refresh to load the current review cycle"
+    : "This review is not open for signing right now";
+  const returnDisabledReason = row.review.status === "abstained" ? "Resume the review before returning it"
+    : signDisabledReason === "This review is not open for signing right now" ? "This review is not open for return right now"
+    : signDisabledReason;
   const hasDraft = Boolean(row.review.draftMd);
   const blankAssessment = editedText.trim() === "";
 
@@ -653,7 +658,7 @@ function AssessmentPane({
             label="Return"
             variant="outline"
             requiresRole="reviewer"
-            disabledReason={signDisabledReason}
+            disabledReason={returnDisabledReason}
             pending={pending || running || mustReviewAgain}
             onAction={eligibility.canSignOrReturn ? () => { setReturnError(null); setReturnRevision(row.review.revision!); setReturnOpen(true); } : undefined}
           />
