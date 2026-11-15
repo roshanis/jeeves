@@ -88,6 +88,9 @@ const loadInitiativeDetailCoherent = cache(async (
   // request are caller-controlled and must never choose where this hop goes.
   const cookieStore = await cookies();
   const rawWorkspace = cookieStore.get(WORKSPACE_COOKIE)?.value ?? "";
+  // Assumes the server answers plain HTTP on 127.0.0.1:PORT (true for next
+  // start, next dev and the container). Under HTTPS or a non-loopback bind,
+  // use a real database URL instead of PGlite.
   const res = await fetch(
     `http://127.0.0.1:${process.env.PORT || 3000}/initiatives/${encodeURIComponent(slug)}/detail-data`,
     {
