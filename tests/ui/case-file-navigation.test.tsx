@@ -77,4 +77,16 @@ describe("case-file navigation and pause evidence", () => {
     fireEvent.click(screen.getByRole("tab", { name: /^Evidence$/ }));
     expect((screen.getByLabelText("Evidence note") as HTMLTextAreaElement).value).toBe("bound to control 4");
   });
+
+  it("does not mount the Evidence tab (and its evidence request) until it is first opened", async () => {
+    navigation.push.mockImplementation((url: string) => { navigation.query = url.split("?")[1]; navigation.listeners.forEach((l) => l()); });
+    await renderPage();
+    // Kept mounted only after a visit: a case-file view that never opens the
+    // tab must not pay for the evidence fetch (a 404 on shared samples).
+    expect(screen.queryByLabelText("Evidence note")).toBeNull();
+    fireEvent.click(screen.getByRole("tab", { name: /^Evidence$/ }));
+    expect(screen.getByLabelText("Evidence note")).toBeTruthy();
+    fireEvent.click(screen.getByRole("tab", { name: /^Reviews$/ }));
+    expect(screen.getByLabelText("Evidence note")).toBeTruthy();
+  });
 });

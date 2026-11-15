@@ -4,7 +4,7 @@ import { EvidenceTab } from "@/components/jeeves/evidence-tab";
 import { notFound } from "next/navigation";
 import { getInitiativeDetailCoherent } from "@/app/_lib/data-provider";
 import { TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { InitiativeTabs } from "@/components/jeeves/initiative-tabs";
+import { InitiativeTabs, KeptTabsContent } from "@/components/jeeves/initiative-tabs";
 // MinusCircle: the neutral "nothing is being counted here" blockers chip.
 import { AlertOctagon, AlertTriangle, CheckCircle2, MinusCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -258,7 +258,7 @@ export default async function InitiativeDetailPage({
           <TabsContent value="intake">
             <IntakeTab intake={detail.intake} summary={summary} events={detail.events} />
           </TabsContent>
-          <TabsContent value="evidence" keepMounted><EvidenceTab slug={summary.slug} /></TabsContent>
+          <KeptTabsContent value="evidence"><EvidenceTab slug={summary.slug} /></KeptTabsContent>
           <TabsContent value="reviews">
             <ReviewsTab reviews={detail.reviews} slug={summary.slug} initiativeId={summary.initiativeId} isSeeded={summary.isSeeded} />
           </TabsContent>
