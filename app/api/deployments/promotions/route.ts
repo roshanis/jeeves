@@ -19,6 +19,7 @@
  */
 import { getDb } from "@/lib/db/client";
 import { listPromotions } from "@/lib/services/promotion-service";
+import { viewerCannotMutate } from "@/lib/services/workspace-guard";
 import {
   initiativeWorkspaceMap,
   isInitiativeVisible,
@@ -35,5 +36,10 @@ export async function GET(req: Request): Promise<Response> {
   const visible = list.filter((p) =>
     isInitiativeVisible(workspaceByInitiative, p.initiativeId, viewerWorkspaceId),
   );
-  return Response.json(visible, { status: 200 });
+  // `isShared`: this viewer cannot act on the row (shared seed or another workspace's), so the page shows it read-only.
+  const items = visible.map((p) => ({
+    ...p,
+    isShared: viewerCannotMutate(workspaceByInitiative.get(p.initiativeId) ?? null, viewerWorkspaceId),
+  }));
+  return Response.json(items, { status: 200 });
 }

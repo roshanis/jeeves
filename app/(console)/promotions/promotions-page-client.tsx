@@ -193,15 +193,19 @@ export function PromotionsPageClient({
                         {formatDate(item.deployedAt)}
                       </TableCell>
                       <TableCell>
-                        <DisableWithTooltip
-                          label="Promote"
-                          requiresRole="approver"
-                          data-slot="promote-button"
-                          onAction={() => {
-                            setDialogError(null);
-                            setDialogTarget(item);
-                          }}
-                        />
+                        {item.isShared ? (
+                          <span className="text-xs text-muted-foreground">Sample data — read-only</span>
+                        ) : (
+                          <DisableWithTooltip
+                            label="Promote"
+                            requiresRole="approver"
+                            data-slot="promote-button"
+                            onAction={() => {
+                              setDialogError(null);
+                              setDialogTarget(item);
+                            }}
+                          />
+                        )}
                       </TableCell>
                     </TableRow>
                   ))}
