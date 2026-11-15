@@ -1,7 +1,20 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { GOVERNANCE_AGENTS, AGENT_GUARDRAIL } from "@/lib/agents/registry";
 import { renderWithProviders } from "@/tests/ui/helpers";
 import AgentDetailPage from "../[id]/page";
+
+const missing = vi.hoisted(() => ({ on: false }));
+vi.mock("@/lib/agents/adapter-shared", async (orig) => {
+  const actual = await orig<typeof import("@/lib/agents/adapter-shared")>();
+  return {
+    ...actual,
+    readAgentFile: (...a: Parameters<typeof actual.readAgentFile>) => {
+      if (missing.on) throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+      return actual.readAgentFile(...a);
+    },
+  };
+});
+afterEach(() => { missing.on = false; });
 
 // AgentDetailPage is an async server component (Next 16 passes `params` as a
 // Promise). Calling it directly and rendering the resolved JSX exercises the
@@ -28,6 +41,20 @@ describe("AgentDetailPage", () => {
     expect(container.textContent).toContain("Domain track overlay");
     // Shared corpus content (agents/reviewer/instructions.md).
     expect(container.textContent).toContain("Citation rules");
+  });
+
+  it("says the instructions file is missing, not that the prompt is inline", async () => {
+    missing.on = true;
+    const { container } = await renderDetail("reviewer-privacy-hipaa");
+    expect(container.textContent).toContain("Instructions file not found in this deployment");
+    expect(container.textContent).not.toContain("defined inline");
+  });
+
+  it("titles the deterministic monitor card as a specification, not a system prompt", async () => {
+    const monitor = GOVERNANCE_AGENTS.find((a) => a.kind === "monitor")!;
+    const { container } = await renderDetail(monitor.id);
+    expect(container.textContent).toContain("Specification (not an LLM prompt)");
+    expect(container.textContent).not.toContain("System prompt");
   });
 
   it("every governance agent id is URL-safe for the dynamic /agents/[id] route", () => {

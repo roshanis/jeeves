@@ -169,7 +169,9 @@ export default async function AgentDetailPage({
       ) : (
         <Card>
           <CardHeader className="py-3">
-            <CardTitle className="text-sm">System prompt</CardTitle>
+            <CardTitle className="text-sm">
+              {agent.kind === "monitor" ? "Specification (not an LLM prompt)" : "System prompt"}
+            </CardTitle>
             <p className="text-xs font-normal text-muted-foreground">{agent.instructionsPath}</p>
           </CardHeader>
           <CardContent>
@@ -186,7 +188,7 @@ export default async function AgentDetailPage({
   );
 }
 
-/** Renders instruction-file content as pre-formatted text, or a fallback note when the path isn't a readable file (e.g. the completeness agent's inline prompt). */
+/** Renders instruction-file content as pre-formatted text, or a fallback note when the instructions file is missing from the deployment. */
 function PromptBody({
   content,
   fallbackSummary,
@@ -199,7 +201,7 @@ function PromptBody({
       <div>
         <p className="text-sm text-muted-foreground">{fallbackSummary}</p>
         <p className="mt-2 text-xs text-muted-foreground">
-          System prompt is defined inline in code (lib/intake/completeness.ts).
+          Instructions file not found in this deployment.
         </p>
       </div>
     );
