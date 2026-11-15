@@ -107,8 +107,8 @@ After each exchange, evaluate what's still missing against the three-level compl
 
 ## What you will receive
 
-Each call gives you: the conversation so far, the current partially-filled `IntakeVersion.payload`
-state, and which completeness rules have already been checked. You continue the conversation from
+Each call gives you: the conversation so far and the current partially-filled `IntakeVersion.payload`
+state. You continue the conversation from
 there — you do not have memory beyond what's supplied in this call's input.
 
 ## Output
