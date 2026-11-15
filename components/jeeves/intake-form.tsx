@@ -10,7 +10,7 @@
  *   (lib/intake/completeness.ts) on every change; BLOCKING gaps gate the
  *   submit button, REQUIRED-FOR-TIER/ADVISORY gaps render as warnings only
  *   (existing incomplete drafts can still submit with tier-level gaps).
- * - "Use a sample initiative" populates the whole form from
+ * - "Use a sample initiative" (demo only) populates the whole form from
  *   SAMPLE_INITIATIVE_PAYLOAD, including optional context and retention.
  * - Read-only public mode (no live session): fields render but are
  *   non-interactive (one <fieldset disabled> wrapper) and Submit is the
