@@ -81,6 +81,13 @@ describe("audit-log protection claims match the migrations (docs-F21)", () => {
   it("README does not claim revoked privileges unless a migration revokes them", () => {
     if (!/^\s*REVOKE\s/im.test(migrations)) expect(read("README.md")).not.toMatch(/revoked privileges/i);
   });
+  it("AGENTS.md rule 3 says triggers and names the owner-role caveat, not role permissions (d18)", () => {
+    const rule = read("AGENTS.md").split("\n").find((l) => /^3\. `AuditEvent`/.test(l)) ?? "";
+    expect(rule).toMatch(/trigger/i);
+    expect(rule).not.toMatch(/role permissions/i);
+    expect(rule).toMatch(/owner/i);
+    expect(rule).toMatch(/docs\/deploy\.md/);
+  });
   it("production-readiness lists the owner/runtime role split as a prerequisite", () => {
     const doc = read("docs/production-readiness.md");
     expect(doc).toMatch(/runtime role/i);
@@ -97,6 +104,12 @@ describe("data disclaimers cover the real-request door (docs-F23)", () => {
     expect(doc).not.toMatch(/all data is synthetic/);
     expect(doc).not.toMatch(/everything is synthetic, so it is\s+moot/);
     expect(doc).toMatch(/real-request door/i);
+  });
+  it("AGENTS.md rule 9 does not say no real PII ever and names the real-request queue (d18)", () => {
+    const rule = read("AGENTS.md").split("\n").find((l) => /^9\. /.test(l)) ?? "";
+    expect(rule).not.toMatch(/no real PHI\/PII ever/i);
+    expect(rule).toMatch(/real-request/i);
+    expect(rule).toMatch(/e-?mail/i);
   });
   it("ARCHITECTURE.md qualifies the no-real-data claim", () => {
     expect(read("docs/ARCHITECTURE.md")).not.toMatch(/no real PHI,\s+PII, or production data exists anywhere/);
