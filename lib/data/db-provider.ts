@@ -373,9 +373,10 @@ export class DbDataProvider implements DataProvider {
       : [];
 
     const ecs = this.controlsOf(snap, init.id);
+    const initEvents = snap.auditEvents.filter(event => event.initiativeId === init.id);
     const cycleReviews = cycleDecisions.map(row => ({
       ...row,
-      abstention: currentAbstention(row, snap.auditEvents.filter(event => event.initiativeId === init.id)),
+      abstention: currentAbstention(row, initEvents),
     }));
 
     return {
@@ -387,7 +388,7 @@ export class DbDataProvider implements DataProvider {
       state: init.state as LifecycleState,
       flags,
       requester: init.requester,
-      accountableApprover: init.accountableApprover,
+      accountableApprover: init.accountableApprover ? displayNameFor(init.accountableApprover) : null,
       domainsRequired: ra ? ra.requiredDomains.length : 0,
       domainsSigned: cycleDecisions.filter((rd) => rd.status === "signed").length,
       domainsAbstained: cycleReviews.filter(row => row.abstention).length,
@@ -455,13 +456,14 @@ export class DbDataProvider implements DataProvider {
         }
       : null;
 
+    const eventRows = snap.auditEvents.filter((event) => event.initiativeId === init.id);
     const cycle = this.latestCycle(snap, init.id);
     const reviews: ReviewRow[] = (
       cycle ? snap.reviewDecisions.filter((rd) => rd.cycleId === cycle.id) : []
     )
       .sort((a, b) => a.domain.localeCompare(b.domain))
       .map((rd) => {
-        const receipt = currentAbstention(rd, snap.auditEvents.filter((event) => event.initiativeId === init.id));
+        const receipt = currentAbstention(rd, eventRows);
         return {
           ...(receipt ? { abstention: { reason: receipt.reason, reviewer: receipt.reviewer, at: receipt.at } } : {}),
           cycleId: rd.cycleId,
@@ -485,7 +487,7 @@ export class DbDataProvider implements DataProvider {
       .sort((a, b) => a.decidedAt.getTime() - b.decidedAt.getTime())
       .map((d) => ({
         type: d.type as DecisionRow["type"],
-        approver: d.approver,
+        approver: displayNameFor(d.approver),
         at: toIso(d.decidedAt),
         conditions: d.conditions,
         citations: d.citations,
@@ -554,7 +556,6 @@ export class DbDataProvider implements DataProvider {
       at: toIso(d.deployedAt),
     }));
 
-    const eventRows = snap.auditEvents.filter((event) => event.initiativeId === init.id);
     const events: AuditEventRow[] = eventRows.map((e) => ({
       ts: toIso(e.ts),
       actor: e.actor,
@@ -569,7 +570,7 @@ export class DbDataProvider implements DataProvider {
   async outcomeMetrics(opts?: WorkspaceScopedReadOptions): Promise<OutcomeMetrics> {
     const snap = this.visibleSnapshot(await this.loadSnapshot(), opts);
 
-    // Median review cycle time over CLOSED cycles, in whole days.
+    // Median review cycle time over CLOSED cycles, in days to one decimal.
     const durations = snap.cycles
       .filter((c) => c.closedAt !== null)
       .map((c) => (c.closedAt!.getTime() - c.openedAt.getTime()) / DAY_MS)
@@ -577,8 +578,9 @@ export class DbDataProvider implements DataProvider {
     let medianReviewCycleDays = 0;
     if (durations.length > 0) {
       const mid = Math.floor(durations.length / 2);
-      medianReviewCycleDays =
+      const median =
         durations.length % 2 === 1 ? durations[mid]! : (durations[mid - 1]! + durations[mid]!) / 2;
+      medianReviewCycleDays = Math.round(median * 10) / 10;
     }
 
     // First-pass completeness: share of v1 intakes submitted (or drafted)
@@ -620,7 +622,9 @@ export class DbDataProvider implements DataProvider {
     const initiativesWithReturnedReview = new Set(
       snap.reviewDecisions
         .filter((rd) => rd.status === "returned")
-        .map((rd) => snap.cycles.find((c) => c.id === rd.cycleId)?.initiativeId)
+        .map((rd) => snap.cycles.find((c) => c.id === rd.cycleId))
+        // A returned review in a closed cycle no longer blocks anything.
+        .map((c) => (c && c.closedAt === null ? c.initiativeId : undefined))
         .filter((id): id is string => !!id),
     ).size;
     const overdueControls = overdueEcs + exceptionEcs + initiativesWithReturnedReview;
@@ -726,7 +730,7 @@ export class DbDataProvider implements DataProvider {
               title: init.title,
               tier: (init.tier ?? null) as Tier | null,
               state: init.state,
-              approver: init.accountableApprover,
+              approver: init.accountableApprover ? displayNameFor(init.accountableApprover) : null,
               detail: controlSummary,
               eventTs: null,
             };
@@ -795,6 +799,7 @@ export class DbDataProvider implements DataProvider {
         for (const rd of snap.reviewDecisions) {
           if (rd.status !== "returned") continue;
           const cycle = snap.cycles.find((c) => c.id === rd.cycleId);
+          if (cycle?.closedAt) continue; // closed cycle: nothing is blocked any more
           const init = cycle ? initById.get(cycle.initiativeId) : undefined;
           const def = snap.controlDefs.find(
             (d) => d.domain === rd.domain && d.enforcementMode === "gate",
@@ -820,11 +825,8 @@ export class DbDataProvider implements DataProvider {
         // Project overrides are initiative-linked and must be visible only
         // when their owning initiative survived visibleSnapshot().
         const visibleInitiativeIds = new Set(snap.initiatives.map((initiative) => initiative.id));
-        const events = await this.db
-          .select()
-          .from(auditEvents)
-          .where(eq(auditEvents.action, "control_threshold_changed"))
-          .orderBy(asc(auditEvents.ts));
+        // The snapshot already holds every audit event, ordered by (ts, id).
+        const events = snap.auditEvents.filter((e) => e.action === "control_threshold_changed");
         return events
           .filter(
             (event) =>

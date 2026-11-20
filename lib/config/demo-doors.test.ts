@@ -1,8 +1,10 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { markBootFailed, resetBootStateForTests } from "./boot-state";
 import { DemoOnlyError, assertDemoMode, demoDoorClosed, demoDoorFallbacks } from "./demo-doors";
 
 afterEach(() => {
+  resetBootStateForTests();
   vi.unstubAllEnvs();
 });
 
@@ -18,6 +20,16 @@ describe("demoDoorClosed", () => {
     expect(res.status).toBe(404);
     expect(await res.text()).toBe("");
     expect(res.headers.get("cache-control")).toBe("no-store");
+  });
+});
+
+describe("demoDoorClosed after a failed boot", () => {
+  it("is a bare 404 even in demo", async () => {
+    vi.stubEnv("JEEVES_MODE", "demo");
+    markBootFailed("database is stamped production");
+    const res = demoDoorClosed()!;
+    expect(res.status).toBe(404);
+    expect(await res.text()).toBe("");
   });
 });
 
@@ -53,6 +65,15 @@ describe("demoDoorFallbacks", () => {
       "PATCH",
       "PUT",
     ]);
+  });
+
+  it("covers only the methods a route implementing several leaves out", () => {
+    expect(Object.keys(demoDoorFallbacks("POST", "DELETE")).sort()).toEqual(["GET", "HEAD", "OPTIONS", "PATCH", "PUT"]);
+  });
+
+  it("lists every implemented method in the demo OPTIONS Allow header", () => {
+    vi.stubEnv("JEEVES_MODE", "demo");
+    expect(demoDoorFallbacks("POST", "DELETE").OPTIONS(req).headers.get("allow")).toBe("DELETE, OPTIONS, POST");
   });
 
   // Next derives HEAD from GET on its own; exporting a HEAD would replace that.

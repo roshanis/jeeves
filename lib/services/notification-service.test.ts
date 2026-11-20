@@ -12,7 +12,7 @@ const svc = await import("./initiative-service");
 const {
   pendingNotificationsForDomain,
   undeliveredNotifications,
-  undeliveredNotificationsForViewer,
+  recentUndeliveredNotifications,
   deliveryTransportStatus,
 } = await import("./notification-service");
 
@@ -165,17 +165,17 @@ describe("review-request notifications", () => {
     it("shows each playground workspace its own asks and the shared examples', never another's", async () => {
       const { alpha, bravo, shared } = await threeInitiatives();
 
-      const asAlpha = await undeliveredNotificationsForViewer(testDb, "ws_alpha");
-      expect(idsOf(asAlpha)).toEqual(new Set([alpha, shared]));
+      const asAlpha = await recentUndeliveredNotifications(testDb, "ws_alpha");
+      expect(idsOf(asAlpha.rows)).toEqual(new Set([alpha, shared]));
 
-      const asBravo = await undeliveredNotificationsForViewer(testDb, "ws_bravo");
-      expect(idsOf(asBravo)).toEqual(new Set([bravo, shared]));
+      const asBravo = await recentUndeliveredNotifications(testDb, "ws_bravo");
+      expect(idsOf(asBravo.rows)).toEqual(new Set([bravo, shared]));
     });
 
     it("never carries another workspace's initiative title in a subject or body", async () => {
       await threeInitiatives();
-      const asAlpha = await undeliveredNotificationsForViewer(testDb, "ws_alpha");
-      const text = asAlpha.map((n) => `${n.subject} ${n.body}`).join(" ");
+      const asAlpha = await recentUndeliveredNotifications(testDb, "ws_alpha");
+      const text = asAlpha.rows.map((n) => `${n.subject} ${n.body}`).join(" ");
 
       expect(text).toContain("Alpha Ward Copilot");
       expect(text).not.toContain("Bravo Ward Copilot");
@@ -184,23 +184,91 @@ describe("review-request notifications", () => {
     it("shows a viewer with no workspace only the shared examples", async () => {
       const { shared } = await threeInitiatives();
       for (const viewer of [null, "ws_unknown"] as const) {
-        const rows = await undeliveredNotificationsForViewer(testDb, viewer);
+        const { rows } = await recentUndeliveredNotifications(testDb, viewer);
         expect(idsOf(rows)).toEqual(new Set([shared]));
         expect(rows.every((n) => n.deliveredAt === null)).toBe(true);
       }
     });
 
-    it("keeps the queue in the order the asks were made", async () => {
+    it("lists the newest asks first", async () => {
       await threeInitiatives();
-      const rows = await undeliveredNotificationsForViewer(testDb, "ws_alpha");
+      const { rows } = await recentUndeliveredNotifications(testDb, "ws_alpha");
       const times = rows.map((n) => n.createdAt.getTime());
-      expect(times).toEqual([...times].sort((a, b) => a - b));
+      expect(times).toEqual([...times].sort((a, b) => b - a));
+    });
+
+    it("counts only what the viewer may see, so the total gives nothing away", async () => {
+      await threeInitiatives();
+      const everything = (await undeliveredNotifications(testDb)).length;
+      const asAlpha = await recentUndeliveredNotifications(testDb, "ws_alpha");
+      const asNobody = await recentUndeliveredNotifications(testDb, null);
+
+      expect(asAlpha.total).toBe(asAlpha.rows.length);
+      expect(asNobody.total).toBe(asNobody.rows.length);
+      expect(asAlpha.total).toBeGreaterThan(asNobody.total);
+      expect(asAlpha.total).toBeLessThan(everything);
     });
 
     it("leaves the unscoped operator query as it was: every ask, every workspace", async () => {
       const { alpha, bravo, shared } = await threeInitiatives();
       expect(idsOf(await undeliveredNotifications(testDb))).toEqual(new Set([alpha, bravo, shared]));
     });
+  });
+
+  it("shows the newest 50 undelivered requests first, with the total", async () => {
+    const id = await championReadyToTriage();
+    await svc.triage(testDb, id, SYSTEM, null);
+    const [seed] = await undeliveredNotifications(testDb);
+    await testDb.insert(reviewNotifications).values(
+      Array.from({ length: 60 }, (_, i) => ({
+        id: `bulk-${i}`,
+        initiativeId: seed!.initiativeId,
+        cycleId: seed!.cycleId,
+        domain: seed!.domain,
+        kind: `bulk_${i}`,
+        subject: `bulk ${i}`,
+        body: "b",
+        createdAt: new Date(Date.UTC(2030, 0, 1, 0, i)),
+      })),
+    );
+    const all = await undeliveredNotifications(testDb);
+    const { rows, total } = await recentUndeliveredNotifications(testDb, null);
+    expect(total).toBe(all.length);
+    expect(rows).toHaveLength(50);
+    expect(rows[0]!.id).toBe("bulk-59");
+    expect(rows[0]!.createdAt.getTime()).toBeGreaterThanOrEqual(rows[49]!.createdAt.getTime());
+  });
+
+  it("lists and counts only requests the viewer's workspace may see", async () => {
+    const mine = await championReadyToTriage();
+    await svc.triage(testDb, mine, SYSTEM, null);
+    const [seed] = await undeliveredNotifications(testDb);
+    const foreign = {
+      ...seed!,
+      id: "foreign-1",
+      kind: "foreign_kind",
+      subject: "Foreign review requested: Secret title",
+    };
+    const other = (await testDb.select().from(initiatives).where(eq(initiatives.id, mine)))[0]!;
+    await testDb.insert(initiatives).values({
+      ...other,
+      id: "init-foreign",
+      slug: "init-foreign",
+      workspaceId: "ws-B",
+    });
+    await testDb.insert(reviewNotifications).values({ ...foreign, initiativeId: "init-foreign" });
+    await testDb.update(initiatives).set({ workspaceId: "ws-A" }).where(eq(initiatives.id, mine));
+
+    const asA = await recentUndeliveredNotifications(testDb, "ws-A");
+    expect(asA.rows.some((r) => r.id === "foreign-1")).toBe(false);
+    expect(asA.total).toBe(asA.rows.length);
+    expect(asA.total).toBeGreaterThan(0);
+    const asNone = await recentUndeliveredNotifications(testDb, null);
+    expect(asNone.rows.some((r) => r.id === "foreign-1")).toBe(false);
+    expect(asNone.total).toBe(0);
+    const asB = await recentUndeliveredNotifications(testDb, "ws-B");
+    expect(asB.rows.map((r) => r.id)).toEqual(["foreign-1"]);
+    expect(asB.total).toBe(1);
   });
 
   it("does not break triage when migration 0013 has not been applied yet", async () => {

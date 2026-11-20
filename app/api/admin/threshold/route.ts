@@ -9,9 +9,11 @@
  * check happening after the shared guard).
  *
  * Body:  { controlId: string, initiativeId?: string | null, tier?: Tier, value: number, reason: string }
- *        `initiativeId` set (or omitted) -> project/deployment override for
- *        that initiative; `initiativeId: null` -> tier-default change (then
- *        `tier` is required).
+ *        `initiativeId` set -> project/deployment override for that
+ *        initiative; `initiativeId: null` or omitted -> tier-default change
+ *        (then `tier` is required; 403 for any session with a workspace).
+ *        `value` is a rate in 0..1; the control must be a runtime-evaluated
+ *        one (tier defaults + sustained window), else 400.
  * 200:   SetEvalThresholdResult
  * 401/429/400: as other mutating routes.
  * 403:   { error: string }  (non-admin actor)
@@ -28,7 +30,7 @@ import {
   NotFoundError,
   ValidationError,
 } from "@/lib/services/admin-service";
-import { runMutationGuard } from "@/lib/services/route-guard";
+import { guardFailureResponse, runMutationGuard } from "@/lib/services/route-guard";
 
 const bodySchema = z.object({
   controlId: z.string().min(1).max(50),
@@ -49,7 +51,7 @@ export async function POST(req: Request): Promise<Response> {
     inputTotalCap: 2000,
   });
   if (!guard.ok) {
-    return Response.json({ error: guard.failure.message }, { status: guard.failure.status });
+    return guardFailureResponse(guard.failure);
   }
   const json = guard.json;
 

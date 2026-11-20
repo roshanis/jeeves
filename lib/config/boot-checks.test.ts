@@ -73,6 +73,17 @@ describe("runBootChecks", () => {
       expect(bootFailure()).toBeNull();
     });
 
+    it("logs one line, without the value, when JEEVES_MODE is set but not exactly demo", async () => {
+      const d = deps({ ...COMPLETE_PRODUCTION, JEEVES_MODE: "Demo" });
+      d.getDb.mockResolvedValue(await database("production"));
+      await runBootChecks(d);
+      expect(d.exit).not.toHaveBeenCalled();
+      const logged = d.log.mock.calls.map((c) => c.join(" "));
+      expect(logged).toHaveLength(1);
+      expect(logged[0]).toMatch(/JEEVES_MODE is set but ignored/);
+      expect(logged[0]).not.toContain("Demo");
+    });
+
     it("logs, marks the boot failed and exits 1 when the configuration is invalid", async () => {
       const d = deps({ JEEVES_MODE: "production" });
       await runBootChecks(d);

@@ -1,5 +1,13 @@
 import type { NextConfig } from "next";
 
+// The lock must fail closed: only "0" and "1" are meaningful, and the runtime
+// check compares against "0" alone, so "false", "off" or "" would otherwise
+// build a demo-capable image that looks locked.
+const demoEnabled = process.env.JEEVES_DEMO_ENABLED ?? "1";
+if (demoEnabled !== "0" && demoEnabled !== "1") {
+  throw new Error('JEEVES_DEMO_ENABLED must be "0" (production build) or "1" (demo-capable build)');
+}
+
 const nextConfig: NextConfig = {
   // Inline the demo build constant into the compiled server code.
   // lib/config/deployment-mode.ts treats the app as the demo only when
@@ -9,7 +17,7 @@ const nextConfig: NextConfig = {
   // builds with JEEVES_DEMO_ENABLED=0 so the demo is compiled out of reach;
   // every other build defaults to "1" and stays demo-capable. Server-only:
   // JEEVES_MODE itself is never inlined or exposed through NEXT_PUBLIC_.
-  env: { JEEVES_DEMO_ENABLED: process.env.JEEVES_DEMO_ENABLED ?? "1" },
+  env: { JEEVES_DEMO_ENABLED: demoEnabled },
 
   // Standalone output: Next traces the exact runtime files (including the
   // node_modules it actually needs) into .next/standalone, so a container
@@ -36,9 +44,12 @@ const nextConfig: NextConfig = {
   // endpoint is pure attack surface: it hands request-selected image bytes
   // to sharp/libvips, which currently carries unpatched HIGH CVEs
   // (GHSA-f88m-g3jw-g9cj) with no fixed version reachable through any next
-  // release. Disabling optimization removes sharp from the runtime entirely
-  // at zero visual cost. Re-evaluate if next/image is ever adopted.
+  // release. Disabling optimization means nothing calls sharp, but Next
+  // still traces it into .next/standalone (about 46 MB, LGPL libvips), so it is
+  // excluded below and scripts/check-standalone-output.cjs fails if it returns.
+  // Re-evaluate both if next/image is ever adopted.
   images: { unoptimized: true },
+  outputFileTracingExcludes: { "*": ["node_modules/sharp/**", "node_modules/@img/**"] },
 
   // The /agents/[id] detail page reads the agent instruction files (the real
   // system prompts) off disk at runtime. Force-include the whole agents/
@@ -108,6 +119,22 @@ const nextConfig: NextConfig = {
           // Disable speculative DNS prefetching of linked origins.
           { key: "X-DNS-Prefetch-Control", value: "off" },
         ],
+      },
+      // Per-viewer JSON must never be stored by a shared cache that ignores the
+      // session cookie; the evidence routes already send the same pair.
+      ...["/api/:path*", "/initiatives/:slug/detail-data"].map((source) => ({
+        source,
+        headers: [
+          { key: "Cache-Control", value: "private, no-store" },
+          { key: "Vary", value: "Authorization, Cookie" },
+        ],
+      })),
+      // Listed after the catch-all so it replaces the app-wide CSP: an
+      // uploaded document is untrusted bytes and must never run scripts, even
+      // if something other than the attachment disposition ever renders it.
+      {
+        source: "/api/initiatives/:id/evidence/:documentId",
+        headers: [{ key: "Content-Security-Policy", value: "sandbox; default-src 'none'" }],
       },
     ];
   },

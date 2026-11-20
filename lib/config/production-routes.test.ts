@@ -51,13 +51,18 @@ describe("classifyPath", () => {
     },
   );
 
+  it("is demo-only for the operator page, which production does not have", () => {
+    expect(classifyPath("/operator")).toBe("demo-only");
+    vi.stubEnv("JEEVES_MODE", undefined);
+    expect(productionRouteDecision("/operator", false)).toEqual({ kind: "not-found" });
+  });
+
   it("is '/' for the landing page", () => {
     expect(classifyPath("/")).toBe("home");
   });
 
   it.each([
     "/sign-in",
-    "/operator",
     "/api/health",
     "/api/initiatives",
     "/robots.txt",
@@ -113,7 +118,7 @@ describe("productionRouteDecision", () => {
 
     it("leaves everything else alone, including sign-in itself", () => {
       asProduction();
-      for (const path of ["/sign-in", "/api/health", "/api/initiatives", "/initiatives/x/detail-data", "/operator"]) {
+      for (const path of ["/sign-in", "/api/health", "/api/initiatives", "/initiatives/x/detail-data"]) {
         expect(productionRouteDecision(path, false)).toEqual({ kind: "next" });
       }
     });

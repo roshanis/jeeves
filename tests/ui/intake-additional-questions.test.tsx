@@ -14,6 +14,7 @@ vi.mock("@/lib/client/api", async (importOriginal) => ({
   createInitiative: mocks.create, updateIntakeDraft: mocks.update, submitIntake: mocks.submit,
 }));
 
+import { DeploymentModeProvider } from "@/lib/client/deployment-mode-context";
 import { IntakeForm } from "@/components/jeeves/intake-form";
 import { IntakeTab } from "@/components/jeeves/intake-tab";
 import type { InitiativeDetail } from "@/lib/data/dto";
@@ -25,7 +26,7 @@ describe("additional intake questions", () => {
   it("collects eight optional answers and sends them in the saved submission", async () => {
     mocks.create.mockResolvedValue({ initiativeId: "new-intake", slug: "new-intake", version: 1 });
     mocks.submit.mockResolvedValue({ submitted: true, completenessPct: 95 });
-    render(<IntakeForm />);
+    render(<DeploymentModeProvider mode="demo"><IntakeForm /></DeploymentModeProvider>);
     fireEvent.click(screen.getByRole("button", { name: "Use a sample initiative" }));
     expect(screen.getByRole("button", { name: "Submit intake" })).not.toHaveProperty("disabled", true);
     for (const [question, answer] of ADDITIONAL_ANSWERS) {

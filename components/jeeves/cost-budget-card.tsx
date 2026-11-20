@@ -35,11 +35,11 @@ const SERIES_NAME = "Portfolio cost/day (USD)";
 function formatShortDate(ts: string): string {
   const d = new Date(ts);
   if (Number.isNaN(d.getTime())) return ts.slice(5, 10);
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 }
 
 function formatUsd(value: number): string {
-  return `$${value.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+  return `$${value.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
 }
 
 // Accessible summary for the chart (WCAG SHOULD-FIX #3) — derived from the
@@ -130,7 +130,7 @@ export function CostBudgetCard({ points }: { points: PortfolioCostPoint[] }) {
           <p className="text-xs text-muted-foreground">
             Synthetic portfolio daily cost. Daily reservation reference:{" "}
             <span className="stat-value text-foreground">
-              {DAILY_TOKEN_BUDGET_REFERENCE.toLocaleString()}
+              {DAILY_TOKEN_BUDGET_REFERENCE.toLocaleString("en-US")}
             </span>{" "}
             estimated tokens/day. Reservations limit demo requests; they do not
             measure provider token usage or billed spend.
@@ -188,7 +188,7 @@ export function CostBudgetCard({ points }: { points: PortfolioCostPoint[] }) {
             </div>
           )}
           <p className="font-mono text-[11px] tabular-nums text-muted-foreground">
-            Daily estimated token reservations: {DAILY_TOKEN_BUDGET_REFERENCE.toLocaleString()}
+            Daily estimated token reservations: {DAILY_TOKEN_BUDGET_REFERENCE.toLocaleString("en-US")}
             {" "}(static demo reference; the live reservation balance is not displayed).
           </p>
         </SyntheticDataLabel>

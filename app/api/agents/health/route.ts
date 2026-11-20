@@ -10,14 +10,16 @@
  * 200: ConnectorHealth
  * 401/429: no/invalid session, rate limit, or budget exhausted.
  * 503: `llm_not_configured` — a production install with no OPENAI_API_KEY has
- *      no mock to report on (demo answers 200 with the mock adapter).
+ *      no mock to report on (demo answers 200 with the mock adapter). Not
+ *      reachable yet: production has no valid session until customer sign-in
+ *      exists, so the guard answers 401 first.
  */
-import { runMutationGuard } from "@/lib/services/route-guard";
-import { probeConnector } from "@/lib/agents/health";
+import { guardFailureResponse, runMutationGuard } from "@/lib/services/route-guard";
+import { PROBE_MAX_OUTPUT_TOKENS, probeConnector } from "@/lib/agents/health";
 import { agentInitializationResponse } from "@/lib/services/agent-error-response";
 
-/** Tiny reserve — a health ping is a single minimal call. */
-const ESTIMATED_TOKENS = 50;
+/** Tiny reserve — a health ping is a single minimal call: ~16 prompt tokens plus the capped reply. */
+const ESTIMATED_TOKENS = PROBE_MAX_OUTPUT_TOKENS + 36;
 
 export async function POST(req: Request): Promise<Response> {
   const guard = await runMutationGuard(req, undefined, {
@@ -25,7 +27,7 @@ export async function POST(req: Request): Promise<Response> {
     estimatedTokens: ESTIMATED_TOKENS,
   });
   if (!guard.ok) {
-    return Response.json({ error: guard.failure.message }, { status: guard.failure.status });
+    return guardFailureResponse(guard.failure);
   }
 
   try {

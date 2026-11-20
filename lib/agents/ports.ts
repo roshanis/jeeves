@@ -118,6 +118,8 @@ export interface DraftReviewInput {
   readonly intake: IntakeSnapshot;
   /** Policy/catalog excerpts the draft must ground itself in. */
   readonly policyContext?: readonly string[];
+  /** Applicable control ids; evidence requests and conditions for any other control are dropped. */
+  readonly controlIds?: readonly string[];
 }
 
 /**
@@ -186,7 +188,7 @@ export interface AuditorAnswerInput {
  */
 export interface AuditorAnswerOutput {
   readonly answerMd: string;
-  /** Every event timestamp (ISO 8601) or decision id relied upon; empty on a refusal. */
+  /** Every row timestamp (eventTs or ts) or row-N label relied upon; empty on a refusal. */
   readonly citedEvents: readonly string[];
   /** The query id/label actually used, echoed back verbatim from the input. */
   readonly queryUsed: string;

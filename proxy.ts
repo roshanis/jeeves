@@ -46,6 +46,7 @@ export const config = {
     "/inbox/:path*",
     "/initiatives/:path*",
     "/monitoring/:path*",
+    "/operator/:path*",
     "/portfolio/:path*",
     "/promotions/:path*",
     "/reviews/:path*",

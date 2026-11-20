@@ -19,6 +19,7 @@ vi.mock("@/lib/client/api", async (importOriginal) => ({
   createIntakeRequestId: () => `unique-intake-request-key-${++mocks.keys}`,
 }));
 
+import { DeploymentModeProvider } from "@/lib/client/deployment-mode-context";
 import { IntakeForm } from "@/components/jeeves/intake-form";
 
 const created = { initiativeId: "init-1", slug: "draft-one", intakeVersionId: "iv-1", version: 1 };
@@ -34,7 +35,7 @@ describe("IntakeForm retry recovery", () => {
     mocks.create.mockRejectedValueOnce(new TypeError("response lost")).mockResolvedValueOnce(created);
     mocks.update.mockImplementation(async (_token, _id, payload) => ({ ...created, intakeVersionId: "iv-2", version: 2, payload }));
     mocks.submit.mockResolvedValue({ submitted: true, completenessPct: 95 });
-    render(<IntakeForm />);
+    render(<DeploymentModeProvider mode="demo"><IntakeForm /></DeploymentModeProvider>);
     fireEvent.click(screen.getByRole("button", { name: "Use a sample initiative" }));
     fireEvent.click(screen.getByRole("button", { name: "Submit intake" }));
     await waitFor(() => expect(mocks.create).toHaveBeenCalledTimes(1));
@@ -57,7 +58,7 @@ describe("IntakeForm retry recovery", () => {
     const { ApiError } = await import("@/lib/client/api");
     mocks.create.mockRejectedValueOnce(new ApiError(400, "invalid intake payload")).mockResolvedValueOnce(created);
     mocks.submit.mockResolvedValue({ submitted: true, completenessPct: 95 });
-    render(<IntakeForm />);
+    render(<DeploymentModeProvider mode="demo"><IntakeForm /></DeploymentModeProvider>);
     fireEvent.click(screen.getByRole("button", { name: "Use a sample initiative" }));
     fireEvent.click(screen.getByRole("button", { name: "Submit intake" }));
     await waitFor(() => expect(mocks.create).toHaveBeenCalledTimes(1));
@@ -73,7 +74,7 @@ describe("IntakeForm retry recovery", () => {
   it("retries submit directly after its response is lost without creating or updating again", async () => {
     mocks.create.mockResolvedValue(created);
     mocks.submit.mockRejectedValueOnce(new TypeError("response lost")).mockResolvedValueOnce({ submitted: true, completenessPct: 95 });
-    render(<IntakeForm />);
+    render(<DeploymentModeProvider mode="demo"><IntakeForm /></DeploymentModeProvider>);
     fireEvent.click(screen.getByRole("button", { name: "Use a sample initiative" }));
     fireEvent.click(screen.getByRole("button", { name: "Submit intake" }));
     await waitFor(() => expect(mocks.submit).toHaveBeenCalledTimes(1));

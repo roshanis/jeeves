@@ -6,6 +6,7 @@ vi.mock("@/lib/client/session-context", () => ({
   useLiveSession: () => ({ session: { token: "t", role: "requester", personaLabel: "P" }, logout: vi.fn() }),
 }));
 
+import { DeploymentModeProvider } from "@/lib/client/deployment-mode-context";
 import { IntakeForm } from "@/components/jeeves/intake-form";
 
 function type(el: HTMLTextAreaElement, text: string) {
@@ -16,7 +17,7 @@ describe("IntakeForm one-per-line textareas", () => {
   afterEach(cleanup);
 
   it("keeps spaces and line breaks while the user types, per keystroke", () => {
-    render(<IntakeForm />);
+    render(<DeploymentModeProvider mode="demo"><IntakeForm /></DeploymentModeProvider>);
     const field = screen.getByLabelText(/Data source\(s\)/) as HTMLTextAreaElement;
     type(field, "Clinical notes (Epic)\nLab results");
     expect(field.value).toBe("Clinical notes (Epic)\nLab results");
@@ -24,18 +25,18 @@ describe("IntakeForm one-per-line textareas", () => {
 
   it("derives the payload array from the typed lines", () => {
     const onPayloadChange = vi.fn();
-    const { rerender } = render(<IntakeForm onPayloadChange={onPayloadChange} />);
+    const { rerender } = render(<DeploymentModeProvider mode="demo"><IntakeForm onPayloadChange={onPayloadChange} /></DeploymentModeProvider>);
     const field = screen.getByLabelText(/Affected populations/) as HTMLTextAreaElement;
     type(field, "Prior auth nurses\nMembers");
     expect(field.value).toBe("Prior auth nurses\nMembers");
     const last = onPayloadChange.mock.calls.at(-1)?.[0];
     expect(last.populationImpact.affectedPopulations).toEqual(["Prior auth nurses", "Members"]);
-    rerender(<IntakeForm onPayloadChange={onPayloadChange} />);
+    rerender(<DeploymentModeProvider mode="demo"><IntakeForm onPayloadChange={onPayloadChange} /></DeploymentModeProvider>);
     expect(field.value).toBe("Prior auth nurses\nMembers");
   });
 
   it("resyncs when a sample initiative replaces the payload", () => {
-    render(<IntakeForm />);
+    render(<DeploymentModeProvider mode="demo"><IntakeForm /></DeploymentModeProvider>);
     const field = screen.getByLabelText(/Data source\(s\)/) as HTMLTextAreaElement;
     type(field, "abc");
     fireEvent.click(screen.getByRole("button", { name: "Use a sample initiative" }));

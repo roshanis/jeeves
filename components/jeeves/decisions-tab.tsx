@@ -4,6 +4,7 @@
 import type { DecisionRow } from "@/lib/data/dto";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { formatUtcTimestamp } from "@/lib/format/timestamp";
 import { AccountableApproverChip } from "./accountable-approver-chip";
 import { EvidenceLink } from "./evidence-link";
 
@@ -46,7 +47,7 @@ export function DecisionsTab({
                 {DECISION_LABEL[decision.type]}
               </Badge>
               <span className="font-mono text-xs font-normal tabular-nums text-muted-foreground">
-                {decision.at.slice(0, 10)}
+                <time dateTime={decision.at}>{formatUtcTimestamp(decision.at)}</time>
               </span>
             </CardTitle>
             <AccountableApproverChip name={decision.approver} />
@@ -56,8 +57,8 @@ export function DecisionsTab({
               <div className="space-y-1.5">
                 <p className="kicker">Conditions</p>
                 <ul className="space-y-1">
-                  {decision.conditions.map((c) => (
-                    <li key={c.controlId} className="flex items-baseline gap-2 text-sm">
+                  {decision.conditions.map((c, ci) => (
+                    <li key={`${ci}-${c.controlId}`} className="flex items-baseline gap-2 text-sm">
                       <span>{c.text}</span>
                       <EvidenceLink slug={slug} tab="controls" className="text-xs">
                         → control {c.controlId}

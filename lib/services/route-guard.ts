@@ -1,4 +1,5 @@
 import { runtimeDatabaseUrl } from "../db/runtime-config";
+import { bootFailure } from "../config/boot-state";
 import { assertDemoMode } from "../config/demo-doors";
 import { isProductionMode } from "../config/deployment-mode";
 /**
@@ -15,7 +16,7 @@ import { isProductionMode } from "../config/deployment-mode";
  */
 import { DbTokenBucketRateLimiter } from "../security/db-rate-limit";
 import { issueSession } from "../security/session";
-import { DbBudgetStore, reserve, type BudgetStore } from "../security/budget";
+import { DAILY_TOKEN_CAP, DbBudgetStore, reserve, type BudgetStore } from "../security/budget";
 import { SESSION_COOKIE_NAME } from "../security/session-cookie-name";
 import { validateInputSize, type FieldLimit, type InputGap } from "../security/input-limits";
 import { PUBLIC_PERSONA_PREFIX, isPersonaKey, resolveActor } from "./actors";
@@ -34,10 +35,10 @@ const SESSION_TTL_MS = 60 * 60 * 1000; // 1 hour demo session
 /** Long enough to fill in one intake form, short enough not to be a handle. */
 const PUBLIC_SESSION_TTL_MS = 30 * 60 * 1000;
 /**
- * Marks a workspace as belonging to a public submitter. Read-scoping uses
- * this to let the Program Office see public submissions; mutation does NOT
- * (workspaceMismatch stays an exact match), so visitors stay isolated from
- * each other.
+ * Marks a workspace as belonging to a public submitter. Only the operator
+ * queue (behind OPERATOR_TOKEN), the public-session mint and the installation
+ * check use it; no persona role may read public submissions, and mutation
+ * stays an exact workspace match, so visitors stay isolated from each other.
  */
 export const PUBLIC_WORKSPACE_PREFIX = "public-";
 const rateLimiter = new DbTokenBucketRateLimiter(
@@ -94,7 +95,6 @@ async function maybePruneStaleState(): Promise<void> {
 }
 
 const budgetStore: BudgetStore = new DbBudgetStore(getDb);
-const DAILY_TOKEN_CAP = 500_000;
 
 // Anonymous workspace creation stays bounded separately from business actions.
 const sessionAttemptLimiter = new DbTokenBucketRateLimiter(
@@ -141,7 +141,7 @@ export async function issuePublicSession(
   | { readOnly: GuardFailure }
 > {
   assertDemoMode("public sessions");
-  const readOnly = checkReadOnlyMode();
+  const readOnly = checkBootFailure() ?? checkReadOnlyMode();
   if (readOnly) return { readOnly };
 
   // Namespaced like every other limiter here: the buckets share one table, and
@@ -174,7 +174,7 @@ export async function issuePublicSession(
     .catch((err: unknown) => {
       throw redactDbError(err);
     });
-  return { token: session.token, workspaceId, expiresAt: session.expiresAt };
+  return { token: session.token, workspaceId, expiresAt: session.expiresAt, expiresInMs: PUBLIC_SESSION_TTL_MS };
 }
 
 
@@ -229,7 +229,9 @@ export function isOperatorAuthorized(authorization: string | null, expected: str
 }
 
 /** Failed-attempt ceiling for the operator queue — cheap insurance on top of
- *  a >= 32-character secret, and it keeps probing from loading the DB. */
+ *  a >= 32-character secret. Wrong tokens spend the bucket and a locked-out
+ *  client is refused before the compare; it does not spare the database, since
+ *  every request still costs one read (and a failure one write). */
 const operatorAttemptLimiter = new DbTokenBucketRateLimiter(
   { capacity: 10, refillPerSecond: 1 / 30 },
   getDb,
@@ -242,14 +244,49 @@ export async function checkOperatorAttempt(
   return operatorAttemptLimiter.checkAndConsume(bucketKey("operator", clientKey));
 }
 
-export type GuardFailureKind = "unauthorized" | "rate_limited" | "invalid_input" | "budget_exhausted" | "read_only" | "payload_too_large";
+/**
+ * Read-only: is this client already locked out? The operator and cron doors
+ * call it BEFORE comparing the secret, so a locked-out client cannot confirm a
+ * correct guess. Requests in flight together can each pass this read before
+ * one of them spends a token, so the bound is the capacity plus the
+ * concurrency; the length of the secret remains the first protection.
+ */
+export async function operatorAttemptStatus(
+  clientKey: string,
+): Promise<{ allowed: boolean; retryAfterSeconds: number }> {
+  return operatorAttemptLimiter.peek(bucketKey("operator", clientKey));
+}
+
+export type GuardFailureKind = "unauthorized" | "rate_limited" | "invalid_input" | "budget_exhausted" | "read_only" | "payload_too_large" | "unavailable";
 
 export interface GuardFailure {
   kind: GuardFailureKind;
-  status: 401 | 403 | 429 | 400 | 413;
+  status: 401 | 403 | 429 | 400 | 413 | 503;
   message: string;
   gaps?: InputGap[];
   retryAfterSeconds?: number;
+}
+
+/** The JSON response for a failed guard: keeps `gaps` and `retryAfterSeconds` and sets Retry-After on a 429. */
+export function guardFailureResponse(failure: GuardFailure, headers: Record<string, string> = {}): Response {
+  const retry: Record<string, string> = failure.retryAfterSeconds !== undefined ? { "Retry-After": String(failure.retryAfterSeconds) } : {};
+  return Response.json(
+    {
+      error: failure.message,
+      ...(failure.retryAfterSeconds !== undefined ? { retryAfterSeconds: failure.retryAfterSeconds } : {}),
+      ...(failure.gaps ? { gaps: failure.gaps } : {}),
+    },
+    { status: failure.status, headers: { ...headers, ...retry } },
+  );
+}
+
+/**
+ * Fail-closed backstop for a process whose boot checks failed but which the
+ * host did not stop (see lib/config/boot-state.ts). A bare status: the reason
+ * is for the server log only.
+ */
+function checkBootFailure(): GuardFailure | null {
+  return bootFailure() === null ? null : { kind: "unavailable", status: 503, message: "service unavailable" };
 }
 
 /** Static preview reads cannot reflect writes, so reject before any DB access. */
@@ -267,6 +304,8 @@ export interface IssueSessionResult {
   token: string;
   workspaceId: string;
   expiresAt: number;
+  /** Lifetime from issue, so a client with a skewed clock can compute its own deadline. */
+  expiresInMs: number;
 }
 
 /**
@@ -291,7 +330,7 @@ export async function issueDemoSession(
   existingWorkspaceId?: string | null,
 ): Promise<IssueSessionResult | null> {
   assertDemoMode("persona sessions");
-  if (checkReadOnlyMode()) return null;
+  if (checkBootFailure() || checkReadOnlyMode()) return null;
   // Demo personas only — never a `public:` key (see app/api/session/route.ts).
   if (!isPersonaKey(personaKey) || !resolveActor(personaKey)) return null;
   // Invariant, held here rather than trusted to every caller: no persona
@@ -313,7 +352,7 @@ export async function issueDemoSession(
     .catch((err: unknown) => {
       throw redactDbError(err);
     });
-  return { token: session.token, workspaceId, expiresAt: session.expiresAt };
+  return { token: session.token, workspaceId, expiresAt: session.expiresAt, expiresInMs: SESSION_TTL_MS };
 }
 
 export interface ResolvedSession {
@@ -362,6 +401,16 @@ export async function resolveSession(token: string | null): Promise<ResolvedSess
     return { actor: null, workspaceId: null };
   }
   return { actor: resolveActor(session.personaKey), workspaceId: session.workspaceId ?? null };
+}
+
+/** Delete exactly one session row by token. The driver error embeds the bound token; never let it reach the log. */
+export async function revokeSession(token: string): Promise<void> {
+  await getDb()
+    .delete(sessions)
+    .where(eq(sessions.token, token))
+    .catch((err: unknown) => {
+      throw redactDbError(err);
+    });
 }
 
 /**
@@ -535,7 +584,7 @@ export async function runMutationGuard(
   body: Record<string, string> | BodyExtractor | undefined,
   options: MutationGuardOptions = {},
 ): Promise<MutationGuardResult> {
-  const readOnlyFailure = checkReadOnlyMode();
+  const readOnlyFailure = checkBootFailure() ?? checkReadOnlyMode();
   if (readOnlyFailure) return { ok: false, failure: readOnlyFailure };
 
   const token = extractSessionToken(req);
@@ -606,7 +655,7 @@ export async function runMutationGuard(
     if (!result.granted) {
       return {
         ok: false,
-        failure: { kind: "budget_exhausted", status: 429, message: "demo token budget exhausted for today" },
+        failure: { kind: "budget_exhausted", status: 429, message: "daily model budget reached" },
       };
     }
   }
@@ -622,7 +671,7 @@ export async function runMutationGuard(
 export async function reserveDailyBudget(tokens: number, day: string = todayUtc()): Promise<GuardFailure | null> {
   const result = await reserve(budgetStore, day, tokens, DAILY_TOKEN_CAP);
   if (result.granted) return null;
-  return { kind: "budget_exhausted", status: 429, message: "demo token budget exhausted for today" };
+  return { kind: "budget_exhausted", status: 429, message: "daily model budget reached" };
 }
 
 /** Exposed for tests that want to exhaust/reset the shared budget deterministically. */

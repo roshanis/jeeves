@@ -12,10 +12,15 @@ import { isDemoMode } from "@/lib/config/deployment-mode";
 // Rendered by the ROOT layout, which supplies no chrome of its own, so this
 // page carries its own header link and footer rather than inheriting the
 // console sidebar or the marketing nav.
-export const metadata: Metadata = {
-  title: "Page not found",
-  description: "That page doesn't exist. Links onward to the console and the public site.",
-};
+// Mode-aware: a production install has no public site to link onward to.
+export function generateMetadata(): Metadata {
+  return {
+    title: "Page not found",
+    description: isDemoMode()
+      ? "That page doesn't exist. Links onward to the console and the public site."
+      : "That page doesn't exist.",
+  };
+}
 
 const DEMO_DESTINATIONS = [
   { href: "/", label: "Home", detail: "What Jeeves is, and who it is for" },
@@ -47,15 +52,23 @@ export default function NotFound() {
       </div>
 
       <div className="flex flex-wrap items-center justify-center gap-2">
-        <Link href="/" className={cn(buttonVariants({ size: "sm" }))}>
-          Back to home
-        </Link>
-        <Link
-          href="/inbox"
-          className={cn(buttonVariants({ size: "sm", variant: "outline" }))}
-        >
-          Open the console
-        </Link>
+        {isDemoMode() ? (
+          <>
+            <Link href="/" className={cn(buttonVariants({ size: "sm" }))}>
+              Back to home
+            </Link>
+            <Link
+              href="/inbox"
+              className={cn(buttonVariants({ size: "sm", variant: "outline" }))}
+            >
+              Open the console
+            </Link>
+          </>
+        ) : (
+          <Link href="/inbox" className={cn(buttonVariants({ size: "sm" }))}>
+            Open the console
+          </Link>
+        )}
       </div>
 
       <div className="w-full border-t pt-5 text-left">

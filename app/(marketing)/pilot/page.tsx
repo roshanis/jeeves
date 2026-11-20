@@ -6,7 +6,7 @@ import { CONTACT_URL, PILOT_PRICE } from "@/lib/marketing/site-config";
 import { guardDemoPage, demoPageMetadata } from "@/lib/config/demo-pages";
 
 export const generateMetadata = demoPageMetadata({
-  title: "Procurement-readiness pilot — Jeeves",
+  title: "Procurement-readiness pilot",
   description:
     "A 4-6 week pilot that gets AI teams selling into health plans and health systems procurement-ready: mapped controls, a governance console, and an evidence pack.",
 });

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq, sql } from "drizzle-orm";
+import { markBootFailed, resetBootStateForTests } from "../config/boot-state";
 import { closeTestDb, createTestDb, type TestDb } from "../db/test-client";
 import { rateLimitBuckets, runBudget, sessions } from "../db/schema";
 import { reserve } from "../security/budget";
@@ -75,6 +76,7 @@ describe("lib/services/route-guard", () => {
       expect(result!.token).toHaveLength(64); // 32 bytes hex
       expect(result!.workspaceId).toMatch(/^ws_[0-9a-f]{64}$/);
       expect(result!.workspaceId).not.toContain(result!.token);
+      expect(result!.expiresInMs).toBe(60 * 60 * 1000);
 
       const [persisted] = await testDb.select().from(sessions).where(eq(sessions.token, result!.token));
       expect(persisted).toMatchObject({
@@ -88,11 +90,7 @@ describe("lib/services/route-guard", () => {
     it("rejects an unknown persona without creating a session", async () => {
       const result = await issueDemoSession("unknown-persona");
       expect(result).toBeNull();
-    });
-
-    it("returns null for an unknown persona key", async () => {
-      const result = await issueDemoSession("not-a-real-persona");
-      expect(result).toBeNull();
+      expect(await testDb.select().from(sessions)).toEqual([]);
     });
   });
 
@@ -225,11 +223,13 @@ describe("lib/services/route-guard", () => {
 
   describe("runMutationGuard", () => {
     it("401s an unauthenticated request with no side effects (no rate-limit consumption)", async () => {
+      const check = vi.spyOn(DbTokenBucketRateLimiter.prototype, "checkAndConsume");
       const req = reqWithBearer("bogus-token", "5.5.5.5");
       const result = await runMutationGuard(req, undefined);
       expect(result.ok).toBe(false);
       if (result.ok) throw new Error("unreachable");
       expect(result.failure.status).toBe(401);
+      expect(check).not.toHaveBeenCalled();
     });
 
     it("200s (ok) with a valid session and resolves the actor from the session, not the body", async () => {
@@ -253,6 +253,7 @@ describe("lib/services/route-guard", () => {
     });
 
     it("429s after a burst exceeds the rate-limit capacity", async () => {
+      vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-09-19T20:00:00Z"));
       const session = (await issueDemoSession("priya-raman"))!;
       const clientIp = "7.7.7.7";
       let lastResult: Awaited<ReturnType<typeof runMutationGuard>> | null = null;
@@ -292,6 +293,7 @@ describe("lib/services/route-guard", () => {
       if (result.ok) throw new Error("unreachable");
       expect(result.failure.status).toBe(429);
       expect(result.failure.kind).toBe("budget_exhausted");
+      expect(result.failure.message).toBe("daily model budget reached");
     });
 
     it("budget reserve costs 0 tokens for the mock adapter but still exercises the reserve path", async () => {
@@ -548,5 +550,29 @@ describe("public role is denied by default", () => {
     expect(denied.failure.status).toBe(403);
     const allowed = await runMutationGuard(reqWithBearer(issued.token, "10.1.0.3"), undefined, { allowPublic: true });
     expect(allowed).toMatchObject({ ok: true, actor: { role: "public" } });
+  });
+});
+
+describe("a server that failed its boot checks", () => {
+  beforeEach(async () => {
+    testDb = await createTestDb();
+  });
+
+  afterEach(async () => {
+    resetBootStateForTests();
+    await closeTestDb(testDb);
+  });
+
+  it("refuses mutations and session minting with a bare 503, before any session lookup", async () => {
+    const session = (await issueDemoSession("priya-raman"))!;
+    const pub = await issuePublicSession("10.2.0.1");
+    markBootFailed("database is stamped production");
+
+    const denied = await runMutationGuard(reqWithBearer(session.token, "10.2.0.2"), undefined);
+    expect(denied).toMatchObject({ ok: false, failure: { status: 503 } });
+    expect(JSON.stringify(denied)).not.toContain("stamped");
+    expect(await issueDemoSession("priya-raman")).toBeNull();
+    expect(await issuePublicSession("10.2.0.3")).toHaveProperty("readOnly");
+    expect("token" in pub).toBe(true);
   });
 });

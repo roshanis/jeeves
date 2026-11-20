@@ -17,12 +17,15 @@ import {
   observations,
   reviewCycles,
   reviewDecisions,
+  reviewNotifications,
   riskAssessments,
 } from "../db/schema";
 import {
   runMonitor,
   listIncidents,
+  listIncidentsForViewer,
   UNSCOPED_WORKSPACE,
+  ConflictError,
 } from "./monitor-service";
 import { SYSTEM_ACTOR } from "./actors";
 import { resumeDeployment } from "./admin-service";
@@ -317,23 +320,6 @@ describe("lib/services/monitor-service", () => {
     });
   });
 
-  /* -----------------------------------------------------------------------
-   * P2-5b fix — external-review finding: the breach-pause flip
-   * (`initiatives.state` -> 'paused') carried no observed-state predicate —
-   * a concurrent change (e.g. an admin manually acting on the same
-   * initiative between the candidate scan and this transaction) would be
-   * silently clobbered. Now compare-and-set, mirroring
-   * promotion-service.test.ts's "promoteCheckpoint — concurrency" tests:
-   * true overlapping transactions aren't reproducible against PGlite, so
-   * this simulates the race deterministically by injecting a
-   * same-transaction write between the read and the CAS update.
-   *
-   * P2-7 fix — external-review finding: previously a single candidate's
-   * failure (this CAS conflict, an illegal-state pause attempt, or the FK
-   * hazard below) aborted the ENTIRE `runMonitor` call, for every
-   * deployment. Now isolated per-candidate: recorded in `result.errors`,
-   * the run completes, and other candidates are unaffected.
-   * -------------------------------------------------------------------- */
   describe("runMonitor — wall-clock stamps", () => {
     it("stamps audit events and incident rows with the wall clock and keeps nowTs as metadata.evaluatedAt", async () => {
       const { init, dep } = await memberChatCopilot(db);
@@ -354,6 +340,19 @@ describe("lib/services/monitor-service", () => {
         expect(e.ts.getTime()).toBeLessThanOrEqual(after);
         expect(e.metadata).toMatchObject({ evaluatedAt: new Date(nowTs).toISOString() });
       }
+    });
+  });
+
+  describe("runMonitor — reassessment review requests (domain-F15)", () => {
+    it("records a review request for every pending reassessment review row", async () => {
+      const { dep } = await memberChatCopilot(db);
+      const run = await runMonitor(db, SYSTEM_ACTOR, PLUS_14D, UNSCOPED_WORKSPACE);
+      const cycleId = run.breaches.find((b) => b.deploymentId === dep.id)!.reviewCycleId!;
+      const decisions = await db.select().from(reviewDecisions).where(eq(reviewDecisions.cycleId, cycleId));
+      const notes = await db.select().from(reviewNotifications).where(eq(reviewNotifications.cycleId, cycleId));
+      expect(decisions.length).toBeGreaterThan(0);
+      expect(notes.map((n) => n.domain).sort()).toEqual(decisions.map((d) => d.domain).sort());
+      expect(notes.every((n) => n.kind === "review_requested")).toBe(true);
     });
   });
 
@@ -381,6 +380,23 @@ describe("lib/services/monitor-service", () => {
     });
   });
 
+  /* -----------------------------------------------------------------------
+   * P2-5b fix — external-review finding: the breach-pause flip
+   * (`initiatives.state` -> 'paused') carried no observed-state predicate —
+   * a concurrent change (e.g. an admin manually acting on the same
+   * initiative between the candidate scan and this transaction) would be
+   * silently clobbered. Now compare-and-set, mirroring
+   * promotion-service.test.ts's "promoteCheckpoint — concurrency" tests:
+   * true overlapping transactions aren't reproducible against PGlite, so
+   * this simulates the race deterministically by injecting a
+   * same-transaction write between the read and the CAS update.
+   *
+   * P2-7 fix — external-review finding: previously a single candidate's
+   * failure (this CAS conflict, an illegal-state pause attempt, or the FK
+   * hazard below) aborted the ENTIRE `runMonitor` call, for every
+   * deployment. Now isolated per-candidate: recorded in `result.errors`,
+   * the run completes, and other candidates are unaffected.
+   * -------------------------------------------------------------------- */
   describe("runMonitor — per-candidate error isolation (external-review P2-5b/P2-7)", () => {
     it("does not return or log a failed statement's bound parameters", async () => {
       await memberChatCopilot(db);
@@ -412,6 +428,42 @@ describe("lib/services/monitor-service", () => {
         spy.mockRestore();
         log.mockRestore();
       }
+    });
+
+    it("a CAS conflict against an incident another run just recorded is reported as already known, not as a failure", async () => {
+      const { dep } = await memberChatCopilot(db);
+
+      /* eslint-disable @typescript-eslint/no-explicit-any */
+      const dbAny = db as any;
+      const realTransaction = dbAny.transaction.bind(dbAny);
+      let txCallCount = 0;
+      const spy = vi.spyOn(dbAny, "transaction").mockImplementation((cb: any) => {
+        txCallCount += 1;
+        if (txCallCount !== 2) return realTransaction(cb);
+        // The overlapping run committed the incident; this run's transaction
+        // then loses its state CAS and throws ConflictError.
+        return realTransaction(cb).then(() => {
+          throw new ConflictError("initiative changed concurrently (expected state 'deployed')");
+        });
+      });
+      /* eslint-enable @typescript-eslint/no-explicit-any */
+      const log = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      let result;
+      try {
+        result = await runMonitor(db, SYSTEM_ACTOR, PLUS_14D, UNSCOPED_WORKSPACE);
+      } finally {
+        spy.mockRestore();
+        log.mockRestore();
+      }
+
+      expect(result.errors.find((e) => e.deploymentId === dep.id)).toBeUndefined();
+      const breach = result.breaches.find((b) => b.deploymentId === dep.id)!;
+      expect(breach.failed).toBeUndefined();
+      expect(breach.isNew).toBe(false);
+      expect(breach.incidentId).not.toBe("");
+      expect(result.alreadyKnown).toBe(1);
+      expect(result.incidentsCreated).toBe(0);
     });
 
     it("a concurrent write that changes the initiative's state before the breach-pause CAS update is recorded in result.errors and does not abort the run (no partial write for that candidate)", async () => {
@@ -661,7 +713,7 @@ describe("lib/services/monitor-service", () => {
     });
   });
 
-  describe("listIncidents — public read-only", () => {
+  describe("listIncidents — unscoped baseline", () => {
     it("returns incidents sorted most-recent-first after a breach", async () => {
       await runMonitor(db, RAY_CHEN, PLUS_14D, UNSCOPED_WORKSPACE);
       const rows = await listIncidents(db);
@@ -672,6 +724,25 @@ describe("lib/services/monitor-service", () => {
     it("returns an empty list before any breach has been detected", async () => {
       const rows = await listIncidents(db);
       expect(rows).toEqual([]);
+    });
+  });
+
+  describe("listIncidentsForViewer", () => {
+    it("returns seeded-deployment incidents for any viewer, newest first, and none once the deployment's initiative belongs to another workspace", async () => {
+      const { init } = await memberChatCopilot(db);
+      await runMonitor(db, RAY_CHEN, PLUS_14D, UNSCOPED_WORKSPACE);
+      const all = await listIncidents(db);
+      expect(all.length).toBeGreaterThanOrEqual(1);
+
+      const seeded = await listIncidentsForViewer(db, null);
+      expect(seeded).toEqual(all);
+      const times = seeded.map((r) => r.detectedAt);
+      expect(times).toEqual(times.slice().sort().reverse());
+
+      await db.update(initiatives).set({ workspaceId: "ws-owner" }).where(eq(initiatives.id, init.id));
+      expect(await listIncidentsForViewer(db, null)).toEqual([]);
+      expect(await listIncidentsForViewer(db, "ws-other")).toEqual([]);
+      expect((await listIncidentsForViewer(db, "ws-owner")).length).toBe(all.length);
     });
   });
 });

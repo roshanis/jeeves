@@ -25,6 +25,7 @@
  */
 import * as React from "react";
 import type { DeploymentMode } from "@/lib/config/deployment-mode";
+import { setApiDeploymentMode } from "@/lib/client/api";
 
 const DeploymentModeContext = React.createContext<DeploymentMode>("production");
 
@@ -35,6 +36,7 @@ export function DeploymentModeProvider({
   mode: DeploymentMode;
   children: React.ReactNode;
 }) {
+  setApiDeploymentMode(mode);
   return <DeploymentModeContext.Provider value={mode}>{children}</DeploymentModeContext.Provider>;
 }
 

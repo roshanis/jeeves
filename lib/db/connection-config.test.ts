@@ -181,4 +181,8 @@ describe("runtime and migration pool limits", () => {
       .toEqual({ user: "user", database: "jeeves", application_name: "jeeves", lock_timeout: "10000" });
     expect(startup(migrationPoolConfig(direct, undefined, {}))).toEqual({ user: "user", database: "postgres" });
   });
+
+  it("reports a malformed percent escape in the host as an invalid URL", () => {
+    expect(() => postgresPoolConfig("postgres://u:p@a%zz.b/db")).toThrow("valid PostgreSQL database URL");
+  });
 });

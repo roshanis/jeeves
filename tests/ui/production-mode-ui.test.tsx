@@ -233,3 +233,27 @@ describe("RootLayout mounts the server-chosen mode", () => {
     expect(screen.getByTestId("mode").textContent).toBe("production");
   });
 });
+
+describe("session-expired copy follows the deployment mode", () => {
+  it("does not send a production user to the demo", async () => {
+    const { ApiError, apiErrorToMessage } = await import("@/lib/client/api");
+    const err = new ApiError(401, "invalid or missing session");
+    try {
+      renderWithMode("production");
+      expect(apiErrorToMessage(err)).toBe("Your session has expired. Sign in again.");
+      cleanup();
+      renderWithMode("demo");
+      expect(apiErrorToMessage(err)).toBe("Session expired or invalid — start the demo again.");
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+function renderWithMode(mode: DeploymentMode) {
+  return render(
+    <DeploymentModeProvider mode={mode}>
+      <span />
+    </DeploymentModeProvider>,
+  );
+}

@@ -264,6 +264,7 @@ export function ControlCatalog({ controls, asOfMs }: { controls: ControlRow[]; a
           <button
             type="button"
             onClick={() => setDomainFilter("all")}
+            aria-pressed={domainFilter === "all"}
             className={cn(
               "touch-min rounded-md px-3 py-1.5 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
               domainFilter === "all"
@@ -278,6 +279,7 @@ export function ControlCatalog({ controls, asOfMs }: { controls: ControlRow[]; a
               key={domain}
               type="button"
               onClick={() => setDomainFilter(domain)}
+              aria-pressed={domainFilter === domain}
               className={cn(
                 "touch-min rounded-md px-3 py-1.5 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
                 domainFilter === domain
@@ -294,6 +296,7 @@ export function ControlCatalog({ controls, asOfMs }: { controls: ControlRow[]; a
           <button
             type="button"
             onClick={() => setStatusFilter("all")}
+            aria-pressed={statusFilter === "all"}
             className={cn(
               "touch-min rounded-md px-3 py-1.5 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
               statusFilter === "all"
@@ -308,6 +311,7 @@ export function ControlCatalog({ controls, asOfMs }: { controls: ControlRow[]; a
               key={status}
               type="button"
               onClick={() => setStatusFilter(status)}
+              aria-pressed={statusFilter === status}
               className={cn(
                 "touch-min rounded-md px-3 py-1.5 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
                 statusFilter === status

@@ -304,6 +304,41 @@ describe("openai-adapter — cancellation", () => {
   });
 });
 
+describe("openai-adapter — hallucinated control ids", () => {
+  it("does not let an evidence request for an unsupplied control reach the result", async () => {
+    const model = new MockLanguageModelV4({
+      doGenerate: async () =>
+        textGenerateResult({
+          ...VALID_REVIEWER_OBJECT,
+          recommendation: "return-with-gaps",
+          evidenceRequests: [
+            { controlId: "H-01", description: "real gap" },
+            { controlId: "ZZ-99", description: "invented gap" },
+          ],
+        }),
+    });
+    const port = createOpenAIAgentPortWithModel(model);
+    const result = await port.draftReview({ ...draftInput(), controlIds: ["H-01"] });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.missingEvidence).toEqual(["real gap"]);
+      expect(result.value.draftMarkdown).not.toContain("ZZ-99");
+    }
+  });
+});
+
+describe("openai-adapter — upstream abort without caller cancellation", () => {
+  it("reports a dropped upstream connection as a provider failure, not cancelled", async () => {
+    const model = new MockLanguageModelV4({
+      doGenerate: async () => { throw new Error("socket aborted"); },
+    });
+    const port = createOpenAIAgentPortWithModel(model);
+    const result = await port.draftReview(draftInput());
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.kind).toBe("provider");
+  });
+});
+
 describe("openai-adapter — timeoutMs deadline (ports.ts InvokeOptions)", () => {
   it("maps a timeoutMs overrun to PortFailure{kind:timeout} even when the model never settles", async () => {
     const model = new MockLanguageModelV4({

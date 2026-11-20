@@ -9,7 +9,7 @@ import type { Metadata } from "next";
 export const metadata: Metadata = {
   title: "Inbox",
   description:
-    "What needs attention right now across the AI governance portfolio, filtered to the role you are viewing as.",
+    "What needs attention right now across the AI governance portfolio, filtered to your role.",
 };
 
 // Eval-quality telemetry kinds that feed the Responsible AI reviewer's
@@ -65,12 +65,18 @@ export default async function InboxPage() {
     (i) => i.state === "deployed" || i.state === "fast_lane_approved",
   ).length;
 
-  const recentDecisions = details
+  const allDecisions = details
     .flatMap((d) =>
       d.decisions.map((dec) => ({ dec, title: d.summary.title, slug: d.summary.slug })),
     )
-    .sort((a, b) => (a.dec.at < b.dec.at ? 1 : -1))
-    .slice(0, 6);
+    .sort((a, b) => (a.dec.at < b.dec.at ? 1 : -1));
+  const recentDecisions = allDecisions.slice(0, 6);
+  const decisionCounts = {
+    approved: allDecisions.filter((d) => d.dec.type === "approved" || d.dec.type === "fast_lane_approved").length,
+    conditional: allDecisions.filter((d) => d.dec.type === "conditionally_approved").length,
+    rejected: allDecisions.filter((d) => d.dec.type === "rejected").length,
+    total: allDecisions.length,
+  };
 
   const alerts = initiatives.filter(
     (i: InitiativeSummary) => i.state === "paused" || i.state === "re_review" || i.overdue,
@@ -80,6 +86,7 @@ export default async function InboxPage() {
     <RoleAwareInbox
       initiatives={initiatives}
       recentDecisions={recentDecisions}
+      decisionCounts={decisionCounts}
       alerts={alerts}
       incidentCount={incidentResult.status === "success" ? incidentResult.incidents.filter((incident) => !incident.resolvedAt).length : null}
       counts={{ inReview, slaBreaches, reassessing, deployed }}

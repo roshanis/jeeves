@@ -12,7 +12,7 @@
  */
 import { z } from "zod";
 import { getDb } from "@/lib/db/client";
-import { runMutationGuard } from "@/lib/services/route-guard";
+import { guardFailureResponse, runMutationGuard } from "@/lib/services/route-guard";
 import { requireViewerForRequest } from "@/lib/services/require-viewer";
 import {
   listExceptions,
@@ -54,7 +54,7 @@ export async function POST(req: Request): Promise<Response> {
     inputTotalCap: REASON_MAX,
   });
   if (!guard.ok) {
-    return Response.json({ error: guard.failure.message }, { status: guard.failure.status });
+    return guardFailureResponse(guard.failure);
   }
   const json = guard.json;
 

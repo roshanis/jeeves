@@ -43,3 +43,17 @@ describe("control catalog clock", () => {
     expect(seen.asOfMs).toEqual([undefined]);
   });
 });
+
+describe("control catalog onward links", () => {
+  it("links to the framework pages in demo", async () => {
+    vi.stubEnv("JEEVES_MODE", "demo");
+    const { container } = renderWithProviders(await ControlsPage());
+    expect(container.querySelector('a[href="/frameworks"]')).not.toBeNull();
+  });
+
+  it("links to no marketing-only page in production", async () => {
+    vi.stubEnv("JEEVES_MODE", undefined);
+    const { container } = renderWithProviders(await ControlsPage(), { mode: "production" });
+    expect(container.querySelector('a[href^="/frameworks"]')).toBeNull();
+  });
+});

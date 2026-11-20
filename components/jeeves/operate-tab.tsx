@@ -24,8 +24,10 @@ import {
 import type { TelemetrySeries } from "@/lib/data/dto";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { OFFLINE_COMPARISON_SLUG, OFFLINE_COMPARISON_VERSIONS } from "./eval-comparison";
+import { useDeploymentMode } from "@/lib/client/deployment-mode-context";
 import { SyntheticDataLabel } from "./synthetic-data-label";
-import { DisableWithTooltip } from "./role-gate";
+import { RunMonitorPanel } from "./run-monitor-panel";
 
 const KIND_TITLE: Record<TelemetrySeries["kind"], string> = {
   cost_tokens_usd_day: "Cost — daily token spend (USD)",
@@ -40,22 +42,39 @@ const SERIES_COLOR = "var(--chart-1)";
 
 // Deterministic offline-eval comparison for #5's v2.0 -> v2.1 promotion
 // story (seed-spec §4: "v2.0->v2.1 offline eval comparison instead of live
-// drift"). Fixed constants — this is a synthetic fixture, not telemetry.
+// drift"). Fixed constants — this is a synthetic fixture, not telemetry. The
+// version pair is shared with the Promotions pointer (eval-comparison.tsx).
+const { current: OFFLINE_CURRENT, candidate: OFFLINE_CANDIDATE } = OFFLINE_COMPARISON_VERSIONS;
 const PROMOTION_EVAL_COMPARISON = [
-  { metric: "Hallucination", "v2.0": 0.042, "v2.1": 0.031 },
-  { metric: "Relevance", "v2.0": 0.87, "v2.1": 0.91 },
-  { metric: "Completeness", "v2.0": 0.82, "v2.1": 0.88 },
+  { metric: "Hallucination", [OFFLINE_CURRENT]: 0.042, [OFFLINE_CANDIDATE]: 0.031 },
+  { metric: "Relevance", [OFFLINE_CURRENT]: 0.87, [OFFLINE_CANDIDATE]: 0.91 },
+  { metric: "Completeness", [OFFLINE_CURRENT]: 0.82, [OFFLINE_CANDIDATE]: 0.88 },
 ];
+
+/** Y-axis domain: eval/cost series pad the data range, and always reach the
+ * threshold so its reference line is drawn (Recharts discards a line that
+ * falls outside the domain). GPU keeps its fixed 0-100 scale. */
+export function seriesYDomain(
+  kind: TelemetrySeries["kind"],
+  threshold: number | null,
+): [number | ((min: number) => number), number | ((max: number) => number)] {
+  if (kind === "gpu_util_pct") return [0, 100];
+  return [
+    (min: number) => Math.floor(min * 0.9 * 1000) / 1000,
+    (max: number) =>
+      Math.ceil(Math.max(max * 1.15, threshold !== null ? threshold * 1.05 : 0) * 1000) / 1000,
+  ];
+}
 
 function formatShortDate(ts: string): string {
   const d = new Date(ts);
   if (Number.isNaN(d.getTime())) return ts.slice(5, 10);
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 }
 
 function formatValue(kind: TelemetrySeries["kind"], value: number): string {
   if (kind === "gpu_util_pct") return `${value.toFixed(0)}%`;
-  if (kind === "cost_tokens_usd_day") return `$${value.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+  if (kind === "cost_tokens_usd_day") return `$${value.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
   return value.toFixed(4);
 }
 
@@ -196,11 +215,7 @@ function SeriesPanel({ series }: { series: TelemetrySeries }) {
                   tickLine={{ stroke: "var(--chart-axis)" }}
                 />
                 <YAxis
-                  domain={
-                    series.kind === "gpu_util_pct"
-                      ? [0, 100]
-                      : [(min: number) => Math.floor(min * 0.9 * 1000) / 1000, (max: number) => Math.ceil(max * 1.15 * 1000) / 1000]
-                  }
+                  domain={seriesYDomain(series.kind, series.threshold)}
                   tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
                   axisLine={{ stroke: "var(--chart-axis)" }}
                   tickLine={false}
@@ -277,20 +292,23 @@ function PromotionTooltip({
 }
 
 function PromotionComparisonPanel() {
+  const mode = useDeploymentMode();
   return (
     <Card data-slot="telemetry-panel" data-kind="promotion-comparison">
       <CardHeader>
-        <CardTitle className="text-sm">Offline eval — v2.0 vs v2.1</CardTitle>
+        <CardTitle className="text-sm">Offline eval — {OFFLINE_CURRENT} vs {OFFLINE_CANDIDATE}</CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
-        <Alert>
-          <AlertTitle>Promotion gate: awaiting feedback-provenance sign-off</AlertTitle>
-          <AlertDescription>
-            v2.1 checkpoint cannot be promoted until feedback-provenance
-            review is signed (RL/version-promotion story — not a training
-            dashboard).
-          </AlertDescription>
-        </Alert>
+        {mode !== "production" && (
+          <Alert>
+            <AlertTitle>Promotion gate: awaiting feedback-provenance sign-off</AlertTitle>
+            <AlertDescription>
+              {OFFLINE_CANDIDATE} checkpoint cannot be promoted until feedback-provenance
+              review is signed (RL/version-promotion story — not a training
+              dashboard).
+            </AlertDescription>
+          </Alert>
+        )}
         <SyntheticDataLabel>
           <div className="h-[200px] w-full">
             <ResponsiveContainer width="100%" height="100%">
@@ -314,8 +332,8 @@ function PromotionComparisonPanel() {
                   cursor={{ fill: "var(--muted)", fillOpacity: 0.4 }}
                 />
                 <Legend wrapperStyle={{ fontSize: 11, color: "var(--muted-foreground)" }} />
-                <Bar dataKey="v2.0" name="v2.0" fill="var(--chart-1)" radius={[3, 3, 0, 0]} />
-                <Bar dataKey="v2.1" name="v2.1" fill="var(--chart-2)" radius={[3, 3, 0, 0]} />
+                <Bar dataKey={OFFLINE_CURRENT} name={OFFLINE_CURRENT} fill="var(--chart-1)" radius={[3, 3, 0, 0]} />
+                <Bar dataKey={OFFLINE_CANDIDATE} name={OFFLINE_CANDIDATE} fill="var(--chart-2)" radius={[3, 3, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -332,7 +350,7 @@ export function EvalsTab({
   slug: string;
   telemetry: TelemetrySeries[];
 }) {
-  const isPromotionStory = slug === "pa-correspondence-model";
+  const isPromotionStory = slug === OFFLINE_COMPARISON_SLUG;
   const evalSeries = telemetry.filter((s) => s.kind === "eval_hallucination" || s.kind === "eval_relevance");
   const costSeries = telemetry.filter((s) => s.kind === "cost_tokens_usd_day");
   const gpuSeries = telemetry.filter((s) => s.kind === "gpu_util_pct");
@@ -341,9 +359,7 @@ export function EvalsTab({
     <div className="space-y-4" data-slot="evals-tab">
       <div className="flex items-center justify-between gap-2">
         <h3 className="text-sm font-medium">Evals &amp; telemetry</h3>
-        {/* Admin-shaped action, rendered disabled for every role in this
-            read-only build (auth gating; see role-gate.tsx). */}
-        <DisableWithTooltip label="Run monitor" variant="outline" />
+        <RunMonitorPanel />
       </div>
 
       {telemetry.length === 0 ? (

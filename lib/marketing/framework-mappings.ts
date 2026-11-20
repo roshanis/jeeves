@@ -41,6 +41,8 @@ export interface FrameworkPageMeta {
   title: string;
   shortName: string;
   intro: string;
+  /** One-sentence card text for the /frameworks index. */
+  summary: string;
   /** Which column of ControlFrameworkMapping this page renders. */
   refKey: "nistAiRmf" | "euAiAct";
 }
@@ -52,6 +54,8 @@ export const FRAMEWORK_PAGES: FrameworkPageMeta[] = [
     shortName: "NIST AI RMF",
     intro:
       "The NIST AI RMF 1.0 organizes trustworthy-AI practice into four functions — GOVERN, MAP, MEASURE, and MANAGE. Jeeves operationalizes them as a workflow: structured intake maps context and risk, tiered reviews and named approvers implement governance, controls and evals measure trustworthiness, and continuous monitoring with an append-only audit trail manages deployed systems. The crosswalk below shows where each control in the demo catalog does that work.",
+    summary:
+      "The NIST AI RMF 1.0 organizes trustworthy-AI practice into four functions: GOVERN, MAP, MEASURE, and MANAGE.",
     refKey: "nistAiRmf",
   },
   {
@@ -60,6 +64,8 @@ export const FRAMEWORK_PAGES: FrameworkPageMeta[] = [
     shortName: "EU AI Act",
     intro:
       "For high-risk AI systems, the EU AI Act requires a risk management system (Art. 9), data governance (Art. 10), technical documentation (Art. 11), record-keeping (Art. 12), transparency to deployers (Art. 13), human oversight (Art. 14), and accuracy, robustness and cybersecurity (Art. 15), with post-market monitoring and incident reporting (Arts. 72–73). Jeeves gives each of these an owner, a gate, and an audit trail. The crosswalk below maps the demo's control catalog onto those obligations.",
+    summary:
+      "For high-risk AI systems, the EU AI Act requires a risk management system, data governance, human oversight and more.",
     refKey: "euAiAct",
   },
 ];

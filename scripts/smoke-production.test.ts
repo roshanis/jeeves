@@ -1,4 +1,7 @@
 // @vitest-environment node
+import { readFileSync } from "node:fs";
+import net from "node:net";
+import path from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   assertDisposableDatabaseUrl,
@@ -8,12 +11,16 @@ import {
   buildSmokeChecks,
   databaseSecrets,
   evaluateCheck,
+  extractStaticAssetUrl,
   parsePort,
+  portInUse,
   prepareSmokeDatabase,
+  runToCompletion,
   redact,
   removeCanaries,
   runtimeEnvFor,
   seedCanary,
+  standaloneStaticTarget,
   withCanary,
   type Observed,
   type SmokeCheck,
@@ -407,5 +414,59 @@ describe("parsePort", () => {
   });
   it.each(["", "abc", "0", "70000", "3217.5", "-1"])("rejects %j", (value) => {
     expect(() => parsePort(value)).toThrow(/SMOKE_PORT/);
+  });
+});
+
+describe("the /operator is-closed check", () => {
+  it("excludes only markers the operator page actually renders", () => {
+    const check = buildSmokeChecks().find((c) => c.path === "/operator")!;
+    const source = ["app/operator/page.tsx", "components/jeeves/public-intake-queue.tsx"]
+      .map((f) => readFileSync(path.join(__dirname, "..", f), "utf8"))
+      .join("\n");
+    expect(check.expect.bodyExcludes?.length).toBeGreaterThan(0);
+    for (const marker of check.expect.bodyExcludes ?? []) expect(source, marker).toContain(marker);
+  });
+});
+
+describe("portInUse", () => {
+  it("is true while something listens on the port and false once it stops", async () => {
+    const server = net.createServer();
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as net.AddressInfo;
+    expect(await portInUse(port)).toBe(true);
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    expect(await portInUse(port)).toBe(false);
+  });
+});
+
+describe("runToCompletion", () => {
+  it("returns the exit code and the output of a run that finishes", async () => {
+    const run = await runToCompletion(["-e", "console.log('migrated'); process.exit(3)"], { PATH: process.env.PATH ?? "" }, 10_000);
+    expect(run).toEqual({ code: 3, output: "migrated\n", timedOut: false });
+  });
+
+  it("stops a run that outlives its limit and says so, so a hung migration cannot hold the job", async () => {
+    const started = Date.now();
+    const run = await runToCompletion(["-e", "console.log('started'); setInterval(() => {}, 1000)"], { PATH: process.env.PATH ?? "" }, 500);
+    expect(run.timedOut).toBe(true);
+    expect(run.code).not.toBe(0);
+    expect(run.output).toContain("started");
+    expect(Date.now() - started).toBeLessThan(10_000);
+  });
+});
+
+describe("static asset check", () => {
+  it("extracts the first /_next/static script or stylesheet URL", () => {
+    const html = '<link rel="stylesheet" href="/_next/static/css/app.css"/><script src="/_next/static/chunks/a.js" async></script>';
+    expect(extractStaticAssetUrl(html)).toBe("/_next/static/css/app.css");
+    expect(extractStaticAssetUrl('<script src="/_next/static/chunks/a.js?dpl=1"></script>')).toBe("/_next/static/chunks/a.js?dpl=1");
+  });
+
+  it("returns null when the page references no static asset", () => {
+    expect(extractStaticAssetUrl("<html><body>sign in</body></html>")).toBeNull();
+  });
+
+  it("copies .next/static to the place the Containerfile puts it", () => {
+    expect(standaloneStaticTarget().replace(/\\/g, "/")).toMatch(/\.next\/standalone\/\.next\/static$/);
   });
 });

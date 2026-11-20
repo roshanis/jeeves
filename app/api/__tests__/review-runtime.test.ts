@@ -5,7 +5,7 @@ const mocks = vi.hoisted(() => ({
   guard: vi.fn(), startDraftRun: vi.fn(), runReviewAgent: vi.fn(), db: { select: vi.fn() },
 }));
 vi.mock("@/lib/db/client", () => ({ getDb: () => mocks.db }));
-vi.mock("@/lib/services/route-guard", () => ({ runMutationGuard: mocks.guard }));
+vi.mock("@/lib/services/route-guard", async (importOriginal) => ({ guardFailureResponse: (await importOriginal<typeof import("@/lib/services/route-guard")>()).guardFailureResponse, runMutationGuard: mocks.guard }));
 vi.mock("@/lib/workflow/review-run", () => ({ startDraftRun: mocks.startDraftRun, getRunProgress: vi.fn() }));
 vi.mock("@/lib/services/initiative-service", () => ({
   runReviewAgent: mocks.runReviewAgent,

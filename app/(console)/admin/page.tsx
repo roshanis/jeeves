@@ -100,7 +100,7 @@ export default async function AdminPage() {
                 visually secondary in the footer rather than a prominent
                 big-number CTA. Per-initiative override values live behind the
                 edit dialog — not fabricated here. */}
-            <Table>
+            <Table containerLabel="Control thresholds">
               <TableHeader>
                 <TableRow>
                   <TableHead>Scope</TableHead>
@@ -122,7 +122,7 @@ export default async function AdminPage() {
                 </TableRow>
                 <TableRow>
                   <TableCell className="font-medium">Critical-tier default</TableCell>
-                  <TableCell className="tabular-nums">0.05</TableCell>
+                  <TableCell className="tabular-nums">{isProductionMode() ? "Per control definition" : "0.05"}</TableCell>
                   <TableCell className="text-xs text-muted-foreground">
                     block · 3-point window
                   </TableCell>
@@ -189,7 +189,7 @@ export default async function AdminPage() {
               against their eval-quality floor.
             </p>
           ) : (
-            <Table>
+            <Table containerLabel="Open incidents">
               <TableHeader>
                 <TableRow>
                   <TableHead>Detected</TableHead>
@@ -232,7 +232,7 @@ export default async function AdminPage() {
           <CardTitle>Deployments — pause / resume</CardTitle>
         </CardHeader>
         <CardContent>
-          <Table>
+          <Table containerLabel="Deployments">
             <TableHeader>
               <TableRow>
                 <TableHead>Initiative</TableHead>
@@ -243,6 +243,13 @@ export default async function AdminPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
+              {deploymentRows.length === 0 ? (
+                <TableRow>
+                  <TableCell className="text-sm text-muted-foreground" colSpan={5}>
+                    No deployments to pause or resume yet.
+                  </TableCell>
+                </TableRow>
+              ) : null}
               {deploymentRows.map((row) => (
                 <TableRow key={`${row.slug}-${row.deployment.version}`}>
                   <TableCell>
@@ -283,7 +290,7 @@ export default async function AdminPage() {
           <CardTitle>Control-change audit log</CardTitle>
         </CardHeader>
         <CardContent>
-          <Table>
+          <Table containerLabel="Control-change audit log">
             <TableHeader>
               <TableRow>
                 <TableHead>When</TableHead>
@@ -292,6 +299,13 @@ export default async function AdminPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
+              {q01Changes.length === 0 ? (
+                <TableRow>
+                  <TableCell className="text-sm text-muted-foreground" colSpan={3}>
+                    No control changes recorded yet.
+                  </TableCell>
+                </TableRow>
+              ) : null}
               {q01Changes.map((row, i) => (
                 <TableRow key={i}>
                   <TableCell className="text-xs text-muted-foreground">

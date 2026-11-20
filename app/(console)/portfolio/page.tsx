@@ -36,7 +36,7 @@ export default async function PortfolioPage() {
           All {initiatives.length} initiatives
         </h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Every Meridian Health AI initiative, its risk tier, lifecycle state,
+          Every {isProductionMode() ? "" : "Meridian Health "}AI initiative, its risk tier, lifecycle state,
           review progress, and next action. Sort any column; filter with saved views.
         </p>
       </div>

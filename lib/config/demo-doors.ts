@@ -5,10 +5,12 @@
 // Two ways to keep them shut:
 //  - the HTTP surface answers a bare 404 (demoDoorClosed, demoDoorFallbacks),
 //    and does so FIRST: before parsing a body, spending a rate-limit token or
-//    checking a secret, so there is no 401/405/429/503 to tell it apart from a
-//    route that was never built;
+//    checking a secret, so there is no 401/405/429/503 to say the door is
+//    there. The empty 404 body does differ from the application's own
+//    not-found page; serving that page instead is an open owner decision;
 //  - code reached some other way refuses (assertDemoMode), as defence in depth
 //    for a caller that skips the route.
+import { bootFailure } from "./boot-state";
 import { isProductionMode } from "./deployment-mode";
 
 /**
@@ -38,7 +40,8 @@ export function assertDemoMode(door: string): void {
  * no-store, so a CDN never keeps a 404 it learned while the mode was wrong.
  */
 export function demoDoorClosed(): Response | null {
-  return isProductionMode()
+  // A server whose boot checks failed serves no demo door either, whatever mode it is in.
+  return isProductionMode() || bootFailure() !== null
     ? new Response(null, { status: 404, headers: { "Cache-Control": "no-store" } })
     : null;
 }
@@ -64,10 +67,13 @@ export type DemoDoorFallbacks<M extends HttpMethod> = Omit<
  * methods), so demo behaviour does not change.
  *
  *   export const { GET, HEAD, PUT, PATCH, DELETE, OPTIONS } = demoDoorFallbacks("POST");
+ *   export const { GET, HEAD, PUT, PATCH, OPTIONS } = demoDoorFallbacks("POST", "DELETE");
+ *
+ * Each implemented handler must still start with demoDoorClosed().
  */
-export function demoDoorFallbacks<M extends HttpMethod>(implemented: M): DemoDoorFallbacks<M> {
-  const own = new Set<HttpMethod>([implemented]);
-  if (implemented === "GET") own.add("HEAD");
+export function demoDoorFallbacks<M extends HttpMethod>(...implemented: [M, ...M[]]): DemoDoorFallbacks<M> {
+  const own = new Set<HttpMethod>(implemented);
+  if (own.has("GET")) own.add("HEAD");
   const allow = [...own, "OPTIONS"].sort().join(", ");
 
   const handlers: Partial<Record<HttpMethod, (req: Request) => Response>> = {};

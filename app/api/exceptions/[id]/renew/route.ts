@@ -6,7 +6,7 @@
  */
 import { z } from "zod";
 import { getDb } from "@/lib/db/client";
-import { runMutationGuard } from "@/lib/services/route-guard";
+import { guardFailureResponse, runMutationGuard } from "@/lib/services/route-guard";
 import { isRouteId, notFoundResponse } from "@/lib/http/route-id";
 import { renewException } from "@/lib/services/exception-service";
 import { NotFoundError, ValidationError, IllegalTransitionError } from "@/lib/services/initiative-service";
@@ -30,7 +30,7 @@ export async function POST(
     inputTotalCap: REASON_MAX,
   });
   if (!guard.ok) {
-    return Response.json({ error: guard.failure.message }, { status: guard.failure.status });
+    return guardFailureResponse(guard.failure);
   }
   const json = guard.json;
 

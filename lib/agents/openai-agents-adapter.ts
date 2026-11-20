@@ -76,6 +76,7 @@ import { resolveAgentRuntimeConfig } from "./runtime";
 import {
   auditorAnswerOutputSchema,
   intakeInterviewOutputSchema,
+  dropUnsuppliedControls,
   mapReviewerDraftToPortOutput,
   reviewerDraftOutputSchema,
 } from "./schemas";
@@ -424,7 +425,7 @@ export function createOpenAiAgentsAdapterWithRunner(
     return {
       ok: true,
       value: {
-        ...mapReviewerDraftToPortOutput(input.domain, parsed.data),
+        ...mapReviewerDraftToPortOutput(input.domain, input.controlIds ? dropUnsuppliedControls(parsed.data, input.controlIds) : parsed.data),
         generationMetadata: {
           adapter: "openai-agents-sdk",
           configuredModelId: terra,
@@ -492,7 +493,7 @@ export function createOpenAiAgentsAdapterWithRunner(
       return {
         ok: true,
         value: {
-          ...mapReviewerDraftToPortOutput(input.domain, parsed.data),
+          ...mapReviewerDraftToPortOutput(input.domain, input.controlIds ? dropUnsuppliedControls(parsed.data, input.controlIds) : parsed.data),
           generationMetadata: {
             adapter: "openai-agents-sdk",
             configuredModelId: terra,

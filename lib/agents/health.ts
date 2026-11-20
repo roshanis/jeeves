@@ -31,6 +31,9 @@ export interface ConnectorHealth extends AgentRuntimeConfig {
 
 const DEFAULT_TIMEOUT_MS = 8000;
 
+/** Output cap for the probe. Reasoning models need a floor or reply empty; only reachability is checked, so an empty reply is fine. */
+export const PROBE_MAX_OUTPUT_TOKENS = 64;
+
 export async function probeConnector(options?: { timeoutMs?: number }): Promise<ConnectorHealth> {
   const runtime = resolveAgentRuntimeConfig();
   // Probe the model used for draftReview. Agents SDK chat uses a separate
@@ -75,6 +78,7 @@ export async function probeConnector(options?: { timeoutMs?: number }): Promise<
       model: openai(model),
       prompt: "Health check. Reply with the single word: ok",
       maxRetries: 0,
+      maxOutputTokens: PROBE_MAX_OUTPUT_TOKENS,
       abortSignal: controller.signal,
     });
     const latencyMs = Date.now() - startedAt;

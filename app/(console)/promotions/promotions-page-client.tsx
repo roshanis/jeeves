@@ -23,6 +23,7 @@ import {
   listPromotions,
   promoteCheckpoint,
   isApiError,
+  ApiError,
   apiErrorToMessage,
   type PromotionListItem,
 } from "@/lib/client/api";
@@ -45,7 +46,7 @@ import {
   type PromotionAttestationInput,
 } from "@/components/jeeves/promotion-dialog";
 import { DeploymentHistory } from "@/components/jeeves/deployment-history";
-import { EvalComparison } from "@/components/jeeves/eval-comparison";
+import { EvalComparison, hasOfflineComparisonFor } from "@/components/jeeves/eval-comparison";
 import type { Tier } from "@/lib/domain/types";
 import type { InitiativeHistoryContext } from "./page";
 
@@ -115,7 +116,13 @@ export function PromotionsPageClient({
   }, []);
 
   async function handleConfirm(input: PromotionAttestationInput) {
-    if (!session || !dialogTarget) return;
+    if (!dialogTarget) return;
+    if (!session) {
+      const message = apiErrorToMessage(new ApiError(401, "session expired"));
+      setDialogError(message);
+      toast.error(message);
+      return;
+    }
     setPending(true);
     setDialogError(null);
     try {
@@ -241,6 +248,7 @@ export function PromotionsPageClient({
                   candidateVersion={item.version}
                   currentVersion={item.supersedesVersion}
                   evalSeries={ctx?.evalSeries ?? null}
+                  hasOfflineComparison={hasOfflineComparisonFor(item.initiativeSlug, item.supersedesVersion, item.version)}
                 />
                 <Link
                   href={`/initiatives/${encodeURIComponent(item.initiativeSlug)}?tab=deployments`}

@@ -10,6 +10,7 @@ import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { createTestDb, closeTestDb, type TestDb } from "../db/test-client";
+import { recordLocks as recordLocksOn } from "../db/test-lock-recorder";
 import { seedDatabase, BASE_DATE_MS } from "../../scripts/seed";
 import { auditEvents, controlDefinitions, deploymentVersions, effectiveControls, incidents, initiativeDecisions, initiatives, reviewCycles, reviewDecisions } from "../db/schema";
 import {
@@ -57,6 +58,103 @@ describe("lib/services/admin-service", () => {
 
   afterEach(async () => {
     await closeTestDb(db);
+  });
+
+  describe("setEvalThreshold — row locks", () => {
+    const recordLocks = () => recordLocksOn(db);
+
+    it("locks the initiative row before reading the control revision on the override branch", async () => {
+      const initiativeId = await memberChatCopilotId(db);
+      const { events, spy } = recordLocks();
+      try {
+        await setEvalThreshold(db, RAY_CHEN, null, {
+          controlId: "Q-01", initiativeId, newValue: 0.06, reason: "Lock check.",
+        });
+      } finally {
+        spy.mockRestore();
+      }
+      const lock = events.indexOf("lock:initiatives");
+      expect(lock).toBeGreaterThanOrEqual(0);
+      expect(lock).toBeLessThan(events.indexOf("from:effective_controls"));
+    });
+
+    it("issues no FOR UPDATE on the initiative row for a caller from another workspace", async () => {
+      const initiativeId = await memberChatCopilotId(db); // seeded, workspace null
+      const { events, spy } = recordLocks();
+      try {
+        await expect(setEvalThreshold(db, RAY_CHEN, "ws-visitor", {
+          controlId: "Q-01", initiativeId, newValue: 0.06, reason: "Foreign lock check.",
+        })).rejects.toThrow(NotFoundError);
+      } finally {
+        spy.mockRestore();
+      }
+      expect(events).toContain("from:initiatives");
+      expect(events).not.toContain("lock:initiatives");
+    });
+
+    it("locks the initiative row for the owning workspace's edit", async () => {
+      const initiativeId = await memberChatCopilotId(db);
+      await db.update(initiatives).set({ workspaceId: "ws-owner" }).where(eq(initiatives.id, initiativeId));
+      const { events, spy } = recordLocks();
+      try {
+        await setEvalThreshold(db, RAY_CHEN, "ws-owner", {
+          controlId: "Q-01", initiativeId, newValue: 0.06, reason: "Owner lock check.",
+        });
+      } finally {
+        spy.mockRestore();
+      }
+      expect(events).toContain("lock:initiatives");
+    });
+
+    it("throws NotFoundError instead of auditing a tier-default change when the locked definition row is gone", async () => {
+      /* eslint-disable @typescript-eslint/no-explicit-any */
+      const dbAny = db as any;
+      const realTransaction = dbAny.transaction.bind(dbAny);
+      const spy = vi.spyOn(dbAny, "transaction").mockImplementation((cb: any) =>
+        realTransaction(async (tx: any) => {
+          const realSelect = tx.select.bind(tx);
+          tx.select = (...a: unknown[]) => {
+            // The locked re-read finds no row (deleted between the two reads).
+            const wrap = (b: any): any =>
+              new Proxy(b, {
+                get(t, k) {
+                  const v = t[k];
+                  if (typeof v !== "function") return v;
+                  if (k === "for") return () => Promise.resolve([]);
+                  return (...args: unknown[]) => {
+                    const r = v.apply(t, args);
+                    return r && typeof r === "object" && k !== "then" ? wrap(r) : r;
+                  };
+                },
+              });
+            return wrap(realSelect(...a));
+          };
+          return cb(tx);
+        }),
+      );
+      /* eslint-enable @typescript-eslint/no-explicit-any */
+      const beforeEvents = await db.select().from(auditEvents);
+      try {
+        await expect(setEvalThreshold(db, RAY_CHEN, null, {
+          controlId: "Q-01", initiativeId: null, tier: "high", newValue: 0.05, reason: "Vanished definition.",
+        })).rejects.toThrow(NotFoundError);
+      } finally {
+        spy.mockRestore();
+      }
+      expect(await db.select().from(auditEvents)).toHaveLength(beforeEvents.length);
+    });
+
+    it("locks the control definition row before reading the tier defaults on the tier-default branch", async () => {
+      const { events, spy } = recordLocks();
+      try {
+        await setEvalThreshold(db, RAY_CHEN, null, {
+          controlId: "Q-01", initiativeId: null, tier: "high", newValue: 0.05, reason: "Lock check.",
+        });
+      } finally {
+        spy.mockRestore();
+      }
+      expect(events).toContain("lock:control_definitions");
+    });
   });
 
   describe("setEvalThreshold — project override", () => {
@@ -192,6 +290,18 @@ describe("lib/services/admin-service", () => {
       }
       await expect(
         setEvalThreshold(db, RAY_CHEN, null, { controlId: "Q-01", initiativeId: null, tier: "high", newValue: 999, reason: "Out of range." }),
+      ).rejects.toThrow(ValidationError);
+    });
+
+    it("rejects a control the monitor never evaluates (no tier defaults / sustained window)", async () => {
+      const initiativeId = await memberChatCopilotId(db);
+      const [other] = (await db.select().from(controlDefinitions)).filter((c) => c.id !== "Q-01" && !c.tierDefaultThresholds);
+      const controlId = other!.id;
+      await expect(
+        setEvalThreshold(db, RAY_CHEN, null, { controlId, initiativeId, newValue: 0.06, reason: "No runtime evaluation." }),
+      ).rejects.toThrow(ValidationError);
+      await expect(
+        setEvalThreshold(db, RAY_CHEN, null, { controlId, initiativeId: null, tier: "high", newValue: 0.06, reason: "No runtime evaluation." }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -331,6 +441,32 @@ describe("lib/services/admin-service", () => {
         expect(await db.select().from(auditEvents).where(eq(auditEvents.initiativeId, initiativeId))).toEqual(beforeEvents);
       },
     );
+
+    it("pause and resume take no FOR UPDATE on a shared row for a caller from another workspace", async () => {
+      const initiativeId = await memberChatCopilotId(db); // seeded, workspace null
+      for (const fn of [pauseDeployment, resumeDeployment]) {
+        const { events, spy } = recordLocksOn(db);
+        try {
+          await expect(fn(db, RAY_CHEN, "ws-visitor", initiativeId, "Foreign lock check.")).rejects.toThrow(NotFoundError);
+        } finally {
+          spy.mockRestore();
+        }
+        expect(events).toContain("from:initiatives");
+        expect(events).not.toContain("lock:initiatives");
+      }
+    });
+
+    it("pause locks the initiative row for the owning workspace", async () => {
+      const initiativeId = await memberChatCopilotId(db);
+      await db.update(initiatives).set({ workspaceId: "ws-owner" }).where(eq(initiatives.id, initiativeId));
+      const { events, spy } = recordLocksOn(db);
+      try {
+        await pauseDeployment(db, RAY_CHEN, "ws-owner", initiativeId, "Owner lock check.");
+      } finally {
+        spy.mockRestore();
+      }
+      expect(events).toContain("lock:initiatives");
+    });
 
     it("pauseDeployment requires a non-empty reason (rejects empty string)", async () => {
       const initiativeId = await memberChatCopilotId(db);

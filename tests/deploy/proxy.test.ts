@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
-import { CONSOLE_PATH_PREFIXES, MARKETING_PATH_PREFIXES } from "@/lib/config/production-routes";
+import { CONSOLE_PATH_PREFIXES, DEMO_ONLY_PAGE_PREFIXES, MARKETING_PATH_PREFIXES } from "@/lib/config/production-routes";
 import { SESSION_COOKIE_NAME } from "@/lib/security/session-cookie-name";
 import { config, proxy } from "@/proxy";
 
@@ -74,6 +74,13 @@ describe("in production", () => {
     }
   });
 
+  it("answers the operator page with the same bare 404", async () => {
+    asProduction();
+    const response = await proxy(request("/operator"));
+    expect(response.status).toBe(404);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+  });
+
   it("passes a console page through when the request carries a session cookie, valid or not", async () => {
     asProduction();
     const response = await proxy(request("/inbox", { cookie: `other=1; ${SESSION_COOKIE_NAME}=whatever` }));
@@ -126,8 +133,8 @@ describe("the matcher", () => {
     for (const pattern of matcher) expect(pattern).toMatch(/^\//);
   });
 
-  it("matches '/' and every console and marketing prefix, and nothing else", () => {
-    const expected = ["/", ...[...CONSOLE_PATH_PREFIXES, ...MARKETING_PATH_PREFIXES].map((prefix) => `${prefix}/:path*`)];
+  it("matches '/' and every console, marketing and demo-only prefix, and nothing else", () => {
+    const expected = ["/", ...[...CONSOLE_PATH_PREFIXES, ...MARKETING_PATH_PREFIXES, ...DEMO_ONLY_PAGE_PREFIXES].map((prefix) => `${prefix}/:path*`)];
     expect([...matcher].sort()).toEqual(expected.sort());
   });
 });

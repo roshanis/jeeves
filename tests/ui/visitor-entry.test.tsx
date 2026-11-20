@@ -83,6 +83,12 @@ describe("visitor entry", () => {
     expect(document.querySelector('input[type="password"]')).toBeNull();
     expect(screen.queryByRole("dialog")).toBeNull();
   });
+  it("announces a start failure once when several entry buttons are mounted", async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ error: "rate limited" }), { status: 429 }));
+    render(<DeploymentModeProvider mode="demo"><RoleProvider><LiveSessionProvider liveModeAvailable><TryDemoButton showStatus={false} /><TryDemoButton /></LiveSessionProvider></RoleProvider></DeploymentModeProvider>);
+    fireEvent.click(screen.getAllByRole("button", { name: "Try the demo" })[0]!);
+    await waitFor(() => expect(screen.getAllByRole("alert")).toHaveLength(1));
+  });
   it("keeps a visible retry when starting the demo fails", async () => {
     fetchMock.mockResolvedValue(new Response(JSON.stringify({ error: "rate limited" }), { status: 429 }));
     show();

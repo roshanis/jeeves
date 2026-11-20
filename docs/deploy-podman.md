@@ -28,12 +28,19 @@ Podman-specific.
 ```bash
 cd deploy/podman
 cp env.example .env          # then edit: set POSTGRES_PASSWORD and JEEVES_COOKIE_SECRET
-podman compose up -d --build
-podman compose run --rm migrate      # create the schema
+podman compose --profile tools build   # the app and the migrate/seed image
+podman compose run --rm migrate      # create the schema, before the app takes traffic
 podman compose run --rm seed         # load the synthetic demo data
+podman compose up -d
 ```
 
 Then open `http://localhost:3000`.
+
+Open it as `localhost` (or over HTTPS). The app marks its workspace cookie
+`Secure` because the image runs with `NODE_ENV=production`, and browsers drop a
+`Secure` cookie over plain HTTP from any other address, such as
+`http://192.168.1.20:3000`. The pages then show only the seeded rows and a
+visitor's own initiatives are missing.
 
 The stack runs the demo: `compose.yaml` and the Quadlet unit set
 `JEEVES_MODE=demo`. The deployment mode defaults to **production** when unset,
@@ -105,6 +112,12 @@ anything you care about.
 
 Quadlet is Podman's native systemd integration: you write `.container` files
 and systemd generates the units.
+
+Health probes: `podman build` produces an OCI-format image by default, and
+that format ignores the Containerfile's `HEALTHCHECK` (Podman warns about it).
+The probes that count here are the ones in `compose.yaml` and the Quadlet
+`.container` files. Only add `--format docker` to the build commands below if
+you want the image to carry its own probe for a bare `podman run`.
 
 ```bash
 # Build both images first — Quadlet does not build.
@@ -216,27 +229,46 @@ Stop the stack first — exporting a volume under a running Postgres captures a
 torn snapshot. For a consistent online backup use `pg_dump` instead:
 
 ```bash
-podman compose exec db pg_dump -U jeeves jeeves > jeeves-$(date +%F).sql   # compose
-podman exec jeeves-db pg_dump -U jeeves jeeves > jeeves-$(date +%F).sql    # Quadlet
+podman compose exec -T db pg_dump -U jeeves jeeves > jeeves-$(date +%F).sql   # compose
+podman exec jeeves-db pg_dump -U jeeves jeeves > jeeves-$(date +%F).sql       # Quadlet
 ```
 
-**Restore from a `pg_dump` file.** Stop the app (`podman compose stop app`, or
-`systemctl --user stop jeeves-app`), restore into a fresh database, start the
-app, then check it:
+`-T` keeps compose from attaching a TTY, which would alter the dump.
+
+**Restore from a `pg_dump` file** into a fresh database, never over the live
+one (`deploy.md` §4 says why). Load the dump into `jeeves_restored`, stop the
+app (`podman compose stop app`, or `systemctl --user stop jeeves-app`), swap
+the database names so the app's unchanged `DATABASE_URL` reaches the restored
+copy, start the app again and check it:
 
 ```bash
-podman exec jeeves-db dropdb -U jeeves --if-exists jeeves   # compose: podman compose exec db ...
-podman exec jeeves-db createdb -U jeeves jeeves
-podman exec -i jeeves-db psql -U jeeves jeeves < jeeves-2026-01-01.sql
+podman exec jeeves-db createdb -U jeeves jeeves_restored   # compose: podman compose exec -T db ...
+podman exec -i jeeves-db psql -U jeeves -d jeeves_restored < jeeves-2026-01-01.sql
+# stop the app, then:
+podman exec jeeves-db psql -U jeeves -d postgres -c 'ALTER DATABASE jeeves RENAME TO jeeves_before_restore'
+podman exec jeeves-db psql -U jeeves -d postgres -c 'ALTER DATABASE jeeves_restored RENAME TO jeeves'
 # start the app again, then:
 curl -s localhost:3000/api/health      # {"status":"ok","database":"ok"}
-podman exec jeeves-db psql -U jeeves jeeves -c 'select count(*) from initiatives'
+podman exec jeeves-db psql -U jeeves jeeves -c 'select count(*) from audit_events'
 ```
 
-`dropdb` destroys the current database: only run it once you hold the dump.
+Keep `jeeves_before_restore` until the post-restore checks in `deploy.md` §4
+pass; it is what you compare the restored audit trail against. Drop it only
+after that.
 
 The same caveat as `deploy.md` §4 applies: nobody has restored from one of
 these. A backup you have not restored from is a hypothesis.
+
+### Stopping during a draft run
+
+Draft runs execute inside the HTTP request. One run may take up to 60 s, or
+120 s with deep review (`JEEVES_DEEP_REVIEW=1`). Podman sends SIGKILL 10 s
+after the stop signal by default, which cuts a live run off. Give the app
+longer than one run: `podman compose stop -t 130 app` (and `up -d -t 130`
+when an upgrade replaces the container) for compose, and for Quadlet a drop-in
+`~/.config/containers/systemd/jeeves-app.container.d/stop.conf` containing
+`[Container]` and `StopTimeout=130`. The server stops as soon as its open
+requests finish, so the longer limit costs nothing when nothing is running.
 
 ### Upgrading
 
@@ -245,7 +277,7 @@ git pull
 podman compose exec db pg_dump -U jeeves jeeves > jeeves-$(date +%F).sql   # back up first
 podman compose --profile tools build    # also rebuilds the migrator image
 podman compose run --rm migrate         # always run it: idempotent
-podman compose up -d
+podman compose up -d -t 130             # lets a running draft finish
 ```
 
 Plain `podman compose build` skips the `tools` profile, so `migrate` would run

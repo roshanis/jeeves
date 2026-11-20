@@ -107,6 +107,12 @@ export async function runBootChecks(deps: BootCheckDeps = {}): Promise<void> {
   };
 
   if (mode === "production") {
+    // Only an exact "demo" (in a build that has demo) opens the demo doors; anything
+    // else is the safe default, which is easy to hit by a typo such as "Demo".
+    const requested = env.JEEVES_MODE?.trim();
+    if (requested && requested.toLowerCase() !== "production") {
+      log("[boot] JEEVES_MODE is set but ignored: this server runs in production mode (demo needs exactly JEEVES_MODE=demo and a demo build).");
+    }
     try {
       assertProductionConfig(env);
     } catch (err) {
@@ -133,7 +139,7 @@ export async function runBootChecks(deps: BootCheckDeps = {}): Promise<void> {
           "which a caller can forge unless the proxy in front overwrites it. Set it (none with no proxy in front, 1 behind an AWS ALB or an appending proxy).",
       );
     }
-    if (!runtimeDatabaseUrl(env) && env.DATA_PROVIDER !== "db") return;
+    if (!runtimeDatabaseUrl(env) && env.DATA_PROVIDER?.trim().toLowerCase() !== "db") return;
   }
 
   const delays = mode === "demo" ? DEMO_CHECK_RETRY_DELAYS_MS : [];

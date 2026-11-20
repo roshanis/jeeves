@@ -1,10 +1,13 @@
 import Link from "next/link";
 import { getAppProvider, getCurrentWorkspaceId } from "@/app/_lib/data-provider";
 import { getDb } from "@/lib/db/client";
+import { runtimeDatabaseUrl } from "@/lib/db/runtime-config";
+import { resolveDataProviderMode } from "@/lib/data/provider-mode";
+import { logUnexpectedError } from "@/lib/http/log-error";
 import { listExceptions, type ExceptionRow } from "@/lib/services/exception-service";
 import { ControlCatalog } from "@/components/jeeves/control-catalog";
 import { ExceptionsPanel } from "@/components/jeeves/exceptions-panel";
-import { isProductionMode } from "@/lib/config/deployment-mode";
+import { isDemoMode, isProductionMode } from "@/lib/config/deployment-mode";
 import { BASE_DATE_MS } from "@/lib/demo/reference-data";
 import type { Metadata } from "next";
 
@@ -39,12 +42,20 @@ export default async function ControlsPage() {
   ).size;
 
   // Exceptions live in the real DB (not the read-model provider). Guard the
-  // read so a fresh/unseeded dev database never crashes the catalog page.
+  // read so a fresh/unseeded dev database never crashes the catalog page, and
+  // skip it in the read-only preview, which has no database to fail: there the
+  // panel keeps its empty state instead of reporting a failed load.
   let exceptions: ExceptionRow[] = [];
-  try {
-    exceptions = await listExceptions(getDb(), undefined, { viewerWorkspaceId });
-  } catch {
-    exceptions = [];
+  let exceptionsLoadFailed = false;
+  const dbMode = resolveDataProviderMode(process.env.DATA_PROVIDER, !!runtimeDatabaseUrl()) === "db";
+  if (dbMode) {
+    try {
+      exceptions = await listExceptions(getDb(), undefined, { viewerWorkspaceId });
+    } catch (err) {
+      logUnexpectedError("controls: could not load control exceptions", err);
+      exceptions = [];
+      exceptionsLoadFailed = true;
+    }
   }
 
   return (
@@ -52,21 +63,24 @@ export default async function ControlsPage() {
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Control catalog</h1>
         <p className="text-sm text-muted-foreground">
-          Every governance control Meridian enforces, across every domain —
+          Every governance control {isProductionMode() ? "enforced" : "Meridian enforces"}, across every domain —
           policy source, status, and evidence, read-only.
         </p>
         <p className="mt-1 text-sm text-muted-foreground">
           {controls.length} controls across {domainCount} domains + runtime.
         </p>
-        <Link
-          href="/frameworks"
-          className="mt-1 inline-block text-sm font-medium text-primary hover:underline"
-        >
-          Framework mappings (NIST AI RMF · EU AI Act) →
-        </Link>
+        {/* /frameworks is a marketing path: a production install answers it with an empty 404. */}
+        {isDemoMode() ? (
+          <Link
+            href="/frameworks"
+            className="mt-1 inline-block text-sm font-medium text-primary hover:underline"
+          >
+            Framework mappings (NIST AI RMF · EU AI Act) →
+          </Link>
+        ) : null}
       </div>
       <ControlCatalog controls={controls} asOfMs={isProductionMode() ? undefined : DEMO_AS_OF_MS} />
-      <ExceptionsPanel exceptions={exceptions} />
+      <ExceptionsPanel exceptions={exceptions} loadFailed={exceptionsLoadFailed} />
     </div>
   );
 }

@@ -52,6 +52,7 @@ import { runSingleDomainDraft, type RunSingleDomainOptions } from "../workflow/r
 import type { AgentPort } from "../agents/ports";
 import { evaluateCompleteness } from "../intake/completeness";
 import type { IntakePayload } from "../intake/types";
+import { intakePayloadSchema } from "../intake/schema";
 import { normalizeAdditionalAnswers } from "../intake/additional-questions";
 import { deriveTier } from "../triage/rules";
 import { requiredDomains } from "../triage/routing";
@@ -84,6 +85,14 @@ export class ValidationError extends Error {
   }
 }
 
+/** Stored intake fields as a payload; a legacy flat record is a typed error, not a TypeError. */
+function storedPayloadOrThrow(fields: unknown): IntakePayload {
+  if (!intakePayloadSchema.safeParse(fields).success) {
+    throw new ValidationError("stored intake is not in the current format");
+  }
+  return fields as IntakePayload;
+}
+
 /**
  * Thrown when a compare-and-set UPDATE affects 0 rows because the row's
  * state changed between this transaction's read and its write (security-
@@ -91,8 +100,11 @@ export class ValidationError extends Error {
  * under concurrency"). Route handlers map this to HTTP 409.
  */
 export class ConflictError extends Error {
-  constructor(message: string) {
+  /** Stable machine-readable reason, for clients that must not parse `message`. */
+  readonly code?: string;
+  constructor(message: string, code?: string) {
     super(message);
+    this.code = code;
     this.name = "ConflictError";
   }
 }
@@ -245,6 +257,21 @@ async function loadInitiativeOrThrow(
   const row = rows[0];
   if (!row) throw new NotFoundError("initiative", initiativeId);
   return row;
+}
+
+/**
+ * Lock the initiative row only after the caller is authorized: an unlocked
+ * read first, so a visitor from another workspace who sends a shared seeded
+ * id gets the NotFoundError without ever holding a lock on that shared row.
+ * An initiative's workspace never changes, so the peek cannot go stale.
+ */
+async function lockAuthorizedInitiative(
+  tx: Tx,
+  initiativeId: string,
+  authorize: (resourceWorkspaceId: string | null) => void,
+): Promise<typeof initiatives.$inferSelect> {
+  authorize((await loadInitiativeOrThrow(tx, initiativeId)).workspaceId);
+  return loadInitiativeOrThrow(tx, initiativeId, true);
 }
 
 /**
@@ -446,9 +473,9 @@ export async function getIntakeDraft(
   const initiative = await loadInitiativeOrThrow(db as Tx, initiativeId);
   assertEditableDraftWorkspace(initiative.workspaceId, workspaceId, initiativeId);
   requireRequesterOwnership(actor, initiative);
-  if (initiative.state !== "intake_draft") throw new ConflictError("intake is no longer editable");
+  if (initiative.state !== "intake_draft") throw new ConflictError("intake is no longer editable", "INTAKE_NOT_EDITABLE");
   const intake = await latestIntakeVersion(db as Tx, initiativeId);
-  if (!intake || intake.submitted) throw new ConflictError("intake is no longer editable");
+  if (!intake || intake.submitted) throw new ConflictError("intake is no longer editable", "INTAKE_NOT_EDITABLE");
   return { initiativeId, slug: initiative.slug, intakeVersionId: intake.id, version: intake.version, payload: normalizeAdditionalAnswers(intake.fields as unknown as IntakePayload) };
 }
 
@@ -457,12 +484,12 @@ export async function updateIntakeDraft(
   input: { initiativeId: string; payload: IntakePayload; expectedVersion: number; actor: Actor; workspaceId: string | null },
 ): Promise<IntakeDraftResult> {
   return db.transaction(async (tx) => {
-    const initiative = await loadInitiativeOrThrow(tx, input.initiativeId, true);
-    assertEditableDraftWorkspace(initiative.workspaceId, input.workspaceId, input.initiativeId);
+    const initiative = await lockAuthorizedInitiative(tx, input.initiativeId, (ws) =>
+      assertEditableDraftWorkspace(ws, input.workspaceId, input.initiativeId));
     requireRequesterOwnership(input.actor, initiative);
-    if (initiative.state !== "intake_draft") throw new ConflictError("intake is no longer editable");
+    if (initiative.state !== "intake_draft") throw new ConflictError("intake is no longer editable", "INTAKE_NOT_EDITABLE");
     const current = await latestIntakeVersion(tx, input.initiativeId);
-    if (!current || current.submitted) throw new ConflictError("intake is no longer editable");
+    if (!current || current.submitted) throw new ConflictError("intake is no longer editable", "INTAKE_NOT_EDITABLE");
     if (current.version !== input.expectedVersion) throw new ConflictError(`draft changed concurrently (expected version ${input.expectedVersion})`);
     // A repeated save of the same content must not append another full copy.
     if (isDeepStrictEqual(JSON.parse(JSON.stringify(input.payload)), current.fields)) {
@@ -473,7 +500,7 @@ export async function updateIntakeDraft(
     const intakeVersionId = `iv-${randomUUID()}`;
     await tx.insert(intakeVersions).values({ id: intakeVersionId, initiativeId: input.initiativeId, version: nextVersion, submitted: false, fields: input.payload, missing: completeness.gaps.map((g) => g.field), createdAt: new Date(nowTs()) });
     const initiativeUpdate = await tx.update(initiatives).set({ title: input.payload.basics.title, updatedAt: new Date(nowTs()) }).where(and(eq(initiatives.id, input.initiativeId), eq(initiatives.state, "intake_draft"))).returning();
-    if (initiativeUpdate.length === 0) throw new ConflictError("intake is no longer editable");
+    if (initiativeUpdate.length === 0) throw new ConflictError("intake is no longer editable", "INTAKE_NOT_EDITABLE");
     return { initiativeId: input.initiativeId, slug: initiative.slug, intakeVersionId, version: nextVersion, payload: input.payload };
   });
 }
@@ -514,8 +541,8 @@ export async function submitIntake(
   sessionWorkspaceId: string | null = null,
 ): Promise<SubmitIntakeResult | SubmitIntakeBlockedResult> {
   return db.transaction(async (tx) => {
-    const initiative = await loadInitiativeOrThrow(tx, initiativeId, true);
-    assertWorkspaceAccess(initiative.workspaceId, sessionWorkspaceId, "initiative", initiativeId);
+    const initiative = await lockAuthorizedInitiative(tx, initiativeId, (ws) =>
+      assertWorkspaceAccess(ws, sessionWorkspaceId, "initiative", initiativeId));
     requireRequesterOwnership(actor, initiative);
     const intake = await latestIntakeVersion(tx, initiativeId);
     if (!intake) {
@@ -523,11 +550,11 @@ export async function submitIntake(
     }
 
     if (initiative.state === "submitted" && intake.submitted) {
-      const completeness = evaluateCompleteness(intake.fields as unknown as IntakePayload);
+      const completeness = evaluateCompleteness(storedPayloadOrThrow(intake.fields));
       return { submitted: true, completenessPct: completeness.completenessPct };
     }
 
-    const payload = intake.fields as unknown as IntakePayload;
+    const payload = storedPayloadOrThrow(intake.fields);
     const completeness = evaluateCompleteness(payload);
 
     if (!completeness.canSubmit) {
@@ -555,7 +582,7 @@ export async function submitIntake(
       initiativeId,
       result.auditEvent,
       `Submitted intake v${intake.version} (${completeness.completenessPct}% complete).`,
-      { completenessPct: completeness.completenessPct },
+      { completenessPct: completeness.completenessPct, intakeVersionId: intake.id, intakeVersion: intake.version },
     );
 
     return { submitted: true, completenessPct: completeness.completenessPct };
@@ -628,14 +655,14 @@ export async function startQc(
   sessionWorkspaceId: string | null = null,
 ): Promise<StartQcResult> {
   return db.transaction(async (tx) => {
-    const initiative = await loadInitiativeOrThrow(tx, initiativeId, true);
-    assertWorkspaceAccess(initiative.workspaceId, sessionWorkspaceId, "initiative", initiativeId);
+    const initiative = await lockAuthorizedInitiative(tx, initiativeId, (ws) =>
+      assertWorkspaceAccess(ws, sessionWorkspaceId, "initiative", initiativeId));
 
     const intake = await latestIntakeVersion(tx, initiativeId);
     if (!intake) {
       throw new ValidationError("initiative has no intake version to QC");
     }
-    const completeness = evaluateCompleteness(intake.fields as unknown as IntakePayload);
+    const completeness = evaluateCompleteness(storedPayloadOrThrow(intake.fields));
 
     const result = transition(initiative.state as LifecycleState, "start_qc", actor, {
       ts: nowTs(),
@@ -646,7 +673,7 @@ export async function startQc(
       initiativeId,
       result.auditEvent,
       `Opened QC on intake v${intake.version} (${completeness.completenessPct}% complete).`,
-      { completenessPct: completeness.completenessPct },
+      { completenessPct: completeness.completenessPct, intakeVersionId: intake.id, intakeVersion: intake.version },
     );
 
     return { state: "in_qc", completenessPct: completeness.completenessPct };
@@ -683,8 +710,8 @@ export async function returnFromQc(
   }
 
   return db.transaction(async (tx) => {
-    const initiative = await loadInitiativeOrThrow(tx, initiativeId, true);
-    assertWorkspaceAccess(initiative.workspaceId, sessionWorkspaceId, "initiative", initiativeId);
+    const initiative = await lockAuthorizedInitiative(tx, initiativeId, (ws) =>
+      assertWorkspaceAccess(ws, sessionWorkspaceId, "initiative", initiativeId));
 
     const result = transition(initiative.state as LifecycleState, "return_to_requester", actor, {
       ts: nowTs(),
@@ -707,7 +734,7 @@ export async function returnFromQc(
       initiativeId,
       result.auditEvent,
       `Returned from QC to the requester: ${trimmed}`,
-      { reason: trimmed },
+      { reason: trimmed, ...(intake ? { intakeVersionId: intake.id, intakeVersion: intake.version } : {}) },
     );
 
     return { state: "intake_draft", reason: trimmed };
@@ -722,13 +749,13 @@ export async function triage(
   passedBy?: Actor,
 ): Promise<TriageFastLaneResult | TriageReviewResult> {
   return db.transaction(async (tx) => {
-    const initiative = await loadInitiativeOrThrow(tx, initiativeId);
-    assertWorkspaceAccess(initiative.workspaceId, sessionWorkspaceId, "initiative", initiativeId);
+    const initiative = await lockAuthorizedInitiative(tx, initiativeId, (ws) =>
+      assertWorkspaceAccess(ws, sessionWorkspaceId, "initiative", initiativeId));
     const intake = await latestIntakeVersion(tx, initiativeId);
     if (!intake) {
       throw new ValidationError("initiative has no intake version to triage");
     }
-    const payload = intake.fields as unknown as IntakePayload;
+    const payload = storedPayloadOrThrow(intake.fields);
     const flags = overlayFromStoredIntake(payload);
     const tier = deriveTier(flags);
     const domains = [...requiredDomains(tier, flags)].sort() as Domain[];
@@ -1086,7 +1113,9 @@ export async function signReview(
         signedMd: draftMd, signedMdSha256: createHash("sha256").update(draftMd).digest("hex"),
         evidenceSnapshot, citations: decision.citations, citationProvenance: decision.citationProvenance,
         missingEvidence: decision.missingEvidence, evidenceRequests: decision.evidenceRequests,
-        sourceMetadata: decision.sourceMetadata },
+        sourceMetadata: decision.sourceMetadata,
+        editedByReviewer: draftMd !== decision.draftMd,
+        agentDraftSha256: decision.draftMd === null ? null : createHash("sha256").update(decision.draftMd).digest("hex") },
     });
     return { cycleId, domain, status: "signed" };
   });
@@ -1289,10 +1318,13 @@ export async function decide(
   if (decision !== "conditionally_approved" && conditions.length > 0) {
     throw new ValidationError("conditions are only allowed on a conditionally_approved decision");
   }
+  if (conditions.some((c) => !c.text.trim() || !c.controlId.trim()) || citations.some((c) => !c.trim())) {
+    throw new ValidationError("conditions need text and a control id, and citations cannot be blank");
+  }
 
   return db.transaction(async (tx) => {
-    const initiative = await loadInitiativeOrThrow(tx, initiativeId, true);
-    assertWorkspaceAccess(initiative.workspaceId, sessionWorkspaceId, "initiative", initiativeId);
+    const initiative = await lockAuthorizedInitiative(tx, initiativeId, (ws) =>
+      assertWorkspaceAccess(ws, sessionWorkspaceId, "initiative", initiativeId));
     const cycle = await latestReviewCycle(tx, initiativeId);
     if (!cycle) {
       throw new ValidationError("initiative has no review cycle to decide on");

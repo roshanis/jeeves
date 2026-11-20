@@ -23,7 +23,7 @@ import {
   returnFromQc,
 } from "@/lib/services/initiative-service";
 import { IllegalTransitionError } from "@/lib/lifecycle/transitions";
-import { runMutationGuard } from "@/lib/services/route-guard";
+import { guardFailureResponse, runMutationGuard } from "@/lib/services/route-guard";
 import { isRouteId, notFoundResponse } from "@/lib/http/route-id";
 
 const bodySchema = z.object({ reason: z.string().min(1).max(2000) });
@@ -41,7 +41,7 @@ export async function POST(
     inputLimits: [{ field: "reason", maxChars: 2000 }],
   });
   if (!guard.ok) {
-    return Response.json({ error: guard.failure.message }, { status: guard.failure.status });
+    return guardFailureResponse(guard.failure);
   }
 
   const parsed = bodySchema.safeParse(guard.json);

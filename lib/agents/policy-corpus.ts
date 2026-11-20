@@ -14,7 +14,7 @@
  * fast-lane-policy.md) and `agents/reviewer/` (the reviewer's own
  * instructions/schema/track overlays) — both repo-root-relative.
  */
-import { readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
+import { readFileSync, readdirSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import { tool } from "@openai/agents";
@@ -191,10 +191,12 @@ export function readPolicyFileSafe(relPath: string): string {
   const { rootIndex, rest } = resolveCorpusPath(relPath);
   const content = readInRoot(rootIndex, rest);
   if (Buffer.byteLength(content, "utf-8") > MAX_READ_BYTES) {
-    // Slice by byte-safe approximation: cap by UTF-16 code units, which is
-    // a conservative (never-larger) proxy for UTF-8 byte length here since
-    // this corpus is prose Markdown, not multi-byte-heavy content.
-    return content.slice(0, MAX_READ_BYTES) + TRUNCATION_MARKER;
+    // Slice by UTF-8 bytes, backing off to a character boundary so the cut
+    // never decodes to U+FFFD.
+    const bytes = Buffer.from(content, "utf-8");
+    let end = MAX_READ_BYTES;
+    while (end > 0 && (bytes[end] & 0xc0) === 0x80) end--;
+    return bytes.subarray(0, end).toString("utf-8") + TRUNCATION_MARKER;
   }
   return content;
 }
@@ -202,12 +204,13 @@ export function readPolicyFileSafe(relPath: string): string {
 /** Recursively walks a resolved root directory, returning absolute .md file paths. */
 function walkMarkdownFiles(absDir: string): string[] {
   const out: string[] = [];
-  for (const entry of readdirSync(absDir)) {
-    const absEntry = path.join(absDir, entry);
-    const stat = statSync(absEntry);
-    if (stat.isDirectory()) {
+  // Dirent types describe the entry itself, so symlinks (which could escape the
+  // corpus or loop) are neither directories nor files here and are skipped.
+  for (const entry of readdirSync(absDir, { withFileTypes: true })) {
+    const absEntry = path.join(absDir, entry.name);
+    if (entry.isDirectory()) {
       out.push(...walkMarkdownFiles(absEntry));
-    } else if (stat.isFile() && path.extname(absEntry) === ALLOWED_EXTENSION) {
+    } else if (entry.isFile() && path.extname(absEntry) === ALLOWED_EXTENSION) {
       out.push(absEntry);
     }
   }
@@ -255,7 +258,13 @@ export function searchPolicyCorpus(
     if (results.length >= effectiveLimit) {
       break;
     }
-    const content = readPolicyFileSafe(relFile);
+    let content: string;
+    try {
+      content = readPolicyFileSafe(relFile);
+    } catch (err) {
+      if (err instanceof PolicyCorpusPathError) continue; // one bad file must not fail every search
+      throw err;
+    }
     const lines = content.split("\n");
     for (let i = 0; i < lines.length; i++) {
       if (results.length >= effectiveLimit) {

@@ -56,6 +56,7 @@ has no effect. Secrets are marked; never log or commit them.
 | Variable | Demo | Production | When | Secret | Default | Effect | Source |
 |---|---|---|---|---|---|---|---|
 | `JEEVES_TRUSTED_PROXY_HOPS` | warns if unset off Vercel; malformed fails boot | **required**: `none` or a non-negative integer | runtime | no | unset (read as 0) | Number of reverse proxies in front that *append* to `X-Forwarded-For`. Rate limits (sessions, mutations, operator-token attempts) key on the client address this selects. `0`: the platform overwrites the header, leftmost entry is the client (Vercel). `N >= 1`: the Nth entry from the right (AWS ALB `1`, CloudFront then ALB `2`). A chain shorter than `N` shares one bucket. `none`: nothing in front of the app, the header is ignored and every caller shares one bucket. | `lib/services/route-guard.ts`, `lib/config/deployment-mode.ts`, `lib/config/boot-checks.ts` |
+| `PORT` | optional | optional | runtime | no | `3000` | Port the server listens on (`next start`, the image's `server.js`). With the local PGlite store, server pages fetch case details from `http://127.0.0.1:PORT`, so it must be the port this process serves plain HTTP on. | `app/_lib/data-provider.ts` |
 
 Setting `0` anywhere but a platform that overwrites the header lets a caller
 forge the leftmost entry and get a fresh rate-limit bucket on every request.

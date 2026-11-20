@@ -32,7 +32,7 @@
  * demo/test can replay history deterministically and idempotently.
  */
 import { randomUUID } from "node:crypto";
-import { and, eq, inArray, isNotNull, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import type { Db } from "../db/client";
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import type * as schema from "../db/schema";
@@ -48,13 +48,15 @@ import {
   reviewDecisions,
   riskAssessments,
 } from "../db/schema";
-import type { Actor, LifecycleState, Observation, Tier } from "../domain/types";
+import type { Actor, Domain, LifecycleState, Observation, Tier } from "../domain/types";
 import { evaluateControl, resolveThreshold, type EffectiveControl } from "../controls/evaluate";
 import { transition, IllegalTransitionError, type AuditEventPayload } from "../lifecycle/transitions";
 import { redactDbError } from "../db/redact-error";
 import { currentControlRevisions } from "../controls/current-revisions";
 import { SYSTEM_ACTOR } from "./actors";
+import { enqueueReviewRequests } from "./notification-service";
 import { ConflictError } from "./initiative-service";
+import { viewerRowsFilter } from "./viewer-workspace";
 
 /**
  * Re-exported so route handlers/callers can catch a compare-and-set race on
@@ -497,6 +499,16 @@ export async function runMonitor(
             status: "pending",
             createdAt: new Date(wallTs),
           })));
+          // Same invariant as triage(): a review row never exists without a
+          // recorded request for it. Idempotent via the unique index.
+          await enqueueReviewRequests(tx, {
+            initiativeId: initiative.id,
+            initiativeTitle: initiative.title,
+            cycleId: reviewCycleId,
+            domains: [...new Set(latestRa.requiredDomains)] as Domain[],
+            tier,
+            now: wallTs,
+          });
         }
         await insertAuditEvent(
           tx,
@@ -571,6 +583,31 @@ export async function runMonitor(
         reviewCycleId: outcome.reviewCycleId,
       });
     } catch (err) {
+      // An overlapping run (cron retry vs manual) lost the state CAS because
+      // the other run just committed this very incident: re-read it outside
+      // the failed transaction and report it as already known, not a failure.
+      if (err instanceof ConflictError) {
+        const [recorded] = await db
+          .select()
+          .from(incidents)
+          .where(eq(incidents.identityKey, evalResult.identityKey!));
+        if (recorded) {
+          alreadyKnown += 1;
+          breaches.push({
+            initiativeId: initiative.id,
+            deploymentId: deployment.id,
+            controlId: RUNTIME_CONTROL_ID,
+            windowStartTs: evalResult.windowStartTs,
+            identityKey: evalResult.identityKey,
+            threshold,
+            breachingValues: evalResult.breachingObservations.map((o) => o.value),
+            isNew: false,
+            incidentId: recorded.id,
+            reviewCycleId: recorded.reviewCycleId,
+          });
+          continue;
+        }
+      }
       const message = redactDbError(err).message;
       // P1 fix (external-review — a failed detection pass rendered
       // identically to a clean run): a real deployment must leave a trace
@@ -607,7 +644,7 @@ export async function runMonitor(
 }
 
 /* -------------------------------------------------------------------------
- * Public read-only incident list (GET /api/monitor/incidents)
+ * Incident list (GET /api/monitor/incidents reads it via listIncidentsForViewer)
  * ---------------------------------------------------------------------- */
 
 export interface IncidentListRow {
@@ -620,18 +657,39 @@ export interface IncidentListRow {
   resolvedAt: string | null;
 }
 
+function toIncidentListRow(r: typeof incidents.$inferSelect): IncidentListRow {
+  return {
+    id: r.id,
+    deploymentId: r.deploymentId,
+    controlId: r.controlId,
+    windowStart: r.windowStart.toISOString(),
+    detectedAt: r.detectedAt.toISOString(),
+    reviewCycleId: r.reviewCycleId,
+    resolvedAt: r.resolvedAt ? r.resolvedAt.toISOString() : null,
+  };
+}
+
+/**
+ * Internal and UNSCOPED: every incident of every workspace, newest first.
+ * Not for routes or pages (they must use `listIncidentsForViewer`); kept as
+ * the unfiltered baseline the monitor tests compare against.
+ */
 export async function listIncidents(db: Db): Promise<IncidentListRow[]> {
   const rows = await db.select().from(incidents);
   return rows
     .slice()
     .sort((a, b) => b.detectedAt.getTime() - a.detectedAt.getTime())
-    .map((r) => ({
-      id: r.id,
-      deploymentId: r.deploymentId,
-      controlId: r.controlId,
-      windowStart: r.windowStart.toISOString(),
-      detectedAt: r.detectedAt.toISOString(),
-      reviewCycleId: r.reviewCycleId,
-      resolvedAt: r.resolvedAt ? r.resolvedAt.toISOString() : null,
-    }));
+    .map(toIncidentListRow);
+}
+
+/** Incidents of seeded deployments plus the viewer's own, newest first, filtered in SQL (an absent deployment/initiative is excluded by the inner joins). */
+export async function listIncidentsForViewer(db: Db, viewerWorkspaceId: string | null): Promise<IncidentListRow[]> {
+  const rows = await db
+    .select({ incident: incidents })
+    .from(incidents)
+    .innerJoin(deploymentVersions, eq(incidents.deploymentId, deploymentVersions.id))
+    .innerJoin(initiatives, eq(deploymentVersions.initiativeId, initiatives.id))
+    .where(viewerRowsFilter(viewerWorkspaceId))
+    .orderBy(desc(incidents.detectedAt));
+  return rows.map((r) => toIncidentListRow(r.incident));
 }

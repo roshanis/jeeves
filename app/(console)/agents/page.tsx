@@ -71,7 +71,7 @@ function AgentGroup({
               <span>
                 Accountable reviewer:{" "}
                 <span className="font-medium text-foreground">
-                  {a.accountablePersonaName ?? "Rotational — no fixed reviewer"}
+                  {(isDemoMode() ? a.accountablePersonaName : null) ?? "Rotational — no fixed reviewer"}
                 </span>
               </span>
               {a.policyId ? (

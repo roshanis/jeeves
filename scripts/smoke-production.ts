@@ -19,8 +19,10 @@
  *   SMOKE_DATABASE_URL=postgres://user:pass@127.0.0.1:5432/jeeves_smoke_local \
  *     npm run smoke:production
  *
- * Needs a finished build (it never builds). SMOKE_PORT (default 3217) picks the
- * port; SMOKE_SERVER=standalone|next-start forces the server command.
+ * Needs a finished build (it never builds; for the standalone server it copies
+ * .next/static into the standalone folder, as the Containerfile does).
+ * SMOKE_PORT (default 3217) picks the port; SMOKE_SERVER=standalone|next-start
+ * forces the server command.
  *
  * SMOKE_DEMO_LOCKED=1 is for a build made with JEEVES_DEMO_ENABLED=0 (what a
  * production image is built with). Such a build has demo mode compiled out, so
@@ -29,8 +31,9 @@
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync } from "node:fs";
+import { cpSync, existsSync } from "node:fs";
 import http from "node:http";
+import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -240,7 +243,7 @@ export function buildSmokeChecks(canary?: string): SmokeCheck[] {
     name: "GET /operator is closed",
     method: "GET",
     path: "/operator",
-    expect: { status: 404, bodyExcludes: ["Operator queue"] },
+    expect: { status: 404, bodyExcludes: ["Real requests", "operator-token-input"] },
   });
 
   // E. Reads are gated.
@@ -279,7 +282,7 @@ export function buildSmokeChecks(canary?: string): SmokeCheck[] {
   });
 
   // H. Unknown path.
-  checks.push({ name: "unknown path is 404", method: "GET", path: "/this-page-does-not-exist", expect: { status: 404 } });
+  checks.push({ name: "unknown path is 404", method: "GET", path: "/this-page-does-not-exist", expect: { status: 404, bodyExcludes: ["the public site"] } });
 
   return checks;
 }
@@ -389,6 +392,8 @@ const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout
 
 interface ServerCommand {
   label: string;
+  /** True for the standalone server, which needs .next/static copied beside it. */
+  standalone: boolean;
   args: string[];
   cwd: string;
 }
@@ -399,13 +404,24 @@ export function serverCommand(port: number, force: string | undefined): ServerCo
   if (useStandalone) {
     if (!existsSync(standalone)) throw new Error(".next/standalone/server.js is missing; SMOKE_SERVER=next-start can run without it");
     // What deploy/podman/Containerfile runs (it chdirs to its own directory itself).
-    return { label: "standalone (node .next/standalone/server.js)", args: [standalone], cwd: REPO_ROOT };
+    return { label: "standalone (node .next/standalone/server.js)", standalone: true, args: [standalone], cwd: REPO_ROOT };
   }
   return {
     label: "next-start (node node_modules/next/dist/bin/next start)",
+    standalone: false,
     args: [path.join(REPO_ROOT, "node_modules/next/dist/bin/next"), "start", "-p", String(port), "-H", "127.0.0.1"],
     cwd: REPO_ROOT,
   };
+}
+
+/** Where the standalone server looks for static assets; the Containerfile copies .next/static here. */
+export function standaloneStaticTarget(): string {
+  return path.join(REPO_ROOT, ".next/standalone/.next/static");
+}
+
+/** The first /_next/static script or stylesheet URL in a page, or null. */
+export function extractStaticAssetUrl(html: string): string | null {
+  return /\/_next\/static\/[^"'\s<>]+\.(?:js|css)(?:\?[^"'\s<>]*)?/.exec(html)?.[0] ?? null;
 }
 
 function spawnServer(cmd: ServerCommand, env: Record<string, string>): { child: ChildProcess; output: () => string } {
@@ -425,6 +441,18 @@ async function stopChild(child: ChildProcess): Promise<void> {
   const timer = setTimeout(() => child.kill("SIGKILL"), 5_000);
   await exited;
   clearTimeout(timer);
+}
+
+/** True when something already accepts connections on 127.0.0.1:`port`. */
+export function portInUse(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = net.connect({ host: "127.0.0.1", port });
+    socket.once("connect", () => {
+      socket.destroy();
+      resolve(true);
+    });
+    socket.once("error", () => resolve(false));
+  });
 }
 
 function request(port: number, check: Pick<SmokeCheck, "method" | "path" | "headers" | "body">): Promise<Observed> {
@@ -448,13 +476,33 @@ function request(port: number, check: Pick<SmokeCheck, "method" | "path" | "head
   });
 }
 
-function runToCompletion(args: string[], env: Record<string, string>): Promise<{ code: number | null; output: string }> {
+/** Default bound for a node script the smoke run waits on (the migration). */
+const RUN_TIMEOUT_MS = 120_000;
+
+/**
+ * Runs a node script and waits until its output is closed. A run that outlives
+ * `timeoutMs` is stopped and reported as `timedOut`, so a hung migration fails
+ * the smoke run with a reason instead of holding the job until its own limit.
+ */
+export function runToCompletion(
+  args: string[],
+  env: Record<string, string>,
+  timeoutMs = RUN_TIMEOUT_MS,
+): Promise<{ code: number | null; output: string; timedOut: boolean }> {
   return new Promise((resolve) => {
     const child = spawn(process.execPath, args, { cwd: REPO_ROOT, env: env as NodeJS.ProcessEnv, stdio: ["ignore", "pipe", "pipe"] });
     let output = "";
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      void stopChild(child);
+    }, timeoutMs);
     child.stdout.on("data", (d: Buffer) => (output += d.toString()));
     child.stderr.on("data", (d: Buffer) => (output += d.toString()));
-    child.on("exit", (code) => resolve({ code, output }));
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      resolve({ code, output, timedOut });
+    });
   });
 }
 
@@ -543,6 +591,7 @@ async function withSmokeDatabase<T>(databaseUrl: string, run: (db: SmokeSql) => 
 async function migrateAndStamp(databaseUrl: string): Promise<void> {
   const tsx = path.join(REPO_ROOT, "node_modules/tsx/dist/cli.mjs");
   const migrate = await runToCompletion([tsx, "scripts/migrate.ts"], { ...baseEnv(), DATABASE_URL: databaseUrl });
+  if (migrate.timedOut) throw new Error(`migration did not finish within ${RUN_TIMEOUT_MS / 1000} s:\n${redact(migrate.output, [databaseUrl])}`);
   if (migrate.code !== 0) throw new Error(`migration failed:\n${redact(migrate.output, [databaseUrl])}`);
 
   await withSmokeDatabase(databaseUrl, (db) => prepareSmokeDatabase(db, `smoke-${randomBytes(4).toString("hex")}`));
@@ -551,7 +600,7 @@ async function migrateAndStamp(databaseUrl: string): Promise<void> {
 async function runBootRefusal(c: BootRefusalCase, cmd: ServerCommand, good: Record<string, string>, secrets: string[]): Promise<string[]> {
   const { child, output } = spawnServer(cmd, c.modify(good));
   const exit = await new Promise<number | null | "timeout">((resolve) => {
-    child.once("exit", (code) => resolve(code));
+    child.once("close", (code) => resolve(code));
     setTimeout(() => resolve("timeout"), 30_000).unref();
   });
   const text = output();
@@ -603,6 +652,12 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (await portInUse(port)) {
+    console.error(`Port ${port} is in use: a server is already listening there. Stop it or set SMOKE_PORT.`);
+    process.exitCode = 2;
+    return;
+  }
+
   const secrets = databaseSecrets(databaseUrl);
   const cmd = serverCommand(port, process.env.SMOKE_SERVER);
   const demoLocked = process.env.SMOKE_DEMO_LOCKED === "1";
@@ -612,6 +667,8 @@ async function main(): Promise<void> {
       ? "Build: demo-locked (JEEVES_DEMO_ENABLED=0). The server runs WITH JEEVES_MODE=demo and must still behave as production."
       : "Build: demo-capable. The server runs without JEEVES_MODE.",
   );
+
+  if (cmd.standalone) cpSync(path.join(REPO_ROOT, ".next/static"), standaloneStaticTarget(), { recursive: true });
 
   console.log("Migrating and stamping the smoke database...");
   await migrateAndStamp(databaseUrl);
@@ -652,6 +709,21 @@ async function main(): Promise<void> {
           } catch (err) {
             record(false, check.name, [`request failed: ${err instanceof Error ? err.message : "unknown error"}`]);
           }
+        }
+        const name = "GET /sign-in links a static asset that is served";
+        try {
+          const page = await request(port, { method: "GET", path: SIGN_IN_PATH });
+          const asset = extractStaticAssetUrl(page.body);
+          if (!asset) {
+            record(false, name, ["no /_next/static script or stylesheet found in the /sign-in HTML"]);
+          } else {
+            const res = await request(port, { method: "GET", path: asset });
+            const type = res.headers["content-type"] ?? "";
+            const served = res.status === 200 && /javascript|css/.test(type);
+            record(served, name, served ? [] : [`${asset}: status ${res.status}, content-type ${type || "none"}`]);
+          }
+        } catch (err) {
+          record(false, name, [`request failed: ${err instanceof Error ? err.message : "unknown error"}`]);
         }
       }),
     );

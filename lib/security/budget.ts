@@ -8,6 +8,9 @@ import { eq, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
 import { runBudget } from "../db/schema";
 
+/** Daily model-token cap for the whole install: one value for both reservation paths. */
+export const DAILY_TOKEN_CAP = 500_000;
+
 /**
  * Persistence boundary for daily usage totals. Both the in-memory unit-test
  * store and the Neon/Drizzle `RunBudget` store implement this interface, so

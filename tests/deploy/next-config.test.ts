@@ -44,10 +44,24 @@ describe("next.config.ts", () => {
       expect((await loadConfig()).env).toEqual({ JEEVES_DEMO_ENABLED: "0" });
     });
 
+    it.each(["false", "no", "off", ""])("refuses to build with the unrecognised value %j", async (value) => {
+      vi.stubEnv("JEEVES_DEMO_ENABLED", value);
+      await expect(loadConfig()).rejects.toThrow(/JEEVES_DEMO_ENABLED/);
+    });
+
     it("never exposes the deployment mode itself to the browser bundle", async () => {
       const env = (await loadConfig()).env ?? {};
       expect(Object.keys(env).filter((key) => key.startsWith("NEXT_PUBLIC_"))).toEqual([]);
       expect(env).not.toHaveProperty("JEEVES_MODE");
     });
+  });
+});
+
+describe("next.config output tracing", () => {
+  it("keeps sharp and the libvips binaries out of the traced runtime (images are unoptimized)", () => {
+    expect(nextConfig.images?.unoptimized).toBe(true);
+    expect(nextConfig.outputFileTracingExcludes?.["*"]).toEqual(
+      expect.arrayContaining(["node_modules/sharp/**", "node_modules/@img/**"]),
+    );
   });
 });

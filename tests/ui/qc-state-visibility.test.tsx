@@ -38,6 +38,7 @@ function initiative(slug: string, state: InitiativeSummary["state"]): Initiative
 
 const baseProps = {
   recentDecisions: [],
+  decisionCounts: { approved: 0, conditional: 0, rejected: 0, total: 0 },
   alerts: [],
   incidentCount: 0,
   counts: { inReview: 0, slaBreaches: 0, reassessing: 0, deployed: 0 },

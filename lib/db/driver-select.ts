@@ -24,6 +24,12 @@ export type DbDriver = "neon" | "pg" | "pglite";
  *  a substring of the raw URL — "neon.tech.evil.example.com" is not Neon. */
 const NEON_HOST_SUFFIX = ".neon.tech";
 
+/** Host as compared against provider suffixes: percent-decoded, lower-cased,
+ *  trailing dot removed. Throws URIError on a malformed escape. */
+export function normalizeHost(hostname: string): string {
+  return decodeURIComponent(hostname).toLowerCase().replace(/\.$/, "");
+}
+
 /**
  * @param databaseUrl  process.env.DATABASE_URL
  * @param override     process.env.JEEVES_DB_DRIVER — "neon" or "pg"; anything
@@ -41,7 +47,7 @@ export function selectDriver(
 
   try {
     const { hostname } = new URL(databaseUrl);
-    return hostname.endsWith(NEON_HOST_SUFFIX) ? "neon" : "pg";
+    return normalizeHost(hostname).endsWith(NEON_HOST_SUFFIX) ? "neon" : "pg";
   } catch {
     // Unparseable means "not demonstrably Neon". node-postgres is the safer
     // default: it will surface a real connection error rather than silently

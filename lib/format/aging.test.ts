@@ -54,3 +54,13 @@ describe("ageMsSince", () => {
     expect(ageMsSince("2026-07-20T00:00:00.000Z", now)).toBe(0);
   });
 });
+
+describe("unparsable timestamps", () => {
+  it("ageMsSince treats an unparsable timestamp as zero age", () => {
+    expect(ageMsSince("garbage", Date.now())).toBe(0);
+    expect(ageMsSince("", Date.now())).toBe(0);
+  });
+  it("formatAge never renders NaN", () => {
+    expect(formatAge(NaN)).toBe("just now");
+  });
+});

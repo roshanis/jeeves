@@ -18,7 +18,7 @@
  * 200:   { reply: string, updatedPayload: object, gaps: CompletenessGap[], done: boolean }
  * 401:   { error: string }  (no/invalid session)
  * 403:   { error: string }  (non-requester persona)
- * 429:   { error: string }  (rate limit or demo token budget exhausted)
+ * 429:   { error: string }  (rate limit or daily model budget reached)
  * 400:   { error: string }  (malformed body / input-size cap exceeded)
  * 502/504/499: as app/api/chat/auditor/route.ts's PortFailure mapping.
  */
@@ -29,7 +29,7 @@ import { agentInitializationResponse, llmNotConfigured } from "@/lib/services/ag
 import { evaluateCompleteness } from "@/lib/intake/completeness";
 import type { IntakePayload } from "@/lib/intake/types";
 import { EMPTY_INTAKE_PAYLOAD } from "@/lib/intake/defaults";
-import { reserveDailyBudget, runMutationGuard } from "@/lib/services/route-guard";
+import { guardFailureResponse, reserveDailyBudget, runMutationGuard } from "@/lib/services/route-guard";
 
 const MAX_MESSAGES = 50;
 const MAX_MESSAGE_CHARS = 4000;
@@ -146,7 +146,7 @@ export async function POST(req: Request): Promise<Response> {
     inputTotalCap: MAX_MESSAGES * MAX_MESSAGE_CHARS + MAX_PARTIAL_PAYLOAD_CHARS,
   });
   if (!guard.ok) {
-    return Response.json({ error: guard.failure.message }, { status: guard.failure.status });
+    return guardFailureResponse(guard.failure);
   }
   const json = guard.json;
 
@@ -191,7 +191,7 @@ export async function POST(req: Request): Promise<Response> {
       conversation: parsed.data.conversation,
       partialPayload: parsed.data.partialPayload,
     },
-    { timeoutMs: AGENT_TIMEOUT_MS },
+    { signal: req.signal, timeoutMs: AGENT_TIMEOUT_MS },
   );
 
   if (!result.ok) {
