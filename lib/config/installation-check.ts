@@ -29,7 +29,9 @@ export type InstallationCheckCode =
   /** Production, and the database role cannot read the migration history. */
   | "migrations_unreadable"
   /** Production, and an append-only trigger on audit_events or installation is missing or disabled. */
-  | "audit_triggers";
+  | "audit_triggers"
+  /** Production, and the runtime database role is a superuser or owns the audit, installation or evidence tables. */
+  | "owner_role";
 
 /**
  * Thrown by verifyInstallation(). The message names what was found and what to
@@ -152,8 +154,9 @@ async function countUnappliedMigrations(db: InstallationDb): Promise<number> {
  * The triggers that make audit_events and installation append-only
  * (drizzle/0002, 0014, 0015). Each must exist and fire for the app's sessions
  * ('O', the default, or 'A', always; not 'D' disabled or 'R' replica only):
- * the app role owns these tables, so a DISABLE TRIGGER leaves the server
- * answering health checks with the audit log silently rewritable.
+ * a DISABLE TRIGGER by an owner would leave the server answering health checks
+ * with the audit log silently rewritable. verifyRuntimeRole closes the other
+ * half: production does not run as a role that owns these tables.
  */
 const APPEND_ONLY_TRIGGERS: { table: string; trigger: string }[] = [
   { table: "audit_events", trigger: "audit_events_no_update" },
@@ -268,7 +271,7 @@ export async function verifyInstallation(db: InstallationDb, mode: DeploymentMod
       throw new InstallationCheckError(
         "audit_triggers",
         `The append-only triggers that protect the audit log are missing or disabled: ${broken.join(", ")}. ` +
-          "Re-create or re-enable them (ALTER TABLE ... ENABLE TRIGGER, or re-apply drizzle/0002, 0014 and 0015) " +
+          "Re-create or re-enable them (ALTER TABLE ... ENABLE ALWAYS TRIGGER, or re-apply drizzle/0002, 0014, 0015 and 0017) " +
           "and find out who disabled them. Refusing to start.",
       );
     }
@@ -281,4 +284,42 @@ export async function verifyInstallation(db: InstallationDb, mode: DeploymentMod
       );
     }
   }
+}
+
+/** The tables whose guards only an owner can switch off. */
+const GUARDED_TABLES = ["audit_events", "installation", "evidence_documents", "evidence_packets", "evidence_assessments"];
+
+/**
+ * Production only: refuse to run as a role that can switch the guard triggers
+ * off. DISABLE TRIGGER, DROP TRIGGER and CREATE OR REPLACE FUNCTION need table
+ * (or function) ownership, and a superuser can do anything, so anything that
+ * can issue SQL as such a role can rewrite audit_events and installation and
+ * leave the catalog looking untouched (finding db-F5; migration 0017 covers
+ * session_replication_role, this covers ownership). Migrations run as an owner
+ * through DATABASE_MIGRATION_URL; the app runs as a role that owns nothing.
+ * Membership in the owner role counts (INHERIT), as it grants the same rights.
+ */
+export async function verifyRuntimeRole(db: InstallationDb): Promise<void> {
+  const names = GUARDED_TABLES.map((name) => `'${name}'`).join(", ");
+  const row = rowsOf<{ superuser: boolean; owned: string | null }>(
+    await db.execute(sql.raw(`
+      SELECT
+        (SELECT rolsuper FROM pg_roles WHERE rolname = current_user) AS superuser,
+        (SELECT string_agg(c.relname::text, ', ' ORDER BY c.relname) FROM pg_class c
+          WHERE c.relnamespace = to_regnamespace(current_schema()) AND c.relname IN (${names})
+            AND pg_has_role(current_user, c.relowner, 'USAGE')) AS owned
+    `)),
+  )[0];
+  if (!row?.superuser && !row?.owned) return;
+  const why = [
+    row?.superuser ? "is a superuser" : null,
+    row?.owned ? `owns ${row.owned}` : null,
+  ].filter(Boolean).join(" and ");
+  throw new InstallationCheckError(
+    "owner_role",
+    `The database role this server connects as ${why}, so anything that can run SQL as that role can switch off ` +
+      "the triggers that keep the audit log and the installation stamp append-only. Run migrations as an owner role " +
+      "through DATABASE_MIGRATION_URL and run the app as a role that owns nothing (see docs/deploy.md, Database roles). " +
+      "JEEVES_DB_ALLOW_OWNER_ROLE=1 skips this check, for a throwaway evaluation install only. Refusing to start.",
+  );
 }

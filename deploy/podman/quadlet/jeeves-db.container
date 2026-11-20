@@ -4,6 +4,11 @@
 #   mkdir -p ~/.config/containers/systemd
 #   cp deploy/podman/quadlet/* ~/.config/containers/systemd/
 #   cp deploy/podman/env.example ~/.config/containers/systemd/jeeves.env  # then edit
+#   # the database unit reads its own env file: POSTGRES_PASSWORD,
+#   # JEEVES_OWNER_PASSWORD and JEEVES_APP_PASSWORD only (mode 0600)
+#   mkdir ~/.config/containers/systemd/jeeves-initdb
+#   cp deploy/podman/initdb/10-jeeves-roles.sh deploy/sql/jeeves-runtime-grants.sql \
+#     ~/.config/containers/systemd/jeeves-initdb/
 #   systemctl --user daemon-reload && systemctl --user start jeeves-app
 #
 # Quadlet generates a .service from this file at daemon-reload; do not write
@@ -17,10 +22,14 @@ ContainerName=jeeves-db
 Image=docker.io/library/postgres:16-alpine
 Network=jeeves.network
 Volume=jeeves-db.volume:/var/lib/postgresql/data
+# Runs once, on an empty data directory: creates jeeves_owner and jeeves_app.
+Volume=%h/.config/containers/systemd/jeeves-initdb/10-jeeves-roles.sh:/docker-entrypoint-initdb.d/10-jeeves-roles.sh:ro
+Volume=%h/.config/containers/systemd/jeeves-initdb/jeeves-runtime-grants.sql:/opt/jeeves/jeeves-runtime-grants.sql:ro
 
 # Credentials come from an environment file that stays OUT of the repo.
-# Quadlet reads it at start; keep it mode 0600.
-EnvironmentFile=%h/.config/containers/systemd/jeeves.env
+# Quadlet reads it at start; keep it mode 0600. It is not jeeves.env: the app
+# unit reads that one, and the app must never see the superuser or owner password.
+EnvironmentFile=%h/.config/containers/systemd/jeeves-db.env
 Environment=POSTGRES_DB=jeeves
 Environment=POSTGRES_USER=jeeves
 

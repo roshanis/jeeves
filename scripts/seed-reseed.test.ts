@@ -74,7 +74,7 @@ describe("scripts/seed.ts — reseed over live state", () => {
     await liveTriage();
     await seedDatabase(testDb);
 
-    // tgenabled 'O' = fires in origin/local mode, i.e. enabled.
+    // tgenabled 'A' = fires in every session, including replica ones (migration 0017).
     const result = await testDb.execute<{ tgname: string; tgenabled: string }>(sql`
       select t.tgname, t.tgenabled
       from pg_trigger t join pg_class c on c.oid = t.tgrelid
@@ -85,7 +85,7 @@ describe("scripts/seed.ts — reseed over live state", () => {
       "audit_events_no_truncate",
       "audit_events_no_update",
     ]);
-    for (const row of result.rows) expect(row.tgenabled, row.tgname).toBe("O");
+    for (const row of result.rows) expect(row.tgenabled, row.tgname).toBe("A");
 
     await expect(testDb.delete(auditEvents)).rejects.toThrow();
     await expect(testDb.execute(sql`TRUNCATE audit_events`)).rejects.toThrow();

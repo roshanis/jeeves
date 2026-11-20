@@ -1,7 +1,7 @@
 # Jeeves — Deployment Runbook
 
 This is the practical "how do I actually run this" doc. It covers running the
-demo locally, deploying it to Vercel with Neon Postgres, the known gaps you
+demo locally, deploying it to Vercel with Supabase or Neon Postgres, the known gaps you
 should be honest about if you show this to anyone, and a demo-day checklist.
 
 Jeeves is a **fictional demo**: "Meridian Health" is not a real organization,
@@ -207,6 +207,152 @@ npm run start        # next start (after build)
    Vercel dashboard/CLI). Visit the deployed URL and confirm the portfolio
    board renders the 12 seeded initiatives before sharing the link further.
 
+### Supabase
+
+The live demo runs on Supabase (see
+[`DEPLOYED-DEMO-REPAIR-2026-09-20.md`](./DEPLOYED-DEMO-REPAIR-2026-09-20.md));
+Neon stays a supported provider. For a Supabase project:
+
+- Connect the Vercel Supabase integration. It supplies `POSTGRES_URL`, which
+  is the transaction pooler (port 6543) and is right for runtime traffic.
+- Set `DATABASE_MIGRATION_URL` to the **direct or session-pooler connection on
+  port 5432**. The transaction pooler cannot run migrations and `db:migrate`
+  refuses it.
+- `npm run db:migrate` applies the API-role lockdown itself. Supabase serves
+  the public schema through its Data API to the `anon` and `authenticated`
+  roles and grants them every new table by default, so migration 0016 and a
+  step after every migrate run enable row level security on each Jeeves table
+  and revoke all access from `PUBLIC`, `anon` and `authenticated`, including
+  the tables' sequences. A table a later migration adds is covered by the same
+  run. On a database without both roles (Neon, RDS, Podman) the step does
+  nothing. If it fails, `db:migrate` exits non-zero and names it; the database
+  is then not locked down, so fix the cause and run it again.
+- Leave the Data API unused: do not add policies or grants for `anon` or
+  `authenticated`, and do not expose the anon key to anything that does not need
+  it. Jeeves reaches the database only through its own server connection.
+
+### Database roles
+
+A production install uses two database roles, because whoever can issue SQL as
+the role that **owns** `audit_events` and `installation` can switch their guard
+triggers off (`ALTER TABLE ... DISABLE TRIGGER`, `DROP TRIGGER`, or replacing
+the trigger function), rewrite history and re-enable them. Revoking `TRIGGER`
+would not stop that: that privilege only governs creating triggers. Ownership
+is what matters.
+
+- `jeeves_owner` owns the schema. It is used only by `npm run db:migrate`,
+  through `DATABASE_MIGRATION_URL`.
+- `jeeves_app` owns nothing. It is the role in `DATABASE_URL`. It reads and
+  writes ordinary tables, only reads and inserts into `audit_events`, the
+  evidence documents, evidence assessments and `installation`, can update (not
+  delete) `evidence_packets` because a draft packet is revised and submitted in
+  place, and holds no `TRUNCATE`.
+
+Migration 0017 also sets every guard trigger to `ENABLE ALWAYS`, so they fire
+even in a session that sets `session_replication_role = replica`.
+
+Create the two roles once, then run the grants file as an administrator in the
+Jeeves database: before the first `db:migrate`, and again after it (it is
+idempotent; the second run narrows the append-only tables, which do not exist
+yet at the first):
+
+```sql
+CREATE ROLE jeeves_owner LOGIN NOSUPERUSER PASSWORD '<owner password>';
+CREATE ROLE jeeves_app   LOGIN NOSUPERUSER PASSWORD '<app password>';
+```
+
+`deploy/sql/jeeves-runtime-grants.sql`:
+
+```sql
+-- Jeeves database roles: grants for the two-role layout (docs/deploy.md, "Database roles").
+--
+--   jeeves_owner  owns the schema; used only by `npm run db:migrate` (DATABASE_MIGRATION_URL).
+--   jeeves_app    owns nothing; the application's runtime role (DATABASE_URL).
+--
+-- Create the two roles first (a login role each, NOSUPERUSER, with your own
+-- passwords), then run THIS file as an administrator in the Jeeves database:
+--
+--   CREATE ROLE jeeves_owner LOGIN NOSUPERUSER PASSWORD '<owner password>';
+--   CREATE ROLE jeeves_app   LOGIN NOSUPERUSER PASSWORD '<app password>';
+--
+-- Run it before the first `db:migrate`, and again after it. It is idempotent.
+-- Before the migrate, the default privileges make every table the owner creates
+-- usable by jeeves_app. After it, the last section narrows the append-only
+-- tables: the triggers from migrations 0002, 0011, 0014, 0015 and 0017 refuse
+-- UPDATE and DELETE on them whatever the grants say, and the app cannot switch
+-- the triggers off because it does not own the tables; withholding the
+-- privileges as well is a second layer, not the control.
+--
+-- jeeves_app never gets TRUNCATE, TRIGGER, REFERENCES or any CREATE right.
+DO $$
+BEGIN
+  EXECUTE format('GRANT CONNECT, CREATE ON DATABASE %I TO jeeves_owner', current_database());
+  EXECUTE format('GRANT CONNECT ON DATABASE %I TO jeeves_app', current_database());
+END
+$$;
+
+REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+GRANT USAGE, CREATE ON SCHEMA public TO jeeves_owner;
+GRANT USAGE ON SCHEMA public TO jeeves_app;
+
+-- Tables and sequences that later migrations create get the same grants.
+-- The drizzle schema (migration history, read by the production boot check)
+-- is created by the first migrate, so its grants come from these defaults.
+ALTER DEFAULT PRIVILEGES FOR ROLE jeeves_owner GRANT USAGE ON SCHEMAS TO jeeves_app;
+ALTER DEFAULT PRIVILEGES FOR ROLE jeeves_owner GRANT SELECT ON TABLES TO jeeves_app;
+ALTER DEFAULT PRIVILEGES FOR ROLE jeeves_owner IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO jeeves_app;
+ALTER DEFAULT PRIVILEGES FOR ROLE jeeves_owner IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO jeeves_app;
+
+-- Objects that already exist (a re-run after the migrate).
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO jeeves_app;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO jeeves_app;
+DO $$
+BEGIN
+  IF to_regclass('drizzle.__drizzle_migrations') IS NOT NULL THEN
+    GRANT USAGE ON SCHEMA drizzle TO jeeves_app;
+    GRANT SELECT ON drizzle.__drizzle_migrations TO jeeves_app;
+  END IF;
+END
+$$;
+
+-- Append-only tables: read and insert only. evidence_packets keeps UPDATE
+-- because a draft packet is revised and then submitted in place; its trigger
+-- freezes it once submitted.
+DO $$
+DECLARE
+  tbl text;
+BEGIN
+  FOREACH tbl IN ARRAY ARRAY['audit_events', 'evidence_documents', 'evidence_assessments', 'installation', 'evidence_packets'] LOOP
+    IF to_regclass(format('public.%I', tbl)) IS NOT NULL THEN
+      EXECUTE format('REVOKE DELETE, TRUNCATE ON public.%I FROM jeeves_app', tbl);
+      IF tbl <> 'evidence_packets' THEN
+        EXECUTE format('REVOKE UPDATE ON public.%I FROM jeeves_app', tbl);
+      END IF;
+    END IF;
+  END LOOP;
+END
+$$;
+```
+
+The `ALTER DEFAULT PRIVILEGES` lines give tables that later migrations create
+the same grants. A later migration that adds an append-only table needs a
+matching line in the last block of that file.
+
+In production mode the server refuses to start when its database role is a
+superuser or owns `audit_events`, `installation` or the evidence tables, and
+the message names the fix. `JEEVES_DB_ALLOW_OWNER_ROLE=1` turns the check off,
+for a throwaway evaluation install only; the server logs a warning on every
+boot while it is set. The Podman stack sets the two roles up itself
+(`docs/deploy-podman.md`). On Neon and RDS create the two roles in the same way
+and point `DATABASE_MIGRATION_URL` and `DATABASE_URL` at them.
+
+On Supabase the migration enables row level security on every table with no
+policy, so a runtime role that does not own the tables sees no rows unless it
+has the `BYPASSRLS` attribute (`ALTER ROLE jeeves_app BYPASSRLS`). That setup
+has not been verified on Supabase here; until it is, a production install on
+Supabase would run as the owning role and set `JEEVES_DB_ALLOW_OWNER_ROLE=1`,
+which keeps the trigger guards but not the ownership protection.
+
 ---
 
 ## 3. KNOWN GAPS — read this before you rely on this in production
@@ -310,6 +456,10 @@ different problems.
    the refusals that hold whatever `ALLOW_SEED` and `NODE_ENV` say; one is a
    database stamped `production` (`installation.deploy_mode`, migration
    0015), which the seed and reset scripts refuse.
+4. **On Supabase, backups and point-in-time recovery are Supabase's** (the
+   Supabase recipe below). A restored database must be migrated again:
+   run `npm run db:migrate` against it before the app uses it, so the API-role
+   lockdown (section 2, Supabase) is applied to the restored tables.
 
 ### Restore
 

@@ -4,6 +4,7 @@ import { sql } from "drizzle-orm";
 import { clearInstallationFixtures, createTestDb, closeTestDb, type TestDb } from "./test-client";
 import { installation } from "./schema";
 import { installationTableExists, readInstallationStamp } from "./installation";
+import { rearmGuardTriggers } from "./guard-triggers";
 
 /**
  * Migration 0015 — the installation stamp.
@@ -114,7 +115,7 @@ describe("migration 0015 — installation stamp", () => {
     it("refuses to change deploy_mode away from production", async () => {
       await db.execute(sql`ALTER TABLE installation DISABLE TRIGGER USER`);
       await db.execute(sql`UPDATE installation SET deploy_mode = 'production'`);
-      await db.execute(sql`ALTER TABLE installation ENABLE TRIGGER USER`);
+      await rearmGuardTriggers(db, ["installation"]);
       await expectRejected(`UPDATE installation SET deploy_mode = 'demo'`, /deploy_mode is immutable/);
       expect((await readInstallationStamp(db))?.deployMode).toBe("production");
     });
@@ -153,7 +154,7 @@ describe("migration 0015 — installation stamp", () => {
     it("blocks TRUNCATE even on an empty table", async () => {
       await db.execute(sql`ALTER TABLE installation DISABLE TRIGGER USER`);
       await db.execute(sql`DELETE FROM installation`);
-      await db.execute(sql`ALTER TABLE installation ENABLE TRIGGER USER`);
+      await rearmGuardTriggers(db, ["installation"]);
       await expectRejected(`TRUNCATE installation`, /TRUNCATE is not permitted/);
     });
 

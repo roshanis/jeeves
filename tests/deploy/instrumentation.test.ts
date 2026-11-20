@@ -86,11 +86,28 @@ describe("instrumentation register()", () => {
     vi.stubEnv("APP_BASE_URL", "https://jeeves.example.com");
     vi.stubEnv("JEEVES_TENANT_ID", "tenant-acme");
     vi.stubEnv("DATA_PROVIDER", "db");
+    // PGlite connects as a superuser, which production refuses without this opt-out.
+    vi.stubEnv("JEEVES_DB_ALLOW_OWNER_ROLE", "1");
     await stampedDatabase("production");
     await register({ exit, log, getDb });
 
     expect(exit).not.toHaveBeenCalled();
     expect(bootFailure()).toBeNull();
+  });
+
+  it("refuses a production boot whose database role is a superuser, naming the fix", async () => {
+    stubProductionBootEnv();
+    vi.stubEnv("DATABASE_URL", "postgres://jeeves_app:pw@db.internal:5432/jeeves?sslmode=verify-full");
+    vi.stubEnv("JEEVES_COOKIE_SECRET", "0123456789abcdef0123456789abcdef");
+    vi.stubEnv("APP_BASE_URL", "https://jeeves.example.com");
+    vi.stubEnv("JEEVES_TENANT_ID", "tenant-acme");
+    vi.stubEnv("DATA_PROVIDER", "db");
+    await stampedDatabase("production");
+    await register({ exit, log, getDb });
+
+    expect(exit).toHaveBeenCalledWith(1);
+    expect(bootFailure()).toMatch(/superuser/);
+    expect(bootFailure()).toContain("DATABASE_MIGRATION_URL");
   });
 
   it("marks the boot failed and exits when a valid production configuration meets an unstamped database", async () => {

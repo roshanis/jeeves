@@ -10,6 +10,7 @@ import { sql } from "drizzle-orm";
 import { drizzle, type PgliteDatabase } from "drizzle-orm/pglite";
 import { migrate } from "drizzle-orm/pglite/migrator";
 import * as schema from "./schema";
+import { rearmGuardTriggers } from "./guard-triggers";
 
 export type TestDb = PgliteDatabase<typeof schema> & {
   $client: PGlite;
@@ -58,12 +59,12 @@ export async function closeTestDb(db: TestDb): Promise<void> {
  * Booting PGlite and replaying every migration costs more than the cases
  * themselves. Only for suites that add no rows under initiatives; the
  * installation trigger is bypassed with the same DISABLE TRIGGER USER that
- * scripts/seed.ts uses for its maintenance wipe, then re-armed.
+ * scripts/seed.ts uses for its maintenance wipe, then re-armed ENABLE ALWAYS.
  */
 export async function clearInstallationFixtures(db: TestDb): Promise<void> {
   await db.execute(sql`ALTER TABLE installation DISABLE TRIGGER USER`);
   await db.execute(sql`DELETE FROM installation`);
-  await db.execute(sql`ALTER TABLE installation ENABLE TRIGGER USER`);
+  await rearmGuardTriggers(db, ["installation"]);
   await db.execute(sql`DELETE FROM sessions`);
   await db.execute(sql`DELETE FROM initiatives`);
 }

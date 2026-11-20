@@ -106,6 +106,9 @@ export function buildServerEnv(opts: { databaseUrl: string; port: number; cookie
     JEEVES_TENANT_ID: "smoke-tenant",
     // Loopback, no proxy in front: nothing appends to X-Forwarded-For.
     JEEVES_TRUSTED_PROXY_HOPS: "0",
+    // The disposable smoke database is reached as the CI service's one user,
+    // which owns the schema; production refuses that role otherwise.
+    JEEVES_DB_ALLOW_OWNER_ROLE: "1",
   };
 }
 

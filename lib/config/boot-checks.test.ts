@@ -60,15 +60,33 @@ beforeAll(async () => {
   await lagging.execute(sql`DROP TABLE installation`);
 });
 
+/**
+ * Production refuses a superuser or owner runtime role, and PGlite connects as
+ * a superuser. A case that expects a production boot to pass runs the check as
+ * this role, which owns nothing (the layout docs/deploy.md asks for).
+ */
+async function asAppRole(db: TestDb): Promise<TestDb> {
+  await db.execute(sql`DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'boot_app') THEN CREATE ROLE boot_app NOSUPERUSER; END IF;
+  END $$`);
+  await db.execute(sql`GRANT USAGE ON SCHEMA public, drizzle TO boot_app`);
+  await db.execute(sql`GRANT ALL ON ALL TABLES IN SCHEMA public TO boot_app`);
+  await db.execute(sql`GRANT SELECT ON drizzle.__drizzle_migrations TO boot_app`);
+  await db.execute(sql`SET ROLE boot_app`);
+  return db;
+}
+
 /** The migrated database, empty except for the stamp asked for. */
 async function database(stamp?: "demo" | "production"): Promise<TestDb> {
+  await shared.execute(sql`RESET ROLE`);
   await clearInstallationFixtures(shared);
   if (stamp) await shared.insert(installation).values({ deployMode: stamp, installId: `inst-${stamp}` });
   return shared;
 }
 
-afterEach(() => {
+afterEach(async () => {
   resetBootStateForTests();
+  await shared.execute(sql`RESET ROLE`);
 });
 
 afterAll(async () => {
@@ -87,7 +105,7 @@ describe("runBootChecks", () => {
       resetBootStateForTests();
 
       const ok = deps(COMPLETE_PRODUCTION);
-      ok.getDb.mockResolvedValue(await database("production"));
+      ok.getDb.mockResolvedValue(await asAppRole(await database("production")));
       await runBootChecks(ok);
       expect(ok.exit).not.toHaveBeenCalled();
       expect(installationGateClosed()).toBe(false);
@@ -95,11 +113,51 @@ describe("runBootChecks", () => {
 
     it("lets a complete configuration boot on a production-stamped database", async () => {
       const d = deps(COMPLETE_PRODUCTION);
-      d.getDb.mockResolvedValue(await database("production"));
+      d.getDb.mockResolvedValue(await asAppRole(await database("production")));
       await runBootChecks(d);
       expect(d.exit).not.toHaveBeenCalled();
       expect(d.log).not.toHaveBeenCalled();
       expect(bootFailure()).toBeNull();
+    });
+
+    describe("runtime database role", () => {
+      // PGlite connects as a superuser, which is exactly what production refuses.
+      it("refuses a superuser or owner runtime role and names the fix", async () => {
+        const d = deps(COMPLETE_PRODUCTION);
+        d.getDb.mockResolvedValue(await database("production"));
+        await runBootChecks(d);
+        expect(d.exit).toHaveBeenCalledWith(1);
+        expect(bootFailure()).toMatch(/superuser/);
+        expect(bootFailure()).toContain("DATABASE_MIGRATION_URL");
+        expect(bootFailure()).toContain("docs/deploy.md");
+      });
+
+      it("JEEVES_DB_ALLOW_OWNER_ROLE=1 lets it boot and warns on every boot", async () => {
+        for (let boot = 0; boot < 2; boot++) {
+          const d = deps({ ...COMPLETE_PRODUCTION, JEEVES_DB_ALLOW_OWNER_ROLE: "1" });
+          d.getDb.mockResolvedValue(await database("production"));
+          await runBootChecks(d);
+          expect(d.exit).not.toHaveBeenCalled();
+          const logged = d.log.mock.calls.map((c) => c.join(" "));
+          expect(logged).toHaveLength(1);
+          expect(logged[0]).toMatch(/JEEVES_DB_ALLOW_OWNER_ROLE/);
+          expect(logged[0]).toMatch(/throwaway evaluation/);
+        }
+      });
+
+      it("only the exact value 1 opts out", async () => {
+        const d = deps({ ...COMPLETE_PRODUCTION, JEEVES_DB_ALLOW_OWNER_ROLE: "true" });
+        d.getDb.mockResolvedValue(await database("production"));
+        await runBootChecks(d);
+        expect(d.exit).toHaveBeenCalledWith(1);
+      });
+
+      it("demo mode never looks at the role", async () => {
+        const d = deps({ ...COMPLETE_PRODUCTION, JEEVES_MODE: "demo" });
+        d.getDb.mockResolvedValue(await database("demo"));
+        await runBootChecks(d);
+        expect(d.exit).not.toHaveBeenCalled();
+      });
     });
 
     it("refuses to boot when the database on another host is reached without verified TLS, before opening it", async () => {
@@ -117,14 +175,14 @@ describe("runBootChecks", () => {
 
     it("boots a plaintext database on this host when the same-host opt-out is set", async () => {
       const d = deps({ ...COMPLETE_PRODUCTION, DATABASE_URL: "postgres://jeeves_app:s3cr3t-db-pw@db.internal:5432/jeeves", JEEVES_DB_ALLOW_UNVERIFIED: "same-host" });
-      d.getDb.mockResolvedValue(await database("production"));
+      d.getDb.mockResolvedValue(await asAppRole(await database("production")));
       await runBootChecks(d);
       expect(d.exit).not.toHaveBeenCalled();
     });
 
     it("logs one line, without the value, when JEEVES_MODE is set but not exactly demo", async () => {
       const d = deps({ ...COMPLETE_PRODUCTION, JEEVES_MODE: "Demo" });
-      d.getDb.mockResolvedValue(await database("production"));
+      d.getDb.mockResolvedValue(await asAppRole(await database("production")));
       await runBootChecks(d);
       expect(d.exit).not.toHaveBeenCalled();
       const logged = d.log.mock.calls.map((c) => c.join(" "));

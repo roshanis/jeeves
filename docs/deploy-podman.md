@@ -27,9 +27,10 @@ Podman-specific.
 
 ```bash
 cd deploy/podman
-cp env.example .env          # then edit: set POSTGRES_PASSWORD and JEEVES_COOKIE_SECRET
+cp env.example .env          # then edit: set the three database passwords and JEEVES_COOKIE_SECRET
 podman compose --profile tools build   # the app and the migrate/seed image
 podman compose run --rm migrate      # create the schema, before the app takes traffic
+podman compose run --rm grants       # second pass of the role grants, once the tables exist
 podman compose run --rm seed         # load the synthetic demo data
 podman compose up -d
 ```
@@ -70,7 +71,72 @@ the Quadlet units in §3 — they are the Podman-native path.
 |---|---|---|
 | `db` | `postgres:16-alpine` | **Not** published to the host. Data in the `jeeves-pgdata` volume. |
 | `app` | built from `Containerfile` (`runner`) | The only published port. Non-root, read-only rootfs. |
-| `migrate` / `seed` | built from `Containerfile` (`migrator`) | One-shot jobs, `tools` profile. |
+| `migrate` / `seed` | built from `Containerfile` (`migrator`) | One-shot jobs, `tools` profile. Connect as `jeeves_owner`. |
+| `grants` | `postgres:16-alpine` | One-shot job, `tools` profile. Second pass of the role grants (below). |
+
+### Database roles
+
+The stack runs two roles, not one. `jeeves_owner` owns the schema and is used
+only by `migrate` and `seed`; `jeeves_app` owns nothing and is the app's role
+(`DATABASE_URL`). A role that owns `audit_events` can switch its append-only
+triggers off, so the app must not be one (`deploy.md`, "Database roles"). The
+bootstrap superuser (`POSTGRES_USER`) is used only by
+`deploy/podman/initdb/10-jeeves-roles.sh`, which the postgres image runs once
+when it initialises an empty data directory, and by the `grants` job.
+
+The init script runs `deploy/sql/jeeves-runtime-grants.sql` before any table
+exists; `podman compose run --rm grants` runs it again after `migrate` and
+narrows the append-only tables to read and insert. Run `grants` again after any
+migrate that adds a table, and after a restore.
+
+An **existing volume** already has its data directory, so the init script does
+not run, and everything Jeeves created there (tables, views, trigger functions
+and the `drizzle` migration history) belongs to the bootstrap user. Once, before
+the first `migrate` with the new compose file:
+
+1. Set `JEEVES_OWNER_PASSWORD` and `JEEVES_APP_PASSWORD` in `.env`.
+2. Create the two roles as the bootstrap user
+   (`podman compose exec -T db psql -U jeeves -d jeeves`), with the
+   `CREATE ROLE` lines from `deploy.md` ("Database roles") and those passwords.
+3. In the same session, hand Jeeves's objects to `jeeves_owner` (owned
+   sequences move with their table):
+
+   ```sql
+   DO $$
+   DECLARE r record;
+   BEGIN
+     FOR r IN
+       SELECT c.oid::regclass AS obj, c.relkind
+       FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+       WHERE n.nspname IN ('public', 'drizzle')
+         AND c.relkind IN ('r', 'p', 'v', 'm', 'S')
+         AND NOT (c.relkind = 'S' AND EXISTS (
+           SELECT 1 FROM pg_depend d WHERE d.objid = c.oid AND d.deptype IN ('a', 'i')))
+     LOOP
+       EXECUTE format('ALTER %s %s OWNER TO jeeves_owner',
+         CASE r.relkind WHEN 'v' THEN 'VIEW' WHEN 'm' THEN 'MATERIALIZED VIEW'
+                        WHEN 'S' THEN 'SEQUENCE' ELSE 'TABLE' END, r.obj);
+     END LOOP;
+     FOR r IN
+       SELECT p.oid::regprocedure AS fn
+       FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+       WHERE n.nspname = 'public'
+     LOOP
+       EXECUTE format('ALTER FUNCTION %s OWNER TO jeeves_owner', r.fn);
+     END LOOP;
+     IF EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'drizzle') THEN
+       ALTER SCHEMA drizzle OWNER TO jeeves_owner;
+     END IF;
+   END
+   $$;
+   ```
+
+4. `podman compose run --rm grants`, then `podman compose run --rm migrate`, then
+   `podman compose run --rm grants` again.
+
+This sequence was checked on PostgreSQL 16 against a database migrated to 0015
+by a superuser: the new migrations then applied as `jeeves_owner`, and
+`jeeves_app` passed the production role check and could not disable a trigger.
 
 ### The image carries no source tree
 
@@ -132,20 +198,29 @@ mkdir -p ~/.config/containers/systemd
 cp deploy/podman/quadlet/* ~/.config/containers/systemd/
 cp deploy/podman/env.example ~/.config/containers/systemd/jeeves.env
 chmod 600 ~/.config/containers/systemd/jeeves.env    # it holds the database password and the cookie key
-# Edit it: set POSTGRES_PASSWORD, put the same password into DATABASE_URL (the
-# app unit cannot assemble it like compose does), and set JEEVES_COOKIE_SECRET.
+# Edit it: put the jeeves_app password (JEEVES_APP_PASSWORD) into DATABASE_URL
+# (the app unit cannot assemble it like compose does), and set JEEVES_COOKIE_SECRET.
 $EDITOR ~/.config/containers/systemd/jeeves.env
+# The database unit reads its own file, so the app never sees the superuser or
+# owner password: POSTGRES_PASSWORD, JEEVES_OWNER_PASSWORD, JEEVES_APP_PASSWORD.
+install -m 600 /dev/null ~/.config/containers/systemd/jeeves-db.env
+$EDITOR ~/.config/containers/systemd/jeeves-db.env
+mkdir -p ~/.config/containers/systemd/jeeves-initdb
+cp deploy/podman/initdb/10-jeeves-roles.sh deploy/sql/jeeves-runtime-grants.sql \
+  ~/.config/containers/systemd/jeeves-initdb/
 
 systemctl --user daemon-reload
 systemctl --user start jeeves-db
-# migrate once, before first app start:
+# migrate once, before first app start, as the owner role:
 podman run --rm --network jeeves \
-  -e DATABASE_URL='postgres://jeeves:PASSWORD@jeeves-db:5432/jeeves' \
+  -e DATABASE_MIGRATION_URL='postgres://jeeves_owner:OWNER_PASSWORD@jeeves-db:5432/jeeves' \
   localhost/jeeves-migrator:latest npm run db:migrate
+# second pass of the grants, now that the tables exist (idempotent):
+podman exec -i jeeves-db psql -U jeeves -d jeeves < deploy/sql/jeeves-runtime-grants.sql
 # load the synthetic demo data, once, on a fresh database only (DESTRUCTIVE,
 # see §2): without it the app boots against an empty database
 podman run --rm --network jeeves \
-  -e DATABASE_URL='postgres://jeeves:PASSWORD@jeeves-db:5432/jeeves' \
+  -e DATABASE_URL='postgres://jeeves_owner:OWNER_PASSWORD@jeeves-db:5432/jeeves' \
   -e JEEVES_MODE=demo localhost/jeeves-migrator:latest npm run db:seed
 systemctl --user start jeeves-app
 ```
@@ -261,6 +336,11 @@ podman exec jeeves-db psql -U jeeves -d postgres -c 'ALTER DATABASE jeeves_resto
 curl -s localhost:3000/api/health      # {"status":"ok","database":"ok"}
 podman exec jeeves-db psql -U jeeves jeeves -c 'select count(*) from audit_events'
 ```
+
+Then run the grants file once more (`podman compose run --rm grants`, or the
+`psql ... < deploy/sql/jeeves-runtime-grants.sql` line above for Quadlet), so
+the restored database carries `jeeves_app`'s grants whatever the dump held. It
+is idempotent.
 
 Keep `jeeves_before_restore` until the post-restore checks in `deploy.md` §4
 pass; it is what you compare the restored audit trail against. Drop it only

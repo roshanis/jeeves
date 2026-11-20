@@ -1,0 +1,15 @@
+-- Hand-written migration (not drizzle-kit generated).
+--
+-- Drop the initiative_registry view created in 0001 (review finding db-F23).
+--
+-- Nothing in the application ever selected from it. It projected every
+-- workspace's initiatives with no workspace_id column, so a page built on it
+-- would have shown each visitor every other workspace's rows. It chose the
+-- latest deployment by deployed_at whatever its status, where the app uses the
+-- operational deployment (deployed or paused only), so it named a pending
+-- candidate as the current version. Its header also said the approver came from
+-- initiative_decisions, but it selected initiatives.accountable_approver.
+--
+-- IF EXISTS because migration 0016's lockdown handles the view only while it
+-- exists, and a database may already have lost it.
+DROP VIEW IF EXISTS "initiative_registry";

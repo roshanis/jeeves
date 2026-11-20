@@ -42,6 +42,7 @@ has no effect. Secrets are marked; never log or commit them.
 | `ALLOW_SEED` | n/a | n/a | runtime | no | unset | `1` lets `npm run db:seed` / reset run with `NODE_ENV=production`. The seed is destructive. | `scripts/seed.ts`, `scripts/reset-demo.ts` |
 | `ALLOW_DISCARD_PUBLIC_REQUESTS` | n/a | n/a | runtime | no | unset | Must equal the number of initiatives in `public-` workspaces for `db:seed` or `reset:demo` to proceed; otherwise the run is refused. | `scripts/seed.ts` |
 | `JEEVES_DB_ALLOW_UNVERIFIED` | unused | optional: `same-host` only | runtime | no | unset | Production only. `same-host` allows a database on another host name without verified TLS (plaintext or unverified), for a database container on this host's private network (the Podman stacks). Blank or unset: no opt-out. Any other value fails boot. Ignored in demo. | `lib/config/deployment-mode.ts` |
+| `JEEVES_DB_ALLOW_OWNER_ROLE` | unused | optional: `1` only | runtime | no | unset | Production only. `1` skips the boot check that refuses a database role that is a superuser or owns `audit_events`, `installation` or the evidence tables (such a role can switch the guard triggers off). For a throwaway evaluation install only: the server logs a warning on every boot while it is set. Any other value, or unset: the check runs. Ignored in demo. See docs/deploy.md, Database roles. | `lib/config/boot-checks.ts`, `lib/config/installation-check.ts` |
 | `PGSSLMODE` | optional | optional | runtime | no | unset (plaintext) | Read by node-postgres when `DATABASE_URL` has no TLS option and `DATABASE_SSL_CA` is unset (not for Supabase hosts): `disable` means plaintext; `prefer`, `require`, `verify-ca` and `verify-full` mean verified TLS; `no-verify` means unverified. The production boot check reads it the same way. | `lib/db/tls-posture.ts` (read by `pg`) |
 | `PGSSLNEGOTIATION` | optional | optional | runtime | no | unset | Read by node-postgres when the URL has no `sslnegotiation`: `postgres` or `direct` (`direct` needs TLS). Any other value stops node-postgres from connecting, and the production boot check refuses it for a node-postgres database on another host. | `lib/db/tls-posture.ts` (read by `pg`) |
 | `NODE_TLS_REJECT_UNAUTHORIZED` | should not be `0` | must not be `0` | runtime | no | unset | Node.js setting. `0` turns certificate verification off for every TLS connection that does not set it explicitly, including the Neon driver and node-postgres without `DATABASE_SSL_CA`. Production refuses it for a database on another host unless the host is Supabase or `DATABASE_SSL_CA` is set, or `JEEVES_DB_ALLOW_UNVERIFIED=same-host`. | `lib/db/tls-posture.ts` |
@@ -150,7 +151,9 @@ Production reports every configuration problem at once
 Then, in both modes, the installation stamp is verified against the database
 (`installation check failed: ...`): a production database must be stamped
 `production`, hold no demo data, and have every bundled migration applied
-(`npm run db:migrate`); demo stamps an unstamped database and refuses a
+(`npm run db:migrate`), and the server's database role must be neither a
+superuser nor an owner of `audit_events`, `installation` or the evidence tables
+(`JEEVES_DB_ALLOW_OWNER_ROLE=1` is the only opt-out); demo stamps an unstamped database and refuses a
 `production` one, and retries a database read error with a short backoff. In
 demo a malformed `JEEVES_TRUSTED_PROXY_HOPS` also fails the boot.
 

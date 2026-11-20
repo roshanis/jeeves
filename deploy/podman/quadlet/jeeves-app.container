@@ -9,7 +9,7 @@
 # image: the runtime image is the traced standalone output and deliberately
 # does not carry tsx/esbuild.
 #   podman run --rm --network jeeves \
-#     -e DATABASE_URL='postgres://jeeves:PASSWORD@jeeves-db:5432/jeeves' \
+#     -e DATABASE_MIGRATION_URL='postgres://jeeves_owner:OWNER_PASSWORD@jeeves-db:5432/jeeves' \
 #     localhost/jeeves-migrator:latest npm run db:migrate
 [Unit]
 Description=Jeeves AI Governance Gateway

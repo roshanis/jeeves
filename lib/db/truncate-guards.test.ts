@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { sql } from "drizzle-orm";
 import { createTestDb, closeTestDb, type TestDb } from "./test-client";
 import { auditEvents, initiatives } from "./schema";
+import { rearmGuardTriggers } from "./guard-triggers";
 
 /**
  * Migration 0014 — TRUNCATE guards.
@@ -133,7 +134,7 @@ describe("migration 0014 — append-only TRUNCATE guards", () => {
     // is not a superuser and so cannot DISABLE TRIGGER ALL.
     await db.execute(sql`ALTER TABLE audit_events DISABLE TRIGGER USER`);
     await expect(db.execute(sql`TRUNCATE audit_events`)).resolves.toBeDefined();
-    await db.execute(sql`ALTER TABLE audit_events ENABLE TRIGGER USER`);
+    await rearmGuardTriggers(db, ["audit_events"]);
     await expectGuarded("TRUNCATE audit_events");
   });
 });

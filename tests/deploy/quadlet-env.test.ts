@@ -21,7 +21,7 @@ describe("Quadlet install: jeeves.env template and steps", () => {
     const required = ["DATABASE_URL", "JEEVES_COOKIE_SECRET"].filter((v) => comment.includes(v));
     expect(required).toContain("DATABASE_URL");
     for (const name of required) expect(env, name).toMatch(new RegExp(`^#?\\s*${name}=`, "m"));
-    expect(env).toMatch(/^DATABASE_URL=postgres:\/\/jeeves:[^@\s]+@jeeves-db:5432\/jeeves$/m);
+    expect(env).toMatch(/^DATABASE_URL=postgres:\/\/jeeves_app:[^@\s]+@jeeves-db:5432\/jeeves$/m);
   });
 
   it("env.example no longer describes DEMO_PASSCODE as an access gate", () => {

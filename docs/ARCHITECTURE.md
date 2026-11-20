@@ -33,7 +33,8 @@ state transition that matters is performed by application code against
 Postgres, never inside an adapter.
 
 The stack is Next.js (App Router) + TypeScript, Tailwind + shadcn/ui,
-Recharts, Neon Postgres + Drizzle ORM, and the Vercel AI SDK (behind
+Recharts, Postgres + Drizzle ORM (the live demo runs on Supabase, per
+[`DEPLOYED-DEMO-REPAIR-2026-09-20.md`](./DEPLOYED-DEMO-REPAIR-2026-09-20.md); Neon is supported), and the Vercel AI SDK (behind
 app-owned ports) — see §3 for why eve was evaluated and rejected at the P0
 gate. All LLM calls are mocked in tests and the app runs fully keyless by
 default (§3, §7).
@@ -83,19 +84,21 @@ schema, plan.md §5). Migrations live in [`drizzle/`](../drizzle/).
 | RunBudget | `run_budget` | `day` (`YYYY-MM-DD`, unique), `tokensUsed`, `tokensCap` | **unique per day** |
 | Session | `sessions` | `token` (PK), `personaKey`, `workspaceId`, `expiresAt` (epoch-ms, checked in app code), `createdAt` | added M2.5 inc.1 — see §6.1 |
 
-The **registry** (plan §5: "registry as a view") is `initiative_registry`, a
-read-only SQL view defined in
-[`drizzle/0001_initiative_registry_view.sql`](../drizzle/0001_initiative_registry_view.sql):
-`initiatives LEFT JOIN` the latest `risk_assessments` row `LEFT JOIN` the
-latest `deployment_versions` row. It is never written to directly — all
-writes land on the authoritative tables above.
+The **registry** (plan §5: "registry as a view") was a SQL view,
+`initiative_registry`, created by
+[`drizzle/0001_initiative_registry_view.sql`](../drizzle/0001_initiative_registry_view.sql)
+and dropped by [`drizzle/0018_drop_initiative_registry.sql`](../drizzle/0018_drop_initiative_registry.sql):
+nothing used it, it exposed every workspace (no `workspace_id` column) and its
+"current deployment" disagreed with the app's. A registry page reads the
+authoritative tables above, scoped to the viewer's workspace.
 
 ### 2.3 Append-only audit enforcement
 
 `AuditEvent` is append-only **at the database level**, not just by
-application-code discipline. Rather than a GRANT/REVOKE role split (both
-PGlite in tests and Neon serverless in production run as a single connection
-role, so a role-based revoke wouldn't hold), the enforcement is a trigger —
+application-code discipline. The enforcement is a trigger rather than a
+GRANT/REVOKE split alone, because PGlite in tests and a single-role demo
+database run as one connection role, so a role-based revoke would not hold
+there —
 [`drizzle/0002_audit_events_append_only.sql`](../drizzle/0002_audit_events_append_only.sql):
 
 ```sql
@@ -117,12 +120,32 @@ FOR EACH ROW EXECUTE FUNCTION "audit_events_append_only"();
 This is tested at the DB level (plan §8 test 11), not only via the app code
 path.
 
+A trigger stops the role that is bound by it, not the role that owns the table.
+Three layers close the gaps (db-F5):
+
+- Migration `0017` sets every guard trigger to `ENABLE ALWAYS`, so it also fires
+  in a session with `session_replication_role = replica`.
+- Disabling or dropping a trigger, or replacing its function, needs
+  **ownership** (or superuser). Revoking the `TRIGGER` privilege would not stop
+  it: that privilege only governs creating triggers. A production install
+  therefore runs migrations as an owner role (`DATABASE_MIGRATION_URL`) and the
+  app as a role that owns nothing, with no `TRUNCATE`
+  ([`deploy/sql/jeeves-runtime-grants.sql`](../deploy/sql/jeeves-runtime-grants.sql),
+  `docs/deploy.md` "Database roles").
+- The production boot check refuses a runtime role that is a superuser or owns
+  `audit_events`, `installation` or the evidence tables
+  (`verifyRuntimeRole`, `lib/config/installation-check.ts`); the only opt-out is
+  `JEEVES_DB_ALLOW_OWNER_ROLE=1`, for a throwaway evaluation install.
+
+Maintenance that disables the guards (the seed's wipe) re-arms them by name with
+`ENABLE ALWAYS` (`lib/db/guard-triggers.ts`), never `ENABLE TRIGGER USER`.
+
 ### 2.4 Migration history (`drizzle/`)
 
 | Migration | Purpose |
 |---|---|
 | `0000_real_falcon.sql` | Initial schema (drizzle-kit generated) — all core tables + FKs + the uniqueness indexes listed in §2.2 |
-| `0001_initiative_registry_view.sql` | Hand-written `initiative_registry` read-only view |
+| `0001_initiative_registry_view.sql` | Hand-written `initiative_registry` read-only view (dropped by 0018) |
 | `0002_audit_events_append_only.sql` | Hand-written append-only trigger (§2.3) |
 | `0003_sessions.sql` | M2.5 inc.1 — DB-backed `sessions` table (§6.1) |
 | `0004_initiatives_workspace.sql` | M2.5 inc.2a — nullable `workspace_id` on `initiatives`, non-breaking (§6.5) |
@@ -135,6 +158,9 @@ path.
 | `0011_evidence_submission.sql` | Evidence documents, bindings and submissions (`docs/evidence-submission.md`) |
 | `0012_review_integrity.sql` | Review revision and signer/source integrity columns |
 | `0013_review_notifications.sql` | Review-request notifications |
+| `0016_supabase_api_lockdown.sql` | Hand-written: RLS on and API-role revokes for every Jeeves table, only where Supabase's `anon` and `authenticated` roles exist |
+| `0017_guard_triggers_enable_always.sql` | Hand-written: every append-only and installation guard trigger set to `ENABLE ALWAYS` (fires under `session_replication_role = replica`) |
+| `0018_drop_initiative_registry.sql` | Hand-written: drops the unused `initiative_registry` view |
 
 `drizzle/` is the source of truth: list it for the current set. `0001`–`0004`
 and most later files are hand-written rather than `drizzle-kit`-generated

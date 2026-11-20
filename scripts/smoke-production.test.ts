@@ -106,6 +106,7 @@ describe("buildServerEnv", () => {
       APP_BASE_URL: "https://jeeves.example.com",
       JEEVES_TENANT_ID: "smoke-tenant",
       JEEVES_TRUSTED_PROXY_HOPS: "0",
+      JEEVES_DB_ALLOW_OWNER_ROLE: "1",
     });
   });
 

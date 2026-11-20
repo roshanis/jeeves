@@ -124,7 +124,8 @@ governance domain, covering all 8 required review domains.
 ## Tech stack
 
 - **Next.js (App Router) + TypeScript**, Tailwind + shadcn/ui, Recharts
-- **Neon Postgres + Drizzle ORM** — the pooled `neon-serverless` driver on
+- **Postgres + Drizzle ORM** — the live demo runs on Supabase
+  (`docs/DEPLOYED-DEMO-REPAIR-2026-09-20.md`); Neon is a supported provider: the pooled `neon-serverless` driver on
   Neon hosts, node-postgres (`pg`) for Supabase and any other Postgres host,
   or a persistent local **PGlite** instance as a zero-setup
   fallback for local dev and tests (same schema, same Drizzle API either
@@ -274,7 +275,7 @@ Run it on a fresh or disposable database only: it refuses once evidence exists,
 and while real inbound requests (public- workspaces) are present unless
 `ALLOW_DISCARD_PUBLIC_REQUESTS=<count>` confirms discarding them.
 
-See `docs/deploy.md` for the full Vercel + Neon deployment runbook, known
+See `docs/deploy.md` for the full Vercel deployment runbook (Supabase or Neon), known
 gaps, and a demo-day checklist. Use `npm run db:migrate` (non-destructive) to
 apply schema changes — `npm run db:seed` wipes every table, audit log
 included, and is for demo datasets only.

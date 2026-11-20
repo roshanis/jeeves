@@ -13,6 +13,7 @@ import * as schema from "./schema";
 import { normalizeHost, selectDriver, type DbDriver } from "./driver-select";
 import { migrationDatabaseUrl, migrationPoolConfig } from "./connection-config";
 import { runtimeDatabaseUrl } from "./runtime-config";
+import { applyApiRoleLockdown } from "./api-role-lockdown";
 
 export const MIGRATIONS_FOLDER = "./drizzle";
 
@@ -85,6 +86,8 @@ export async function applyMigrations(
     await migrate(db as Parameters<typeof migrate>[0], { migrationsFolder: MIGRATIONS_FOLDER });
   }
   await assertJournalApplied(db);
+  // Covers tables later migrations add; a no-op without the Supabase API roles.
+  await applyApiRoleLockdown(db as Parameters<typeof applyApiRoleLockdown>[0]);
 }
 
 /** Arbitrary constant key of the session advisory lock that serialises concurrent migrate runs. */
