@@ -137,6 +137,7 @@ path.
 | `0012_review_integrity.sql` | Review revision and signer/source integrity columns |
 | `0013_review_notifications.sql` | Review-request notifications |
 | `0016_supabase_api_lockdown.sql` | Hand-written: RLS on and API-role revokes for every Jeeves table, only where Supabase's `anon` and `authenticated` roles exist |
+| `0017_guard_triggers_enable_always.sql` | Hand-written: every append-only and installation guard trigger set to `ENABLE ALWAYS` (fires under `session_replication_role = replica`) |
 
 `drizzle/` is the source of truth: list it for the current set. `0001`–`0004`
 and most later files are hand-written rather than `drizzle-kit`-generated

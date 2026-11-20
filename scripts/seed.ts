@@ -36,6 +36,7 @@ import {
   riskAssessments,
   runBudget,
 } from "../lib/db/schema";
+import { rearmGuardTriggers } from "../lib/db/guard-triggers";
 import { isMain } from "./is-main";
 
 /* -------------------------------------------------------------------------
@@ -347,7 +348,10 @@ async function seedInTransaction(db: SeedDb): Promise<RowCounts> {
   // rolls the triggers back to enabled.
   await db.execute(`ALTER TABLE audit_events DISABLE TRIGGER USER;`);
   await db.delete(auditEvents);
-  await db.execute(`ALTER TABLE audit_events ENABLE TRIGGER USER;`);
+  // Re-arm by name with ENABLE ALWAYS (migration 0017): ENABLE TRIGGER USER
+  // would silently put the guards back to the default state, which does not
+  // fire under session_replication_role = replica.
+  await rearmGuardTriggers(db, ["audit_events"]);
   await db.delete(incidents);
   await db.delete(observations);
   await db.delete(controlExceptions);

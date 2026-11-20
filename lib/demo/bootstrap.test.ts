@@ -191,13 +191,13 @@ describe("lib/demo/bootstrap — against an already-populated demo database", ()
     });
   }
 
-  /** Put the database back to its pre-0015 state without touching any data. */
+  /** Put the database back to its pre-0015 state without touching any data (0015's journal time, and every later one, is forgotten). */
   async function windBackMigration0015(): Promise<void> {
     await db.execute(sql`DROP TABLE installation`);
     await db.execute(sql`DROP FUNCTION installation_guard()`);
     await db.execute(sql`
       DELETE FROM drizzle.__drizzle_migrations
-      WHERE id = (SELECT max(id) FROM drizzle.__drizzle_migrations)
+      WHERE created_at >= 1783738680661
     `);
   }
 

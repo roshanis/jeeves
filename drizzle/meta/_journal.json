@@ -120,6 +120,13 @@
       "when": 1783738680662,
       "tag": "0016_supabase_api_lockdown",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1783738680663,
+      "tag": "0017_guard_triggers_enable_always",
+      "breakpoints": true
     }
   ]
 }
