@@ -44,9 +44,8 @@ JEEVES_MODE=demo DATA_PROVIDER=db JEEVES_COOKIE_SECRET=<server-signing-key> npm 
 Notes on each step:
 
 - `npm install` — installs from `package-lock.json` (npm is the toolchain in
-  use here; there is no `pnpm-lock.yaml` in the repo, so ignore the `pnpm`
-  commands in `.claude/CLAUDE.md` — use `npm run <script>` from
-  `package.json`).
+  use here; there is no `pnpm-lock.yaml` in the repo, so use `npm run <script>`
+  from `package.json`, as `AGENTS.md` and `.claude/CLAUDE.md` do).
 - `JEEVES_MODE=demo` is required locally: the mode defaults to production,
   which refuses the local PGlite store, the mock data provider and the mock
   LLM (`lib/db/client.ts`, `lib/data/index.ts`, `lib/agents/index.ts`).
