@@ -1452,7 +1452,7 @@ describe("POST /api/session — signed workspace cookie", () => {
     return decodeURIComponent(match![1]!);
   }
 
-  it("the Set-Cookie value is signed (id.hexmac) and reusing it keeps the SAME workspaceId across logins", async () => {
+  it("the Set-Cookie value is signed (v1.issued.id.hexmac) and reusing it keeps the SAME workspaceId across logins", async () => {
     const { POST } = await import("../session/route");
     const res1 = await POST(
       new Request("http://localhost/api/session", {
@@ -1463,8 +1463,8 @@ describe("POST /api/session — signed workspace cookie", () => {
     );
     const json1 = (await res1.json()) as { workspaceId: string };
     const cookieValue = extractCookie(res1);
-    expect(cookieValue).toMatch(/^ws_[0-9a-f]+\.[0-9a-f]{64}$/);
-    expect(cookieValue.startsWith(`${json1.workspaceId}.`)).toBe(true);
+    expect(cookieValue).toMatch(/^v1\.\d+\.ws_[0-9a-f]+\.[0-9a-f]{64}$/);
+    expect(cookieValue.split(".")[2]).toBe(json1.workspaceId);
 
     const res2 = await POST(
       new Request("http://localhost/api/session", {

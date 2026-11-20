@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { createHmac } from "node:crypto";
 import {
+  WORKSPACE_COOKIE_MAX_AGE_SECONDS,
   resolveWorkspaceCookieSecret,
   signWorkspaceId,
   verifyWorkspaceCookie,
@@ -15,7 +17,7 @@ describe("lib/security/workspace-cookie", () => {
   describe("signWorkspaceId / verifyWorkspaceCookie round-trip", () => {
     it("verifies a value it signed itself", () => {
       const signed = signWorkspaceId("ws_abc123def456", "top-secret");
-      expect(signed).toMatch(/^ws_abc123def456\.[0-9a-f]{64}$/);
+      expect(signed).toMatch(/^v1\.\d+\.ws_abc123def456\.[0-9a-f]{64}$/);
       expect(verifyWorkspaceCookie(signed, "top-secret")).toBe("ws_abc123def456");
     });
 
@@ -26,11 +28,44 @@ describe("lib/security/workspace-cookie", () => {
     });
   });
 
+  describe("version and issue time", () => {
+    const NOW = 1_800_000_000_000;
+    const id = "ws_abc123def456";
+
+    it("accepts a fresh value", () => {
+      expect(verifyWorkspaceCookie(signWorkspaceId(id, "k", NOW), "k", NOW + 1000)).toBe(id);
+    });
+
+    it("accepts a value up to Max-Age old and refuses one older", () => {
+      const signed = signWorkspaceId(id, "k", NOW);
+      expect(verifyWorkspaceCookie(signed, "k", NOW + WORKSPACE_COOKIE_MAX_AGE_SECONDS * 1000)).toBe(id);
+      expect(verifyWorkspaceCookie(signed, "k", NOW + WORKSPACE_COOKIE_MAX_AGE_SECONDS * 1000 + 2000)).toBeNull();
+    });
+
+    it("refuses an issue time in the future beyond a small skew, accepts within it", () => {
+      const future = signWorkspaceId(id, "k", NOW + 10 * 60_000);
+      expect(verifyWorkspaceCookie(future, "k", NOW)).toBeNull();
+      const nearly = signWorkspaceId(id, "k", NOW + 30_000);
+      expect(verifyWorkspaceCookie(nearly, "k", NOW)).toBe(id);
+    });
+
+    it("refuses the old format (id.mac over the bare id) even with a correct mac", () => {
+      const mac = createHmac("sha256", "k").update(id).digest("hex");
+      expect(verifyWorkspaceCookie(`${id}.${mac}`, "k", NOW)).toBeNull();
+    });
+
+    it("refuses a tampered issue time", () => {
+      const signed = signWorkspaceId(id, "k", NOW);
+      const [v, , rest1, mac] = signed.split(".");
+      expect(verifyWorkspaceCookie([v, String(Math.floor(NOW / 1000) + 5), rest1, mac].join("."), "k", NOW)).toBeNull();
+    });
+  });
+
   describe("tampering / wrong secret / malformed input -> null", () => {
     it("rejects a tampered id with a still-valid-looking mac", () => {
       const signed = signWorkspaceId("ws_abc123def456", "top-secret");
-      const [, mac] = signed.split(".");
-      const tampered = `ws_evil-workspace.${mac}`;
+      const [v, ts, , mac] = signed.split(".");
+      const tampered = `${v}.${ts}.ws_evil-workspace.${mac}`;
       expect(verifyWorkspaceCookie(tampered, "top-secret")).toBeNull();
     });
 

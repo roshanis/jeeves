@@ -8,16 +8,18 @@ import { safeDriverCode } from "@/lib/db/driver-error";
 import { isSameOriginRequest } from "@/lib/security/same-origin";
 import { BodyReadError, PRE_SESSION_BODY_MAX_BYTES, readJsonBody } from "@/lib/http/read-json-body";
 import {
+  WORKSPACE_COOKIE_MAX_AGE_SECONDS,
   resolveWorkspaceCookieSecret,
   signWorkspaceId,
   verifyWorkspaceCookie,
 } from "@/lib/security/workspace-cookie";
 import { databaseNotReady } from "@/lib/http/database-gate";
 
-// Per-browser workspace cookie (M2.5 inc.2b). Read-scoping ONLY — it is not
-// an auth credential (mutations still require the Bearer token, which a
-// browser never attaches on its own), so a forged cross-site request cannot
-// mutate anything. The cookie is SameSite=Lax, so it IS sent on top-level
+// Per-browser workspace cookie (M2.5 inc.2b). A bearer capability for one
+// playground workspace, valid for its Max-Age (see workspace-cookie.ts): it
+// lets its holder enter that workspace, but mutations still require the
+// Bearer token, which a browser never attaches on its own, so a forged
+// cross-site request cannot mutate anything. The cookie is SameSite=Lax, so it IS sent on top-level
 // cross-site GET navigations: keep every GET that reads it side-effect free,
 // and keep SameSite/HttpOnly as they are. Set on first login and REUSED on
 // later logins so every persona acting in one browser shares the same demo
@@ -36,7 +38,7 @@ import { databaseNotReady } from "@/lib/http/database-gate";
 // the Next runtime AND when unit tests invoke POST() directly with no request
 // scope.
 const WORKSPACE_COOKIE = "jeeves_workspace";
-const WORKSPACE_COOKIE_MAX_AGE = 60 * 60 * 24 * 7; // 7 days
+const WORKSPACE_COOKIE_MAX_AGE = WORKSPACE_COOKIE_MAX_AGE_SECONDS;
 
 function readWorkspaceCookie(req: Request): string | null {
   const cookieHeader = req.headers.get("cookie");
