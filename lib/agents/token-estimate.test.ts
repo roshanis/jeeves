@@ -14,6 +14,9 @@ import {
   estimateTokens,
 } from "./token-estimate";
 import { WORKSPACE_DAILY_TOKEN_CAP } from "../security/budget";
+import { DOMAIN_LABEL } from "../domain/labels";
+import type { Domain } from "../domain/types";
+import { CHAMPION_PREFILL_PAYLOAD } from "../intake/champion-prefill";
 
 const instructions = loadInstructions();
 const draftInput = (answers: Record<string, unknown>, policy = readFileSync("docs/policies/legal.md", "utf8")) => ({
@@ -52,6 +55,16 @@ describe("estimateDraftAttemptTokens", () => {
     expect(estimate).toBeLessThan(20_000);
     // Four attempts fit in one workspace's share of the day; the share still bounds the total.
     expect(WORKSPACE_DAILY_TOKEN_CAP / estimate).toBeGreaterThan(2);
+  });
+
+  it("fits one full standard run of all eight domains for a typical intake in one workspace's share", () => {
+    const answers = CHAMPION_PREFILL_PAYLOAD as unknown as Record<string, unknown>;
+    const fullRun = (Object.keys(DOMAIN_LABEL) as Domain[]).reduce((sum, domain) => {
+      const policy = readFileSync(`docs/policies/${domain}.md`, "utf8");
+      const input = { ...draftInput(answers, policy), domain, policyContext: [`Policy source: docs/policies/${domain}.md\n${policy}`] };
+      return sum + estimateDraftAttemptTokens(input, false);
+    }, 0);
+    expect(fullRun).toBeLessThanOrEqual(WORKSPACE_DAILY_TOKEN_CAP);
   });
 
   it("charges a deep run for each turn resending the prompt and the tool results so far", () => {

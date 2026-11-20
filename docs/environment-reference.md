@@ -99,7 +99,7 @@ deterministic keyless mock adapter and cannot spend; production answers 503
 (`llm_not_configured`) on LLM routes instead of serving canned drafts.
 
 Daily model budget (with a key): 500,000 estimated tokens per UTC day for the
-installation, and at most 10% of that (50,000) per workspace. Both are
+installation, and at most 20% of that (100,000) per workspace. Both are
 reserved together before a model call; a refusal names which cap it was and
 resets at 00:00 UTC. A keyless (mock) demo reserves nothing and is bounded by
 the rate limits instead. The caps are constants in `lib/security/budget.ts`.
@@ -107,9 +107,9 @@ the rate limits instead. The caps are constants in `lib/security/budget.ts`.
 Each reservation is an estimate sized from the prompt that is actually built
 (one token per four characters of system prompt plus input, plus an allowance
 for the reply); it is not corrected after the call. A standard reviewer draft
-reserves about 9,000 to 10,000 tokens, so a workspace gets about five draft
-attempts a day, and the installation about fifty (roughly six full 8-domain
-runs); the old flat guess allowed about 41 full runs. A deep review
+reserves about 7,500 to 10,000 tokens depending on the intake, so a full
+8-domain run is about 60,000 to 80,000: one per workspace a day, and six to
+eight for the installation; the old flat guess allowed about 41 full runs. A deep review
 (`JEEVES_DEEP_REVIEW=1`, at most 3 tool calls of 8,000 characters each)
 reserves about 40,000 to 45,000 for one domain. Raise `DAILY_TOKEN_CAP` or
 `WORKSPACE_DAILY_SHARE` in `lib/security/budget.ts` if that is too few.

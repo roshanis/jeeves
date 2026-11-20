@@ -691,14 +691,14 @@ describe("deep-review budget multiplier on draft-run", () => {
     expect(await reservedTokens()).toBe(estimate);
   });
 
-  it("stops one workspace at its 50,000-token share however many domains it asks for", async () => {
+  it("keeps one workspace within its 100,000-token share however many domains it asks for", async () => {
     vi.stubEnv("OPENAI_API_KEY", "test-placeholder-never-sent");
     vi.stubEnv("JEEVES_AGENT_RUNTIME", "agents-sdk");
     vi.stubEnv("JEEVES_DEEP_REVIEW", "0");
     const { id, token } = await triagedInitiative("11.5.1.1");
     const status = await draftRun(id, token, "11.5.1.1", ["legal", "procurement", "tech-architecture", "responsible-ai", "security", "privacy-hipaa", "clinical-safety", "data-governance"]);
     expect(await reservedTokens()).toBeGreaterThan(0);
-    expect(await reservedTokens()).toBeLessThanOrEqual(50_000);
+    expect(await reservedTokens()).toBeLessThanOrEqual(100_000);
     expect([200, 429]).toContain(status);
   });
 

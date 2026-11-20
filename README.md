@@ -319,15 +319,15 @@ conditional approval — against a real (mocked-LLM) run.
 - **Atomic per-day token budget** — LLM usage is capped per UTC day (500,000
   estimated tokens) via a conditional `INSERT ... ON CONFLICT DO UPDATE`
   reservation, so concurrent requests can't race past the cap. Each workspace
-  may reserve at most 10% of the day (50,000), taken in the same transaction,
+  may reserve at most 20% of the day (100,000), taken in the same transaction,
   so one visitor cannot use up the budget for everyone else. A refusal says
   which cap it was (`workspace_budget_exhausted` or `daily_budget_exhausted`)
   and that it resets at 00:00 UTC. The keyless mock adapter makes no provider
   call, so it reserves nothing and spends no budget; it is bounded by the rate
   limits instead. Reservations are estimates from the real prompt length (about
-  9,000-10,000 tokens for one standard draft attempt), so the public demo allows
-  roughly five draft attempts per workspace and six full runs a day across the
-  installation; see `docs/environment-reference.md`.
+  7,500-10,000 tokens for one standard draft attempt), so with a key one
+  workspace can finish one full 8-domain run a day, and the installation about
+  six to eight; see `docs/environment-reference.md`.
 - **Requester-ownership and reviewer-domain authorization** — a reviewer can
   only sign/return reviews in their own assigned domain; a requester can
   only submit/edit their own initiatives.

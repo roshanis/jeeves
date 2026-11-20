@@ -37,8 +37,8 @@ import { databaseNotReady } from "@/lib/http/database-gate";
 // One request reserves at most ~10,000 tokens (2% of the 500,000 daily cap):
 // (20 x 1,000 + 6,000 characters) / 4 + 600 headroom is about 7,100, which
 // leaves room for the system prompt when reservations are sized from it. The
-// per-workspace share is 50,000 a day, so larger caps would let one request
-// use a fifth of it. The real IntakePayload (lib/intake/types.ts) serializes
+// per-workspace share is 100,000 a day, and a request this size leaves it for
+// the draft runs. The real IntakePayload (lib/intake/types.ts) serializes
 // to ~2-3k chars once fully filled in, so 6,000 still leaves headroom.
 const MAX_MESSAGES = 20;
 const MAX_MESSAGE_CHARS = 1000;

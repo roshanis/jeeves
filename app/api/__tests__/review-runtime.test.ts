@@ -55,14 +55,14 @@ describe("review route runtime reservations", () => {
     expect(mocks.guard).toHaveBeenLastCalledWith(fanOutRequest, expect.any(Function), { bodyOptional: true });
     expect(mocks.startDraftRun).toHaveBeenLastCalledWith(mocks.db, "i", ["legal", "security"], undefined, {
       actor: { role: "requester" }, sessionWorkspaceId: "visitor-workspace", signal: fanOutRequest.signal,
-      budget: tokens === 0 ? undefined : expect.objectContaining({ estimateAttempt: expect.any(Function), dailyCap: 500_000, workspaceCap: 50_000 }),
+      budget: tokens === 0 ? undefined : expect.objectContaining({ estimateAttempt: expect.any(Function), dailyCap: 500_000, workspaceCap: 100_000 }),
       runTimeoutMs: timeoutMs, attemptTimeoutMs,
     });
     const singleRequest = new Request("http://localhost/api/reviews/c/legal/run", { method: "POST", signal: controller.signal });
     expect((await single(singleRequest, { params: Promise.resolve({ cycleId: "c", domain: "legal" }) })).status).toBe(200);
     expect(mocks.guard).toHaveBeenLastCalledWith(singleRequest, undefined);
     expect(mocks.runReviewAgent).toHaveBeenLastCalledWith(mocks.db, "c", "legal", { role: "requester" }, "visitor-workspace", undefined, {
-      signal: singleRequest.signal, budget: tokens === 0 ? undefined : expect.objectContaining({ estimateAttempt: expect.any(Function), dailyCap: 500_000, workspaceCap: 50_000 }),
+      signal: singleRequest.signal, budget: tokens === 0 ? undefined : expect.objectContaining({ estimateAttempt: expect.any(Function), dailyCap: 500_000, workspaceCap: 100_000 }),
       runTimeoutMs: timeoutMs, attemptTimeoutMs,
     });
   });

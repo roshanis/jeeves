@@ -13,8 +13,13 @@ import { runBudget, runBudgetWorkspace } from "../db/schema";
 /** Daily model-token cap for the whole install: one value for both reservation paths. */
 export const DAILY_TOKEN_CAP = 500_000;
 
-/** One workspace may reserve at most this share of the day, so one visitor cannot use it all (decision d06). */
-export const WORKSPACE_DAILY_SHARE = 0.1;
+/**
+ * One workspace may reserve at most this share of the day, so one visitor cannot
+ * use it all (decision d06). 20%, not the 10% first chosen: a full standard run
+ * of all eight domains is estimated at about 62,000 tokens for a typical intake,
+ * so 10% could never finish one (lib/agents/token-estimate.test.ts).
+ */
+export const WORKSPACE_DAILY_SHARE = 0.2;
 export const WORKSPACE_DAILY_TOKEN_CAP = Math.floor(DAILY_TOKEN_CAP * WORKSPACE_DAILY_SHARE);
 
 /** Which cap refused a reservation. */
