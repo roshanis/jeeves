@@ -18,7 +18,7 @@ import {
   runBootChecks,
 } from "./boot-checks";
 import { clearInstallationFixtures, closeTestDb, createTestDb, type TestDb } from "../db/test-client";
-import { initiatives, installation } from "../db/schema";
+import { controlDefinitions, initiatives, installation } from "../db/schema";
 import { readInstallationStamp } from "../db/installation";
 
 const SECRET = "0123456789abcdef0123456789abcdef";
@@ -94,12 +94,37 @@ describe("runBootChecks", () => {
       expect(installationGateClosed()).toBe(false);
     });
 
+    it("warns once, and still boots, when the control catalog is empty", async () => {
+      const d = deps(COMPLETE_PRODUCTION);
+      d.getDb.mockResolvedValue(await database("production"));
+      await runBootChecks(d);
+      expect(d.exit).not.toHaveBeenCalled();
+      expect(bootFailure()).toBeNull();
+      const warnings = d.log.mock.calls.flat().filter((line) => /control catalog is empty/i.test(String(line)));
+      expect(warnings).toHaveLength(1);
+      expect(String(warnings[0])).toMatch(/^\[boot\] /);
+    });
+
+    it("does not warn when the catalog has controls", async () => {
+      const d = deps(COMPLETE_PRODUCTION);
+      const db = await database("production");
+      await db.insert(controlDefinitions).values({
+        id: "C-01", domain: "clinical-safety", name: "Human review", applicability: "all", policySource: "test", owner: "o",
+        requiredEvidence: "e", cadence: "quarterly", enforcementMode: "block", exceptionProcess: null, remediationOwner: "r",
+      });
+      d.getDb.mockResolvedValue(db);
+      await runBootChecks(d);
+      expect(d.log).not.toHaveBeenCalled();
+      await db.delete(controlDefinitions);
+    });
+
     it("lets a complete configuration boot on a production-stamped database", async () => {
       const d = deps(COMPLETE_PRODUCTION);
       d.getDb.mockResolvedValue(await database("production"));
       await runBootChecks(d);
       expect(d.exit).not.toHaveBeenCalled();
-      expect(d.log).not.toHaveBeenCalled();
+      // The only line is the empty-catalog warning: this database has no controls.
+      expect(d.log.mock.calls.flat().join(" ")).not.toMatch(/refusing|invalid|failed/i);
       expect(bootFailure()).toBeNull();
     });
 
@@ -128,7 +153,7 @@ describe("runBootChecks", () => {
       d.getDb.mockResolvedValue(await database("production"));
       await runBootChecks(d);
       expect(d.exit).not.toHaveBeenCalled();
-      const logged = d.log.mock.calls.map((c) => c.join(" "));
+      const logged = d.log.mock.calls.map((c) => c.join(" ")).filter((line) => !/control catalog is empty/.test(line));
       expect(logged).toHaveLength(1);
       expect(logged[0]).toMatch(/JEEVES_MODE is set but ignored/);
       expect(logged[0]).not.toContain("Demo");

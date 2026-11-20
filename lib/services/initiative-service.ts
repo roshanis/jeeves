@@ -129,6 +129,19 @@ export class ConflictError extends Error {
 }
 
 /**
+ * Approving with an empty control_definitions table would record a controlled
+ * approval with no control behind it. A production install starts with no
+ * catalog (scripts/seed.ts refuses production), so approval fails closed until
+ * one is loaded. "No control applies" with a non-empty catalog stays allowed.
+ */
+export class ControlCatalogEmptyError extends ConflictError {
+  constructor() {
+    super("The control catalog is empty: load the catalog before approving.", "control_catalog_empty");
+    this.name = "ControlCatalogEmptyError";
+  }
+}
+
+/**
  * Workspace-authorization guard (external-review finding #1): throws the
  * SAME `NotFoundError` shape used for an unknown id when `resource`'s
  * workspace doesn't match the acting session's — a workspace mismatch must
@@ -1365,6 +1378,18 @@ export async function decide(
     const result = transition(initiative.state as LifecycleState, action, actor, { ts: nowTs() });
 
     if (cycle.closedAt !== null) throw new ConflictError(`review cycle ${cycle.id} is already closed`);
+
+    // With a catalog loaded, a condition must point at a control in it. With
+    // none loaded, generating controls below refuses the approval itself.
+    if (conditions.length > 0) {
+      const known = new Set((await tx.select({ id: controlDefinitions.id }).from(controlDefinitions)).map((row) => row.id));
+      if (known.size > 0) {
+        const unknown = [...new Set(conditions.map((c) => c.controlId.trim()).filter((id) => !known.has(id)))];
+        if (unknown.length > 0) {
+          throw new ValidationError(`unknown control id in conditions: ${unknown.join(", ")}`);
+        }
+      }
+    }
     const reviewSnapshots: Record<string, unknown>[] = [];
 
     // Requirements belong to this exact cycle and initiative; readiness is shared
@@ -1540,6 +1565,7 @@ async function generateEffectiveControlsInTx(
   const flags = ra.flags as unknown as OverlayFlags;
 
   const defs = await tx.select().from(controlDefinitions);
+  if (defs.length === 0) throw new ControlCatalogEmptyError();
   const applicable = defs.filter(
     (d) => d.domain !== "runtime" && applicabilityApplies(d.applicability, tier, flags),
   );

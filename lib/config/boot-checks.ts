@@ -6,6 +6,7 @@
 // guard in a dynamically imported module like this one.
 import type { InstallationDb } from "../db/installation";
 import { BootDeadlineError, isConnectionClassError, safeDriverCode } from "../db/driver-error";
+import { controlDefinitions } from "../db/schema";
 import { runtimeDatabaseUrl } from "../db/runtime-config";
 import { closeInstallationGate, markBootFailed, openInstallationGate, setInstallationRecheck } from "./boot-state";
 import { assertProductionConfig, deploymentMode, ProductionConfigError, trustedProxyHopsState } from "./deployment-mode";
@@ -212,13 +213,32 @@ export async function runBootChecks(deps: BootCheckDeps = {}): Promise<void> {
     exit(1);
   }
 
+  // A production install starts without a control catalog, and approval fails
+  // closed until one is loaded (ControlCatalogEmptyError). Say so at boot
+  // rather than at the first approval; never a reason to stop the server.
+  async function warnIfCatalogEmpty(db: InstallationDb): Promise<void> {
+    try {
+      const rows = await db.select({ id: controlDefinitions.id }).from(controlDefinitions).limit(1);
+      if (rows.length === 0) {
+        log("[boot] The control catalog is empty: approvals are refused until the catalog is loaded.");
+      }
+    } catch {
+      // Best effort: the installation check just passed, and this must not fail a boot.
+    }
+  }
+
   async function checkInstallation(): Promise<void> {
     const delays = mode === "demo" ? DEMO_CHECK_RETRY_DELAYS_MS : PRODUCTION_CHECK_RETRY_DELAYS_MS;
     for (let attempt = 0; ; attempt++) {
       try {
-        const verify = async () => verifyInstallation(await getDb(), mode);
+        let handle: InstallationDb | undefined;
+        const verify = async () => {
+          handle = await getDb();
+          return verifyInstallation(handle, mode);
+        };
         await withDeadline(verify(), DEMO_BOOT_ATTEMPT_DEADLINE_MS);
         if (mode === "demo") openInstallationGate();
+        else if (handle) await warnIfCatalogEmpty(handle);
         return;
       } catch (err) {
         if (err instanceof InstallationCheckError) {

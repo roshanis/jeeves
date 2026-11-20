@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { createTestDb, closeTestDb, type TestDb } from "../db/test-client";
-import { initiativeDecisions, reviewCycles, reviewDecisions } from "../db/schema";
+import { controlDefinitions, initiativeDecisions, reviewCycles, reviewDecisions } from "../db/schema";
 import { TRIAGE_READY_CHAMPION_PAYLOAD } from "../../tests/fixtures/triage-ready-intake";
 import { createMockAgentPort } from "../agents/mock-adapter";
 import { createDraft, submitIntake, startQc, triage, decide } from "../services/initiative-service";
@@ -10,7 +10,14 @@ import { startDraftRun } from "../workflow/review-run";
 import { DbDataProvider } from "./db-provider";
 
 let db: TestDb;
-beforeEach(async () => { db = await createTestDb(); });
+beforeEach(async () => {
+  db = await createTestDb();
+  // Approval refuses an empty control catalog; one control is enough here.
+  await db.insert(controlDefinitions).values({
+    id: "C-TEST", domain: "clinical-safety", name: "Test control", applicability: "all", policySource: "test", owner: "owner",
+    requiredEvidence: "none", cadence: "quarterly", enforcementMode: "block", exceptionProcess: null, remediationOwner: "owner",
+  });
+});
 afterEach(async () => { await closeTestDb(db); });
 
 it("uses the same descending cycle ID for equal timestamps in drafting, projection and approval", async () => {

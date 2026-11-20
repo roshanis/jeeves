@@ -16,7 +16,7 @@ import {
   reviewDecisions,
   riskAssessments,
 } from "../db/schema";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, ne, sql } from "drizzle-orm";
 import { PgSelectBase } from "drizzle-orm/pg-core";
 import { createHash } from "node:crypto";
 import { CONTROL_SEEDS } from "../../scripts/seed";
@@ -1157,6 +1157,73 @@ describe("lib/services/initiative-service", () => {
       const res = await svc.decide(db, initiativeId, APPROVER, null, { decision: "approved" });
       expect(res.controlsGenerated).toBeTruthy();
       expect(res.controlsGenerated!.created).toBeGreaterThan(0);
+    });
+
+    describe("control catalog presence", () => {
+      it.each(["approved", "conditionally_approved"] as const)(
+        "refuses a '%s' decision while the catalog is empty, and rolls the decision back",
+        async (decision) => {
+          const { initiativeId } = await setUpSignedInReview();
+          await db.delete(controlDefinitions);
+          const err = await svc
+            .decide(db, initiativeId, APPROVER, null, {
+              decision,
+              ...(decision === "conditionally_approved" ? { conditions: [{ text: "Review all output.", controlId: "C-01" }] } : {}),
+            })
+            .catch((e: unknown) => e);
+          expect(err).toBeInstanceOf(svc.ConflictError);
+          expect((err as svc.ConflictError).code).toBe("control_catalog_empty");
+          expect((err as Error).message).toMatch(/control catalog is empty: load the catalog before approving/i);
+
+          const [row] = await db.select().from(initiatives).where(eq(initiatives.id, initiativeId));
+          expect(row!.state).toBe("in_review");
+          expect(await db.select().from(initiativeDecisions).where(eq(initiativeDecisions.initiativeId, initiativeId))).toHaveLength(0);
+        },
+      );
+
+      it("still lets a rejection through while the catalog is empty", async () => {
+        const { initiativeId } = await setUpSignedInReview();
+        await db.delete(controlDefinitions);
+        const res = await svc.decide(db, initiativeId, APPROVER, null, { decision: "rejected" });
+        expect(res.type).toBe("rejected");
+      });
+
+      it("rolls a fast-lane triage back while the catalog is empty", async () => {
+        await db.delete(controlDefinitions);
+        const draft = await svc.createDraft(db, {
+          payload: lowTierPayload(),
+          requesterActor: { id: "dan-kowalski", role: "requester" },
+          requesterName: "Dan Kowalski",
+        });
+        await svc.submitIntake(db, draft.initiativeId, { id: "dan-kowalski", role: "requester" });
+        await svc.startQc(db, draft.initiativeId, PROGRAM);
+        await expect(svc.triage(db, draft.initiativeId)).rejects.toBeInstanceOf(svc.ConflictError);
+        const [row] = await db.select().from(initiatives).where(eq(initiatives.id, draft.initiativeId));
+        expect(row!.state).not.toBe("fast_lane_approved");
+      });
+
+      it("approves with zero controls when the catalog is non-empty but none applies", async () => {
+        const { initiativeId } = await setUpSignedInReview();
+        const [runtimeOnly] = CONTROL_SEEDS.filter((c) => c.domain === "runtime");
+        await db.delete(controlDefinitions).where(ne(controlDefinitions.id, runtimeOnly!.id));
+        const res = await svc.decide(db, initiativeId, APPROVER, null, { decision: "approved" });
+        expect(res.controlsGenerated?.created).toBe(0);
+      });
+
+      it("names a condition's control id that is not in the catalog", async () => {
+        const { initiativeId } = await setUpSignedInReview();
+        const err = await svc
+          .decide(db, initiativeId, APPROVER, null, {
+            decision: "conditionally_approved",
+            conditions: [{ text: "Review all output.", controlId: "C-01" }, { text: "Other.", controlId: "NOPE-99" }],
+          })
+          .catch((e: unknown) => e);
+        expect(err).toBeInstanceOf(svc.ValidationError);
+        expect((err as Error).message).toContain("NOPE-99");
+        expect((err as Error).message).not.toContain("C-01");
+        const [row] = await db.select().from(initiatives).where(eq(initiatives.id, initiativeId));
+        expect(row!.state).toBe("in_review");
+      });
     });
 
     it("rejected does NOT generate any effective controls or deployment", async () => {
