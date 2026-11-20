@@ -1843,3 +1843,20 @@ Hard rules: no violations found.
 ### Recommendations / Next steps:
 - Codex: a new browser storage key needs a line on the privacy page and an entry in the storage-key test in tests/ui/site-essentials.test.tsx.
 - Owner: bump LEGAL_LAST_UPDATED when you have read the new bullet; the operator queue's own sessionStorage token (`jeeves_operator_token`) is not listed, since only the operator holds it.
+
+## [AGENT: Claude] [2026-11-20T15:04Z]
+### Action: implementer: the owner accepted the peer-review recommendations (human "go", 2026-11-20); this lane covers eight documentation and wording items (d16, the CLAUDE.md mirror, is its own pull request stacked on this one)
+### Files changed: AGENTS.md, .env.example, README.md, SECURITY.md, docs/security-model.md, docs/deploy.md, docs/ARCHITECTURE.md, docs/ui-spec.md, docs/archive/GOAL.md and docs/archive/MORNING-REPORT.md (moved), app/(marketing)/privacy/page.tsx, lib/marketing/framework-mappings.ts, and tests under tests/docs, tests/ui
+### Diff summary:
+- d03 (docs-F20): AGENTS.md rule 5 lists what Admin can do today, derived from the code; Admin never approves.
+- d18 (docs-F21, docs-F23): rules 3 and 9 say triggers only (owner role can disable them) and that the real-request queue stores real personal data.
+- d09 (ui-public-F1): the privacy page promises only content removal, with the audit record and title kept; deploy.md has the operator SQL and tests/docs/request-removal.test.ts runs it on PGlite.
+- d17 (docs-F13, deploy-F9, prodmode-F24): .env.example comments out OPENAI_API_KEY and lists every variable the code reads; a test enforces both; README note updated.
+- L10 (dyn-prod-F9): deploy.md tells ALB deployments to block TRACE (listener rule or WAF).
+- L23 (ui-public-F7): EU page drops Art. 9 and 12, C-01 cites GOVERN 3.2, L-02 loses Art. 50.
+- L25 (docs-F39): SECURITY.md and docs/security-model.md, linked from README.
+- L37 (docs-F36): GOAL.md and MORNING-REPORT.md moved to docs/archive/ with banners; ui-spec marked the M1 record.
+### Verified: each new test was run before its fix and failed for the stated reason. Typecheck and lint clean on changed files; full unit suite before the d16 split 283 files, 3,423 tests, all passed; after the split the docs and marketing tests pass on this branch and on the d16 branch.
+### Recommendations / Next steps:
+- Owner: turn on GitHub private vulnerability reporting in the repository settings (SECURITY.md relies on it); bump LEGAL_LAST_UPDATED after reading the privacy change.
+- Codex: .claude/settings.json and .claude/agents/code-reviewer.md and security-reviewer.md still mention pnpm and "no real PHI/PII"; align them.
