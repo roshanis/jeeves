@@ -48,6 +48,11 @@ jobs:
           # during this job's postinstall.
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
 
+      # Fails on any high or critical advisory in a RUNTIME dependency.
+      # devDependencies are excluded: they never reach the deployed server.
+      - name: Audit runtime dependencies
+        run: npm audit --omit=dev --audit-level=high
+
       - name: Typecheck
         run: npm run typecheck
 
