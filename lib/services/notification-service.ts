@@ -23,10 +23,10 @@
  *    keeping the review, which is the failure mode that makes a governance
  *    queue quietly stall.
  */
-import { and, asc, desc, eq, isNull, or, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, notInArray, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import type { Db } from "../db/client";
-import { initiatives, reviewNotifications } from "../db/schema";
+import { initiatives, reviewCycles, reviewDecisions, reviewNotifications } from "../db/schema";
 import type { Domain, Tier } from "../domain/types";
 import { DOMAIN_LABEL } from "../domain/labels";
 
@@ -113,44 +113,15 @@ export async function enqueueReviewRequests(
   }
 }
 
-/** A single domain's outstanding asks — the reviewer's own view. */
-export async function pendingNotificationsForDomain(
-  db: Db,
-  domain: Domain,
-): Promise<ReviewNotificationRow[]> {
-  return db
-    .select()
-    .from(reviewNotifications)
-    .where(
-      and(eq(reviewNotifications.domain, domain), isNull(reviewNotifications.deliveredAt)),
-    )
-    .orderBy(asc(reviewNotifications.createdAt)) as Promise<ReviewNotificationRow[]>;
-}
-
 /**
- * Everything not yet delivered, across EVERY workspace — the operator view.
- * With no transport configured this is every notification ever recorded, which
- * is the honest picture: these are asks that exist in the system and have
- * reached nobody outside it.
+ * The review-request queue as one viewer may see it: the newest `limit`
+ * requests (newest first) plus the total, for the /reviews page.
  *
- * Unscoped on purpose, so it must never feed a page or route a viewer can
- * reach: each subject and body embeds the initiative's title, and playground
- * visitors each own a workspace. Anything shown to a viewer goes through
- * recentUndeliveredNotifications.
- */
-export async function undeliveredNotifications(db: Db): Promise<ReviewNotificationRow[]> {
-  return db
-    .select()
-    .from(reviewNotifications)
-    .where(isNull(reviewNotifications.deliveredAt))
-    .orderBy(asc(reviewNotifications.createdAt)) as Promise<ReviewNotificationRow[]>;
-}
-
-/**
- * The undelivered queue as one viewer may see it: the newest `limit` requests
- * (newest first) plus the total, for the /reviews page. Nothing is ever marked
- * delivered while no transport is configured, so the unbounded list above only
- * grows.
+ * Only requests whose review still needs a human and whose cycle is still
+ * open are listed: a review that is signed or abstained, or whose cycle has
+ * closed (a decision was made), is no longer an outstanding ask. Nothing is
+ * marked delivered while no transport is configured, so without this filter
+ * the list would only ever grow.
  *
  * Scoped to the viewer's workspace, because subject and body embed the
  * initiative title: the asks for initiatives in the viewer's own workspace plus
@@ -159,7 +130,8 @@ export async function undeliveredNotifications(db: Db): Promise<ReviewNotificati
  * (lib/services/workspace-guard.ts workspaceMismatch), resolved through the
  * notification's initiative, which is where the workspace lives. Rows and
  * total use the same filter, so the count never reveals how many requests
- * other workspaces hold.
+ * other workspaces hold. This is the only reader: an unscoped one would show
+ * every visitor's initiative titles.
  */
 export async function recentUndeliveredNotifications(
   db: Db,
@@ -168,6 +140,8 @@ export async function recentUndeliveredNotifications(
 ): Promise<{ rows: ReviewNotificationRow[]; total: number }> {
   const visible = and(
     isNull(reviewNotifications.deliveredAt),
+    isNull(reviewCycles.closedAt),
+    notInArray(reviewDecisions.status, ["signed", "abstained"]),
     viewerWorkspaceId === null
       ? isNull(initiatives.workspaceId)
       : or(isNull(initiatives.workspaceId), eq(initiatives.workspaceId, viewerWorkspaceId)),
@@ -177,6 +151,11 @@ export async function recentUndeliveredNotifications(
       .select({ n: reviewNotifications })
       .from(reviewNotifications)
       .innerJoin(initiatives, eq(initiatives.id, reviewNotifications.initiativeId))
+      .innerJoin(reviewCycles, eq(reviewCycles.id, reviewNotifications.cycleId))
+      .innerJoin(
+        reviewDecisions,
+        and(eq(reviewDecisions.cycleId, reviewNotifications.cycleId), eq(reviewDecisions.domain, reviewNotifications.domain)),
+      )
       .where(visible)
       .orderBy(desc(reviewNotifications.createdAt))
       .limit(limit)
@@ -185,6 +164,11 @@ export async function recentUndeliveredNotifications(
       .select({ n: sql<number>`count(*)::int` })
       .from(reviewNotifications)
       .innerJoin(initiatives, eq(initiatives.id, reviewNotifications.initiativeId))
+      .innerJoin(reviewCycles, eq(reviewCycles.id, reviewNotifications.cycleId))
+      .innerJoin(
+        reviewDecisions,
+        and(eq(reviewDecisions.cycleId, reviewNotifications.cycleId), eq(reviewDecisions.domain, reviewNotifications.domain)),
+      )
       .where(visible),
   ]);
   return { rows, total: counted[0]?.n ?? rows.length };
