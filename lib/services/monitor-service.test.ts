@@ -31,6 +31,7 @@ import {
 } from "./monitor-service";
 import { SYSTEM_ACTOR } from "./actors";
 import { resumeDeployment } from "./admin-service";
+import { requestException } from "./exception-service";
 import { createDraft } from "./initiative-service";
 import { CHAMPION_PREFILL_PAYLOAD } from "../intake/champion-prefill";
 
@@ -353,6 +354,7 @@ describe("lib/services/monitor-service", () => {
       const first = await runMonitor(db, SYSTEM_ACTOR, BASE_DATE_MS + 30 * DAY_MS, UNSCOPED_WORKSPACE);
       const rows = await q01Rows(db, dep.id);
       expect(rows).toHaveLength(1);
+      expect(rows[0]!.status).toBe("met"); // passing evidence in the same run
       expect(first.errors).toEqual([]);
       const events = (await db.select().from(auditEvents).where(eq(auditEvents.action, "effective_control_attached")))
         .filter((e) => (e.metadata as { deploymentId: string }).deploymentId === dep.id);
@@ -379,6 +381,47 @@ describe("lib/services/monitor-service", () => {
       // Only the seeded deployments that already have eval data were attached.
       const events = await db.select().from(auditEvents).where(eq(auditEvents.action, "effective_control_attached"));
       expect(events.map((e) => (e.metadata as { deploymentId: string }).deploymentId)).not.toContain(dep.id);
+    });
+  });
+
+  describe("runMonitor — Q-01 status after resume and with an open exception request (L15)", () => {
+    it("a Q-01 reset to pending stays pending without fresh evidence and becomes met when passing evidence arrives", async () => {
+      const { init, dep } = await memberChatCopilot(db);
+      const first = await runMonitor(db, SYSTEM_ACTOR, PLUS_14D, UNSCOPED_WORKSPACE);
+      const cycleId = first.breaches[0]!.reviewCycleId!;
+      await db.update(reviewCycles).set({ closedAt: new Date() }).where(eq(reviewCycles.id, cycleId));
+      await db.insert(initiativeDecisions).values({
+        id: `decision-${randomUUID()}`, initiativeId: init.id, cycleId, type: "approved",
+        approver: "angela-torres", decidedAt: new Date(),
+      });
+      await db.update(initiatives).set({ state: "approved" }).where(eq(initiatives.id, init.id));
+      await resumeDeployment(db, RAY_CHEN, null, init.id, "Reassessment approved; resume.");
+      const q01 = async () => (await db.select().from(effectiveControls).where(eq(effectiveControls.deploymentId, dep.id)))
+        .find((r) => r.controlId === "Q-01")!.status;
+      expect(await q01()).toBe("pending");
+
+      // Only the old breach is in the series: nothing fresh, so no change.
+      await runMonitor(db, SYSTEM_ACTOR, PLUS_14D + DAY_MS, UNSCOPED_WORKSPACE);
+      expect(await q01()).toBe("pending");
+
+      await db.insert(observations).values({
+        id: "obs-l15-pass", deploymentId: dep.id, kind: "eval_hallucination",
+        ts: new Date(BASE_DATE_MS + 20 * DAY_MS), value: 0.01,
+      });
+      await runMonitor(db, SYSTEM_ACTOR, BASE_DATE_MS + 25 * DAY_MS, UNSCOPED_WORKSPACE);
+      expect(await q01()).toBe("met");
+    });
+
+    it("a breach still records the incident but leaves a control with an open exception request alone", async () => {
+      const { dep } = await memberChatCopilot(db);
+      const [ec] = (await db.select().from(effectiveControls).where(eq(effectiveControls.deploymentId, dep.id)))
+        .filter((r) => r.controlId === "Q-01");
+      await db.update(effectiveControls).set({ status: "overdue" }).where(eq(effectiveControls.id, ec!.id));
+      await requestException(db, ec!.id, { id: "marcus-webb", role: "reviewer" }, null, "Retraining in progress");
+      const result = await runMonitor(db, SYSTEM_ACTOR, PLUS_14D, UNSCOPED_WORKSPACE);
+      expect(result.incidentsCreated).toBe(1);
+      const [after] = await db.select().from(effectiveControls).where(eq(effectiveControls.id, ec!.id));
+      expect(after!.status).toBe("exception_requested");
     });
   });
 

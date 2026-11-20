@@ -39,6 +39,7 @@ import type * as schema from "../db/schema";
 import {
   auditEvents,
   controlDefinitions,
+  controlExceptions,
   deploymentVersions,
   effectiveControls,
   incidents,
@@ -185,6 +186,15 @@ function insertAuditEvent(
     after: payload.after,
     metadata: metadata ?? null,
   });
+}
+
+async function hasRequestedException(tx: Tx, effectiveControlId: string): Promise<boolean> {
+  const rows = await tx
+    .select({ id: controlExceptions.id })
+    .from(controlExceptions)
+    .where(and(eq(controlExceptions.effectiveControlId, effectiveControlId), eq(controlExceptions.status, "requested")))
+    .limit(1);
+  return rows.length > 0;
 }
 
 /** Deployments currently `deployed` with their owning initiative + tier + flags. */
@@ -373,10 +383,13 @@ export async function runMonitor(
     // a recorded incident; then look past the end of that run so a LATER breach
     // (e.g. after a resume) is detected instead of the old one found again.
     let evalResult = evaluateControl(control, series, nowTs);
+    // End of the latest known breach run, and whether the series has moved
+    // past a known breach (no later sustained breach).
+    let since: number | undefined;
+    let pastKnownBreach = false;
     if (evalResult.identityKey) {
       const known = await db.select().from(incidents).where(eq(incidents.deploymentId, deployment.id));
       const sorted = series.slice().sort((a, b) => a.ts - b.ts);
-      let since: number | undefined;
       for (const inc of known) {
         const startIdx = sorted.findIndex((o) => o.ts >= inc.windowStart.getTime());
         if (startIdx === -1) continue;
@@ -387,6 +400,38 @@ export async function runMonitor(
       if (since !== undefined && known.some((k) => k.identityKey === evalResult.identityKey)) {
         const later = evaluateControl(control, series, nowTs, since);
         if (later.breached) evalResult = later;
+        else pastKnownBreach = true;
+      }
+    }
+
+    // A control reset to 'pending' (new Q-01, or after an approved
+    // reassessment) becomes 'met' once there is a passing observation newer
+    // than any known breach. A control with an open exception request is left
+    // alone, as for a breach below.
+    if (ec.status === "pending" && (!evalResult.breached || pastKnownBreach)) {
+      const latest = series.filter((o) => o.ts <= nowTs).sort((a, b) => b.ts - a.ts)[0];
+      if (latest && latest.value <= threshold && (since === undefined || latest.ts > since)) {
+        await db.transaction(async (tx) => {
+          if (await hasRequestedException(tx, ec.id)) return;
+          const updated = await tx
+            .update(effectiveControls)
+            .set({ status: "met" })
+            .where(and(eq(effectiveControls.id, ec.id), eq(effectiveControls.status, "pending")))
+            .returning();
+          if (updated.length === 0) return;
+          await tx.insert(auditEvents).values({
+            id: `evt-${randomUUID()}`,
+            initiativeId: initiative.id,
+            ts: new Date(),
+            actor: SYSTEM_ACTOR.id,
+            actorRole: SYSTEM_ACTOR.role,
+            action: "control_met",
+            detail: `${RUNTIME_CONTROL_ID} is met for deployment ${deployment.id}: passing evidence at ${new Date(latest.ts).toISOString()}.`,
+            before: "pending",
+            after: "met",
+            metadata: { effectiveControlId: ec.id, controlId: RUNTIME_CONTROL_ID, deploymentId: deployment.id, evidenceTs: latest.ts },
+          });
+        });
       }
     }
     if (!evalResult.breached || !evalResult.identityKey || evalResult.windowStartTs === null) {
@@ -599,10 +644,14 @@ export async function runMonitor(
           .update(reviewCycles)
           .set({ incidentId })
           .where(eq(reviewCycles.id, reviewCycleId));
-        await tx
-          .update(effectiveControls)
-          .set({ status: "breached" })
-          .where(eq(effectiveControls.id, ec.id));
+        // The incident is recorded either way; the control's status is not
+        // overwritten while an exception request for it is open.
+        if (!(await hasRequestedException(tx, ec.id))) {
+          await tx
+            .update(effectiveControls)
+            .set({ status: "breached" })
+            .where(eq(effectiveControls.id, ec.id));
+        }
 
         await tx.insert(auditEvents).values({
           id: `evt-${randomUUID()}`,
