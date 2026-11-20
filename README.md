@@ -332,6 +332,9 @@ conditional approval — against a real (mocked-LLM) run.
   table, so it is not yet a privilege-level guarantee), and every synthetic telemetry panel is
   explicitly labeled as synthetic.
 
+The full model (trust boundaries, limits, data, secrets, what is out of scope)
+is in `docs/security-model.md`; `SECURITY.md` says how to report a problem.
+
 See `docs/deploy.md` §3 for the current, explicitly-documented gaps (e.g.
 rate-limiter scope) and `docs/production-readiness.md` for the fuller
 assessment, before relying on this for anything beyond a controlled demo.
@@ -375,7 +378,8 @@ components/jeeves/      App-specific UI: workbench, case-file tabs, chats,
 deploy/                 Container deploy templates (Podman: Containerfile, compose, Quadlet)
 drizzle/                Generated SQL migrations, incl. the append-only audit trigger
 docs/                   plan.md-adjacent specs: seed-spec, intake-spec, ui-spec,
-                        demo-script, deploy runbook, per-domain policy corpus
+                        demo-script, deploy runbook, security-model, per-domain
+                        policy corpus
 tests/                  Component tests, port compile-tripwire tests, and the
                         required Playwright golden-path spec
 scripts/                seed.ts (deterministic seed), migrate.ts (db:migrate),
