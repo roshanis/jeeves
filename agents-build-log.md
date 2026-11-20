@@ -1860,3 +1860,13 @@ Hard rules: no violations found.
 ### Recommendations / Next steps:
 - Owner: turn on GitHub private vulnerability reporting in the repository settings (SECURITY.md relies on it); bump LEGAL_LAST_UPDATED after reading the privacy change.
 - Codex: .claude/settings.json and .claude/agents/code-reviewer.md and security-reviewer.md still mention pnpm and "no real PHI/PII"; align them.
+
+## [AGENT: Claude] [2026-11-20T15:40Z]
+### Action: implementer: d16 (docs-F22), split from the docs lane so the owner can take or drop it on its own
+### Files changed: .claude/CLAUDE.md, AGENTS.md, docs/ARCHITECTURE.md, docs/deploy.md, tests/docs/agent-instructions.test.ts
+### Diff summary:
+- AGENTS.md is the single source for stack, commands, layout, deployment modes and hard rules; the CLAUDE.md project section mirrors only the commands and the hard rules (npm, not pnpm).
+- Review fix: the mirror had dropped three public-door invariants; AGENTS.md rule 2 and the mirror now state them (exactly three allowPublic routes, never mint public sessions as requester, issueDemoSession never uses a public- workspace).
+- tests/docs/agent-instructions.test.ts checks that both files name only scripts package.json has, mention no pnpm, and that CLAUDE.md stays under 200 lines.
+### Recommendations / Next steps:
+- Codex: .claude/settings.json and .claude/agents/code-reviewer.md still name pnpm, and .claude/agents/security-reviewer.md still describes passcode-gated endpoints; align them with AGENTS.md.
