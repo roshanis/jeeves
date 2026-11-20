@@ -2,12 +2,13 @@
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
-import { auditEvents, reviewCycles, reviewDecisions, runBudget } from "../db/schema";
+import { auditEvents, reviewCycles, reviewDecisions } from "../db/schema";
 import type { Actor, Domain } from "../domain/types";
 import { assertLlmConfigured, getAgentPort } from "../agents";
 import { AgentInitializationError } from "../agents/initialization-error";
-import type { AgentPort, DraftReviewOutput, PortFailure, PortResult } from "../agents/ports";
+import type { AgentPort, DraftReviewInput, DraftReviewOutput, PortFailure, PortResult } from "../agents/ports";
 import { lockCurrentReviewCycle, ReviewIntegrityError, type ReviewTx } from "../services/review-integrity";
+import { BUDGET_REFUSAL, reserveForWorkspace } from "../security/budget";
 import { loadReviewContext } from "./review-context";
 import type { DraftBudgetPolicy } from "./draft-execution-policy";
 
@@ -82,32 +83,35 @@ async function claimDomain(db: Db, cycleId: string, domain: Domain, force: boole
 class ReservationInterrupted extends Error {
   constructor(readonly reason: "cancelled" | "timed-out") { super(reason); }
 }
-async function reserveAttempt(db: Db, claim: Claim, options: StartDraftRunOptions, attempt: number, deadline: number): Promise<"ready" | "superseded" | "budget-exhausted" | "cancelled" | "timed-out"> {
+function draftInput(claim: Claim): DraftReviewInput {
+  return {reviewCycleId:claim.row.cycleId,domain:claim.row.domain as Domain,intake:claim.context.intake,policyContext:claim.context.policyContext,controlIds:claim.context.metadata.controlIds as string[]};
+}
+async function reserveAttempt(db: Db, claim: Claim, options: StartDraftRunOptions, attempt: number, deadline: number): Promise<"ready" | "superseded" | "budget-exhausted" | "workspace-budget-exhausted" | "cancelled" | "timed-out"> {
   const requireTime = () => {
     if (options.signal?.aborted) throw new ReservationInterrupted("cancelled");
     if (Date.now() >= deadline) throw new ReservationInterrupted("timed-out");
   };
   try { return await db.transaction(async (tx) => {
-    try { await lockCurrentReviewCycle(tx, claim.row.cycleId, options.sessionWorkspaceId); }
+    let initiative: Awaited<ReturnType<typeof lockCurrentReviewCycle>>["initiative"];
+    try { ({ initiative } = await lockCurrentReviewCycle(tx, claim.row.cycleId, options.sessionWorkspaceId)); }
     catch (error) { if (error instanceof ReviewIntegrityError && error.kind === "conflict") return "superseded"; throw error; }
     const [row] = await tx.select().from(reviewDecisions).where(eq(reviewDecisions.id, claim.row.id));
     const now = await databaseNow(tx);
     if (!row || row.activeAttemptId !== claim.id || row.revision !== claim.row.revision || !row.activeAttemptExpiresAt || row.activeAttemptExpiresAt <= now || row.status === "signed") return "superseded";
     requireTime();
     if (options.budget) {
-      const { day, tokensPerAttempt, dailyCap } = options.budget;
+      const { day, dailyCap, workspaceCap } = options.budget;
+      // Sized from the prompt this attempt will send (same inputs as invoke()).
+      const tokensPerAttempt = options.budget.estimateAttempt?.(draftInput(claim)) ?? options.budget.tokensPerAttempt;
       const reservationId = `evt-budget-${claim.id}-${attempt}`;
       const [existing] = await tx.select({id: auditEvents.id}).from(auditEvents).where(eq(auditEvents.id, reservationId));
       if (existing) return "ready";
-      if (tokensPerAttempt > dailyCap) return "budget-exhausted";
-      const reserved = await tx.insert(runBudget).values({id:day,day,tokensUsed:tokensPerAttempt,tokensCap:dailyCap}).onConflictDoUpdate({
-        target: runBudget.day, set: {tokensUsed:sql`${runBudget.tokensUsed} + ${tokensPerAttempt}`,tokensCap:dailyCap},
-        setWhere:sql`${runBudget.tokensUsed} + ${tokensPerAttempt} <= ${dailyCap}`,
-      }).returning();
+      // The workspace share and the day are reserved together or not at all.
+      const reserved = await reserveForWorkspace(tx, {day, workspaceId: options.sessionWorkspaceId ?? initiative.workspaceId ?? "shared", tokens: tokensPerAttempt, dailyCap, workspaceCap});
       // A shared-budget row lock may also outlast cancellation/deadline.
       // Throwing here rolls back any reservation for work never dispatched.
       requireTime();
-      if (!reserved.length) return "budget-exhausted";
+      if (!reserved.granted) return reserved.scope === "workspace" ? "workspace-budget-exhausted" : "budget-exhausted";
       const actor = options.actor ?? system;
       await tx.insert(auditEvents).values({id:reservationId,initiativeId:claim.initiativeId,ts:new Date(),actor:actor.id,actorRole:actor.role,
         action:"draft_budget_reserved",detail:"Reserved estimated model capacity for one draft attempt.",metadata:{attemptId:claim.id,attempt,estimatedTokens:tokensPerAttempt,day}});
@@ -129,7 +133,7 @@ async function invoke(port: AgentPort, claim: Claim, options: StartDraftRunOptio
     options.signal?.addEventListener("abort", abort, {once:true});
     timer = setTimeout(() => { controller.abort(); resolve({ok:false,error:timeout(timeoutMs)}); }, timeoutMs);
   });
-  const call = Promise.resolve().then(() => port.draftReview({reviewCycleId:claim.row.cycleId,domain:claim.row.domain as Domain,intake:claim.context.intake,policyContext:claim.context.policyContext,controlIds:claim.context.metadata.controlIds as string[]},
+  const call = Promise.resolve().then(() => port.draftReview(draftInput(claim),
     {signal:controller.signal,timeoutMs})).catch((): DraftResult => ({ok:false,error:{kind:"provider",message:"Draft generation failed. Retry this domain.",retryable:true}}));
   try { return await Promise.race([call,stopped]); }
   finally { if(timer)clearTimeout(timer); options.signal?.removeEventListener("abort",abort); }
@@ -198,7 +202,9 @@ async function executeClaim(db: Db, claim: Claim, port: AgentPort | undefined, o
     if(reserved==="superseded")return {outcome:{cycleId:claim.row.cycleId,domain:claim.row.domain as Domain,status:"skipped",reason:"superseded"}};
     if(reserved==="cancelled"){result={ok:false,error:cancelled()};break;}
     if(reserved==="timed-out"){result={ok:false,error:timeout(bounded(options.runTimeoutMs,90_000,180_000))};break;}
-    if(reserved==="budget-exhausted"){result={ok:false,error:{kind:"budget-exhausted",message:"Daily model budget reached."}};break;}
+    if(reserved==="budget-exhausted"||reserved==="workspace-budget-exhausted"){
+      const scope = reserved==="workspace-budget-exhausted" ? "workspace" : "global";
+      result={ok:false,error:{kind:"budget-exhausted",message:BUDGET_REFUSAL[scope].message,code:BUDGET_REFUSAL[scope].code as "workspace_budget_exhausted"|"daily_budget_exhausted"}};break;}
     // Lock acquisition and reservation can consume the remaining run time.
     const dispatchRemaining = deadline-Date.now();
     if (dispatchRemaining<=0) {result={ok:false,error:timeout(bounded(options.runTimeoutMs,90_000,180_000))};break;}

@@ -39,6 +39,21 @@ describe("audit timestamps", () => {
   });
 });
 
+describe("decisions tab rejection reason", () => {
+  it("shows the written reason on a rejection, and nothing for a decision without one", () => {
+    const withReason = renderWithProviders(
+      <DecisionsTab slug="x" decisions={[{ type: "rejected", approver: "A B", at: "2026-09-07T19:05:00.000Z", conditions: [], citations: [], reason: "PHI leaves the tenant boundary." }]} />,
+    );
+    expect(withReason.container.textContent).toContain("Reason");
+    expect(withReason.container.textContent).toContain("PHI leaves the tenant boundary.");
+    withReason.unmount();
+    const without = renderWithProviders(
+      <DecisionsTab slug="x" decisions={[{ type: "rejected", approver: "A B", at: "2026-09-07T19:05:00.000Z", conditions: [], citations: [], reason: null }]} />,
+    );
+    expect(without.container.textContent).not.toContain("Reason");
+  });
+});
+
 describe("decisions tab keys", () => {
   it("renders two conditions on the same control without a duplicate key warning", () => {
     const err = vi.spyOn(console, "error").mockImplementation(() => {});

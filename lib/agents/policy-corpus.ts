@@ -295,7 +295,17 @@ export function searchPolicyCorpus(
  */
 export function createPolicyCorpusTools(
   onRead?: (label: string) => void,
+  limits: { readonly maxCalls?: number; readonly maxResultChars?: number } = {},
 ): unknown[] {
+  // Per run: every call after the cap gets a short refusal instead of a result,
+  // and results are cut, so a deep review's token use has an upper bound.
+  let calls = 0;
+  const overLimit = () => limits.maxCalls !== undefined && ++calls > limits.maxCalls;
+  const LIMIT_MESSAGE = "refused: tool-call limit reached for this review. Write the final JSON from what you have already read.";
+  const cut = (text: string) =>
+    limits.maxResultChars !== undefined && text.length > limits.maxResultChars
+      ? `${text.slice(0, limits.maxResultChars)}\n\n[... truncated: result cut at ${limits.maxResultChars} characters ...]`
+      : text;
   const readPolicyFileTool = tool({
     name: "read_policy_file",
     description:
@@ -319,9 +329,10 @@ export function createPolicyCorpusTools(
         ),
     }),
     execute: (args: { path: string }) => {
+      if (overLimit()) return LIMIT_MESSAGE;
       onRead?.(args.path);
       try {
-        return readPolicyFileSafe(args.path);
+        return cut(readPolicyFileSafe(args.path));
       } catch (err) {
         if (err instanceof PolicyCorpusPathError) {
           return `refused: path outside the policy corpus or not a readable .md file: ${args.path}`;
@@ -355,6 +366,7 @@ export function createPolicyCorpusTools(
         .describe("Maximum matches to return (default 40, hard cap 40)."),
     }),
     execute: (args: { pattern: string; limit?: number | null }) => {
+      if (overLimit()) return LIMIT_MESSAGE;
       onRead?.(args.pattern);
       const matches = searchPolicyCorpus(
         args.pattern,
@@ -363,9 +375,9 @@ export function createPolicyCorpusTools(
       if (matches.length === 0) {
         return `No matches for "${args.pattern}" in the policy corpus.`;
       }
-      return matches
+      return cut(matches
         .map((m) => `${m.path}:${m.line}: ${m.text}`)
-        .join("\n");
+        .join("\n"));
     },
   });
 

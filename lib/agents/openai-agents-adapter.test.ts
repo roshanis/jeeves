@@ -1,3 +1,4 @@
+import { DEEP_REVIEW_MAX_TURNS } from "./token-estimate";
 import { createHash } from "node:crypto";
 import { MaxTurnsExceededError } from "@openai/agents";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -559,7 +560,7 @@ describe("openai-agents-adapter — deep review mode", () => {
       expect(result.error.kind).toBe("provider");
       if (result.error.kind === "provider") {
         expect(result.error.retryable).toBe(false);
-        expect(result.error.message).toContain("15");
+        expect(result.error.message).toContain(String(DEEP_REVIEW_MAX_TURNS));
       }
     }
   });

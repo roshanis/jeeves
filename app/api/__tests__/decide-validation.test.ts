@@ -57,6 +57,16 @@ describe("decide input validation", () => {
     expect(res.status).toBe(400);
   });
 
+  it.each([
+    ["is missing", { decision: "rejected" }],
+    ["is blank", { decision: "rejected", reason: "   " }],
+    ["is over 2,000 characters", { decision: "rejected", reason: "x".repeat(2001) }],
+  ])("answers 400 naming the reason field when a rejection's reason %s", async (_label, body) => {
+    const res = await postDecide(body);
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toMatch(/reason/i);
+  });
+
   it("decide() itself rejects blank conditions for non-HTTP callers", async () => {
     await expect(
       decide(testDb, "no-such-initiative", { id: "angela-torres", role: "approver" }, null, {

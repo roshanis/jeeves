@@ -27,12 +27,14 @@
  *        below)
  */
 import { z } from "zod";
+import { AgentInitializationError } from "@/lib/agents/initialization-error";
+import { estimateAuditorTokens } from "@/lib/agents/token-estimate";
 import { getAgentPort } from "@/lib/agents";
 import type { AgentPort, PortFailure } from "@/lib/agents/ports";
 import { agentInitializationResponse, llmNotConfigured, llmNotConfiguredResponse } from "@/lib/services/agent-error-response";
 import { getProvider } from "@/lib/data";
 import type { AuditQueryRow, CannedAuditQueryId } from "@/lib/data/dto";
-import { guardFailureResponse, reserveDailyBudget, runMutationGuard } from "@/lib/services/route-guard";
+import { guardFailureResponse, reserveDailyBudget, runMutationGuard, type GuardFailure } from "@/lib/services/route-guard";
 import { databaseNotReady } from "@/lib/http/database-gate";
 
 const bodySchema = z.object({
@@ -40,8 +42,6 @@ const bodySchema = z.object({
 });
 
 const QUESTION_MAX_CHARS = 2000;
-/** Headroom for the system prompt and completion; the grounding text is added on top when reserving. */
-const BASE_ESTIMATED_TOKENS = 600;
 /** Grounding sent to the model is bounded so a caller cannot inflate real spend past the reservation. */
 const MAX_GROUNDING_ROWS = 50;
 const MAX_GROUNDING_FIELD_CHARS = 500;
@@ -232,11 +232,21 @@ export async function POST(req: Request): Promise<Response> {
 
   rows = boundGroundingRows(rows, keepNewest);
 
-  // Reserve from what is actually sent to the model, after grounding.
-  const budget = await reserveDailyBudget(
-    BASE_ESTIMATED_TOKENS + Math.ceil((parsed.data.question.length + JSON.stringify(rows).length) / 4),
-  );
-  if (budget) return Response.json({ error: budget.message }, { status: budget.status });
+  // Reserve from what is actually sent to the model, after grounding: the
+  // system prompt, the question and the bounded rows, plus a reply allowance.
+  const auditorInput = { question: parsed.data.question, groundingRows: rows, queryUsed };
+  const size = () => {
+    try { return estimateAuditorTokens(auditorInput); } catch (error) { throw new AgentInitializationError(error); }
+  };
+  let budget: GuardFailure | null;
+  try {
+    budget = await reserveDailyBudget(size, guard.workspaceId);
+  } catch (error) {
+    const unavailable = agentInitializationResponse(error);
+    if (unavailable) return unavailable;
+    throw error;
+  }
+  if (budget) return guardFailureResponse(budget);
 
   let port: AgentPort;
   try {
@@ -247,7 +257,7 @@ export async function POST(req: Request): Promise<Response> {
     throw error;
   }
   const result = await port.auditorAnswer(
-    { question: parsed.data.question, groundingRows: rows, queryUsed },
+    auditorInput,
     { signal: req.signal, timeoutMs: AGENT_TIMEOUT_MS },
   );
 

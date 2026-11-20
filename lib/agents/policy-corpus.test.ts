@@ -230,6 +230,29 @@ describe("policy-corpus - createPolicyCorpusTools", () => {
     expect(result).toContain("docs/policies/legal.md");
   });
 
+  it("stops answering after maxCalls tool calls in total, across both tools", async () => {
+    const onRead = vi.fn();
+    const tools = createPolicyCorpusTools(onRead, { maxCalls: 2 });
+    const readTool = findTool(tools, "read_policy_file");
+    const searchTool = findTool(tools, "search_policy");
+    const args = JSON.stringify({ path: "docs/policies/legal.md" });
+    expect(await readTool.invoke(new RunContext(), args)).toContain("Meridian AI Policy");
+    expect(await searchTool.invoke(new RunContext(), JSON.stringify({ pattern: "MP-L-1.1" }))).toContain("legal.md");
+    const refused = await readTool.invoke(new RunContext(), args);
+    expect(refused).toMatch(/tool-call limit/i);
+    expect(onRead).toHaveBeenCalledTimes(2);
+  });
+
+  it("cuts a read result at maxResultChars and says so", async () => {
+    const tools = createPolicyCorpusTools(undefined, { maxResultChars: 500 });
+    const result = (await findTool(tools, "read_policy_file").invoke(
+      new RunContext(),
+      JSON.stringify({ path: "docs/policies/legal.md" }),
+    )) as string;
+    expect(result.length).toBeLessThan(700);
+    expect(result).toMatch(/truncated/);
+  });
+
   it("onRead fires with the repo-relative path for read_policy_file and the pattern for search_policy", async () => {
     const onRead = vi.fn();
     const tools = createPolicyCorpusTools(onRead);

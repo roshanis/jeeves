@@ -94,6 +94,7 @@ import {
   validateDraftReviewInput,
 } from "./adapter-shared";
 import { createPolicyCorpusTools } from "./policy-corpus";
+import { DEEP_REVIEW_MAX_TOOL_CALLS, DEEP_REVIEW_MAX_TURNS, DEEP_TOOL_RESULT_MAX_CHARS } from "./token-estimate";
 import { invokeWithDeadline } from "./invoke";
 import type {
   AgentPort,
@@ -237,8 +238,6 @@ function mapAgentsErrorToPortFailure(
  * Deep review mode (draftReview only) — policy-corpus tool use
  * ---------------------------------------------------------------------- */
 
-/** Hard cap on tool-use turns for a deep-review run; see error mapping above. */
-const DEEP_REVIEW_MAX_TURNS = 15;
 
 const DEEP_REVIEW_TAIL = `
 
@@ -398,7 +397,7 @@ export function createOpenAiAgentsAdapterWithRunner(
         message: label,
         at: new Date().toISOString(),
       });
-    });
+    }, { maxCalls: DEEP_REVIEW_MAX_TOOL_CALLS, maxResultChars: DEEP_TOOL_RESULT_MAX_CHARS });
 
     const deepAgent = new Agent({
       name: `jeeves-reviewer-deep-${input.domain}`,

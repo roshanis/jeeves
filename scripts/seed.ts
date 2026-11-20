@@ -35,6 +35,7 @@ import {
   reviewNotifications,
   riskAssessments,
   runBudget,
+  runBudgetWorkspace,
 } from "../lib/db/schema";
 import { rearmGuardTriggers } from "../lib/db/guard-triggers";
 import { isMain } from "./is-main";
@@ -368,6 +369,7 @@ async function seedInTransaction(db: SeedDb): Promise<RowCounts> {
   await db.delete(controlDefinitions);
   await db.delete(initiatives);
   await db.delete(runBudget);
+  await db.delete(runBudgetWorkspace);
 
   // --- Control catalog -----------------------------------------------
   for (const c of CONTROL_SEEDS) {
@@ -783,6 +785,7 @@ async function seedInTransaction(db: SeedDb): Promise<RowCounts> {
       approver: ACTORS.angelaTorres.name,
       citations: ["MP-H-5.1(b)", "MP-H-5.2", "MP-R-5.1(a)", "MP-R-5.2", "MP-L-6.1(b)", "MP-L-6.2"],
       conditions: [],
+      reason: "Joint Privacy/HIPAA, Responsible AI and Legal grounds: the tool infers sensitive conditions from monitored member communications without consent.",
       decidedAt: dateAt(-20),
     });
     await insertAudit(ctx, {

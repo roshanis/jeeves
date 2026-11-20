@@ -356,6 +356,7 @@ function DecideForm({
   );
   const [conditions, setConditions] = React.useState<ConditionDraft[]>([]);
   const [citationsText, setCitationsText] = React.useState("");
+  const [reason, setReason] = React.useState("");
   const [error, setError] = React.useState<string | null>(null);
   const [pending, setPending] = React.useState(false);
   React.useEffect(() => { onPendingChange?.(pending); }, [pending, onPendingChange]);
@@ -375,6 +376,12 @@ function DecideForm({
       setError("Each condition needs both text and a control id (e.g. C-01).");
       return;
     }
+    // Rejection is terminal: the requester and later auditors need the reason on the record.
+    const cleanReason = decision === "rejected" ? reason.trim() : "";
+    if (decision === "rejected" && cleanReason.length === 0) {
+      setError("Enter a reason for rejecting this initiative.");
+      return;
+    }
     const citations = citationsText
       .split(",")
       .map((c) => c.trim())
@@ -387,6 +394,7 @@ function DecideForm({
         decision,
         conditions: cleanConditions.length > 0 ? cleanConditions : undefined,
         citations: citations.length > 0 ? citations : undefined,
+        ...(decision === "rejected" ? { reason: cleanReason } : {}),
         ...(reviews && reviews.length > 0 && reviews.every((r) => r.cycleId && r.revision !== undefined)
           ? {
               expectedCycleId: reviews[0]!.cycleId,
@@ -477,6 +485,21 @@ function DecideForm({
         </Button>
       </div> : null}
 
+      {decision === "rejected" ? (
+        <label className="flex flex-col gap-1 text-sm">
+          <span className="font-medium">Reason for rejecting (required)</span>
+          <textarea
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            maxLength={2000}
+            rows={3}
+            placeholder="What the requester needs to know. This is recorded on the decision and the audit trail."
+            data-slot="decide-reason"
+            className={fieldClass}
+          />
+        </label>
+      ) : null}
+
       <label className="flex flex-col gap-1 text-sm">
         <span className="font-medium">Policy citations (optional, comma-separated)</span>
         <input
@@ -501,7 +524,7 @@ function DecideForm({
         </Button>
         <Button
           type="button"
-          disabled={pending}
+          disabled={pending || (decision === "rejected" && reason.trim().length === 0)}
           onClick={() => void handleConfirm()}
           data-slot="decide-confirm"
         >

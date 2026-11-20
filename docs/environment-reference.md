@@ -98,6 +98,22 @@ All LLM calls are mocked in tests. With no `OPENAI_API_KEY`, demo uses the
 deterministic keyless mock adapter and cannot spend; production answers 503
 (`llm_not_configured`) on LLM routes instead of serving canned drafts.
 
+Daily model budget (with a key): 500,000 estimated tokens per UTC day for the
+installation, and at most 10% of that (50,000) per workspace. Both are
+reserved together before a model call; a refusal names which cap it was and
+resets at 00:00 UTC. A keyless (mock) demo reserves nothing and is bounded by
+the rate limits instead. The caps are constants in `lib/security/budget.ts`.
+
+Each reservation is an estimate sized from the prompt that is actually built
+(one token per four characters of system prompt plus input, plus an allowance
+for the reply); it is not corrected after the call. A standard reviewer draft
+reserves about 9,000 to 10,000 tokens, so a workspace gets about five draft
+attempts a day, and the installation about fifty (roughly six full 8-domain
+runs); the old flat guess allowed about 41 full runs. A deep review
+(`JEEVES_DEEP_REVIEW=1`, at most 3 tool calls of 8,000 characters each)
+reserves about 40,000 to 45,000 for one domain. Raise `DAILY_TOKEN_CAP` or
+`WORKSPACE_DAILY_SHARE` in `lib/security/budget.ts` if that is too few.
+
 | Variable | Demo | Production | When | Secret | Default | Effect | Source |
 |---|---|---|---|---|---|---|---|
 | `OPENAI_API_KEY` | optional | needed for LLM features | runtime | yes | none | Enables the live adapter. | `lib/agents/runtime.ts` |

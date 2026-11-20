@@ -74,7 +74,7 @@ schema, plan.md §5). Migrations live in [`drizzle/`](../drizzle/).
 | RiskAssessment | `risk_assessments` | `initiativeId` FK, `version`, `intakeVersionId` FK, `tier`, `flags` (JSONB), `requiredDomains` (JSONB) | unique `(initiativeId, version)` |
 | ReviewCycle | `review_cycles` | `initiativeId` FK, `kind` (`initial`\|`reassessment`), `riskAssessmentId` FK, `openedAt`, `closedAt`, `incidentId` (nullable — set only for breach-opened reassessments) | — |
 | ReviewDecision | `review_decisions` | `cycleId` FK, `domain`, `status` (`pending`\|`drafted`\|`signed`\|`returned`), `reviewer`, `draftMd`, `citations` (JSONB), `signedAt`, `returnReason` | **unique `(cycleId, domain)`** — one ReviewDecision per (cycle, domain), plan §5 |
-| Initiative-level decision | `initiative_decisions` | `initiativeId` FK, `cycleId` FK, `type` (`approved`\|`conditionally_approved`\|`rejected`\|`fast_lane_approved`), `approver`, `policyId` (fast-lane only), `citations`, `conditions` (JSONB `{text, controlId}[]`) | separate table from `ReviewDecision` on purpose — initiative-level accountable decisions vs. per-domain drafts |
+| Initiative-level decision | `initiative_decisions` | `initiativeId` FK, `cycleId` FK, `type` (`approved`\|`conditionally_approved`\|`rejected`\|`fast_lane_approved`), `approver`, `policyId` (fast-lane only), `citations`, `conditions` (JSONB `{text, controlId}[]`), `reason` (required on `rejected`, null otherwise) | separate table from `ReviewDecision` on purpose — initiative-level accountable decisions vs. per-domain drafts |
 | DeploymentVersion | `deployment_versions` | `initiativeId` FK, `version` (e.g. "v2.1"), `status` (`deployed`\|`paused`\|`awaiting_promotion_signoff`\|`retired`), `modelVersion`, `selfHosted`, `feedbackProvenanceSignedOff`, `deployedAt`/`pausedAt`/`retiredAt` | — |
 | ControlDefinition | `control_definitions` | `id` (e.g. "H-01", "Q-01"), `domain` (or `"runtime"` for Q-01), `applicability`, `policySource`, `owner`, `requiredEvidence`, `cadence`, `enforcementMode` (`monitor`\|`gate`\|`block`), `exceptionProcess`, `remediationOwner`, plus Q-01-only `observationKind`/`tierDefaultThresholds`/`sustainedWindow` | catalog — read-mostly |
 | EffectiveControl | `effective_controls` | `deploymentId` FK, `controlId` FK, `version`, `status` (`met`\|`pending`\|`overdue`\|`breached`\|`exception_requested`), `thresholdOverride`, `evidence`/`evidenceAt`, `dueAt`, `remediationOwner` | **unique `(deploymentId, controlId, version)`** |
@@ -82,6 +82,7 @@ schema, plan.md §5). Migrations live in [`drizzle/`](../drizzle/).
 | Incident | `incidents` | `deploymentId` FK, `controlId` FK, `windowStart`, `identityKey` (unique, `${deploymentId}:${controlId}:${windowStartTsMs}`), `detectedAt`, `reviewCycleId` (nullable), `resolvedAt` | **unique `identityKey`** and unique `(deploymentId, controlId, windowStart)` — deterministic breach identity enables idempotent upsert-on-conflict re-runs |
 | AuditEvent | `audit_events` | `initiativeId` FK (nullable), `ts`, `actor`, `actorRole`, `action`, `detail`, `before`, `after`, `metadata` (JSONB) | **append-only at the DB level** — see §2.3 |
 | RunBudget | `run_budget` | `day` (`YYYY-MM-DD`, unique), `tokensUsed`, `tokensCap` | **unique per day** |
+| RunBudgetWorkspace | `run_budget_workspace` | `day`, `workspaceId`, `tokensUsed` | **primary key (day, workspace)** |
 | Session | `sessions` | `token` (PK), `personaKey`, `workspaceId`, `expiresAt` (epoch-ms, checked in app code), `createdAt` | added M2.5 inc.1 — see §6.1 |
 
 The **registry** (plan §5: "registry as a view") was a SQL view,
@@ -561,9 +562,16 @@ const rows = await db.insert(runBudget)
 
 `.returning()` comes back empty when the `setWhere` predicate fails (i.e.
 the reservation would exceed the cap), which the caller treats as denied.
-The cap is `500_000` tokens/day (`route-guard.ts`). An `InMemoryBudgetStore`
-exists for pure unit tests; production/dev-with-Postgres always uses
-`DbBudgetStore`.
+The cap is `500_000` tokens/day (`DAILY_TOKEN_CAP` in `lib/security/budget.ts`).
+An `InMemoryBudgetStore` exists for pure unit tests; production/dev-with-Postgres
+always uses `DbBudgetStore`.
+
+Each workspace also has a row in `run_budget_workspace` (`day`, `workspace_id`,
+`tokens_used`) capped at 10% of the day. `reserveForWorkspace()` takes the
+workspace row first and the day row second in one transaction, and gives the
+workspace increment back if the day refuses, so both pass or nothing is kept.
+The refusal carries `workspace_budget_exhausted` or `daily_budget_exhausted`.
+Nothing is reserved when the offline mock adapter answers (no provider call).
 
 ### 6.4 Requester ownership + reviewer-domain authorization
 

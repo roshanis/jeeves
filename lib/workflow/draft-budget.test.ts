@@ -5,14 +5,16 @@ import type { Actor } from "../domain/types";
 import type { AgentPort, DraftReviewInput, DraftReviewOutput, PortFailure } from "../agents/ports";
 import { createMockAgentPort } from "../agents/mock-adapter";
 import { createTestDb, closeTestDb, type TestDb } from "../db/test-client";
-import { auditEvents, initiatives, intakeVersions, reviewCycles, reviewDecisions, riskAssessments, runBudget } from "../db/schema";
+import { auditEvents, initiatives, intakeVersions, reviewCycles, reviewDecisions, riskAssessments, runBudget, runBudgetWorkspace } from "../db/schema";
 import { runReviewAgent } from "../services/initiative-service";
+import { estimateDraftAttemptTokens } from "../agents/token-estimate";
 import { draftBudgetPolicy } from "./draft-execution-policy";
+import { loadReviewContext } from "./review-context";
 import { startDraftRun } from "./review-run";
 
 const at = new Date("2026-09-19T10:00:00Z");
 const reviewer: Actor = { id: "james-liu", role: "reviewer" };
-const budget = { day: "2026-09-19", dailyCap: 500_000, tokensPerAttempt: 1_500 };
+const budget = { day: "2026-09-19", dailyCap: 500_000, workspaceCap: 50_000, tokensPerAttempt: 1_500 };
 const options = { budget, actor: reviewer, sessionWorkspaceId: "workspace-a", retryDelayMs: 0 };
 let db: TestDb;
 
@@ -100,15 +102,20 @@ describe("draft attempt reservations", () => {
   });
 
   it.each([
-    { runtime: "openai", deep: "1", estimate: 1_500 },
-    { runtime: "agents-sdk", deep: "0", estimate: 1_500 },
-    { runtime: "agents-sdk", deep: "1", estimate: 15_000 },
-  ])("reserves each retry before invocation with $runtime deep=$deep estimate=$estimate", async ({ runtime, deep, estimate }) => {
+    { runtime: "openai", deep: "1", isDeep: false },
+    { runtime: "agents-sdk", deep: "0", isDeep: false },
+    { runtime: "agents-sdk", deep: "1", isDeep: true },
+  ])("reserves each retry, sized from the built prompt, before invocation with $runtime deep=$deep", async ({ runtime, deep, isDeep }) => {
     vi.stubEnv("OPENAI_API_KEY", "test-placeholder-never-sent");
     vi.stubEnv("JEEVES_AGENT_RUNTIME", runtime);
     vi.stubEnv("JEEVES_DEEP_REVIEW", deep);
     const policy = draftBudgetPolicy(at);
-    expect(policy).toEqual({ ...budget, tokensPerAttempt: estimate });
+    expect(policy).toMatchObject({ day: budget.day, dailyCap: budget.dailyCap, workspaceCap: budget.workspaceCap });
+    // The same prompt the adapter will build for this claim: real intake, real policy file.
+    const [decision] = await db.select().from(reviewDecisions).where(eq(reviewDecisions.id, "review-legal"));
+    const context = await loadReviewContext(db, decision!.cycleId, "legal");
+    const estimate = estimateDraftAttemptTokens({ reviewCycleId: "cycle", domain: "legal", intake: context.intake, policyContext: context.policyContext, controlIds: context.metadata.controlIds as string[] }, isDeep);
+    expect(estimate).toBeGreaterThan(1_500);
     const observed: number[] = [];
     const { port, draftReview } = mockPort();
     draftReview.mockImplementation(async (input) => {
@@ -117,7 +124,7 @@ describe("draft attempt reservations", () => {
         ? { ok: false, error: { kind: "provider", message: "Transient synthetic provider failure", retryable: true } }
         : { ok: true, value: success(input) };
     });
-    const result = await runReviewAgent(db, "cycle", "legal", reviewer, "workspace-a", port, { ...options, budget: policy, maxAttempts: 3 });
+    const result = await runReviewAgent(db, "cycle", "legal", reviewer, "workspace-a", port, { ...options, budget: { ...policy!, workspaceCap: 10 * estimate }, maxAttempts: 3 });
     expect(result.status).toBe("drafted");
     expect(draftReview).toHaveBeenCalledTimes(2);
     expect(observed).toEqual([estimate, estimate * 2]);
@@ -126,6 +133,18 @@ describe("draft attempt reservations", () => {
     expect(new Set(receipts.map((event) => event.metadata?.attemptId)).size).toBe(1);
     expect(receipts.map((event) => event.metadata?.attempt).sort()).toEqual([1, 2]);
     expect(receipts.every((event) => event.actor === reviewer.id && event.metadata?.estimatedTokens === estimate)).toBe(true);
+  });
+
+  it("stops at the workspace share when each attempt is sized from its prompt", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "test-placeholder-never-sent");
+    const policy = draftBudgetPolicy(at)!;
+    const { port, draftReview } = mockPort();
+    draftReview.mockResolvedValue({ ok: false, error: { kind: "provider", message: "Transient", retryable: true } });
+    const context = await loadReviewContext(db, "cycle", "legal");
+    const one = estimateDraftAttemptTokens({ reviewCycleId: "cycle", domain: "legal", intake: context.intake, policyContext: context.policyContext, controlIds: context.metadata.controlIds as string[] }, false);
+    const result = await startDraftRun(db, "i", ["legal"], port, { ...options, budget: { ...policy, workspaceCap: one + 100 }, maxAttempts: 3 });
+    expect(result.outcomes[0]).toMatchObject({ status: "failed", error: { kind: "budget-exhausted", code: "workspace_budget_exhausted" } });
+    expect(draftReview).toHaveBeenCalledTimes(1);
   });
 
   it("does not invoke or reserve when the day is already exhausted", async () => {
@@ -172,5 +191,47 @@ describe("draft attempt reservations", () => {
     expect(draftReview).toHaveBeenCalledTimes(1);
     expect(await tokensUsed()).toBe(1_500);
     expect(await reservations()).toHaveLength(1);
+  });
+
+  async function workspaceTokens() {
+    const rows = await db.select().from(runBudgetWorkspace).where(eq(runBudgetWorkspace.workspaceId, "workspace-a"));
+    return rows.find((row) => row.day === budget.day)?.tokensUsed ?? 0;
+  }
+
+  it("counts each reservation against the workspace as well as the day", async () => {
+    const { port } = mockPort();
+    await startDraftRun(db, "i", ["legal"], port, options);
+    expect(await tokensUsed()).toBe(1_500);
+    expect(await workspaceTokens()).toBe(1_500);
+  });
+
+  it("refuses at the workspace share with a code that names it, while the day still has room", async () => {
+    await db.insert(runBudgetWorkspace).values({ day: budget.day, workspaceId: "workspace-a", tokensUsed: 49_000 });
+    const { port, draftReview } = mockPort();
+    const result = await startDraftRun(db, "i", ["legal"], port, options);
+    expect(result.outcomes[0]).toMatchObject({
+      status: "failed",
+      error: { kind: "budget-exhausted", code: "workspace_budget_exhausted" },
+    });
+    expect(draftReview).not.toHaveBeenCalled();
+    expect(await tokensUsed()).toBe(0);
+    expect(await workspaceTokens()).toBe(49_000);
+  });
+
+  it("names the daily cap when that is what refused, and leaves the workspace row alone", async () => {
+    await db.insert(runBudget).values({ id: budget.day, day: budget.day, tokensUsed: budget.dailyCap, tokensCap: budget.dailyCap });
+    const { port } = mockPort();
+    const result = await startDraftRun(db, "i", ["legal"], port, options);
+    expect(result.outcomes[0]).toMatchObject({ error: { kind: "budget-exhausted", code: "daily_budget_exhausted" } });
+    expect(await workspaceTokens()).toBe(0);
+  });
+
+  it("reserves nothing when the policy is absent (the mock adapter answers)", async () => {
+    const { port, draftReview } = mockPort();
+    const result = await startDraftRun(db, "i", ["legal"], port, { ...options, budget: undefined });
+    expect(result.outcomes[0]).toMatchObject({ status: "drafted" });
+    expect(draftReview).toHaveBeenCalledTimes(1);
+    expect(await db.select().from(runBudget)).toEqual([]);
+    expect(await db.select().from(runBudgetWorkspace)).toEqual([]);
   });
 });

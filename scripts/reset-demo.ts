@@ -29,7 +29,7 @@ import { resolveWorkspaceCookieSecret } from "../lib/security/workspace-cookie";
 import { execSync } from "node:child_process";
 import { getDb, closeDb, type Db } from "../lib/db/client";
 import { assertDemoMode, DemoOnlyError } from "../lib/config/demo-doors";
-import { initiatives, rateLimitBuckets, runBudget, sessions } from "../lib/db/schema";
+import { initiatives, rateLimitBuckets, runBudget, runBudgetWorkspace, sessions } from "../lib/db/schema";
 import { assertDemoDatabase } from "../lib/demo/bootstrap";
 import { seedDatabase } from "./seed";
 import { agentRuntimeStatus } from "../lib/agents/registry";
@@ -74,6 +74,7 @@ export async function resetDemo(database?: Db): Promise<void> {
   const counts = await seedDatabase(db, async (tx) => {
     await tx.delete(sessions);
     await tx.delete(runBudget);
+    await tx.delete(runBudgetWorkspace);
     await tx.delete(rateLimitBuckets);
   });
   ok("Seed", `${counts.initiatives} initiatives, ${counts.effectiveControls} effective controls`);

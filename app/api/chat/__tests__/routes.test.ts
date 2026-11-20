@@ -5,6 +5,7 @@
  * app/api/__tests__/routes.test.ts's conventions for issuing a session,
  * exhausting the rate limiter/budget, and asserting on JSON error shapes.
  */
+import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { vi } from "vitest";
 import { createTestDb, closeTestDb, type TestDb } from "@/lib/db/test-client";
@@ -330,6 +331,7 @@ describe("POST /api/chat/auditor", () => {
   });
 
   it("bounds the grounding sent to the agent and reserves budget from its size (api-initiatives-F7)", async () => {
+    process.env.OPENAI_API_KEY = "test-placeholder-never-sent"; // a keyless install reserves no budget
     const token = await issueSessionFor("angela-torres", "40.1.0.3");
     const bigRows = Array.from({ length: 2000 }, (_, i) => ({ id: `r${i}`, detail: "x".repeat(1000) }));
     const realProvider = dataModule.getProvider();
@@ -358,6 +360,10 @@ describe("POST /api/chat/auditor", () => {
       expect(Math.max(...sent.groundingRows.map((r) => r.detail.length))).toBeLessThanOrEqual(500);
       const reserved = (await getBudgetStoreForTests().getUsed(day)) - before;
       expect(reserved).toBeGreaterThanOrEqual(Math.ceil(JSON.stringify(sent.groundingRows).length / 4));
+      // The reservation also counts the 5 KB system prompt the model receives (agents-F5).
+      expect(reserved).toBeGreaterThanOrEqual(
+        Math.ceil((JSON.stringify(sent.groundingRows).length + readFileSync("agents/auditor/instructions.md", "utf8").length) / 4),
+      );
     } finally {
       portSpy.mockRestore();
       providerSpy.mockRestore();
@@ -546,7 +552,7 @@ describe("POST /api/chat/intake", () => {
     const requester = await issueSessionFor("priya-raman", "41.1.0.2");
     const { POST } = await import("../intake/route");
     const before = await getBudgetStoreForTests().getUsed(day);
-    const conversation = Array.from({ length: 10 }, () => ({ role: "user", content: "x".repeat(4000) }));
+    const conversation = Array.from({ length: 10 }, () => ({ role: "user", content: "x".repeat(1000) }));
     const forbidden = await POST(
       new Request("http://localhost/api/chat/intake", {
         method: "POST",
@@ -574,12 +580,74 @@ describe("POST /api/chat/intake", () => {
         method: "POST",
         headers: bearer(token, "41.0.0.6"),
         body: JSON.stringify({
-          conversation: [{ role: "user", content: "x".repeat(5000) }],
+          conversation: [{ role: "user", content: "x".repeat(1001) }],
           partialPayload: EMPTY_INTAKE_PAYLOAD,
         }),
       }),
     );
     expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/at most 1,000 characters/);
+  });
+
+  it("400s more than 20 messages and says to send fewer", async () => {
+    const token = await issueSessionFor("priya-raman", "41.0.1.1");
+    const { POST } = await import("../intake/route");
+    const res = await POST(
+      new Request("http://localhost/api/chat/intake", {
+        method: "POST",
+        headers: bearer(token, "41.0.1.1"),
+        body: JSON.stringify({
+          conversation: Array.from({ length: 21 }, () => ({ role: "user", content: "hi" })),
+          partialPayload: EMPTY_INTAKE_PAYLOAD,
+        }),
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/at most 20 messages/);
+  });
+
+  it("400s a partialPayload over 6,000 characters and says what to shorten", async () => {
+    const token = await issueSessionFor("priya-raman", "41.0.1.2");
+    const { POST } = await import("../intake/route");
+    const res = await POST(
+      new Request("http://localhost/api/chat/intake", {
+        method: "POST",
+        headers: bearer(token, "41.0.1.2"),
+        body: JSON.stringify({ conversation: [], partialPayload: { notes: "x".repeat(7000) } }),
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/partialPayload.*6,000 characters.*shorten/i);
+  });
+
+  it("reserves at most 10,000 tokens (2% of the day) for the largest request the caps allow", async () => {
+    process.env.OPENAI_API_KEY = "test-placeholder-never-sent";
+    const token = await issueSessionFor("priya-raman", "41.0.1.3");
+    const portSpy = vi.spyOn(agentsModule, "getAgentPort").mockReturnValue({
+      intakeInterview: async () => ({ ok: true, value: { payload: EMPTY_INTAKE_PAYLOAD, followUpQuestions: [] } }),
+    } as never);
+    const day = new Date().toISOString().slice(0, 10);
+    try {
+      const before = await getBudgetStoreForTests().getUsed(day);
+      const { POST } = await import("../intake/route");
+      const res = await POST(
+        new Request("http://localhost/api/chat/intake", {
+          method: "POST",
+          headers: bearer(token, "41.0.1.3"),
+          body: JSON.stringify({
+            conversation: Array.from({ length: 20 }, () => ({ role: "user", content: "x".repeat(1000) })),
+            // Padded to the cap, so the whole 6,000 characters are serialized.
+            partialPayload: { notes: "y".repeat(5_950) },
+          }),
+        }),
+      );
+      expect(res.status).toBe(200);
+      const reserved = (await getBudgetStoreForTests().getUsed(day)) - before;
+      expect(reserved).toBeGreaterThan(5_000);
+      expect(reserved).toBeLessThanOrEqual(10_000);
+    } finally {
+      portSpy.mockRestore();
+    }
   });
 
   it("429s after a rate-limit burst from the same client", async () => {
@@ -627,6 +695,7 @@ describe("POST /api/chat/intake", () => {
   });
 
   it("scales the budget reservation with actual input size (429s a large-but-legal body against a near-exhausted budget that a flat 600-token reservation would have admitted)", async () => {
+    process.env.OPENAI_API_KEY = "test-placeholder-never-sent"; // a keyless install reserves no budget
     const { getBudgetStoreForTests } = await import("@/lib/services/route-guard");
     const store = getBudgetStoreForTests();
     const today = new Date().toISOString().slice(0, 10);
@@ -645,9 +714,9 @@ describe("POST /api/chat/intake", () => {
 
     const token = await issueSessionFor("priya-raman", "41.0.0.9");
     const { POST } = await import("../intake/route");
-    const largeConversation = Array.from({ length: 10 }, () => ({
+    const largeConversation = Array.from({ length: 20 }, () => ({
       role: "user" as const,
-      content: "x".repeat(4000),
+      content: "x".repeat(1000),
     }));
     const res = await POST(
       new Request("http://localhost/api/chat/intake", {
@@ -685,6 +754,7 @@ describe("POST /api/chat/intake", () => {
  */
 describe("budget-exhaustion 429 on chat routes", () => {
   it("429s POST /api/chat/auditor when the daily token budget is already exhausted", async () => {
+    process.env.OPENAI_API_KEY = "test-placeholder-never-sent"; // a keyless install reserves no budget
     const { getBudgetStoreForTests } = await import("@/lib/services/route-guard");
     const store = getBudgetStoreForTests();
     const today = new Date().toISOString().slice(0, 10);
@@ -703,6 +773,7 @@ describe("budget-exhaustion 429 on chat routes", () => {
   });
 
   it("429s POST /api/chat/intake when the daily token budget is already exhausted", async () => {
+    process.env.OPENAI_API_KEY = "test-placeholder-never-sent"; // a keyless install reserves no budget
     const { getBudgetStoreForTests } = await import("@/lib/services/route-guard");
     const store = getBudgetStoreForTests();
     const today = new Date().toISOString().slice(0, 10);

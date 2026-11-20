@@ -87,15 +87,19 @@ describe("Supabase API-role lockdown", () => {
   it("on a Supabase-shaped database, migrate leaves RLS on and every API grant revoked", async () => {
     const db = await freshDb({ supabaseRoles: true });
     // Only the journal, so this proves migration 0016 itself, not the post-migrate step.
+    // Tables that later migrations add (run_budget_workspace, ...) are covered by the post-migrate step: see the next test.
     await migrate(db, { migrationsFolder: "./drizzle" });
-    expect(Object.values(await rls(schemaTableNames)).every(Boolean)).toBe(true);
-    expect(Object.keys(await rls(schemaTableNames))).toHaveLength(schemaTableNames.length);
-    expect(await apiPrivileges(schemaTableNames)).toEqual([]);
+    const list = /ARRAY\[([^\]]+)\]/.exec(readFileSync("./drizzle/0016_supabase_api_lockdown.sql", "utf8"))?.[1] ?? "";
+    const named = [...list.matchAll(/'([a-z_]+)'/g)].map((m) => m[1]!);
+    expect(Object.values(await rls(named)).every(Boolean)).toBe(true);
+    expect(Object.keys(await rls(named))).toHaveLength(named.length);
+    expect(await apiPrivileges(named)).toEqual([]);
   });
 
-  it("the real migrate path does the same", async () => {
+  it("the real migrate path does the same, for every table including ones added after 0016", async () => {
     const db = await freshDb({ supabaseRoles: true });
     await applyMigrations(db, "pglite");
+    expect(schemaTableNames).toContain("run_budget_workspace");
     expect(Object.values(await rls(schemaTableNames)).every(Boolean)).toBe(true);
     expect(await apiPrivileges(schemaTableNames)).toEqual([]);
   });

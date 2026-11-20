@@ -36,9 +36,9 @@ export function resolveAgentRuntimeConfig(
   };
 }
 
-/** Estimates size the atomic reservation; they are not measured token usage. */
-export function reviewInvocationLimits(runtime: AgentRuntimeConfig): { estimatedTokens: number; timeoutMs: number; attemptTimeoutMs: number } {
+/** Deadlines for a draft run. Reservation sizes come from lib/agents/token-estimate.ts, from the built prompt. */
+export function reviewInvocationLimits(runtime: AgentRuntimeConfig): { timeoutMs: number; attemptTimeoutMs: number } {
   return runtime.deepReviewEnabled
-    ? { estimatedTokens: 15_000, timeoutMs: 120_000, attemptTimeoutMs: 90_000 }
-    : { estimatedTokens: 1500, timeoutMs: 60_000, attemptTimeoutMs: 45_000 };
+    ? { timeoutMs: 120_000, attemptTimeoutMs: 90_000 }
+    : { timeoutMs: 60_000, attemptTimeoutMs: 45_000 };
 }

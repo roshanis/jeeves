@@ -54,7 +54,7 @@ describe("NUL bytes at the boundary", () => {
       new Request("http://localhost/api/initiatives/%00/decide", {
         method: "POST",
         headers: auth(session.token),
-        body: JSON.stringify({ decision: "rejected" }),
+        body: JSON.stringify({ decision: "rejected", reason: "Synthetic rejection reason." }),
       }),
       { params: Promise.resolve({ id: "\u0000" }) },
     );

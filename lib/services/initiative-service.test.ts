@@ -876,9 +876,48 @@ describe("lib/services/initiative-service", () => {
       expect(res.type).toBe("approved");
     });
 
+    describe("rejection reason (domain-F10)", () => {
+      const decisionRow = async (initiativeId: string) =>
+        (await db.select().from(initiativeDecisions).where(eq(initiativeDecisions.initiativeId, initiativeId)))[0];
+
+      it.each([undefined, "", "   \n\t "])("refuses a rejection with reason %j before any write", async (reason) => {
+        const { initiativeId } = await setUpInReview();
+        await expect(svc.decide(db, initiativeId, APPROVER, null, { decision: "rejected", ...(reason === undefined ? {} : { reason }) }))
+          .rejects.toThrow(/reason/);
+        expect((await db.select().from(initiatives).where(eq(initiatives.id, initiativeId)))[0]!.state).toBe("in_review");
+        expect(await decisionRow(initiativeId)).toBeUndefined();
+      });
+
+      it("refuses a reason over 2,000 characters", async () => {
+        const { initiativeId } = await setUpInReview();
+        await expect(svc.decide(db, initiativeId, APPROVER, null, { decision: "rejected", reason: "x".repeat(2001) }))
+          .rejects.toThrow(/1 to 2,000 characters/);
+      });
+
+      it("stores the trimmed reason on the decision row and its audit event", async () => {
+        const { initiativeId } = await setUpInReview();
+        const res = await svc.decide(db, initiativeId, APPROVER, null, { decision: "rejected", reason: "  PHI leaves the tenant boundary.  " });
+        expect((await decisionRow(initiativeId))!.reason).toBe("PHI leaves the tenant boundary.");
+        const events = await db.select().from(auditEvents).where(eq(auditEvents.initiativeId, initiativeId));
+        const event = events.find((e) => (e.metadata as { decisionId?: string } | null)?.decisionId === res.decisionId)!;
+        expect(event.metadata).toMatchObject({ reason: "PHI leaves the tenant boundary." });
+        expect(event.detail).toContain("PHI leaves the tenant boundary.");
+      });
+
+      it("does not store a reason sent with an approval", async () => {
+        const { initiativeId, cycleId } = await setUpInReview();
+        for (const domain of await draftAll(cycleId)) await signLoadedReview(db, cycleId, domain, DOMAIN_REVIEWER[domain], null);
+        const res = await svc.decide(db, initiativeId, APPROVER, null, { decision: "approved", reason: "Looks fine." });
+        expect((await decisionRow(initiativeId))!.reason).toBeNull();
+        const events = await db.select().from(auditEvents).where(eq(auditEvents.initiativeId, initiativeId));
+        const event = events.find((e) => (e.metadata as { decisionId?: string } | null)?.decisionId === res.decisionId)!;
+        expect(event.metadata).not.toHaveProperty("reason");
+      });
+    });
+
     it("allows `rejected` regardless of review completeness", async () => {
       const { initiativeId } = await setUpInReview();
-      const res = await svc.decide(db, initiativeId, APPROVER, null, { decision: "rejected" });
+      const res = await svc.decide(db, initiativeId, APPROVER, null, { decision: "rejected", reason: "Synthetic rejection reason." });
       expect(res.type).toBe("rejected");
     });
   });
@@ -927,7 +966,7 @@ describe("lib/services/initiative-service", () => {
         startQc: () => svc.startQc(db, id, PROGRAM, "ws-other"),
         returnFromQc: () => svc.returnFromQc(db, id, REVIEWER, "Foreign lock check.", "ws-other"),
         triage: () => svc.triage(db, id, SYSTEM_ACTOR, "ws-other"),
-        decide: () => svc.decide(db, id, APPROVER, "ws-other", { decision: "rejected" }),
+        decide: () => svc.decide(db, id, APPROVER, "ws-other", { decision: "rejected", reason: "Synthetic rejection reason." }),
       };
       for (const [name, call] of Object.entries(calls)) {
         const events = await foreignRefusalLocks(call);
@@ -1010,6 +1049,7 @@ describe("lib/services/initiative-service", () => {
       await expect(
         svc.decide(db, draft.initiativeId, APPROVER, null, {
           decision,
+          reason: "Synthetic rejection reason.",
           conditions: [{ text: "Retain human review", controlId: "C-01" }],
         }),
       ).rejects.toThrow(/conditions are only allowed on a conditionally_approved decision/);
@@ -1161,7 +1201,7 @@ describe("lib/services/initiative-service", () => {
 
     it("rejected does NOT generate any effective controls or deployment", async () => {
       const { initiativeId } = await setUpSignedInReview();
-      const res = await svc.decide(db, initiativeId, APPROVER, null, { decision: "rejected" });
+      const res = await svc.decide(db, initiativeId, APPROVER, null, { decision: "rejected", reason: "Synthetic rejection reason." });
       expect(res.controlsGenerated).toBeUndefined();
 
       const deps = await db
@@ -1721,41 +1761,41 @@ describe("lib/services/initiative-service", () => {
       it("a session bound to a DIFFERENT workspace gets NotFoundError — same shape as an unknown id", async () => {
         const { initiativeId } = await initiativeReadyToDecide("ws-A");
         await expect(
-          svc.decide(db, initiativeId, APPROVER, "ws-B", { decision: "rejected" }),
+          svc.decide(db, initiativeId, APPROVER, "ws-B", { decision: "rejected", reason: "Synthetic rejection reason." }),
         ).rejects.toThrow(NotFoundError);
         await expect(
-          svc.decide(db, initiativeId, APPROVER, "ws-B", { decision: "rejected" }),
+          svc.decide(db, initiativeId, APPROVER, "ws-B", { decision: "rejected", reason: "Synthetic rejection reason." }),
         ).rejects.toThrow(`initiative not found: ${initiativeId}`);
       });
 
       it("a session bound to the OWNING workspace succeeds", async () => {
         const { initiativeId } = await initiativeReadyToDecide("ws-A");
-        const res = await svc.decide(db, initiativeId, APPROVER, "ws-A", { decision: "rejected" });
+        const res = await svc.decide(db, initiativeId, APPROVER, "ws-A", { decision: "rejected", reason: "Synthetic rejection reason." });
         expect(res.type).toBe("rejected");
       });
 
       it("a session with a NULL workspace cannot decide a workspace-tagged initiative", async () => {
         const { initiativeId } = await initiativeReadyToDecide("ws-A");
         await expect(
-          svc.decide(db, initiativeId, APPROVER, null, { decision: "rejected" }),
+          svc.decide(db, initiativeId, APPROVER, null, { decision: "rejected", reason: "Synthetic rejection reason." }),
         ).rejects.toThrow(NotFoundError);
       });
 
       it("a non-null session cannot decide a null-workspace initiative, with no partial write", async () => {
         const { initiativeId } = await initiativeReadyToDecide(null);
-        await expect(svc.decide(db, initiativeId, APPROVER, "ws-anything-at-all", { decision: "rejected" }))
+        await expect(svc.decide(db, initiativeId, APPROVER, "ws-anything-at-all", { decision: "rejected", reason: "Synthetic rejection reason." }))
           .rejects.toThrow(NotFoundError);
         const unchanged = (await db.select().from(initiatives).where(eq(initiatives.id, initiativeId)))[0]!;
         expect(unchanged.state).toBe("in_review");
         expect(await db.select().from(initiativeDecisions).where(eq(initiativeDecisions.initiativeId, initiativeId))).toHaveLength(0);
-        const res = await svc.decide(db, initiativeId, APPROVER, null, { decision: "rejected" });
+        const res = await svc.decide(db, initiativeId, APPROVER, null, { decision: "rejected", reason: "Synthetic rejection reason." });
         expect(res.type).toBe("rejected");
       });
 
       it("no partial write happens on a workspace-mismatch rejection", async () => {
         const { initiativeId } = await initiativeReadyToDecide("ws-A");
         await expect(
-          svc.decide(db, initiativeId, APPROVER, "ws-B", { decision: "rejected" }),
+          svc.decide(db, initiativeId, APPROVER, "ws-B", { decision: "rejected", reason: "Synthetic rejection reason." }),
         ).rejects.toThrow(NotFoundError);
         const row = (await db.select().from(initiatives).where(eq(initiatives.id, initiativeId)))[0]!;
         expect(row.state).toBe("in_review"); // unchanged
@@ -2004,7 +2044,7 @@ describe("lib/services/initiative-service", () => {
       await svc.startQc(db, draft.initiativeId, PROGRAM);
       await svc.triage(db, draft.initiativeId);
 
-      const first = await svc.decide(db, draft.initiativeId, APPROVER, null, { decision: "rejected" });
+      const first = await svc.decide(db, draft.initiativeId, APPROVER, null, { decision: "rejected", reason: "Synthetic rejection reason." });
       expect(first.type).toBe("rejected");
 
       // The second call's own fresh read already sees the first call's
@@ -2014,7 +2054,7 @@ describe("lib/services/initiative-service", () => {
       // ConflictError. The safety property under test either way: no
       // second initiative_decisions row.
       await expect(
-        svc.decide(db, draft.initiativeId, APPROVER, null, { decision: "rejected" }),
+        svc.decide(db, draft.initiativeId, APPROVER, null, { decision: "rejected", reason: "Synthetic rejection reason." }),
       ).rejects.toThrow(IllegalTransitionError);
 
       const decisions = await db
@@ -2080,7 +2120,7 @@ describe("lib/services/initiative-service", () => {
 
       let caught: unknown;
       try {
-        await svc.decide(db, draft.initiativeId, APPROVER, null, { decision: "rejected" });
+        await svc.decide(db, draft.initiativeId, APPROVER, null, { decision: "rejected", reason: "Synthetic rejection reason." });
       } catch (err) {
         caught = err;
       }

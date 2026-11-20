@@ -12,7 +12,7 @@ import { runSingleDomainDraft, startDraftRun } from "./review-run";
 
 let db: TestDb;
 const at = new Date("2026-09-19T10:00:00Z");
-const budget = { day: "2026-09-19", dailyCap: 500_000, tokensPerAttempt: 1_500 };
+const budget = { day: "2026-09-19", dailyCap: 500_000, workspaceCap: 50_000, tokensPerAttempt: 1_500 };
 const options = { budget, sessionWorkspaceId: "workspace-a", retryDelayMs: 0 };
 const priorDraft = "The existing assessment remains available for human review.";
 

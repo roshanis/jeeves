@@ -23,23 +23,28 @@
  * 502/504/499: as app/api/chat/auditor/route.ts's PortFailure mapping.
  */
 import { z } from "zod";
+import { AgentInitializationError } from "@/lib/agents/initialization-error";
+import { estimateIntakeTokens } from "@/lib/agents/token-estimate";
 import { getAgentPort } from "@/lib/agents";
 import type { AgentPort, PortFailure } from "@/lib/agents/ports";
 import { agentInitializationResponse, llmNotConfigured } from "@/lib/services/agent-error-response";
 import { evaluateCompleteness } from "@/lib/intake/completeness";
 import type { IntakePayload } from "@/lib/intake/types";
 import { EMPTY_INTAKE_PAYLOAD } from "@/lib/intake/defaults";
-import { guardFailureResponse, reserveDailyBudget, runMutationGuard } from "@/lib/services/route-guard";
+import { guardFailureResponse, reserveDailyBudget, runMutationGuard, type GuardFailure } from "@/lib/services/route-guard";
 import { databaseNotReady } from "@/lib/http/database-gate";
 
-const MAX_MESSAGES = 50;
-const MAX_MESSAGE_CHARS = 4000;
-// Generous cap: the real IntakePayload (lib/intake/types.ts) serializes to
-// ~2-3k chars once fully filled in. 20k leaves ample headroom for an
-// in-progress conversational fill without letting an authenticated
-// requester smuggle a multi-megabyte payload past every other input cap
-// straight into the LLM prompt (JSON.stringify'd by the agent adapter).
-const MAX_PARTIAL_PAYLOAD_CHARS = 20_000;
+// One request reserves at most ~10,000 tokens (2% of the 500,000 daily cap):
+// (20 x 1,000 + 6,000 characters) / 4 + 600 headroom is about 7,100, which
+// leaves room for the system prompt when reservations are sized from it. The
+// per-workspace share is 50,000 a day, so larger caps would let one request
+// use a fifth of it. The real IntakePayload (lib/intake/types.ts) serializes
+// to ~2-3k chars once fully filled in, so 6,000 still leaves headroom.
+const MAX_MESSAGES = 20;
+const MAX_MESSAGE_CHARS = 1000;
+const MAX_PARTIAL_PAYLOAD_CHARS = 6000;
+// The guard sees the messages joined by newlines, so allow one separator each.
+const MAX_CONVERSATION_CHARS = MAX_MESSAGES * (MAX_MESSAGE_CHARS + 1);
 
 const messageSchema = z.object({
   role: z.enum(["user", "assistant"]),
@@ -105,6 +110,25 @@ function coerceToIntakePayload(portPayload: Readonly<Record<string, unknown>>): 
   };
 }
 
+const fmt = (n: number) => n.toLocaleString("en-US");
+
+/** Says which field to shorten when the guard's size check fails. */
+function tooLongMessage(failure: GuardFailure): GuardFailure {
+  const gap = failure.kind === "invalid_input" ? failure.gaps?.find((g) => g.reason !== "unknown_field") : undefined;
+  if (!gap) return failure;
+  return { ...failure, message: `${gap.field} is too long: at most ${fmt(gap.limit)} characters are allowed (got ${fmt(gap.actual)}). Shorten it and send again.` };
+}
+
+function invalidBodyMessage(error: z.ZodError): string {
+  const issue = error.issues[0];
+  if (issue?.code === "too_big" && issue.path[0] === "conversation") {
+    return issue.path.length === 1
+      ? `Send at most ${MAX_MESSAGES} messages; drop the oldest and send again.`
+      : `A message may be at most ${fmt(MAX_MESSAGE_CHARS)} characters; shorten it and send again.`;
+  }
+  return "invalid request body";
+}
+
 export async function POST(req: Request): Promise<Response> {
   const unavailable = databaseNotReady();
   if (unavailable) return unavailable;
@@ -143,24 +167,15 @@ export async function POST(req: Request): Promise<Response> {
     return { conversation: flattenedConversation, partialPayload: serializedPartialPayload };
   }, {
     inputLimits: [
-      { field: "conversation", maxChars: MAX_MESSAGES * MAX_MESSAGE_CHARS },
+      { field: "conversation", maxChars: MAX_CONVERSATION_CHARS },
       { field: "partialPayload", maxChars: MAX_PARTIAL_PAYLOAD_CHARS },
     ],
-    inputTotalCap: MAX_MESSAGES * MAX_MESSAGE_CHARS + MAX_PARTIAL_PAYLOAD_CHARS,
+    inputTotalCap: MAX_CONVERSATION_CHARS + MAX_PARTIAL_PAYLOAD_CHARS,
   });
   if (!guard.ok) {
-    return guardFailureResponse(guard.failure);
+    return guardFailureResponse(tooLongMessage(guard.failure));
   }
   const json = guard.json;
-
-  // Budget reservation must scale with what we actually send to the
-  // provider: system prompt + completion overhead (600 tokens of headroom)
-  // plus the real conversation/partialPayload text, at the standard ~4
-  // chars-per-token heuristic. A flat estimate would let large-but-legal
-  // inputs (e.g. a full 50-message conversation) blow past the atomic daily
-  // budget's intended bound on real LLM spend.
-  const estimatedTokens =
-    600 + Math.ceil((flattenedConversation.length + serializedPartialPayload.length) / 4);
 
   // Guard-first, then role-check (app/api/admin/threshold/route.ts's
   // underlying admin-service.ts precedent) — role always comes from the
@@ -171,14 +186,27 @@ export async function POST(req: Request): Promise<Response> {
 
   const parsed = bodySchema.safeParse(json);
   if (!parsed.success) {
-    return Response.json({ error: "invalid request body" }, { status: 400 });
+    return Response.json({ error: invalidBodyMessage(parsed.error) }, { status: 400 });
   }
 
   // Reserve only now that the caller is authenticated, is a requester and
   // sent a valid body: a refused call never spends the shared daily cap.
+  // The estimate is sized from the prompt that will actually be sent (its
+  // system prompt, the conversation and the payload), so a large legal request
+  // reserves more than a small one; see lib/agents/token-estimate.ts.
   if (!noLlm) {
-    const budget = await reserveDailyBudget(estimatedTokens);
-    if (budget) return Response.json({ error: budget.message }, { status: budget.status });
+    const size = () => {
+      try { return estimateIntakeTokens(parsed.data); } catch (error) { throw new AgentInitializationError(error); }
+    };
+    let budget: GuardFailure | null;
+    try {
+      budget = await reserveDailyBudget(size, guard.workspaceId);
+    } catch (error) {
+      const unavailable = agentInitializationResponse(error);
+      if (unavailable) return unavailable;
+      throw error;
+    }
+    if (budget) return guardFailureResponse(budget);
   }
 
   let port: AgentPort;

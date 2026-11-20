@@ -5,11 +5,31 @@
  * for persistent, cross-instance enforcement.
  */
 import { eq, sql } from "drizzle-orm";
+import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
+import type * as schema from "../db/schema";
 import type { Db } from "../db/client";
-import { runBudget } from "../db/schema";
+import { runBudget, runBudgetWorkspace } from "../db/schema";
 
 /** Daily model-token cap for the whole install: one value for both reservation paths. */
 export const DAILY_TOKEN_CAP = 500_000;
+
+/** One workspace may reserve at most this share of the day, so one visitor cannot use it all (decision d06). */
+export const WORKSPACE_DAILY_SHARE = 0.1;
+export const WORKSPACE_DAILY_TOKEN_CAP = Math.floor(DAILY_TOKEN_CAP * WORKSPACE_DAILY_SHARE);
+
+/** Which cap refused a reservation. */
+export type BudgetScope = "global" | "workspace";
+
+export const BUDGET_REFUSAL: Record<BudgetScope, { code: string; message: string }> = {
+  global: {
+    code: "daily_budget_exhausted",
+    message: "The daily model budget for this installation is used up. It resets at 00:00 UTC.",
+  },
+  workspace: {
+    code: "workspace_budget_exhausted",
+    message: "This workspace has used its share of the daily model budget. It resets at 00:00 UTC.",
+  },
+};
 
 /**
  * Persistence boundary for daily usage totals. Both the in-memory unit-test
@@ -220,4 +240,71 @@ export async function reserve(
     await store.addUsage(day, requested);
     return { granted: true, remaining: dailyCap - wouldBeUsed };
   });
+}
+
+type BudgetTx = PgDatabase<PgQueryResultHKT, typeof schema>;
+
+export type WorkspaceReserveResult =
+  | { granted: true }
+  | { granted: false; scope: BudgetScope; remaining: number };
+
+/**
+ * Reserve `tokens` from the workspace's row and the install-wide row for `day`.
+ * Both must pass or nothing is kept. Pass a transaction to join the caller's
+ * own; a bare handle runs this as one.
+ *
+ * The workspace row is taken first and the global row second, always in that
+ * order, so two reservations cannot wait on each other. If the global cap
+ * refuses, the workspace increment is taken back inside the same transaction.
+ */
+export async function reserveForWorkspace(
+  db: BudgetTx,
+  req: { day: string; workspaceId: string; tokens: number; dailyCap?: number; workspaceCap?: number },
+): Promise<WorkspaceReserveResult> {
+  const { day, workspaceId, tokens } = req;
+  const dailyCap = req.dailyCap ?? DAILY_TOKEN_CAP;
+  const workspaceCap = req.workspaceCap ?? Math.floor(dailyCap * WORKSPACE_DAILY_SHARE);
+  return db.transaction(async (tx) => {
+    if (tokens > workspaceCap) {
+      return { granted: false, scope: "workspace", remaining: await workspaceRemaining(tx, day, workspaceId, workspaceCap) } as const;
+    }
+    const workspaceRows = await tx
+      .insert(runBudgetWorkspace)
+      .values({ day, workspaceId, tokensUsed: tokens })
+      .onConflictDoUpdate({
+        target: [runBudgetWorkspace.day, runBudgetWorkspace.workspaceId],
+        set: { tokensUsed: sql`${runBudgetWorkspace.tokensUsed} + ${tokens}` },
+        setWhere: sql`${runBudgetWorkspace.tokensUsed} + ${tokens} <= ${workspaceCap}`,
+      })
+      .returning();
+    if (!workspaceRows.length) {
+      return { granted: false, scope: "workspace", remaining: await workspaceRemaining(tx, day, workspaceId, workspaceCap) } as const;
+    }
+    const globalRows = tokens > dailyCap
+      ? []
+      : await tx
+          .insert(runBudget)
+          .values({ id: day, day, tokensUsed: tokens, tokensCap: dailyCap })
+          .onConflictDoUpdate({
+            target: runBudget.day,
+            set: { tokensUsed: sql`${runBudget.tokensUsed} + ${tokens}`, tokensCap: dailyCap },
+            setWhere: sql`${runBudget.tokensUsed} + ${tokens} <= ${dailyCap}`,
+          })
+          .returning();
+    if (!globalRows.length) {
+      await tx
+        .update(runBudgetWorkspace)
+        .set({ tokensUsed: sql`${runBudgetWorkspace.tokensUsed} - ${tokens}` })
+        .where(sql`${runBudgetWorkspace.day} = ${day} and ${runBudgetWorkspace.workspaceId} = ${workspaceId}`);
+      const [row] = await tx.select().from(runBudget).where(eq(runBudget.day, day));
+      return { granted: false, scope: "global", remaining: Math.max(0, dailyCap - (row?.tokensUsed ?? 0)) } as const;
+    }
+    return { granted: true } as const;
+  });
+}
+
+async function workspaceRemaining(tx: BudgetTx, day: string, workspaceId: string, cap: number): Promise<number> {
+  const rows = await tx.select().from(runBudgetWorkspace).where(eq(runBudgetWorkspace.workspaceId, workspaceId));
+  const used = rows.find((row) => row.day === day)?.tokensUsed ?? 0;
+  return Math.max(0, cap - used);
 }

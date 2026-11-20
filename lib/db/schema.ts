@@ -169,6 +169,8 @@ export const initiativeDecisions = pgTable(
       .$type<{ text: string; controlId: string }[]>()
       .notNull()
       .default(sql`'[]'::jsonb`),
+    // Written reason; required on a rejection, null on every other type and on decisions recorded before 0020.
+    reason: text("reason"),
     decidedAt: timestamp("decided_at", { withTimezone: true }).notNull(),
   },
   (t) => [
@@ -330,6 +332,21 @@ export const runBudget = pgTable(
     tokensCap: integer("tokens_cap").notNull(),
   },
   (t) => [uniqueIndex("run_budget_day_uq").on(t.day)],
+);
+
+/**
+ * What each workspace has reserved on a UTC day (decision d06). The app caps a
+ * workspace at a share of the daily cap and updates this row in the same
+ * transaction as run_budget, so one visitor cannot use up everyone's budget.
+ */
+export const runBudgetWorkspace = pgTable(
+  "run_budget_workspace",
+  {
+    day: text("day").notNull(),
+    workspaceId: text("workspace_id").notNull(),
+    tokensUsed: integer("tokens_used").notNull().default(0),
+  },
+  (t) => [primaryKey({ columns: [t.day, t.workspaceId] })],
 );
 
 /* -------------------------------------------------------------------------

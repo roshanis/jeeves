@@ -188,6 +188,13 @@ describe("lib/data/db-provider", () => {
       );
     });
 
+    it("rejected (#3): the decision carries its written reason; earlier decisions have none", async () => {
+      const rejected = (await provider.getInitiativeDetail("social-sentiment-miner"))!.decisions[0]!;
+      expect(rejected.reason).toMatch(/without consent/);
+      const fastLane = (await provider.getInitiativeDetail("marketing-ab-tester"))!.decisions[0]!;
+      expect(fastLane.reason ?? null).toBeNull();
+    });
+
     it("rejected (#3): decision cites the real MP-§ anchors from the policy corpus", async () => {
       const detail = await provider.getInitiativeDetail("social-sentiment-miner");
       expect(detail!.decisions).toHaveLength(1);

@@ -11,6 +11,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTestDb, closeTestDb, type TestDb } from "@/lib/db/test-client";
 import { controlDefinitions, initiatives, reviewDecisions, auditEvents, reviewCycles } from "@/lib/db/schema";
 import { and, eq, sql } from "drizzle-orm";
+import type { Domain } from "@/lib/domain/types";
+import { estimateDraftAttemptTokens } from "@/lib/agents/token-estimate";
+import { loadReviewContext } from "@/lib/workflow/review-context";
 import { createMockAgentPort } from "@/lib/agents/mock-adapter";
 import { CONTROL_SEEDS } from "@/scripts/seed";
 import { mkdtempSync } from "node:fs";
@@ -47,6 +50,14 @@ afterEach(async () => {
 
 function bearer(token: string, ip = "1.1.1.1"): HeadersInit {
   return { authorization: `Bearer ${token}`, "x-forwarded-for": ip, "content-type": "application/json" };
+}
+
+async function cycleEstimate(cycleId: string, domain: Domain, deep: boolean): Promise<number> {
+  const context = await loadReviewContext(testDb, cycleId, domain);
+  return estimateDraftAttemptTokens({
+    reviewCycleId: cycleId, domain, intake: context.intake, policyContext: context.policyContext,
+    controlIds: context.metadata.controlIds as string[],
+  }, deep);
 }
 
 async function reservedTokens(): Promise<number> {
@@ -601,20 +612,16 @@ describe("requester ownership authz on submit", () => {
 });
 
 describe("deep-review budget multiplier on draft-run", () => {
-  // The actual Agents SDK runtime plus deep-review flag selects 15,000
-  // estimated tokens per attempt. The agent port is always mocked here.
+  // The actual Agents SDK runtime plus deep-review flag reserves for every
+  // turn of a tool-using run, sized from the real prompt (agents-F5). The
+  // agent port is always mocked here.
   const DAILY_TOKEN_CAP = 500_000;
-  const STANDARD_RESERVE = 8 * 1500; // 8 domains x ESTIMATED_TOKENS_PER_DOMAIN
-  const ALL_DOMAINS = [
-    "legal",
-    "procurement",
-    "tech-architecture",
-    "responsible-ai",
-    "security",
-    "privacy-hipaa",
-    "clinical-safety",
-    "data-governance",
-  ];
+
+  /** What one attempt reserves for `domain`: the same context and prompt the draft run builds. */
+  async function attemptEstimate(initiativeId: string, domain: Domain, deep: boolean): Promise<number> {
+    const [cycle] = await testDb.select().from(reviewCycles).where(eq(reviewCycles.initiativeId, initiativeId));
+    return cycleEstimate(cycle!.id, domain, deep);
+  }
 
   async function triagedInitiative(ip: string): Promise<{ id: string; token: string }> {
     const { token, workspaceCookie } = await issueSessionInWorkspace("priya-raman");
@@ -659,25 +666,40 @@ describe("deep-review budget multiplier on draft-run", () => {
     await store.addUsage(today, DAILY_TOKEN_CAP - headroom - used);
   }
 
-  async function draftRun(id: string, token: string, ip: string): Promise<number> {
+  async function draftRun(id: string, token: string, ip: string, domains: string[] = ["legal"]): Promise<number> {
     const { POST: draftRunPost } = await import("../initiatives/[id]/draft-run/route");
     const res = await draftRunPost(
       new Request(`http://localhost/api/initiatives/${id}/draft-run`, {
         method: "POST",
         headers: bearer(token, ip),
-        body: JSON.stringify({ domains: ALL_DOMAINS }),
+        body: JSON.stringify({ domains }),
       }),
       { params: Promise.resolve({ id }) },
     );
     return res.status;
   }
 
-  it("reserves the standard estimate when deep review is off", async () => {
+  it("reserves an estimate sized from the real prompt when deep review is off", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "test-placeholder-never-sent");
     vi.stubEnv("JEEVES_AGENT_RUNTIME", "agents-sdk");
     vi.stubEnv("JEEVES_DEEP_REVIEW", "0");
-    await leaveHeadroom(STANDARD_RESERVE);
     const { id, token } = await triagedInitiative("11.5.0.1");
+    const estimate = await attemptEstimate(id, "legal", false);
+    expect(estimate).toBeGreaterThan(5_000);
+    expect(estimate).toBeLessThan(20_000);
     expect(await draftRun(id, token, "11.5.0.1")).toBe(200);
+    expect(await reservedTokens()).toBe(estimate);
+  });
+
+  it("stops one workspace at its 50,000-token share however many domains it asks for", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "test-placeholder-never-sent");
+    vi.stubEnv("JEEVES_AGENT_RUNTIME", "agents-sdk");
+    vi.stubEnv("JEEVES_DEEP_REVIEW", "0");
+    const { id, token } = await triagedInitiative("11.5.1.1");
+    const status = await draftRun(id, token, "11.5.1.1", ["legal", "procurement", "tech-architecture", "responsible-ai", "security", "privacy-hipaa", "clinical-safety", "data-governance"]);
+    expect(await reservedTokens()).toBeGreaterThan(0);
+    expect(await reservedTokens()).toBeLessThanOrEqual(50_000);
+    expect([200, 429]).toContain(status);
   });
 
   it("returns a safe 503 for missing agent assets while keeping unknown IDs private", async () => {
@@ -703,19 +725,21 @@ describe("deep-review budget multiplier on draft-run", () => {
     }
   });
 
-  it("429s with the same request when JEEVES_DEEP_REVIEW=1 — the 10x reserve no longer fits", async () => {
+  it("429s with the same request when JEEVES_DEEP_REVIEW=1 — the deep estimate no longer fits", async () => {
     vi.stubEnv("OPENAI_API_KEY", "test-placeholder-never-sent");
     vi.stubEnv("JEEVES_AGENT_RUNTIME", "agents-sdk");
     vi.stubEnv("JEEVES_DEEP_REVIEW", "1");
-    // 12,000 fits eight ordinary attempts, but cannot fund one deep attempt.
-    await leaveHeadroom(STANDARD_RESERVE);
     const { id, token } = await triagedInitiative("11.6.0.1");
+    // Room for one ordinary attempt, but not for a deep one.
+    await leaveHeadroom(await attemptEstimate(id, "legal", false));
+    expect(await attemptEstimate(id, "legal", true)).toBeGreaterThan(await attemptEstimate(id, "legal", false) * 2);
     expect(await draftRun(id, token, "11.6.0.1")).toBe(429);
   });
 });
 
 describe("budget-exhaustion 429 on draft-run", () => {
   it("429s when the daily token budget is already exhausted", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "test-placeholder-never-sent"); // a keyless install reserves no budget
     // Exhaust the shared budget store for "today" directly via the guard's
     // test hook, then confirm the route surfaces 429 rather than invoking
     // the AgentPort.
@@ -877,7 +901,7 @@ describe("POST /api/reviews/[cycleId]/[domain]/run — on-demand agent run", () 
     }), { params: Promise.resolve({ cycleId, domain: "clinical-safety" }) });
   }
 
-  it("uses the same 15,000-token deep runtime reservation for a reviewer", async () => {
+  it("uses the same prompt-sized deep runtime reservation for a reviewer", async () => {
     vi.stubEnv("OPENAI_API_KEY", "test-placeholder-never-sent");
     vi.stubEnv("JEEVES_AGENT_RUNTIME", "agents-sdk");
     vi.stubEnv("JEEVES_DEEP_REVIEW", "1");
@@ -886,20 +910,23 @@ describe("POST /api/reviews/[cycleId]/[domain]/run — on-demand agent run", () 
     const response = await runDomain(cycleId, token, 0);
     expect(response.status).toBe(200);
     expect((await response.json()).status).toBe("drafted");
-    expect(await reservedTokens()).toBe(15_000);
+    const deepEstimate = await cycleEstimate(cycleId, "clinical-safety", true);
+    expect(await reservedTokens()).toBe(deepEstimate);
+    expect(deepEstimate).toBeGreaterThan(2 * (await cycleEstimate(cycleId, "clinical-safety", false)));
     const receipts = await testDb.select().from(auditEvents).where(eq(auditEvents.action, "draft_budget_reserved"));
     expect(receipts).toHaveLength(1);
-    expect(receipts[0].metadata).toMatchObject({ estimatedTokens: 15_000, attempt: 1 });
+    expect(receipts[0].metadata).toMatchObject({ estimatedTokens: deepEstimate, attempt: 1 });
     expect(portMocks.getAgentPort).toHaveBeenCalledTimes(1);
   });
 
   it("does not enable deep budgeting for the AI SDK runtime alone", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "test-placeholder-never-sent"); // a keyless install reserves no budget
     vi.stubEnv("JEEVES_AGENT_RUNTIME", "ai-sdk");
     vi.stubEnv("JEEVES_DEEP_REVIEW", "1");
     const { cycleId, workspaceCookie } = await setUpCycle("23.1.0.1");
     const { token } = await issueSessionInWorkspace("elena-vasquez", workspaceCookie);
     expect((await runDomain(cycleId, token)).status).toBe(200);
-    expect(await reservedTokens()).toBe(1_500);
+    expect(await reservedTokens()).toBe(await cycleEstimate(cycleId, "clinical-safety", false));
   });
 
   it("does not reserve for foreign workspaces, stale revisions, signed reviews, or an active duplicate", async () => {
@@ -923,6 +950,7 @@ describe("POST /api/reviews/[cycleId]/[domain]/run — on-demand agent run", () 
   });
 
   it("returns a budget-specific 429 without invoking the reviewer provider", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "test-placeholder-never-sent"); // a keyless install reserves no budget
     vi.stubEnv("JEEVES_AGENT_RUNTIME", "agents-sdk");
     vi.stubEnv("JEEVES_DEEP_REVIEW", "1");
     const { cycleId, workspaceCookie } = await setUpCycle("23.3.0.1");
@@ -1086,7 +1114,7 @@ describe("workspace isolation on mutation routes (external-review finding #1)", 
       new Request(`http://localhost/api/initiatives/${initiativeId}/decide`, {
         method: "POST",
         headers: bearer(strangerToken, "50.0.0.2"),
-        body: JSON.stringify({ decision: "rejected" }),
+        body: JSON.stringify({ decision: "rejected", reason: "Synthetic rejection reason." }),
       }),
       { params: Promise.resolve({ id: initiativeId }) },
     );
@@ -1098,7 +1126,7 @@ describe("workspace isolation on mutation routes (external-review finding #1)", 
       new Request(`http://localhost/api/initiatives/${initiativeId}/decide`, {
         method: "POST",
         headers: bearer(approverToken, "50.0.0.3"),
-        body: JSON.stringify({ decision: "rejected" }),
+        body: JSON.stringify({ decision: "rejected", reason: "Synthetic rejection reason." }),
       }),
       { params: Promise.resolve({ id: initiativeId }) },
     );
@@ -1407,6 +1435,7 @@ describe("POST /api/initiatives/[id]/draft-run — role + workspace authorizatio
   });
 
   it("does not reserve again for repeated or duplicate domains and signed no-ops", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "test-placeholder-never-sent"); // a keyless install reserves no budget
     const { token, workspaceCookie } = await issueSessionInWorkspace("priya-raman");
     const initiativeId = await createSubmittedTriagedInitiative(token, "51.0.3.1", workspaceCookie);
     const { POST } = await import("../initiatives/[id]/draft-run/route");
@@ -1416,7 +1445,9 @@ describe("POST /api/initiatives/[id]/draft-run — role + workspace authorizatio
     const first = await run();
     expect(first.status).toBe(200);
     expect((await first.json()).outcomes).toHaveLength(1);
-    expect(await reservedTokens()).toBe(1_500);
+    const [firstCycle] = await testDb.select().from(reviewCycles).where(eq(reviewCycles.initiativeId, initiativeId));
+    const legalEstimate = await cycleEstimate(firstCycle!.id, "legal", false);
+    expect(await reservedTokens()).toBe(legalEstimate);
     const repeated = await run();
     expect(repeated.status).toBe(200);
     expect((await repeated.json()).outcomes).toEqual([{ domain: "legal", status: "skipped" }]);
@@ -1427,7 +1458,7 @@ describe("POST /api/initiatives/[id]/draft-run — role + workspace authorizatio
     const signed = await run();
     expect(signed.status).toBe(200);
     expect((await signed.json()).outcomes).toEqual([{ domain: "legal", status: "skipped", reason: "already signed" }]);
-    expect(await reservedTokens()).toBe(1_500);
+    expect(await reservedTokens()).toBe(legalEstimate);
     expect(portMocks.getAgentPort).toHaveBeenCalledTimes(1);
   });
 
