@@ -777,12 +777,13 @@ export function askAuditor(
 export function intakeChat(
   token: string,
   input: { conversation: { role: "user" | "assistant"; content: string }[]; partialPayload: unknown },
-): Promise<{ reply: string; updatedPayload: IntakePayload; gaps: CompletenessGap[]; done: boolean }> {
+): Promise<{ reply: string; updatedPayload: IntakePayload; gaps: CompletenessGap[]; done: boolean; adapter?: "openai" | "mock" }> {
   return request<{
     reply: string;
     updatedPayload: IntakePayload;
     gaps: CompletenessGap[];
     done: boolean;
+    adapter?: "openai" | "mock";
   }>("/api/chat/intake", { method: "POST", token, body: input });
 }
 

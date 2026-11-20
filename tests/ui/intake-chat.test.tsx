@@ -71,4 +71,28 @@ describe("IntakeChat", () => {
     await waitFor(() => expect(intakeChatMock).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(log.textContent).toContain("No further questions"));
   });
+
+  it("does not promise an interview in the empty state", () => {
+    render(<IntakeChat />);
+    expect(document.querySelector('[data-slot="intake-chat-transcript"]')!.textContent).not.toMatch(/until the intake is complete/i);
+  });
+
+  async function sendOne(adapter: "mock" | "openai") {
+    intakeChatMock.mockResolvedValue({ reply: "Does it access PHI?", updatedPayload: {}, gaps: [], done: false, adapter });
+    render(<IntakeChat />);
+    fireEvent.change(screen.getByPlaceholderText(PLACEHOLDER), { target: { value: "hello" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(document.querySelector('[data-slot="intake-chat-transcript"]')!.textContent).toContain("Does it access PHI?"));
+  }
+
+  it("labels the assistant as scripted when the mock adapter answered", async () => {
+    await sendOne("mock");
+    expect(screen.getByText(/scripted demo assistant/i)).toBeDefined();
+    expect(document.body.textContent).toMatch(/answers are canned, not interpreted/i);
+  });
+
+  it("shows no scripted label when a model answered", async () => {
+    await sendOne("openai");
+    expect(screen.queryByText(/scripted demo assistant/i)).toBeNull();
+  });
 });

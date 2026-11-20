@@ -15,7 +15,8 @@
  * 403 otherwise.
  *
  * Body:  { conversation: {role: "user"|"assistant", content: string}[], partialPayload: object }
- * 200:   { reply: string, updatedPayload: object, gaps: CompletenessGap[], done: boolean }
+ * 200:   { reply: string, updatedPayload: object, gaps: CompletenessGap[], done: boolean, adapter: "openai" | "mock" }
+ *         `adapter` says what answered, so the chat can label the scripted mock.
  * 401:   { error: string }  (no/invalid session)
  * 403:   { error: string }  (non-requester persona)
  * 429:   { error: string }  (rate limit or daily model budget reached)
@@ -24,6 +25,7 @@
  */
 import { z } from "zod";
 import { getAgentPort } from "@/lib/agents";
+import { resolveAgentRuntimeConfig } from "@/lib/agents/runtime";
 import type { AgentPort, PortFailure } from "@/lib/agents/ports";
 import { agentInitializationResponse, llmNotConfigured } from "@/lib/services/agent-error-response";
 import { evaluateCompleteness } from "@/lib/intake/completeness";
@@ -223,6 +225,8 @@ export async function POST(req: Request): Promise<Response> {
       updatedPayload,
       gaps: completeness.gaps,
       done,
+      // Same decision getAgentPort() made for this request.
+      adapter: resolveAgentRuntimeConfig().adapter,
     },
     { status: 200 },
   );
