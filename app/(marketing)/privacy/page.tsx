@@ -6,6 +6,8 @@ import { guardDemoPage, demoPageMetadata } from "@/lib/config/demo-pages";
 // below is checkable against a file:
 //   - jeeves_workspace cookie      -> app/api/session/route.ts
 //   - sessionStorage token         -> lib/client/session-context.tsx
+//   - unsent real-request draft    -> components/jeeves/intake-form.tsx
+//   - reviewer's unsaved work      -> lib/client/review-unsaved-store.ts
 //   - jeeves-theme preference      -> components/jeeves/theme-toggle.tsx
 //   - cookie notice acknowledgement -> components/jeeves/cookie-notice.tsx
 //   - public submissions           -> app/api/public-session/route.ts
@@ -53,8 +55,19 @@ export default function PrivacyPage() {
             <span className="font-medium">A session token</span> held in your
             browser&rsquo;s sessionStorage
             (<code className="font-mono text-xs">jeeves_live_session</code>). A
-            real request sets no cookie; it keeps only this token and the
-            preferences below. The token is cleared when you close the tab.
+            real request sets no cookie; it keeps only this token, any unsent
+            draft in this tab, and the preferences below. The token is cleared
+            when you close the tab.
+          </li>
+          <li>
+            <span className="font-medium">Unsent work, in this tab only.</span> A
+            real request&rsquo;s unfinished form
+            (<code className="font-mono text-xs">jeeves_public_intake_draft</code>)
+            and a demo reviewer&rsquo;s unsaved assessment or reason
+            (<code className="font-mono text-xs">jeeves:review-unsaved:v1:…</code>)
+            are kept in your browser&rsquo;s sessionStorage so that they survive
+            a reload or an expired session. Nothing in them is sent until you
+            save or submit, and they are cleared when you close the tab.
           </li>
           <li>
             <span className="font-medium">Two local preferences</span> in your

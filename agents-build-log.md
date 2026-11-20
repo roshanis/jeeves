@@ -1831,3 +1831,15 @@ Hard rules: no violations found.
 - Codex: (1) A demo door that gains a method must list it in demoDoorFallbacks("POST", "DELETE", ...) and answer demoDoorClosed() first; production-doors.test.ts covers DELETE with and without a session, so extend it for a new method. (2) Copy that names the fictional payer, a demo persona or a demo default belongs behind useDeploymentMode() === "demo" (or the server-side mode check); the B-line page tests render both modes. (3) apiErrorToMessage is a plain function: DeploymentModeProvider records the mode for it with setApiDeploymentMode, and a caller without a provider keeps the demo wording.
 - Owner decision left open: whether a closed demo door should answer with the standard not-found page instead of a bare 404 (prodmode-F14).
 - Merge order: #24, #25, #27, #26 into #23's branch, this line's PR into #23's branch, the decisions PR into this line's branch, then #23.
+
+## [AGENT: Claude] [2026-11-20T14:20Z]
+### Action: implementer: the owner kept the recommended decisions (human "go" and "merge", 2026-11-20), so the privacy page now lists the two tab-only stores that d12 and d13 add, before this branch merges
+### Files changed: app/(marketing)/privacy/page.tsx, tests/ui/site-essentials.test.tsx
+### Diff summary:
+- This branch carries nine decision commits (d01, d04 plus its Podman templates, d10, d11, d02, d07, d13, d12); `git log claude/peer-review-prodmode-small-fixes..` lists them and each message has its Decision line.
+- Privacy: a new "Unsent work, in this tab only" bullet names `jeeves_public_intake_draft` (a real request's unsent form, d13) and `jeeves:review-unsaved:v1:…` (a demo reviewer's unsaved text, d12), both sessionStorage, both cleared with the tab. The session-token bullet now says a real request keeps "only this token, any unsent draft in this tab, and the preferences below". The header comment maps both claims to their files. LEGAL_LAST_UPDATED is unchanged: that date is the owner's to set.
+- Tests: the storage-key test lists both keys and the new token sentence; the cookie-by-cookie test expects exactly two sessionStorage mentions.
+### Verified: the storage-key test failed before the page change and passes after it; tests/ui/site-essentials.test.tsx 18 of 18; typecheck and lint clean on the changed files.
+### Recommendations / Next steps:
+- Codex: a new browser storage key needs a line on the privacy page and an entry in the storage-key test in tests/ui/site-essentials.test.tsx.
+- Owner: bump LEGAL_LAST_UPDATED when you have read the new bullet; the operator queue's own sessionStorage token (`jeeves_operator_token`) is not listed, since only the operator holds it.

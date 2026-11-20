@@ -79,7 +79,8 @@ describe("legal pages", () => {
   it("privacy says what is actually stored, cookie by cookie", () => {
     renderWithProviders(<PrivacyPage />);
     expect(screen.getByText(/jeeves_workspace/)).toBeDefined();
-    expect(screen.getByText(/sessionStorage/)).toBeDefined();
+    // Two tab-only stores: the session token and any unsent work.
+    expect(screen.getAllByText(/sessionStorage/).length).toBe(2);
     // Said twice on purpose — as a section heading and in the body — so
     // this matches both.
     expect(screen.getAllByText(/do not enter real/i).length).toBeGreaterThan(0);
@@ -88,13 +89,25 @@ describe("legal pages", () => {
   it("privacy lists every browser storage key the app writes and scopes the cookie to the demo", () => {
     const { container } = renderWithProviders(<PrivacyPage />);
     const text = container.textContent ?? "";
-    for (const key of ["jeeves_live_session", "jeeves-theme", "jeeves_cookie_notice_ack", "localStorage"]) {
+    for (const key of [
+      "jeeves_live_session",
+      "jeeves-theme",
+      "jeeves_cookie_notice_ack",
+      "localStorage",
+      // Tab-only stores for unsent work: a real request's form and a demo
+      // reviewer's unsaved text (components/jeeves/intake-form.tsx,
+      // lib/client/review-unsaved-store.ts).
+      "jeeves_public_intake_draft",
+      "jeeves:review-unsaved:v1:",
+    ]) {
       expect(text, key).toContain(key);
     }
     // Nothing writes this key any more (the registry module was deleted), so
     // the page must not list it.
     expect(text).not.toContain("jeeves_live_registry");
     expect(text).toContain("A real request sets no cookie");
+    // A real request can also keep an unsent draft, so "only this token" alone would be untrue.
+    expect(text).toContain("it keeps only this token, any unsent draft in this tab, and the preferences below");
   });
 
   it("privacy is honest that AI processing sends data to OpenAI", () => {
