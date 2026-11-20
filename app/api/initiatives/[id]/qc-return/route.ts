@@ -25,6 +25,7 @@ import {
 import { IllegalTransitionError } from "@/lib/lifecycle/transitions";
 import { guardFailureResponse, runMutationGuard } from "@/lib/services/route-guard";
 import { isRouteId, notFoundResponse } from "@/lib/http/route-id";
+import { databaseNotReady } from "@/lib/http/database-gate";
 
 const bodySchema = z.object({ reason: z.string().min(1).max(2000) });
 
@@ -32,6 +33,8 @@ export async function POST(
   req: Request,
   context: { params: Promise<{ id: string }> },
 ): Promise<Response> {
+  const unavailable = databaseNotReady();
+  if (unavailable) return unavailable;
   // Input-size caps applied through the shared guard, same as other
   // reason-carrying mutations. The body is read after the session check.
   const guard = await runMutationGuard(req, (raw) => {

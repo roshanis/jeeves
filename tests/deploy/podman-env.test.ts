@@ -23,17 +23,30 @@ describe("Podman stack configuration", () => {
     expect(envExample).toMatch(/^JEEVES_COOKIE_SECRET=/m);
     expect(envExample).toContain("openssl rand -hex 32");
   });
-  it("migrates before the app starts and names the real volumes", () => {
+  it("migrates before the app starts", () => {
+    // This line pins the volume name on both install paths: tests/deploy/podman-volume-names.test.ts.
     const quick = guide.slice(guide.indexOf("## 1. Quick start"), guide.indexOf("## 2."));
     expect(quick.indexOf("run --rm migrate")).toBeGreaterThan(-1);
     expect(quick.indexOf("run --rm migrate")).toBeLessThan(quick.indexOf("up -d"));
-    expect(guide).toContain("podman_jeeves-pgdata");
-    expect(guide).not.toMatch(/podman volume export jeeves-pgdata/);
   });
 
-  it("tells Quadlet operators to define DATABASE_URL in jeeves.env", () => {
+  it("gives Quadlet operators a DATABASE_URL in jeeves.env", () => {
+    // On this line env.example carries the line; the operator sets the same password in it.
     const quadlet = guide.slice(guide.indexOf("## 3."), guide.indexOf("## 4."));
-    expect(quadlet).toContain("DATABASE_URL=postgres://jeeves:");
+    expect(envExample).toMatch(/^DATABASE_URL=postgres:\/\/jeeves:[^@\s]+@jeeves-db:5432\/jeeves$/m);
+    expect(quadlet).toContain("same password into DATABASE_URL");
+  });
+
+  it("lets a production-mode install reach the stack's own database without TLS", () => {
+    // Production refuses a database on another host without verified TLS
+    // (lib/config/deployment-mode.ts). The db / jeeves-db container is on this
+    // host's private network without TLS, so both install paths carry the
+    // same-host opt-out the guide promises, beside the URL it vouches for.
+    const app = compose.slice(compose.search(/^ {2}app:\s*$/m), compose.search(/^ {2}migrate:\s*$/m));
+    expect(app).toMatch(/^\s+DATABASE_URL: postgres:\/\/[^\n]*@db:5432\/[^\n]*\n(?:\s+#[^\n]*\n)*\s+JEEVES_DB_ALLOW_UNVERIFIED: same-host\s*$/m);
+    expect(envExample).toMatch(/^DATABASE_URL=[^\n]*@jeeves-db:5432\/jeeves\n(?:#[^\n]*\n)*JEEVES_DB_ALLOW_UNVERIFIED=same-host$/m);
+    expect(read("deploy", "podman", "quadlet", "jeeves-app.container")).toMatch(/^#[^\n]*JEEVES_DB_ALLOW_UNVERIFIED/m);
+    expect(guide).toContain("`JEEVES_DB_ALLOW_UNVERIFIED=same-host`");
   });
 
   it("documents a stop timeout that outlasts the longest draft run", () => {

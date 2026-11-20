@@ -1531,6 +1531,126 @@ never gets), sticky CTA hint ("Read-only" — visitors can act now).
 - The operator queue is read-only by design; acting on a real request in-app
   would need cross-workspace operator powers — a separate decision.
 
+## [AGENT: Claude] [2026-10-23T04:49Z]
+### Action: code review (reviewer role): P0 + P1 (production-mode shell), `git diff 2e8769b...HEAD` (10 WIP checkpoints, 127 files). Verdict: REQUEST REVISIONS
+### Files changed: agents-build-log.md (this entry only; no source modified)
+### Diff summary:
+Reviewed against the production/AWS Marketplace plan (P0, P1, hard-rules table,
+critic findings) and the .claude/CLAUDE.md hard rules.
+
+VERIFIED (my own runs, not the implementer reports):
+- `npm run typecheck` and `npm run lint` are clean.
+- Full `vitest run`: 1 failed / 2253 passed (192 files). The failure is real, see B1.
+- Playwright golden path (repo config, longer webServer timeout, local Chromium 1194): 28/28 pass in demo mode.
+- `node scripts/check-agent-bundle.cjs` on the webpack standalone build passes.
+- Coverage on changed lib/ files (targeted run) is >80% lines: config 93.9, require-viewer 97.4,
+  route-guard 96.4, bootstrap 92.3, db/client 80.9, review-run 92.9, agents >=95, demo-pages and
+  site-metadata 100. lib/client/api.ts measured 68% in that subset, but it is a pre-existing file and its changed lines are covered.
+- Disposable PG16 cluster, non-superuser table owner:
+  - main 0000-0013 then HEAD applies 0014/0015.
+  - Seed and reseed work with DISABLE TRIGGER USER. DISABLE TRIGGER ALL is denied ("RI_ConstraintTrigger... is a system trigger"), which confirms the RDS claim.
+  - TRUNCATE is blocked on audit_events, on `initiatives CASCADE` and on `control_definitions CASCADE`.
+  - The installation stamp refuses DELETE and an update of deploy_mode.
+  - seed and reset refuse a production stamp even with ALLOW_SEED=1 and NODE_ENV=production.
+- Live `next start` in production mode on a production-stamped DB:
+  - All five doors return 404 for every method, and /operator returns 404.
+  - Every gated GET returns 401 no-store, and POST mutations return 401.
+  - robots.txt is Disallow and the sitemap is empty. There is no X-Powered-By header.
+  - The boot check exits 1 on a mode/stamp mismatch in both directions.
+  - The mode is decided at runtime: a build made with JEEVES_MODE=demo serves production when the variable is unset at run time.
+- AGENTS.md is byte-identical to main.
+
+FINDINGS (by severity):
+B1 BLOCKER: the suite is red.
+  - The mock at lib/services/admin-service.test.ts:31-34 replaces "../agents" with only getAgentPort.
+  - lib/workflow/review-run.ts:239/262 now call assertLlmConfigured() from that module, so the test fails with
+    "No assertLlmConfigured export is defined on the ../agents mock". It reproduces in isolation, so the CI verify job will fail.
+  - Fix: spread importOriginal in the mock, as app/api/__tests__/routes.test.ts:24 does, or move
+    assertLlmConfigured into its own non-port module. Then rerun the full `npm test`.
+B2 BLOCKER (merge gate, human only):
+  - A human must set JEEVES_MODE=demo in Vercel Production, Preview and Development.
+  - Migrations 0014 and 0015 must be applied to Neon.
+  - The ci.yml changes (the new `container` job and the JEEVES_MODE env) need explicit human approval
+    (CLAUDE.md §1, plan "(approval)").
+M1 MAJOR: the stamp check can be bypassed.
+  - lib/config/boot-checks.ts:95 skips verifyInstallation in demo whenever the provider resolves to "mock",
+    even when DATABASE_URL is set. GET routes call getDb() directly regardless of DATA_PROVIDER.
+  - Verified live: JEEVES_MODE=demo DATA_PROVIDER=mock against a production-stamped DB boots with no [boot] line,
+    and anonymous /api/exceptions, /api/monitor/incidents and /api/health query that DB (200).
+  - Fix: skip the check only when no DB URL is configured; otherwise always verify. Add a test.
+M2 MAJOR (pre-existing on main, outside the P0/P1 scope): a cross-workspace read.
+  - app/(console)/reviews/page.tsx:30-33 renders `undeliveredNotifications(getDb())` with no workspace scope
+    (lib/services/notification-service.ts:136).
+  - The subjects embed the initiative titles of every playground workspace, and any demo visitor sees them.
+  - The new read-gate inventory cannot catch this, because the page does call the gate.
+  - Fix: scope by isInitiativeVisible(viewerWorkspaceId) and add a read-isolation case. A separate PR is fine.
+m1 minor: the seed and reset CLIs ignore the deployment mode.
+  - scripts/seed.ts main() and scripts/reset-demo.ts run in production mode whenever DATABASE_URL is set.
+  - Verified: with JEEVES_MODE unset, a fresh DB gets 12 demo initiatives and a permanent 'demo' stamp.
+  - Fix: call assertDemoMode() first in both entry points, and add a CLI test.
+m2 minor: the demo can now crash at boot.
+  - boot-checks.ts:106 exits the process on any DB error at boot, demo included. On Vercel every cold start does a
+    DB round trip, so a transient Neon error takes the instance down.
+  - Fix: add a bounded retry in demo, and keep failing closed on mode_mismatch.
+m3 minor: production pages answer HTTP 200.
+  - /inbox and /portfolio return 200 with a streamed meta-refresh to /sign-in and the console chrome.
+  - "/" returns 200 and redirects to /inbox. /pilot, /privacy and /frameworks are soft 404s.
+  - Fix: add a production-only proxy.ts (307 or 404), or drop the loading.tsx files in production.
+m4 minor: demo branding still reaches production metadata.
+  - "Meridian Health" is in the static metadata of portfolio/page.tsx:12, controls/page.tsx:13 and admin/page.tsx:27
+    (verified in the live production <head>).
+  - agents/[id]/page.tsx:44 generateMetadata runs before the gate, which contradicts the comment at :65.
+m5 minor: the chat routes reserve budget before checking for an LLM.
+  - chat/intake:153-185 and chat/auditor:138-188 take the budget reservation, then hit LlmNotConfiguredError and return 503.
+  - Fix: call assertLlmConfigured() before the guard, as startDraftRun does.
+m6 minor: a load-sensitive test.
+  - In lib/config/boot-checks.test.ts:55 the first test builds the shared PGlite DB inside the 5 s test timeout.
+  - It failed at 5073 ms in a targeted run. Fix: build the DB in beforeAll.
+m7 minor: quality and process items.
+  - resolveViewerWorkspaceId has no callers outside tests.
+  - The DeploymentModeContext default is "demo", which fails open.
+  - Not accepting PG* settings is a plan deviation that needs a human acknowledgement.
+  - No implementer build-log entries were written.
+  - The WIP checkpoints mix tests and implementation, so test-first order cannot be verified from history.
+Hard rules: no violations found.
+  - Agents still only draft.
+  - Production refuses every public or persona session.
+  - Mutations stay behind runMutationGuard.
+  - Append-only is strengthened (TRUNCATE guards).
+  - Synthetic panels are removed in production rather than shown unlabelled.
+### Recommendations / Next steps:
+1. Fix B1 and rerun the full `npm test`. Fix M1 and add its test. Then rerun Playwright and check-agent-bundle.
+2. Fix m1 and m5 in the same pass (small). Split M2 into its own PR. m2, m3 and m4 can follow in P1 polish or P3.
+3. A human clears B2 before merge.
+
+## [AGENT: Claude] [2026-10-23T05:25Z]
+### Action: implementer: review-fix slice for P0 + P1 (answers the 2026-10-23T04:49Z review: B1, M1, M2, m1 to m7)
+### Files changed:
+- B1: lib/services/admin-service.test.ts
+- M1 + m2 + m6: lib/config/boot-checks.ts (+ test), tests/deploy/instrumentation.test.ts, lib/config/installation-check.test.ts, lib/db/installation.test.ts, lib/demo/bootstrap.test.ts
+- M2: lib/services/notification-service.ts (+ test), app/(console)/reviews/page.tsx, app/(console)/reviews/__tests__/reviews-page-isolation.test.tsx (new)
+- m1: scripts/seed.ts, scripts/reset-demo.ts, scripts/seed-installation.test.ts, README.md, docs/deploy.md
+- m3: proxy.ts (new), lib/config/production-routes.ts (+ test, new), lib/security/session-cookie-name.ts (new), tests/deploy/proxy.test.ts (new); small edits in lib/services/route-guard.ts, require-viewer.ts, lib/config/demo-pages.ts
+- m4: app/(console)/{portfolio,controls,admin,agents/[id],initiatives/[slug]}/page.tsx, tests/seo/console-metadata.test.ts (new)
+- m5: app/api/chat/{intake,auditor}/route.ts, lib/services/agent-error-response.ts, app/api/__tests__/production-llm.test.ts
+- m7: lib/client/deployment-mode-context.tsx, tests/ui/{helpers.tsx,landing-page,session-identity,visitor-entry,production-mode-ui}.test.tsx, lib/services/viewer-workspace.ts, lib/config/deployment-mode.ts (comments)
+### Diff summary:
+- B1 fixed: the "../agents" mock now spreads importOriginal, so assertLlmConfigured survives. The file passes on its own (47/47).
+- M1 fixed: the demo boot skips the stamp check only when there is no database URL and DATA_PROVIDER is not "db". Mock data plus a database URL now verifies the stamp and refuses a production stamp.
+- m2 fixed: in demo, a database error at boot is retried (3 attempts, waits of 1 s and 4 s, injectable sleep). A stamp mismatch and a not-yet-migrated database are never retried. Production does not retry.
+- M2 fixed (kept in this slice, not split out): /reviews renders undeliveredNotificationsForViewer(db, viewerWorkspaceId), which joins initiatives and applies the same workspace rule as every other read. The unscoped undeliveredNotifications stays, documented as operator-only.
+- m1 fixed: seed.ts main() and resetDemo() call assertDemoMode before any database is opened. CLI tests spawn both scripts with JEEVES_MODE unset and a database URL set. The Podman `seed` service is unaffected: the migrator image inherits ENV JEEVES_MODE=demo from the builder stage.
+- m3 fixed for requests that carry no credential: proxy.ts (Node runtime) answers 307 /sign-in for console pages, 307 /inbox for "/", and 404 for the marketing pages in production, and passes everything on in demo. It checks that a credential is present, not that it is valid (requireViewer stays the access control). A request with a stale or invalid session cookie still gets the streamed 200 meta-refresh.
+- m4 fixed: Portfolio, Control catalog and Administration metadata are mode-aware; /agents/[id] metadata runs the viewer gate first; the initiative page drops "Synthetic demo data." in production.
+- m5 fixed: both chat routes ask llmNotConfigured() before the guard and pass requiresBudget: !noLlm, so the guard still authenticates first (anonymous gets 401) but reserves nothing; the 503 follows after the persona and body checks.
+- m6 fixed: boot-checks and instrumentation tests build their PGlite databases in beforeAll; the other cases that boot a database inside a test got a 30 s timeout.
+- m7: DeploymentModeContext now defaults to "production" (tests wrap in an explicit provider through renderWithProviders). resolveViewerWorkspaceId kept with a TODO. The PG* deviation is noted in assertProductionConfig's comment. These implementer entries were missing for P0/P1; that work is in the WIP checkpoint commits 83ae913..da13dad.
+### Recommendations / Next steps:
+1. Still a human gate (B2): set JEEVES_MODE=demo in Vercel Production, Preview and Development; apply migrations 0014 and 0015 to Neon; explicitly approve the ci.yml diff (container job, JEEVES_MODE env). Not touched here.
+2. Human sign-off on the PG* deviation; revisit in P5.3.
+3. When squashing for the PR, keep the test-first commits separate (history is the only evidence of order).
+4. Optional: a production smoke test that asserts the live statuses (307/404) once a production smoke job exists; proxy.ts is unit-tested and was probed live (see the report).
+
 ## [AGENT: Claude] [2026-11-12T03:40Z]
 ### Action: implementer: P0.5 security patch on main (human go-ahead 2026-11-12 "do the patch")
 ### Files changed: package.json, package-lock.json, .github/workflows/ci.yml, agents-build-log.md
@@ -1565,6 +1685,24 @@ never gets), sticky CTA hint ("Read-only" — visitors can act now).
 - Codex: two new rules that older fixtures trip over. `decide()` refuses conditions unless the decision is `conditionally_approved`, and the draft path no longer creates review rows, so a fixture that adds a cycle must add its rows the way `triage()` does.
 - Wave 2 follows on this branch: request body limits before authentication, rate-limit key hashing, exception approval roles, accessibility.
 
+## [AGENT: Claude] [2026-11-15T04:10Z]
+### Action: reviewer + implementer: peer-review fix wave 1 on the production-mode line (PR #26, targets PR #23's branch; same human request as the entry above)
+### Files changed: `git log --no-merges HEAD ^claude/peer-review-fixes ^87e75bb` lists the 26 commits of this line. proxy.ts, scripts/smoke-production.ts, scripts/is-main.ts, scripts/seed.ts, scripts/reset-demo.ts, scripts/migrate.ts, lib/config/boot-checks.ts, lib/config/installation-check.ts, lib/config/deployment-mode.ts, lib/db/driver-error.ts, lib/services/route-guard.ts, app/api/session/route.ts, docs/environment-reference.md, docs/deploy-podman.md, docs/deploy.md, docs/production-readiness.md, README.md, and their tests under tests/deploy, tests/docs, scripts and lib/config. Shared files, each in its own commit so it can be dropped: .github/workflows/ci.yml (8de6c6f), package.json (7971d51, one script line), .containerignore and .dockerignore (412ca80), deploy/podman/compose.yaml, env.example and the Quadlet units (91b2a4a, 5833291, 9c88949, 08874f3, dc1e240, 9d62f55, 350f6d1).
+### Diff summary:
+- proxy.ts sent a relative Location, so production mode answered 500 on / and on every signed-out page. The redirect is absolute now.
+- `npm run smoke:production` boots a real production-mode server against a throwaway jeeves_smoke_* database and checks the wire: 44 checks, or 43 on a demo-locked build with SMOKE_DEMO_LOCKED=1.
+- Production boot refuses a schema that is behind the migration journal, append-only triggers that are not enabled, and a missing or malformed JEEVES_TRUSTED_PROXY_HOPS (`none` means no proxy in front).
+- db:seed and reset:demo refuse while real inbound requests exist (ALLOW_DISCARD_PUBLIC_REQUESTS=<count> overrides). db:migrate, db:seed and reset:demo no longer exit 0 without running when the checkout path has a space or a symlink (scripts/is-main.ts).
+- Podman and Quadlet: nested .env files stay out of the build context, one volume name (jeeves-pgdata) with upgrade and restore notes, a DATABASE_URL and seed step for Quadlet, and an upgrade runbook that rebuilds the migrator image.
+- docs/environment-reference.md lists every variable the code reads, with a drift test.
+- Merges of the main-line fixes (PR #25): the chat routes keep "no reservation without an LLM" in the main line's reserve-after-checks order. compose.yaml and env.example keep both sides: cookie secret required, OPERATOR_TOKEN passed through, JEEVES_MODE and proxy hops.
+### Verified: typecheck and lint clean. Unit suite 214 files, 2639 tests (5 tests in two files pinned pre-merge behaviour and were adapted in ed3e641). Turbopack, demo-locked and webpack builds with the standalone and packaged-agent checks. Smoke 44/44 and 43/43. Playwright 28/28. Real-PostgreSQL integrity suite 9/9.
+### Recommendations / Next steps:
+- Merge this PR into PR #23's branch after #25, then run PR #23's own gates.
+- The CI job (8de6c6f) and the deploy template commits need the owner's explicit OK.
+- Correction to the entry above: the review produced 459 findings, of which 443 held up on a second check (19 high, 133 medium, 291 low).
+- Wave 2 follows on this branch: the smoke test's garbage-cookie check must be able to fail.
+
 ## [AGENT: Claude] [2026-11-15T08:06Z]
 ### Action: reviewer + implementer: peer-review fix wave 2 on the main line, plus a follow-up round from the orchestrator's own read of wave 2 (human request 2026-11-15 "peer review, find out all issues that we can solve, and help me fix")
 ### Files changed: 104 files besides this log, in 32 commits; `git diff --stat 5456fb8..HEAD` lists them. No shared file (CI, deploy templates, migrations, schema, package files, agent instructions) is touched in this wave.
@@ -1583,6 +1721,20 @@ never gets), sticky CTA hint ("Read-only" — visitors can act now).
 - Codex: four things older code and fixtures trip over. (1) A route no longer calls `req.json()`: it passes an extractor to `runMutationGuard` and reads `guard.json`; a test that stands in for the guard must hand back `json`. (2) `getAppProvider()` shares one snapshot per server render, so a page must not write and then read through the provider in the same render (none does today). (3) The first guarded call of every test file runs the housekeeping; a test that stubs the database for its first guarded call parks the counter with `resetHousekeepingCounterForTests(1)`. (4) A browser test that presses an aria-disabled control cannot use `locator.click()` or `locator.tap()` (Playwright waits for enabled): press at coordinates or with the keyboard, as tests/e2e/disabled-actions.spec.ts does.
 - Open: the low-severity findings that are safe and small follow on a separate branch. The findings that need the owner's decision are in the review report in the project thread.
 
+## [AGENT: Claude] [2026-11-15T08:46Z]
+### Action: reviewer + implementer: peer-review fix wave 2 on the production-mode line (PR #26, targets PR #23's branch; same human request as the entry above)
+### Files changed: scripts/smoke-production.ts, scripts/smoke-production.test.ts, app/(console)/controls/page.tsx, tests/ui/controls-production.test.tsx, app/sign-in/page.tsx, tests/ui/sign-in-page.test.tsx, plus the merges of the main line (ada0fd0, 0d4c2df, 259d758, 85f8f95). No shared file (CI, deploy templates, migrations, schema, package files, agent instructions) is touched in this wave.
+### Diff summary:
+- Smoke test: the bad-cookie check can fail now. It only asserted that one word was absent from an empty database, so a server error and a leaked console page both passed. It pins the status and the sign-in redirect, and plants a random canary row that must not appear in that answer or on the sign-in page (c01df9f, 80db5dd).
+- Correction to that fix (f082ecb): the canary is an initiative without a workspace, and the production boot check refuses a database that holds one as demo data, so the smoke test could not pass. The row is now written once the server is healthy and removed when the checks end, whatever their outcome. A row that an interrupted run left behind is cleared before the next server starts. The database steps are unit-tested against PGlite together with `verifyInstallation`, and the client that holds the row has an error listener, so a dropped connection fails the run instead of leaving the server running.
+- Production-mode halves of two main-line fixes: the control catalog uses the frozen demo clock in demo mode only, and judges evidence against today in production (96454a8); the skip link can focus the sign-in page, which exists only on this line (5346982).
+- Merges of the main line's wave 2. Three hand-made resolutions: lib/db/client.ts keeps this line's pool options and gains the error redaction; the data provider keeps the production refusal of mock data and gains the per-render snapshot; the admin page keeps its mode-aware title with the corrected wording.
+### Verified: every fix has a test that was run against the code without the fix to prove that it fails there, and the smoke script's database steps were also checked with nine one-line mutations, each caught by a unit test. Every lane was read by an independent reviewer and then by the orchestrator; the correction f082ecb was read by two. At f082ecb: typecheck and lint clean. Unit suite with coverage 223 files, 2,736 tests (statements 88.0%, branches 81.6%, functions 91.0%, lines 90.5%), run at 259d758; the commits after it change the smoke script, two unit test files and one browser spec, and those were run again (13 files and 291 tests, and the browser runs below). Turbopack, demo-locked and webpack builds with the standalone and packaged-agent checks. `npm run smoke:production` 44 of 44 on the demo-capable build and 43 of 43 on the demo-locked one, one after the other on the same database, as CI runs them. The corrected smoke test was also run against a server whose top bar reads past the sign-in gate (it fails on the canary alone), with the boot check slowed by four seconds (it passes), and with its database connection terminated during the checks (it fails, the server is stopped, and the next run clears the row). Playwright 33 of 33, every test on its first attempt, in each of two local Chromium 153 binaries. Real-PostgreSQL integrity suite 9 of 9. One failure to report: an earlier browser run at 85f8f95 had one failure in a golden-path test this line does not change ("additional intake answers survive reopening, editing, and submission": the sign-in helper never saw "Exit demo"), while three other browser runs were loading the same machine. It passed in the other browser of that run and in the four runs since. The helper presses "Start demo" without waiting for the page to hydrate; that is being measured and follows with the small fixes.
+### Recommendations / Next steps:
+- Merge order is unchanged: #24, then #25, then this PR into #23, then #23's own gates, then #23.
+- Codex: the four notes in the main-line entry above apply here as well. Two more for this line. (1) A production database may hold no initiative without a workspace and no session row: the boot check refuses it. A script that needs such a row writes it after the server is up and removes it, as the smoke test does, and the smoke test must keep refusing any database that is not named jeeves_smoke_*. (2) A change to a script that starts a server is not verified until that script has been run. The first canary passed its unit tests and its review, and failed on its first real run.
+- Open: the low-severity findings that are safe and small follow on this branch for the production-mode ones.
+
 ## [AGENT: Claude] [2026-11-15T10:27Z]
 ### Action: implementer + reviewer: two corrections on the main line after wave 2 (human request 2026-11-15 "peer review, find out all issues that we can solve, and help me fix")
 ### Files changed: lib/db/test-client.ts, lib/db/test-client.test.ts (new), lib/db/redact-error.test.ts, docs/ARCHITECTURE.md, lib/services/notification-service.ts, lib/services/notification-service.test.ts, app/(console)/reviews/page.tsx. No shared file (CI, deploy templates, migrations, schema, package files, agent instructions) is touched.
@@ -1595,6 +1747,19 @@ never gets), sticky CTA hint ("Read-only" — visitors can act now).
 - Codex: anything shown to a viewer reads review requests through `undeliveredNotificationsForViewer`. `undeliveredNotifications` is unscoped and must not feed a page or a route.
 - Merge order is unchanged: #24, then #25, then #26 into #23, then #23.
 - Open: the small fixes (wave 3) follow as separate pull requests stacked on #25 and #26.
+
+## [AGENT: Claude] [2026-11-15T10:31Z]
+### Action: implementer + reviewer: merge of the two main-line corrections into the production-mode fixes (PR #26), after CI cancelled the unit job on 9cf631a (same human request as the entries above)
+### Files changed: by the merge: lib/db/test-client.ts, lib/db/test-client.test.ts (new), lib/db/redact-error.test.ts, docs/ARCHITECTURE.md. No shared file (CI, deploy templates, migrations, schema, package files, agent instructions) is touched.
+### Diff summary:
+- CI on 9cf631a: "Typecheck, lint, unit tests" was cancelled by its 30-minute limit after 113 of 223 test files, with no test failed. The other three jobs passed (container image build, production-mode smoke test, Playwright golden path). The same test files ran a third slower on that runner than in the run for 368e45c, where the job took 24 minutes 53 seconds. It was not re-run: the cause is the length of the suite, so the fix is the snapshot helper from the main line (62c2f8b, finding tests-F0), merged here. The limit in the workflow file is unchanged. `clearInstallationFixtures` is unchanged.
+- The Reviews page scoping (5bbf80e, finding own-F18) changes nothing on this line: it already had those three files from 87e75bb, and the main line now carries the same ones.
+- Correction to the 2026-11-15T08:46Z entry. Its last "Verified" sentence said that the sign-in helper presses "Start demo" without waiting for the page to hydrate. That does not explain the failed browser run: a press before hydration still signs in, 150 of 150 further runs passed (140 of them under heavy CPU and build load), and the failures in the first measurement came from the session rate limit of the measuring loop itself. The cause of the one failed run at 85f8f95 is not established; the most likely one is the test server stalling under the load of the other runs on the machine. Nothing was changed in the helper.
+### Verified: unit suite with coverage 224 files, 2,751 tests, all passed (statements 88.0%, branches 81.6%, functions 90.7%, lines 90.5%), run on the merge of the first version of 62c2f8b; the final version differs in lib/db/redact-error.test.ts and docs/ARCHITECTURE.md, so that suite and eight others (the helper, the deployment evidence, the three installation suites, the installation seed, the doc-drift test and the notification service: 138 tests) were run again on the final merge, with typecheck and lint. On the main line the same change took the unit suite from 1,367 s and 1,573 s to 705 s on one machine.
+### Recommendations / Next steps:
+- Codex: the two notes in the main-line entry above (create test databases in a hook, read review requests for a viewer through `undeliveredNotificationsForViewer`) apply here as well.
+- Merge order is unchanged: #24, then #25, then #26 into #23, then #23.
+- Open: the small fixes (wave 3) go to a separate pull request stacked on this one, not onto this branch as the 08:46Z entry said.
 
 ## [AGENT: Claude] [2026-11-15T18:23Z]
 ### Action: implementer + reviewer: peer-review fix wave 3 (low-severity findings) on the main line (human request 2026-11-15 "peer review, find out all issues that we can solve, and help me fix")
@@ -1624,6 +1789,18 @@ never gets), sticky CTA hint ("Read-only" — visitors can act now).
 ### Recommendations / Next steps:
 - agents/auditor/instructions.md is the owner's wording; review it with the two prompts changed in 7159290.
 
+## [AGENT: Claude] [2026-11-15T18:33Z]
+### Action: implementer + reviewer: peer-review fix wave 3 on the production-mode line (human request 2026-11-15 "peer review, find out all issues that we can solve, and help me fix")
+### Files changed: the main-line wave 3 commits arrive through merges (b5dac28, 1143ce8, c319546, df09fd1, 172a14c, a7b11d3); see the main-line entry above. This line's own 19 commits touch: app/(console)/controls/page.tsx, app/(console)/inbox/page.tsx, app/api/agents/health/route.ts, app/not-found.tsx, docs/deploy.md, docs/environment-reference.md, lib/config/boot-checks.ts, lib/config/demo-doors.ts, lib/config/production-routes.ts, lib/data/provider-mode.ts, lib/services/route-guard.ts, next.config.ts, proxy.ts, scripts/smoke-production.ts, and their tests. No shared file (CI, deploy templates, migrations, schema, package files, agent instructions) is touched by them.
+### Diff summary:
+- Production-mode findings (11): a failed boot check now also refuses mutations and session issuance (bare 503) and closes the demo doors (404) (auth-F28, also prodmode-F13); /operator gets the proxy's bare production 404 (dyn-prod-F8); the production 404 head and the Inbox description lose their demo copy, and the 404 button goes to the console (dyn-prod-F7, prodmode-F16); the production Control catalog hides its /frameworks link (prodmode-F10); the build refuses a JEEVES_DEMO_ENABLED other than "0" or "1" (prodmode-F21); one boot line says when JEEVES_MODE is set but ignored, without the value (dyn-prod-F10); the agents/health 503 is documented as unreachable before sign-in exists (api-ops-F16); a test pins the effective /api cache headers once every next.config.ts rule is applied (dyn-demo-F12). Smoke run: refuses a busy port, reads child output on close, bounds its migration at 120 s (tests-F7), and its closed-door check uses markers the operator page renders (tests-F8).
+- Merge resolutions, by hand where both lines changed a file: the PGlite detail hop keeps the main line's loopback origin and reads this line's WORKSPACE_COOKIE_NAME; the cron and health routes keep the production answers first; the marketing pages keep demoPageMetadata with the main line's titles; the controls and monitoring pages keep the production branches with the main line's load-failure flag; the Podman guide keeps this line's pinned volume names, its env.example DATABASE_URL and its always-migrate upgrade; deploy.md lists this line's seed refusals; the evidence guide says a production install closes the demo doors.
+- Follow-ups to the merges: two merged UI tests render inside the DeploymentModeProvider this line requires (b7729e0); docs/environment-reference.md documents PORT, which the detail hop depends on (c4c6cb0); deploy.md says the mode defaults to production and points section 4 at the seed's refusals (96fa242).
+### Verified: tests first, and each new test was run against the code without its fix. Unit suite with coverage at c0801ef: 256 files, 2,984 tests; the 3 failures came from the first merge and were fixed by b7729e0 and c4c6cb0, and every test file touched after that run was run again and passes. At 172a14c: typecheck and lint clean; Turbopack build with the standalone check and both production smoke runs (demo-capable and locked builds); webpack build with the standalone and packaged-agent checks; Playwright 33 of 33, every test on its first attempt, in each of two local Chromium binaries; real-PostgreSQL integrity suite 9 of 9. The demo-capable smoke run passed 44 checks and the locked one 43. After a7b11d3 (the operator-queue and auditor-prompt fixes from the main line): typecheck and lint clean, and the agent, chat, operator-queue, preview-mode and standalone-output tests pass here too (19 files, 337 tests).
+### Recommendations / Next steps:
+- Codex: (1) a test that renders a component using TryDemoButton or the deployment-mode hooks must wrap it in DeploymentModeProvider (tests/ui/helpers.tsx renderWithProviders does). (2) Every new environment variable needs a row in docs/environment-reference.md; tests/docs/env-reference.test.ts fails otherwise. (3) The boot-failed flag lives on globalThis, and while it is set runMutationGuard and the session issuers answer 503, so a test that marks it must call resetBootStateForTests() afterwards.
+- Merge order: #24, #25, #27, #26 into #23, this line's PR into #23's branch, then #23.
+
 ## [AGENT: Claude] [2026-11-15T22:15Z]
 ### Action: implementer + reviewer: peer-review fix wave 4 (the remaining low-severity findings) on the main line (human request 2026-11-15 "peer review, find out all issues that we can solve, and help me fix")
 ### Files changed: 112 files besides this log, in 69 commits on claude/peer-review-small-fixes; `git diff --stat 0642241..e5df611` lists them. Shared file: .env.example (e5df611, docs-F31: its Luna comment now matches the agents-sdk routing). Nothing in .github/, deploy/, drizzle/, lib/db/schema.ts, the package files, agents/, AGENTS.md or plan.md is touched.
@@ -1642,3 +1819,27 @@ never gets), sticky CTA hint ("Read-only" — visitors can act now).
 - Codex: (1) Before FOR UPDATE on a row a caller names, authorize on an unlocked read, then lock that row by id and re-check its workspace; lib/db/test-lock-recorder.ts records the order and `beforeFirstLock` in lib/services/evidence-service.test.ts shows the race test. (2) Viewer readers filter by workspace in SQL. (3) Mutation routes build guard failures only with guardFailureResponse. (4) Treat only an error named AbortError as a cancellation.
 - Owner follow-ups: extractSessionToken still falls back to the cookie (auth-F10). After a persona switch, Exit revokes only the current token, so the parent token stays valid for up to an hour. The migration advisory lock runs on every non-pooled URL. The wider mock/DB fixture drift (db-F17) and the Q-01 threshold display (db-F18) are open. ui-intake-F33's BLK-03 is one rule for the whole overlay group.
 - Merge order: #24, #25, #27, #26 into #23's branch, #28 into #23's branch, the decisions PR into #28's branch, then #23.
+
+## [AGENT: Claude] [2026-11-15T22:43Z]
+### Action: implementer + reviewer: peer-review fix wave 4 on the production-mode line (human request 2026-11-15 "peer review, find out all issues that we can solve, and help me fix")
+### Files changed: the main-line wave 4 commits arrive through two merges (5a8edb2, 980c532); see the main-line entry above. This line's own 14 commits touch: app/(console)/admin/page.tsx, app/(console)/agents/[id]/page.tsx, app/(console)/agents/page.tsx, app/(console)/controls/page.tsx, app/(console)/portfolio/page.tsx, components/jeeves/intake-form.tsx, components/jeeves/operate-tab.tsx, docs/deploy.md, docs/production-readiness.md, lib/client/api.ts, lib/client/deployment-mode-context.tsx, lib/config/demo-doors.ts, scripts/smoke-production.ts, and their tests. No shared file (CI, deploy templates, migrations, schema, package files, agent instructions) is touched by them.
+### Diff summary:
+- Production-mode findings (5): the production smoke serves .next/static the way the Containerfile does and fetches one asset linked from /sign-in, so a broken static output fails CI (tests-F9); production hides the "Use a sample initiative" button, which loads the fictional payer's payload (ui-intake-F48); production page bodies drop the fictional payer's name, the demo personas listed as accountable reviewers, the hard-coded 0.05 critical default and the promotion-gate alert (ui-shell-F15); a 401 in production reads "Your session has expired. Sign in again." instead of asking to start the demo again (ui-shell-F9); the demo-doors comment no longer claims a closed door looks like a route that was never built, and the bare 404 stays an owner decision (prodmode-F14). deploy.md section 4 names the TRUNCATE guard (migration 0014) and the installation stamp in the restore rationale (docs-F28, this line's half).
+- Merge resolutions, by hand where both lines changed a file (5a8edb2's message lists each): the exceptions, evidence and incidents routes keep the production read gate with the main line's guardFailureResponse, and incidents read through listIncidentsForViewer; the session routes answer production's 404 before the new same-origin (403) and content-type (415) checks; the new DELETE /api/session is a demo door too, and demoDoorFallbacks takes several implemented methods; the og:url removal applies to rootMetadata() in both modes; reset-demo keeps the demo-mode and stamp refusals and clears sessions, run budget and rate-limit buckets inside the seed transaction; the Podman restore loads into jeeves_restored and swaps the names instead of dropping the live database. 980c532 brings the main line's .env.example correction, its build-log entry and the live-loop test fix (b7a4695), and only had to keep both build-log entries in date order.
+### Verified: tests first, and each new test was run against the code without its fix. At c096948: typecheck and lint clean; unit suite with coverage 268 files, 3,122 tests, all passed (statements 89.4%, branches 83.4%, functions 92.3%, lines 91.8%); Turbopack build with the standalone check and both production smoke runs (demo-capable 45 checks, now with the static asset, and locked 44); webpack build with the standalone and packaged-agent checks; real-PostgreSQL integrity suite 9 of 9; Playwright 33 of 33 in the headless shell and 32 of 33 in Chromium, where the live-loop test's assessment locator also matched the hidden server-rendered copy right after its reload (fixed on the main line in b7a4695). At 980c532, with that fix: Playwright 33 of 33 in each of two local Chromium binaries, and the docs and deploy tests pass.
+### Recommendations / Next steps:
+- Codex: (1) A demo door that gains a method must list it in demoDoorFallbacks("POST", "DELETE", ...) and answer demoDoorClosed() first; production-doors.test.ts covers DELETE with and without a session, so extend it for a new method. (2) Copy that names the fictional payer, a demo persona or a demo default belongs behind useDeploymentMode() === "demo" (or the server-side mode check); the B-line page tests render both modes. (3) apiErrorToMessage is a plain function: DeploymentModeProvider records the mode for it with setApiDeploymentMode, and a caller without a provider keeps the demo wording.
+- Owner decision left open: whether a closed demo door should answer with the standard not-found page instead of a bare 404 (prodmode-F14).
+- Merge order: #24, #25, #27, #26 into #23's branch, this line's PR into #23's branch, the decisions PR into this line's branch, then #23.
+
+## [AGENT: Claude] [2026-11-20T14:20Z]
+### Action: implementer: the owner kept the recommended decisions (human "go" and "merge", 2026-11-20), so the privacy page now lists the two tab-only stores that d12 and d13 add, before this branch merges
+### Files changed: app/(marketing)/privacy/page.tsx, tests/ui/site-essentials.test.tsx
+### Diff summary:
+- This branch carries nine decision commits (d01, d04 plus its Podman templates, d10, d11, d02, d07, d13, d12); `git log claude/peer-review-prodmode-small-fixes..` lists them and each message has its Decision line.
+- Privacy: a new "Unsent work, in this tab only" bullet names `jeeves_public_intake_draft` (a real request's unsent form, d13) and `jeeves:review-unsaved:v1:…` (a demo reviewer's unsaved text, d12), both sessionStorage, both cleared with the tab. The session-token bullet now says a real request keeps "only this token, any unsent draft in this tab, and the preferences below". The header comment maps both claims to their files. LEGAL_LAST_UPDATED is unchanged: that date is the owner's to set.
+- Tests: the storage-key test lists both keys and the new token sentence; the cookie-by-cookie test expects exactly two sessionStorage mentions.
+### Verified: the storage-key test failed before the page change and passes after it; tests/ui/site-essentials.test.tsx 18 of 18; typecheck and lint clean on the changed files.
+### Recommendations / Next steps:
+- Codex: a new browser storage key needs a line on the privacy page and an entry in the storage-key test in tests/ui/site-essentials.test.tsx.
+- Owner: bump LEGAL_LAST_UPDATED when you have read the new bullet; the operator queue's own sessionStorage token (`jeeves_operator_token`) is not listed, since only the operator holds it.

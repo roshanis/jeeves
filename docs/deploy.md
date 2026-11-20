@@ -13,14 +13,32 @@ data (see "Personal data" in section 5). See the top of
 Deploy itself is **not executed by any agent** in this repo — this document
 only describes the steps. A human runs them.
 
+> **Deployment mode: set `JEEVES_MODE=demo` in Vercel for the demo.**
+> The deployment mode **defaults to production**. Demo is an explicit
+> opt-in: only the exact value `JEEVES_MODE=demo` selects it, and anything else
+> (unset, empty, `Demo`, `prod`) is production — a closed shell with no
+> personas, no playground and no public intake, which also refuses to boot
+> without `APP_BASE_URL`, `JEEVES_TENANT_ID` and a 32+ character
+> `JEEVES_COOKIE_SECRET`. A Vercel project that does not set the variable
+> **flips the live demo into production mode on its next deploy.**
+>
+> In the Vercel project settings, add `JEEVES_MODE` = `demo` to **Production,
+> Preview and Development** (all three) before deploying. Preview deployments
+> are the ones people forget. Local development, the test suite, Playwright,
+> CI and the Podman stack set it themselves
+> (`.env.example`, `vitest.config.ts`, `playwright.config.ts`,
+> `.github/workflows/ci.yml`, `deploy/podman/`); Vercel is the one place only a
+> human can set it. Never expose it as `NEXT_PUBLIC_JEEVES_MODE`: the mode is
+> server-only.
+
 ---
 
 ## 1. Local demo quickstart
 
 ```bash
 npm install
-npm run db:seed
-DATA_PROVIDER=db JEEVES_COOKIE_SECRET=<server-signing-key> npm run dev
+JEEVES_MODE=demo npm run db:seed
+JEEVES_MODE=demo DATA_PROVIDER=db JEEVES_COOKIE_SECRET=<server-signing-key> npm run dev
 ```
 
 Notes on each step:
@@ -29,6 +47,9 @@ Notes on each step:
   use here; there is no `pnpm-lock.yaml` in the repo, so ignore the `pnpm`
   commands in `.claude/CLAUDE.md` — use `npm run <script>` from
   `package.json`).
+- `JEEVES_MODE=demo` is required locally: the mode defaults to production,
+  which refuses the local PGlite store, the mock data provider and the mock
+  LLM (`lib/db/client.ts`, `lib/data/index.ts`, `lib/agents/index.ts`).
 - `npm run db:seed` runs `tsx scripts/seed.ts`. With no `DATABASE_URL` set,
   this seeds a **persistent local PGlite store** at `./.pglite` (gitignored)
   — no external service, no signup. The seed is deterministic (fixed PRNG
@@ -81,13 +102,14 @@ npm run start        # next start (after build)
 2. **Connect a hosted PostgreSQL database.** Neon remains supported; the Vercel
    Supabase integration supplies `POSTGRES_URL`. Use the transaction pooler for
    serverless runtime traffic and a direct/session connection for migrations.
-3. **Set environment variables** in the Vercel project settings:
+3. **Set environment variables** in the Vercel project settings (every variable the code reads, with its demo/production behaviour, is in [`environment-reference.md`](./environment-reference.md)):
 
    | Variable | Required | Notes |
    |---|---|---|
    | `DATABASE_URL` or `POSTGRES_URL` | Yes | Explicit nonblank `DATABASE_URL` wins; otherwise the Vercel integration `POSTGRES_URL` is used consistently for runtime, pages and incident reads. Neon hosts use the Neon driver; other PostgreSQL hosts use `pg`. Vercel refuses local PGlite fallback. |
    | `DATABASE_MIGRATION_URL` | For Supabase migrations; recommended for Neon | Supabase: direct or session-pooler connection on port 5432; its transaction pooler on port 6543 cannot run migrations. Neon: the direct (non `-pooler`) endpoint, so overlapping runs serialise on the advisory lock; through `-pooler` they run without it. |
-   | `DATABASE_SSL_CA` | Optional | Optional CA (PEM). Applies to every PostgreSQL host reached through node-postgres, not to Neon, which uses its own driver and public certificates. When set, the connection uses TLS and verifies the server against this CA (for Amazon RDS, the RDS CA bundle). It cannot be combined with `sslmode=disable` or `no-verify`, or with `sslrootcert`, `sslcert` or `sslkey` in the URL. Supabase hosts additionally always verify and use a pool of one. |
+   | `DATABASE_SSL_CA` | Optional | Optional CA (PEM). Applies to every PostgreSQL host reached through node-postgres, not to Neon, which uses its own driver and public certificates. When set, the connection uses TLS and verifies the server against this CA (for Amazon RDS, the RDS CA bundle). It cannot be combined with `sslmode=disable` or `no-verify`, or with `sslrootcert`, `sslcert` or `sslkey` in the URL. Supabase hosts additionally always verify and use a pool of one. In production mode it is one way to satisfy the database TLS rule (see environment-reference.md, Database TLS in production). |
+   | `JEEVES_MODE` | **Yes: `demo`** | Must be exactly `demo` in Production, Preview and Development, or the deployment runs in production mode (see the note at the top of this page). Server-only; never `NEXT_PUBLIC_`. |
    | `DATABASE_POOL_MAX` | Optional | Largest number of connections one app instance opens through node-postgres (its default is 10). Not used for Neon hosts (own driver) or Supabase hosts (always one connection). |
    | `DATABASE_STATEMENT_TIMEOUT_MS`, `DATABASE_IDLE_IN_TRANSACTION_TIMEOUT_MS` | Optional | Server-side limits, in milliseconds, for one statement and for a transaction left idle (default `60000` each). node-postgres sends them as startup parameters. `0` turns one off and sends nothing: use that behind a pooler that refuses startup parameters it does not track (PgBouncer without `ignore_startup_parameters`), and set the limits on the database role instead. Not sent to Neon or Supabase hosts. |
    | `DATABASE_MIGRATION_LOCK_TIMEOUT_MS` | Optional | How long `npm run db:migrate` waits for a lock before it fails and can be retried, in milliseconds (default `10000`; `0` turns it off). Migrations have no statement timeout. On other node-postgres hosts it also bounds the wait for the migration advisory lock, so an overlapping `db:migrate` fails after this time (SQLSTATE 55P03) instead of waiting. Supabase and direct Neon endpoints wait for the lock without a limit, and Neon pooled (`-pooler`) endpoints take no advisory lock. Not sent to Neon or Supabase hosts. |
@@ -147,26 +169,31 @@ npm run start        # next start (after build)
 5. **Seed only an explicitly approved disposable demo database.**
 
    ```bash
-   DATABASE_URL="<your Neon pooled connection string>" npm run db:seed
+   JEEVES_MODE=demo DATABASE_URL="<your Neon pooled connection string>" npm run db:seed
    ```
 
    Read this before running it: `npm run db:seed` **wipes every seeded
    table and repopulates it**, and to do that it issues
-   `ALTER TABLE audit_events DISABLE TRIGGER ALL` so it can delete the
+   `ALTER TABLE audit_events DISABLE TRIGGER USER` so it can delete the
    append-only audit log (`scripts/seed.ts`, "Wipe in FK-safe order"). That
    is correct for a demo dataset and catastrophic for a real one — the audit
    log is the compliance record the product exists to keep.
 
-   `scripts/seed.ts` refuses to run when `NODE_ENV=production` unless you
-   set `ALLOW_SEED=1`. That guard does not apply from a laptop, where
-   `NODE_ENV` is unset, so the one refusal that always holds is the
-   evidence-history check: the seed will not wipe a database that holds
-   evidence documents or packets. Check `DATABASE_URL` yourself before
-   every run. The seed applies the migrations itself before it wipes (the
-   same `applyMigrations` as `npm run db:migrate`), so step 4 first is good
-   practice, not a precondition. It migrates over `DATABASE_URL` and does
-   not read `DATABASE_MIGRATION_URL`: for Supabase, run it with a direct or
-   session-pooler URL on port 5432. Do not seed against a database that is
+   `scripts/seed.ts` and `scripts/reset-demo.ts` are demo-only: they refuse
+   to run unless `JEEVES_MODE=demo` (the mode defaults to production), even
+   when `DATABASE_URL` is set, so a seed can never stamp an unprepared
+   database `demo`. `scripts/seed.ts` also refuses to run when
+   `NODE_ENV=production` unless you set `ALLOW_SEED=1`; that guard does not
+   apply from a laptop, where `NODE_ENV` is unset. The refusals that always
+   hold are `JEEVES_MODE=demo`, the database's `production` stamp, the
+   evidence-history check (the seed will not wipe a database that holds
+   evidence documents or packets) and the real-request count, which
+   `ALLOW_DISCARD_PUBLIC_REQUESTS` must match. Check `DATABASE_URL` yourself
+   before every run. The seed applies the migrations itself before it wipes
+   (the same `applyMigrations` as `npm run db:migrate`), so step 4 first is
+   good practice, not a precondition. It migrates over `DATABASE_URL` and
+   does not read `DATABASE_MIGRATION_URL`: for Supabase, run it with a direct
+   or session-pooler URL on port 5432. Do not seed against a database that is
    currently serving a live demo audience mid-session.
 
 6. **Playwright is NOT run on Vercel.** `npm run test:e2e` boots its own
@@ -279,7 +306,10 @@ different problems.
    every seeded table and disables the `audit_events` append-only triggers to
    do it. The `ALLOW_SEED=1` guard applies only when `NODE_ENV=production` is
    set for the seed run (`npm run db:seed` from a laptop does not set it), so
-   check `DATABASE_URL` yourself before every run.
+   check `DATABASE_URL` yourself before every run. Section 2 step 5 lists
+   the refusals that hold whatever `ALLOW_SEED` and `NODE_ENV` say; one is a
+   database stamped `production` (`installation.deploy_mode`, migration
+   0015), which the seed and reset scripts refuse.
 
 ### Restore
 
@@ -290,13 +320,14 @@ events" path to undo *with* — the trigger rejects `DELETE` from the app
 entirely.
 
 **Always restore into a new database or instance, never over the live one.**
-`audit_events` rejects `UPDATE` and `DELETE` by trigger, so clearing the bad
-rows before loading a dump means deleting them, which the triggers reject, and
+`audit_events` rejects `UPDATE`, `DELETE` and (since migration 0014)
+`TRUNCATE` by trigger, so clearing the bad rows before loading a dump means
+deleting or truncating them, which the triggers reject, and
 `pg_restore --clean` against the running database drops and recreates every
 table, which discards every audit row written since the backup and leaves
-nothing to compare against. Restore into an empty
-database, check it as below, then repoint `DATABASE_URL` (and
-`DATABASE_MIGRATION_URL`) at it and retire the old one.
+nothing to compare against. Restore into an empty database, check it as
+below, then repoint `DATABASE_URL` (and `DATABASE_MIGRATION_URL`) at it and
+retire the old one.
 
 The same rule gives the per-platform recipes:
 
@@ -328,7 +359,12 @@ After any restore, before sending traffic to it:
    (`npm run db:migrate` checks this and refuses to continue when one is
    missing).
 2. Boot the app against the restored database and `GET /api/health` answers
-   200.
+   200. The restored database keeps the source's `installation.deploy_mode`
+   stamp (migration 0015), so boot it with the same `JEEVES_MODE`. A
+   production boot also refuses a database whose applied migrations are
+   behind the build or whose append-only triggers are missing or disabled.
+   A refused boot logs `[boot] installation check failed: ...` with the
+   reason and does not start.
 3. Compare `select count(*) from audit_events` with the source (or with what
    you expect at the restore point), and open a recent initiative and one of
    its evidence files.
@@ -421,12 +457,17 @@ product decision.
 Run through this the morning of a demo, in order:
 
 1. **Do not reseed the hosted database.** Seed exactly once, when the
-   database is provisioned (`npm run db:seed`). Re-running it against a
-   database that visitors have used deletes every visitor workspace, the whole
-   audit log and any real inbound requests (including submitters' contact
-   details), and it refuses outright once evidence exists. If you need a
-   clean stage, use a disposable database (local PGlite, a Neon branch or a
-   second project) behind a preview deployment.
+   database is provisioned:
+   ```bash
+   JEEVES_MODE=demo DATABASE_URL="<Neon pooled connection string>" npm run db:seed
+   ```
+   Re-running it against a database that visitors have used deletes every
+   visitor workspace and the whole audit log. It refuses outright once evidence
+   exists, and when the database holds real inbound requests (public-
+   workspaces, including submitters' contact details) unless
+   `ALLOW_DISCARD_PUBLIC_REQUESTS=<count>` names how many to discard. If you
+   need a clean stage, use a disposable database (local PGlite, a Neon branch
+   or a second project) behind a preview deployment.
 
 2. **Verify `/audit` queries.** Visit `/audit` and run all four canned
    queries (`lib/data/dto.ts` → `CannedAuditQueryId`):

@@ -29,6 +29,7 @@ import {
 } from "@/lib/services/admin-service";
 import { guardFailureResponse, runMutationGuard } from "@/lib/services/route-guard";
 import { isRouteId, notFoundResponse } from "@/lib/http/route-id";
+import { databaseNotReady } from "@/lib/http/database-gate";
 
 const bodySchema = z.object({
   reason: z.string().min(1).max(2000),
@@ -38,6 +39,8 @@ export async function POST(
   req: Request,
   context: { params: Promise<{ id: string }> },
 ): Promise<Response> {
+  const unavailable = databaseNotReady();
+  if (unavailable) return unavailable;
   const guard = await runMutationGuard(req, (json) => {
     const bodyText: Record<string, string> = {
       reason: typeof (json as { reason?: unknown })?.reason === "string" ? (json as { reason: string }).reason : "",

@@ -4,6 +4,9 @@ Self-hosted deployment with Podman: the app plus its own Postgres, no Neon and
 no Vercel. Companion to [`deploy.md`](./deploy.md), which covers the Vercel +
 Neon path.
 
+Every variable is described in
+[`environment-reference.md`](./environment-reference.md).
+
 Everything here also works with Docker (`docker` for `podman`,
 `Containerfile` is a Dockerfile) except the Quadlet units, which are
 Podman-specific.
@@ -39,6 +42,16 @@ Open it as `localhost` (or over HTTPS). The app marks its workspace cookie
 `http://192.168.1.20:3000`. The pages then show only the seeded rows and a
 visitor's own initiatives are missing.
 
+The stack runs the demo: `compose.yaml` and the Quadlet unit set
+`JEEVES_MODE=demo`. The deployment mode defaults to **production** when unset,
+which refuses to boot without `APP_BASE_URL`, `JEEVES_TENANT_ID` and a 32+
+character `JEEVES_COOKIE_SECRET`, so do not remove the variable. Production also
+refuses a database it cannot reach with verified TLS unless
+`JEEVES_DB_ALLOW_UNVERIFIED=same-host` is set (the stack's database container is
+reached without TLS on its private network).
+`JEEVES_COOKIE_SECRET` (`openssl rand -hex 32`) is required in `.env`: compose
+stops with a clear error while it is blank.
+
 `OPERATOR_TOKEN` in `.env` (32+ characters, `openssl rand -hex 32`) is optional.
 It opens the "Send a real request" door and the `/operator` queue that reads
 those requests. While it is unset the door is closed: visitors are not offered
@@ -55,7 +68,7 @@ the Quadlet units in §3 — they are the Podman-native path.
 
 | Service | Image | Notes |
 |---|---|---|
-| `db` | `postgres:16-alpine` | **Not** published to the host. Data in the `jeeves-pgdata` volume (`podman_jeeves-pgdata` on the host). |
+| `db` | `postgres:16-alpine` | **Not** published to the host. Data in the `jeeves-pgdata` volume. |
 | `app` | built from `Containerfile` (`runner`) | The only published port. Non-root, read-only rootfs. |
 | `migrate` / `seed` | built from `Containerfile` (`migrator`) | One-shot jobs, `tools` profile. |
 
@@ -119,12 +132,8 @@ mkdir -p ~/.config/containers/systemd
 cp deploy/podman/quadlet/* ~/.config/containers/systemd/
 cp deploy/podman/env.example ~/.config/containers/systemd/jeeves.env
 chmod 600 ~/.config/containers/systemd/jeeves.env    # it holds the database password and the cookie key
-# env.example has no DATABASE_URL (compose builds it inline; Quadlet cannot), so add
-# this line to jeeves.env while you edit it, with the same password as POSTGRES_PASSWORD:
-#   DATABASE_URL=postgres://jeeves:PASSWORD@jeeves-db:5432/jeeves
-# Without it the app falls back to a local PGlite store, which the read-only root
-# filesystem refuses: the app runs without a database, its data pages fail and
-# the health check reports unhealthy.
+# Edit it: set POSTGRES_PASSWORD, put the same password into DATABASE_URL (the
+# app unit cannot assemble it like compose does), and set JEEVES_COOKIE_SECRET.
 $EDITOR ~/.config/containers/systemd/jeeves.env
 
 systemctl --user daemon-reload
@@ -133,8 +142,16 @@ systemctl --user start jeeves-db
 podman run --rm --network jeeves \
   -e DATABASE_URL='postgres://jeeves:PASSWORD@jeeves-db:5432/jeeves' \
   localhost/jeeves-migrator:latest npm run db:migrate
+# load the synthetic demo data, once, on a fresh database only (DESTRUCTIVE,
+# see §2): without it the app boots against an empty database
+podman run --rm --network jeeves \
+  -e DATABASE_URL='postgres://jeeves:PASSWORD@jeeves-db:5432/jeeves' \
+  -e JEEVES_MODE=demo localhost/jeeves-migrator:latest npm run db:seed
 systemctl --user start jeeves-app
 ```
+
+Never run the seed step against a database you care about: it wipes every
+seeded table and the audit log. Skip it on any install that already holds data.
 
 For a rootless service that should survive logout:
 `loginctl enable-linger $USER`.
@@ -176,6 +193,13 @@ which is a genuinely confusing thing to debug. Any container deploy with a
 `JEEVES_DB_DRIVER=neon|pg` forces the choice if you need to (a Neon proxy on a
 custom domain, say).
 
+**TLS to the database.** In production mode a URL to another host needs verified
+TLS. This stack's `db` / `jeeves-db` container is on the same host's private
+network without TLS, so a production-mode Podman install sets
+`JEEVES_DB_ALLOW_UNVERIFIED=same-host` (compose: app environment; Quadlet:
+`jeeves.env`) and removes it if `DATABASE_URL` ever points at another machine.
+Demo mode ignores the variable.
+
 ---
 
 ## 5. Operations
@@ -195,26 +219,55 @@ errors carry the host and port.
 
 ### Backups
 
-The Postgres data lives in a named volume. Compose prefixes the volume with
-the project name, which defaults to the directory name, so from
-`deploy/podman` it is `podman_jeeves-pgdata` (check with `podman volume ls`).
-The Quadlet path names it `jeeves-db`.
+The Postgres data lives in a named volume:
 
 ```bash
-podman volume export podman_jeeves-pgdata --output jeeves-pgdata.tar    # back up
-podman volume import podman_jeeves-pgdata jeeves-pgdata.tar             # restore
+podman volume export jeeves-pgdata --output jeeves-pgdata.tar    # back up
+podman volume import jeeves-pgdata jeeves-pgdata.tar             # restore
 ```
+
+The volume is named `jeeves-pgdata` on both install paths (`compose.yaml` and
+the Quadlet unit pin it). A compose install created before the name was pinned
+holds its data in `podman_jeeves-pgdata` (the project name is the prefix): run
+`podman volume ls` to see which one you have, export that one, and import the
+tar into `jeeves-pgdata` before starting the new stack. A Quadlet install created
+before this change holds its data in the volume `jeeves-db`: export `jeeves-db`
+and import it into `jeeves-pgdata` the same way before starting the new units,
+otherwise Postgres starts on an empty `jeeves-pgdata` volume.
 
 Stop the stack first — exporting a volume under a running Postgres captures a
 torn snapshot. For a consistent online backup use `pg_dump` instead:
 
 ```bash
-podman compose exec -T db pg_dump -U jeeves jeeves > jeeves-$(date +%F).sql
+podman compose exec -T db pg_dump -U jeeves jeeves > jeeves-$(date +%F).sql   # compose
+podman exec jeeves-db pg_dump -U jeeves jeeves > jeeves-$(date +%F).sql       # Quadlet
 ```
 
-Restore into a fresh database rather than over the running one, and run the
-post-restore checks: see `deploy.md` §4. The same caveat applies: nobody has
-restored from one of these. A backup you have not restored from is a hypothesis.
+`-T` keeps compose from attaching a TTY, which would alter the dump.
+
+**Restore from a `pg_dump` file** into a fresh database, never over the live
+one (`deploy.md` §4 says why). Load the dump into `jeeves_restored`, stop the
+app (`podman compose stop app`, or `systemctl --user stop jeeves-app`), swap
+the database names so the app's unchanged `DATABASE_URL` reaches the restored
+copy, start the app again and check it:
+
+```bash
+podman exec jeeves-db createdb -U jeeves jeeves_restored   # compose: podman compose exec -T db ...
+podman exec -i jeeves-db psql -U jeeves -d jeeves_restored < jeeves-2026-01-01.sql
+# stop the app, then:
+podman exec jeeves-db psql -U jeeves -d postgres -c 'ALTER DATABASE jeeves RENAME TO jeeves_before_restore'
+podman exec jeeves-db psql -U jeeves -d postgres -c 'ALTER DATABASE jeeves_restored RENAME TO jeeves'
+# start the app again, then:
+curl -s localhost:3000/api/health      # {"status":"ok","database":"ok"}
+podman exec jeeves-db psql -U jeeves jeeves -c 'select count(*) from audit_events'
+```
+
+Keep `jeeves_before_restore` until the post-restore checks in `deploy.md` §4
+pass; it is what you compare the restored audit trail against. Drop it only
+after that.
+
+The same caveat as `deploy.md` §4 applies: nobody has restored from one of
+these. A backup you have not restored from is a hypothesis.
 
 ### Stopping during a draft run
 
@@ -231,10 +284,19 @@ requests finish, so the longer limit costs nothing when nothing is running.
 
 ```bash
 git pull
-podman compose --profile tools build   # rebuilds the migrator, so migrate sees the new drizzle/
-podman compose run --rm migrate        # only if drizzle/ changed
-podman compose up -d -t 130            # lets a running draft finish
+podman compose exec db pg_dump -U jeeves jeeves > jeeves-$(date +%F).sql   # back up first
+podman compose --profile tools build    # also rebuilds the migrator image
+podman compose run --rm migrate         # always run it: idempotent
+podman compose up -d -t 130             # lets a running draft finish
 ```
+
+Plain `podman compose build` skips the `tools` profile, so `migrate` would run
+from a stale migrator image that still carries the old `drizzle/` directory and
+report nothing to apply.
+
+For the Quadlet units (§3): `git pull`, repeat the two `podman build` commands
+there (both images), re-run the one-off `podman run ... npm run db:migrate`
+against the new migrator image, then `systemctl --user restart jeeves-app`.
 
 **Upgrading an older `.env`.** The compose stack now requires a non-empty
 `JEEVES_COOKIE_SECRET`, and `DEMO_PASSCODE` is gone from the template. A `.env`
@@ -259,6 +321,22 @@ seeded data until they get a new cookie.
 - **TLS.** The app serves plain HTTP on 3000. Put it behind a reverse proxy
   (Caddy, nginx, Traefik) that terminates TLS. The app already sends HSTS,
   which is only meaningful once something is actually serving HTTPS.
+- **Client addresses and rate limits.** Rate limits (sessions, mutations, the
+  operator-token attempt limiter) key on the client address taken from
+  `X-Forwarded-For`, and `JEEVES_TRUSTED_PROXY_HOPS` says how to read it: the
+  number of reverse proxies in front that *append* to the header. Both stacks
+  here publish the port directly, so they set it to `none` (nothing in front
+  appends to or overwrites the header): the app ignores the header entirely,
+  because anything a caller sends is forged
+  (a random `X-Forwarded-For` per request would otherwise get a fresh bucket
+  every time). The cost is that every caller shares one bucket, so a handful
+  of visitors can hit 429 together. Behind a proxy that appends the client
+  address (Caddy, nginx with `$proxy_add_x_forwarded_for`, an AWS ALB) set `1`
+  (`2` for CloudFront then ALB) in `.env` or the Quadlet unit and stop
+  publishing the port to the network. `0` is only for a platform that
+  overwrites the header (Vercel). Production boot refuses to start without the
+  variable; a malformed value fails boot in both modes; demo off Vercel warns
+  when it is unset.
 - **Horizontal scale.** Sessions, the token budget and the rate-limit buckets
   are all in Postgres, so multiple replicas are *correct* — but nothing here
   sets up a load balancer, and the single published port assumes one app

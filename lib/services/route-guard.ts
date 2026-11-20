@@ -1,4 +1,7 @@
 import { runtimeDatabaseUrl } from "../db/runtime-config";
+import { bootFailure } from "../config/boot-state";
+import { assertDemoMode } from "../config/demo-doors";
+import { isProductionMode } from "../config/deployment-mode";
 /**
  * Shared request-guard pipeline for `app/api/**` mutating route handlers
  * (task brief deliverable 3): writable mode -> session (server-issued) -> rate-limit ->
@@ -14,6 +17,7 @@ import { runtimeDatabaseUrl } from "../db/runtime-config";
 import { DbTokenBucketRateLimiter } from "../security/db-rate-limit";
 import { issueSession } from "../security/session";
 import { DAILY_TOKEN_CAP, DbBudgetStore, reserve, type BudgetStore } from "../security/budget";
+import { SESSION_COOKIE_NAME } from "../security/session-cookie-name";
 import { validateInputSize, type FieldLimit, type InputGap } from "../security/input-limits";
 import { PUBLIC_PERSONA_PREFIX, isPersonaKey, resolveActor } from "./actors";
 import type { Actor } from "../domain/types";
@@ -124,6 +128,10 @@ const publicSessionLimiter = new DbTokenBucketRateLimiter(
  * (see MutationGuardOptions.allowPublic for which, and why). This session
  * therefore holds nothing except what the three intake routes opt it into.
  * The TTL is short — a visitor fills one form; they do not need an hour.
+ *
+ * Demo only. Production has no `public` session (the route answers 404); this
+ * throws DemoOnlyError for any other caller, before the rate limiter or the
+ * database is touched.
  */
 export async function issuePublicSession(
   clientKey: string,
@@ -132,7 +140,8 @@ export async function issuePublicSession(
   | { rateLimited: true; retryAfterSeconds: number }
   | { readOnly: GuardFailure }
 > {
-  const readOnly = checkReadOnlyMode();
+  assertDemoMode("public sessions");
+  const readOnly = checkBootFailure() ?? checkReadOnlyMode();
   if (readOnly) return { readOnly };
 
   // Namespaced like every other limiter here: the buckets share one table, and
@@ -248,11 +257,11 @@ export async function operatorAttemptStatus(
   return operatorAttemptLimiter.peek(bucketKey("operator", clientKey));
 }
 
-export type GuardFailureKind = "unauthorized" | "rate_limited" | "invalid_input" | "budget_exhausted" | "read_only" | "payload_too_large";
+export type GuardFailureKind = "unauthorized" | "rate_limited" | "invalid_input" | "budget_exhausted" | "read_only" | "payload_too_large" | "unavailable";
 
 export interface GuardFailure {
   kind: GuardFailureKind;
-  status: 401 | 403 | 429 | 400 | 413;
+  status: 401 | 403 | 429 | 400 | 413 | 503;
   message: string;
   gaps?: InputGap[];
   retryAfterSeconds?: number;
@@ -269,6 +278,15 @@ export function guardFailureResponse(failure: GuardFailure, headers: Record<stri
     },
     { status: failure.status, headers: { ...headers, ...retry } },
   );
+}
+
+/**
+ * Fail-closed backstop for a process whose boot checks failed but which the
+ * host did not stop (see lib/config/boot-state.ts). A bare status: the reason
+ * is for the server log only.
+ */
+function checkBootFailure(): GuardFailure | null {
+  return bootFailure() === null ? null : { kind: "unavailable", status: 503, message: "service unavailable" };
 }
 
 /** Static preview reads cannot reflect writes, so reject before any DB access. */
@@ -302,12 +320,17 @@ export interface IssueSessionResult {
  * creates -> reviewer signs -> approver decides, all separate logins in one
  * browser) keeps seeing the same workspace across logins. Omitted/empty ->
  * unchanged behavior (fresh workspaceId derived from the new token).
+ *
+ * Demo only. Production has no passwordless persona session (the route answers
+ * 404); this throws DemoOnlyError for any other caller, before the database is
+ * touched.
  */
 export async function issueDemoSession(
   personaKey: string,
   existingWorkspaceId?: string | null,
 ): Promise<IssueSessionResult | null> {
-  if (checkReadOnlyMode()) return null;
+  assertDemoMode("persona sessions");
+  if (checkBootFailure() || checkReadOnlyMode()) return null;
   // Demo personas only — never a `public:` key (see app/api/session/route.ts).
   if (!isPersonaKey(personaKey) || !resolveActor(personaKey)) return null;
   // Invariant, held here rather than trusted to every caller: no persona
@@ -342,9 +365,16 @@ export interface ResolvedSession {
  * `workspaceId` (M2.5 inc.2a — workspace isolation foundation). Role ALWAYS
  * comes from the server-side persona directory keyed by the token — never
  * from anything in the request body (task brief §4).
+ *
+ * Production resolves nothing: every row in `sessions` today is a persona or
+ * `public:` session, and neither exists in production, so a row that survives
+ * from a demo database (or is written by hand) must not authenticate anyone.
+ * The request is simply unauthenticated. Real sign-in sessions replace this
+ * branch when SSO lands; until then production has no valid session.
  */
 export async function resolveSession(token: string | null): Promise<ResolvedSession> {
   if (!token) return { actor: null, workspaceId: null };
+  if (isProductionMode()) return { actor: null, workspaceId: null };
 
   const [session] = await getDb()
     .select({
@@ -399,8 +429,6 @@ export async function resolveSessionActor(token: string | null): Promise<Actor |
  * Token extraction (cookie or bearer)
  * ---------------------------------------------------------------------- */
 
-const SESSION_COOKIE_NAME = "jeeves_session";
-
 export function extractSessionToken(req: Request): string | null {
   const auth = req.headers.get("authorization");
   if (auth && /^bearer /i.test(auth)) {
@@ -427,11 +455,66 @@ export function extractSessionToken(req: Request): string | null {
   return null;
 }
 
-/** Best-effort client identifier for rate limiting — hashed upstream in production via a proxy header; falls back to a constant bucket key when absent (single-tenant demo). */
+const UNKNOWN_CLIENT = "unknown-client";
+const warnedHopValues = new Set<string>();
+
+/**
+ * JEEVES_TRUSTED_PROXY_HOPS: how many reverse proxies in front of the app each
+ * append to X-Forwarded-For. Unset/blank/0 -> 0 (Vercel, which overwrites the
+ * header). The keyword `none` (case-insensitive) -> "none": nothing in front
+ * appends to or overwrites the header, so it is ignored. Returns null for a
+ * set-but-malformed value so the caller can fail closed instead of guessing;
+ * warns once per distinct bad value.
+ */
+function trustedProxyHops(): number | "none" | null {
+  const raw = process.env.JEEVES_TRUSTED_PROXY_HOPS?.trim();
+  if (!raw) return 0;
+  if (raw.toLowerCase() === "none") return "none";
+  if (/^\d+$/.test(raw)) {
+    const hops = Number(raw);
+    if (Number.isSafeInteger(hops)) return hops;
+  }
+  if (!warnedHopValues.has(raw)) {
+    warnedHopValues.add(raw);
+    console.warn(
+      `JEEVES_TRUSTED_PROXY_HOPS=${JSON.stringify(raw.slice(0, 40))} is not a non-negative integer or "none"; ` +
+        "ignoring X-Forwarded-For and rate-limiting all clients as one until it is fixed.",
+    );
+  }
+  return null;
+}
+
+/**
+ * Best-effort client identifier for rate limiting; falls back to a constant
+ * bucket key when no usable address is available.
+ *
+ * Which X-Forwarded-For entry is the client depends on the proxy in front:
+ *  - JEEVES_TRUSTED_PROXY_HOPS unset or 0 (Vercel): the platform overwrites the
+ *    header, so the LEFTMOST entry is the client. This is the original behaviour.
+ *  - N >= 1 (AWS ALB is 1; CloudFront then ALB is 2): each trusted proxy
+ *    APPENDS the address it saw, so the client is the Nth entry from the RIGHT.
+ *    Everything left of that is caller-supplied and ignored, so rotating a
+ *    spoofed leading entry cannot mint a fresh rate-limit bucket.
+ *  - `none` (the app port is published directly, nothing in front): any
+ *    X-Forwarded-For is caller-supplied, so it is ignored and every caller
+ *    shares the one constant key.
+ *
+ * A chain shorter than N did not pass through every trusted proxy, and a
+ * malformed setting cannot be trusted either; both fall back to the shared
+ * constant key rather than to an attacker-controlled entry.
+ */
 export function clientKeyFor(req: Request): string {
+  const hops = trustedProxyHops();
+  if (hops === null || hops === "none") return UNKNOWN_CLIENT;
   const forwarded = req.headers.get("x-forwarded-for");
-  if (forwarded) return forwarded.split(",")[0]!.trim();
-  return "unknown-client";
+  if (hops === 0) {
+    if (forwarded) return forwarded.split(",")[0]!.trim();
+    return UNKNOWN_CLIENT;
+  }
+  if (!forwarded) return UNKNOWN_CLIENT;
+  const entries = forwarded.split(",");
+  // A negative index (chain shorter than `hops`) is undefined.
+  return entries[entries.length - hops]?.trim() || UNKNOWN_CLIENT;
 }
 
 /* -------------------------------------------------------------------------
@@ -501,7 +584,7 @@ export async function runMutationGuard(
   body: Record<string, string> | BodyExtractor | undefined,
   options: MutationGuardOptions = {},
 ): Promise<MutationGuardResult> {
-  const readOnlyFailure = checkReadOnlyMode();
+  const readOnlyFailure = checkBootFailure() ?? checkReadOnlyMode();
   if (readOnlyFailure) return { ok: false, failure: readOnlyFailure };
 
   const token = extractSessionToken(req);

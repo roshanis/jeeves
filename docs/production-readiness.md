@@ -97,6 +97,16 @@ The unused in-memory `TokenBucketRateLimiter` and its exclusive tests were
 retired on 2026-09-19. Shared rate-limit types and the active database limiter
 remain; its focused tests cover burst, refill, isolation and shared allowance.
 
+**Client key (X-Forwarded-For).** The bucket key is the client address from
+`X-Forwarded-For`, read according to `JEEVES_TRUSTED_PROXY_HOPS` (the number of
+trusted proxies that append to the header; `none` when nothing is in front and
+the header is ignored, as in the Podman stacks; `0` is only right where the
+platform overwrites it, as on Vercel). Left unset anywhere else, the leftmost
+entry is whatever the caller sent, so a random header per request gets a fresh
+bucket each time. Production boot therefore refuses to start without an explicit
+value (`none` or an integer), a malformed value fails boot in both modes, and demo off Vercel warns
+when it is unset. See `docs/deploy-podman.md` §6 for the values per shape.
+
 **Correctly scoped already:** sessions and the daily token budget are *not*
 affected — both moved to Postgres. `DbBudgetStore.reserveAtomic()` is a single
 `INSERT … ON CONFLICT DO UPDATE` with a `setWhere` cap predicate and
@@ -186,6 +196,11 @@ TRIGGER` and rewrite history (`scripts/seed.ts` does exactly that for the
 reseed). **Production prerequisite:** a separate owner/migrator role, and a
 runtime role without ownership that holds only INSERT and SELECT on
 `audit_events`, the evidence tables and any other append-only table. Not built.
+When it is, the runtime role also needs to read the migration history, which
+the production boot check compares with the build:
+`GRANT USAGE ON SCHEMA drizzle TO <role>; GRANT SELECT ON drizzle.__drizzle_migrations TO <role>;`
+(the boot refuses with `migrations_unreadable` and names these grants when
+they are missing).
 
 ### 2.1 No backup or restore procedure — DOCUMENTED 2026-09-12, not yet exercised
 
@@ -229,6 +244,43 @@ deployment. The test encodes that distinction.
 
 The failing state is now reachable from a mock-sourced fixture, so a test
 like the original blockers-rail one would catch the original bug.
+
+### 2.2a Production-mode smoke test — ADDED
+
+Nothing used to start a real production-mode server, which is how a relative
+`Location` in `proxy.ts` made every signed-out page answer 500 unnoticed.
+`npm run smoke:production` closes that gap. It migrates a throwaway Postgres
+database, stamps it `production`, boots the real server (the standalone build
+the container image runs, or `next start`), and checks the HTTP behaviour on
+the wire: redirects, 404s for marketing pages and demo doors, 401s for gated
+reads, the sign-in page and its security headers, one of the page's own
+`/_next/static` scripts or stylesheets, robots, sitemap and health.
+It also starts the server four times with a deliberately bad configuration and
+requires each to refuse to boot.
+
+It stamps its database for good, so it only accepts `SMOKE_DATABASE_URL`
+(there is no fallback to `DATABASE_URL`) naming a database called
+`jeeves_smoke_<name>`. Create one with `CREATE DATABASE jeeves_smoke_local;`.
+It needs a finished build and never builds: run
+`DATA_PROVIDER=mock JEEVES_MODE=demo npm run build` first. For the standalone
+server it copies `.next/static` into `.next/standalone/.next/static`, as the
+Containerfile does. Then:
+
+    SMOKE_DATABASE_URL=postgres://user:pass@127.0.0.1:5432/jeeves_smoke_local npm run smoke:production
+
+`SMOKE_DATABASE_URL` must be loopback or carry `sslmode=verify-full`, because the
+smoke server runs in production mode and gets no `JEEVES_DB_ALLOW_UNVERIFIED`.
+
+`SMOKE_PORT` changes the port (default 3217) and `SMOKE_SERVER=standalone` or
+`next-start` forces the server command. The run is repeatable on the same
+database and exits 1 if any check fails.
+
+A production image is built with `JEEVES_DEMO_ENABLED=0`, which compiles demo
+mode out. To check such a build, add `SMOKE_DEMO_LOCKED=1`: the server is then
+started with `JEEVES_MODE=demo` set, and every production check must still
+pass, which is the proof that the flag cannot open the demo on that build. Run
+against a build that is not locked, the same command fails, because the server
+enters demo mode and refuses the production-stamped database.
 
 ### 2.3 No staging environment — DOCUMENTED 2026-09-12, not built
 
@@ -280,8 +332,11 @@ weigh against it.
 - **The audit log is append-only at the database level**, not in application
   code — `drizzle/0002_audit_events_append_only.sql` installs triggers that
   raise on UPDATE and DELETE for every role, but the table owner can disable them.
-  `lib/db/schema.test.ts` tests it at the DB level. See the prerequisite
-  below: the runtime role currently owns the table.
+  `lib/db/schema.test.ts` tests it at the DB level. A production boot therefore
+  checks that all six append-only triggers (audit_events, installation) exist
+  and are enabled, and refuses to start otherwise (`audit_triggers` in
+  `lib/config/installation-check.ts`). See the prerequisite below: the runtime
+  role currently owns the table.
 - **Security response headers are thorough**: a real CSP pinning every
   fetchable resource to same-origin, HSTS with preload, `X-Frame-Options:
   DENY`, nosniff, Referrer-Policy, Permissions-Policy. `next/image` is
@@ -305,6 +360,7 @@ weigh against it.
 | Driver + transactions | Ready — driver chosen in `lib/db/driver-select.ts`, real interactive transactions |
 | Append-only audit enforcement | Ready — DB-level triggers, tested |
 | Non-destructive migration path | **Added 2026-09-11** — see below |
+| Database TLS | **Enforced in production** — a database on another host needs verified TLS; loopback exempt; opt-out `JEEVES_DB_ALLOW_UNVERIFIED=same-host` |
 | Shared rate limiting | **Added 2026-09-12** — §1.2 |
 | Provider-parity tests | **Added 2026-09-12** — §2.2 |
 | Backup / restore | **Documented** (deploy.md §4) — never exercised |
@@ -328,6 +384,26 @@ supported path: non-destructive, idempotent, and driver-matched to whatever
 (audit events included) and leaves the append-only triggers armed. Verified
 end-to-end against a populated store: 122 audit events, 12 initiatives and 23
 effective controls, identical before and after.
+
+### Database TLS (production boot check)
+
+A production boot is refused when the database is on another host and the
+connection would not be TLS with certificate verification. A plaintext RDS URL
+used to boot silently, and `sslmode=no-verify` and `uselibpqcompat=true` used to
+be accepted. The check follows what node-postgres or the Neon driver will do
+with the URL, `DATABASE_SSL_CA`, `PGSSLMODE` and `NODE_TLS_REJECT_UNAUTHORIZED`.
+Loopback databases are exempt.
+
+Two ways out: add `sslmode=verify-full` to `DATABASE_URL` (or set
+`DATABASE_SSL_CA` to the server's CA; for Amazon RDS, the RDS bundle), or, only for
+a database on this machine or a private container network of this host, set
+`JEEVES_DB_ALLOW_UNVERIFIED=same-host`. Any other value of that variable fails
+the boot. `npm run db:migrate`, `npm run db:seed` and `DATABASE_MIGRATION_URL` are
+not checked and must use the same verified settings.
+
+node-postgres 9 will give `sslmode=require` libpq semantics (no verification).
+`lib/db/tls-posture.test.ts` pins today's behaviour and will fail on that
+upgrade, so use `sslmode=verify-full`. See docs/environment-reference.md, "Database TLS in production".
 
 ---
 

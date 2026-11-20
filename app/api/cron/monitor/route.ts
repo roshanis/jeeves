@@ -24,8 +24,12 @@
  * 403: read-only preview (answered before the bearer is looked at).
  * 429: too many failed attempts from this client.
  * 400: nowTs not a valid ISO-8601 timestamp, or outside [base date, now + 1 day].
+ * 404: production mode, before CRON_SECRET is even read. A production install
+ *      runs its scheduled work as jobs, not through this synthetic-telemetry
+ *      replay, so there is no cron secret to configure and no 503 to leak.
  */
 import { createHash, timingSafeEqual } from "node:crypto";
+import { demoDoorClosed, demoDoorFallbacks } from "@/lib/config/demo-doors";
 import { getDb } from "@/lib/db/client";
 import {
   runMonitor,
@@ -34,6 +38,7 @@ import {
 import { expireDueExceptions } from "@/lib/services/exception-service";
 import { SYSTEM_ACTOR } from "@/lib/services/actors";
 import { checkOperatorAttempt, checkReadOnlyMode, clientKeyFor, operatorAttemptStatus } from "@/lib/services/route-guard";
+import { databaseNotReady } from "@/lib/http/database-gate";
 
 // Kept in sync with app/api/monitor/run/route.ts#DEFAULT_MONITOR_NOW_TS (a
 // literal here rather than a cross-route import — same rationale as that file).
@@ -56,7 +61,15 @@ function authorizeCron(req: Request): { ok: true } | { ok: false; status: 401 | 
   return match ? { ok: true } : { ok: false, status: 401 };
 }
 
+export const { POST, PUT, PATCH, DELETE, OPTIONS } = demoDoorFallbacks("GET");
+
 export async function GET(req: Request): Promise<Response> {
+  const closed = demoDoorClosed();
+  if (closed) return closed;
+
+  const unavailable = databaseNotReady();
+  if (unavailable) return unavailable;
+
   if (process.env.CRON_SECRET) {
     // The read-only preview has nothing to run and may have no database for
     // the limiter to read, so it answers first. The mode is no secret: every

@@ -13,6 +13,7 @@
  * and running it against production is the intended use.
  */
 import { describeMigrationTarget, runMigrations } from "../lib/db/migrate";
+import { isMain } from "./is-main";
 
 async function main() {
   const runtimeUrl = process.env.DATABASE_URL?.trim() || process.env.POSTGRES_URL?.trim();
@@ -63,7 +64,7 @@ export function describeMigrationFailure(err: unknown): string {
 }
 
 // Only run when executed directly (not when imported by tests).
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isMain(import.meta.url, process.argv[1])) {
   main().catch((err) => {
     console.error(describeMigrationFailure(err));
     process.exitCode = 1;

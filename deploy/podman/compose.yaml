@@ -47,7 +47,27 @@ services:
       # sends any non-*.neon.tech host to node-postgres; the Neon serverless
       # driver would try to open a WebSocket to :443 here and fail.
       DATABASE_URL: postgres://${POSTGRES_USER:-jeeves}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-jeeves}
+      # Production mode refuses a database on another host without verified
+      # TLS. `db` is this stack's own container, reached without TLS on this
+      # host's private network, so the stack opts out. Demo mode ignores it.
+      # Remove it if DATABASE_URL ever points at another machine.
+      JEEVES_DB_ALLOW_UNVERIFIED: same-host
       DATA_PROVIDER: db
+      # How many reverse proxies in front of the app append to X-Forwarded-For;
+      # rate limits key on the client address that implies. `none` means
+      # nothing in front appends to or overwrites the header. This stack
+      # publishes the app port directly, with no proxy, so any X-Forwarded-For
+      # a caller sends is forged: `none` ignores it and all callers share one
+      # rate-limit bucket. Behind a proxy that appends the client address
+      # (an AWS ALB, or Caddy/nginx with $proxy_add_x_forwarded_for) set 1 in
+      # .env and stop publishing the port. Never leave the port published AND
+      # set 0 or 1.
+      JEEVES_TRUSTED_PROXY_HOPS: ${JEEVES_TRUSTED_PROXY_HOPS:-none}
+      # This stack runs the demo. An unset JEEVES_MODE means production, which
+      # refuses to boot without APP_BASE_URL, JEEVES_TENANT_ID and a cookie
+      # secret, and closes the demo doors.
+      JEEVES_MODE: demo
+      # Signs browser workspace cookies. Required: `openssl rand -hex 32`.
       JEEVES_COOKIE_SECRET: ${JEEVES_COOKIE_SECRET:?set JEEVES_COOKIE_SECRET in .env (openssl rand -hex 32)}
       # Unset by default: with no key the app uses the deterministic keyless
       # mock adapter and cannot generate spend. Set it only for a controlled
@@ -119,3 +139,9 @@ services:
 
 volumes:
   jeeves-pgdata:
+    # Pinned: without `name:` compose prefixes the project (podman_jeeves-pgdata)
+    # and `podman volume export jeeves-pgdata` finds nothing. The Quadlet unit
+    # uses the same name. An install that already has podman_jeeves-pgdata keeps
+    # its data there: export it, then import into jeeves-pgdata (see
+    # docs/deploy-podman.md, Backups).
+    name: jeeves-pgdata

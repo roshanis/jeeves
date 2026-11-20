@@ -151,7 +151,7 @@ const CHAMPION_PAYLOAD = {
     dataSources: ["Clinical notes (Epic)"],
     phiCategories: ["Diagnosis/ICD codes"],
     phiCategoriesOtherText: null,
-    retentionIntent: null,
+    retentionIntent: "<=30 days",
     retentionIntentNote: null,
     trainingVsInference: "Inference-only",
   },
@@ -497,6 +497,54 @@ describe("full champion route chain: submit -> triage -> draft-run -> sign -> de
       { params: Promise.resolve({ id: initiativeId }) },
     );
     expect(decideAsRequesterRes.status).toBe(403);
+  });
+});
+
+describe("POST /api/initiatives/[id]/triage — REQUIRED_FOR_TIER gaps block passing QC", () => {
+  it("400s with the typed code and the gaps, leaving the initiative in QC with no reviews", async () => {
+    const { token: requesterToken, workspaceCookie } = await issueSessionInWorkspace("priya-raman");
+    const { POST: createInitiative } = await import("../initiatives/route");
+    const createRes = await createInitiative(
+      new Request("http://localhost/api/initiatives", {
+        method: "POST",
+        headers: bearer(requesterToken, "10.0.0.7"),
+        body: JSON.stringify({
+          payload: { ...CHAMPION_PAYLOAD, data: { ...CHAMPION_PAYLOAD.data, retentionIntent: null } },
+          requestId: "routes-tier-gaps-0001",
+        }),
+      }),
+    );
+    const { initiativeId } = await createRes.json();
+    const { POST: submitPost } = await import("../initiatives/[id]/submit/route");
+    const submitRes = await submitPost(
+      new Request(`http://localhost/api/initiatives/${initiativeId}/submit`, {
+        method: "POST",
+        headers: bearer(requesterToken, "10.0.0.7"),
+      }),
+      { params: Promise.resolve({ id: initiativeId }) },
+    );
+    expect((await submitRes.json()).submitted).toBe(true);
+    const programToken = await passQcOverHttp(initiativeId, workspaceCookie, "10.0.0.7");
+
+    const { POST: triagePost } = await import("../initiatives/[id]/triage/route");
+    const res = await triagePost(
+      new Request(`http://localhost/api/initiatives/${initiativeId}/triage`, {
+        method: "POST",
+        headers: bearer(programToken, "10.0.0.7"),
+      }),
+      { params: Promise.resolve({ id: initiativeId }) },
+    );
+    expect(res.status).toBe(400);
+    const json = await res.json();
+    expect(json.code).toBe("INTAKE_TIER_GAPS");
+    expect(json.error).toContain("RFT-02");
+    expect(json.gaps).toEqual([
+      expect.objectContaining({ ruleId: "RFT-02", level: "REQUIRED_FOR_TIER", field: "data.retentionIntent" }),
+    ]);
+
+    const [row] = await testDb.select().from(initiatives).where(eq(initiatives.id, initiativeId));
+    expect(row!.state).toBe("in_qc");
+    expect(await testDb.select().from(reviewDecisions)).toHaveLength(0);
   });
 });
 

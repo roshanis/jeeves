@@ -9,7 +9,7 @@ import type { Metadata } from "next";
 export const metadata: Metadata = {
   title: "Inbox",
   description:
-    "What needs attention right now across the AI governance portfolio, filtered to the role you are viewing as.",
+    "What needs attention right now across the AI governance portfolio, filtered to your role.",
 };
 
 // Eval-quality telemetry kinds that feed the Responsible AI reviewer's

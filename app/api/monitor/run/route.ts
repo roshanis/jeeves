@@ -16,11 +16,16 @@
  *        summary is formatted deterministically (monitor-service.ts), so a
  *        run makes no model call and must not drain the shared daily LLM
  *        budget. The per-IP rate limit still applies.
+ * 404:   production mode. The monitor replays synthetic telemetry and takes
+ *        an arbitrary `nowTs` from the caller, so a production install has no
+ *        use for it; it answers before the body is parsed.
  */
 import { z } from "zod";
+import { demoDoorClosed, demoDoorFallbacks } from "@/lib/config/demo-doors";
 import { getDb } from "@/lib/db/client";
 import { runMonitor } from "@/lib/services/monitor-service";
 import { guardFailureResponse, runMutationGuard } from "@/lib/services/route-guard";
+import { databaseNotReady } from "@/lib/http/database-gate";
 
 /**
  * Demo's fixed base date (docs/seed-spec.md top: "fixed base date
@@ -45,7 +50,15 @@ const bodySchema = z.object({
   nowTs: z.string().datetime().optional(),
 });
 
+export const { GET, HEAD, PUT, PATCH, DELETE, OPTIONS } = demoDoorFallbacks("POST");
+
 export async function POST(req: Request): Promise<Response> {
+  const closed = demoDoorClosed();
+  if (closed) return closed;
+
+  const unavailable = databaseNotReady();
+  if (unavailable) return unavailable;
+
   const guard = await runMutationGuard(req, () => undefined, { bodyOptional: true });
   if (!guard.ok) {
     return guardFailureResponse(guard.failure);

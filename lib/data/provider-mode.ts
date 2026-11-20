@@ -5,7 +5,7 @@ export function resolveDataProviderMode(
   providerMode: string | undefined,
   hasDatabaseUrl: boolean,
 ): "db" | "mock" {
-  // Trimmed and lower-cased: a mistyped "Mock" must not leave a preview writable.
+  // Trimmed and lower-cased, like assertProductionConfig: "Mock" must not leave a preview writable.
   const normalised = providerMode?.trim().toLowerCase();
   return normalised === "db" || (normalised !== "mock" && hasDatabaseUrl) ? "db" : "mock";
 }

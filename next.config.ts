@@ -1,11 +1,33 @@
 import type { NextConfig } from "next";
 
+// The lock must fail closed: only "0" and "1" are meaningful, and the runtime
+// check compares against "0" alone, so "false", "off" or "" would otherwise
+// build a demo-capable image that looks locked.
+const demoEnabled = process.env.JEEVES_DEMO_ENABLED ?? "1";
+if (demoEnabled !== "0" && demoEnabled !== "1") {
+  throw new Error('JEEVES_DEMO_ENABLED must be "0" (production build) or "1" (demo-capable build)');
+}
+
 const nextConfig: NextConfig = {
+  // Inline the demo build constant into the compiled server code.
+  // lib/config/deployment-mode.ts treats the app as the demo only when
+  // JEEVES_MODE=demo AND this constant is not "0". Without inlining, a runtime
+  // environment variable would be all that stands between a production image
+  // and demo mode (passwordless personas, public intake). A production image
+  // builds with JEEVES_DEMO_ENABLED=0 so the demo is compiled out of reach;
+  // every other build defaults to "1" and stays demo-capable. Server-only:
+  // JEEVES_MODE itself is never inlined or exposed through NEXT_PUBLIC_.
+  env: { JEEVES_DEMO_ENABLED: demoEnabled },
+
   // Standalone output: Next traces the exact runtime files (including the
   // node_modules it actually needs) into .next/standalone, so a container
   // image can ship that instead of the whole dependency tree. Required by
   // deploy/podman/Containerfile; harmless on Vercel, which ignores it.
   output: "standalone",
+
+  // Next adds `X-Powered-By: Next.js` to every response by default. It names
+  // the framework to any scanner for no benefit, so drop it.
+  poweredByHeader: false,
 
   // PGlite ships WASM/data assets that break when bundled by
   // Turbopack/webpack (its internal file loading receives a bundler URL

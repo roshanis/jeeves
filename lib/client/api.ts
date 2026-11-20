@@ -20,6 +20,7 @@ import type { IntakePayload } from "@/lib/intake/types";
 import type { CompletenessGap } from "@/lib/intake/completeness";
 import { issueFieldLabel } from "@/lib/intake/field-labels";
 import { READ_ONLY_PREVIEW_MESSAGE } from "@/lib/data/provider-mode";
+import type { DeploymentMode } from "@/lib/config/deployment-mode";
 
 /* -------------------------------------------------------------------------
  * Error type
@@ -48,9 +49,19 @@ export function isApiError(value: unknown): value is ApiError {
   return value instanceof ApiError;
 }
 
+// Set by DeploymentModeProvider (apiErrorToMessage is a plain function, so it
+// cannot read the context). The module defaults to "demo" while the context
+// defaults to "production": callers without a provider, such as
+// tests/ui/api-client.test.ts, keep the demo copy.
+let clientMode: DeploymentMode = "demo";
+export function setApiDeploymentMode(mode: DeploymentMode): void {
+  clientMode = mode;
+}
+
 /**
  * Stable, user-facing copy per status class (task contract):
- *   401 -> restart demo session; 429 -> rate limit/budget; 403 -> role;
+ *   401 -> restart the demo session (demo) or sign in again (production);
+ *   429 -> rate limit/budget; 403 -> role;
  *   400 -> surface the server's own validation message; else generic.
  */
 export function apiErrorToMessage(err: ApiError): string {
@@ -63,12 +74,15 @@ export function apiErrorToMessage(err: ApiError): string {
   if (err.status === 503 && err.code === "DEMO_STORAGE_UNAVAILABLE") {
     return "Demo storage is temporarily unavailable. Please try again shortly.";
   }
+  if (err.status === 503 && err.code === "LLM_NOT_CONFIGURED") {
+    return "AI drafting is not configured for this installation. Ask your administrator to set it up.";
+  }
   if (err.status === 503 && err.code === "AGENT_INITIALIZATION_FAILED") {
     return "Agents could not start. Test the connection on the Agents page, then retry.";
   }
   switch (err.status) {
     case 401:
-      return "Session expired or invalid — start the demo again.";
+      return clientMode === "production" ? "Your session has expired. Sign in again." : "Session expired or invalid — start the demo again.";
     case 429:
       if (/budget (exhausted|reached)/i.test(err.message)) return "The daily model budget is used up — please come back tomorrow.";
       return err.retryAfterSeconds !== undefined
@@ -542,6 +556,20 @@ export function returnFromQc(
   );
 }
 
+/** Code on the 400 that refuses the QC pass while a REQUIRED_FOR_TIER intake gap is open. */
+export const INTAKE_TIER_GAPS = "INTAKE_TIER_GAPS";
+
+/** The open REQUIRED_FOR_TIER gaps of a refused QC pass, or null for any other error. */
+export function intakeTierGaps(err: unknown): { ruleId: string; message: string }[] | null {
+  if (!isApiError(err) || err.status !== 400 || err.code !== INTAKE_TIER_GAPS || !Array.isArray(err.gaps)) return null;
+  return err.gaps.flatMap((g) => {
+    const gap = g as { ruleId?: unknown; message?: unknown } | null;
+    return gap && typeof gap.ruleId === "string" && typeof gap.message === "string"
+      ? [{ ruleId: gap.ruleId, message: gap.message }]
+      : [];
+  });
+}
+
 export function runTriage(token: string, initiativeId: string): Promise<TriageResult> {
   return request<TriageResult>(`/api/initiatives/${encodeURIComponent(initiativeId)}/triage`, {
     method: "POST",
@@ -715,7 +743,7 @@ export function pauseDeployment(
   );
 }
 
-/** POST /api/admin/deployments/[id]/resume — admin-only; valid from paused AND re_review. */
+/** POST /api/admin/deployments/[id]/resume — admin-only; valid from paused, or from approved after an approved reassessment; 409 while a reassessment is open. */
 export function resumeDeployment(
   token: string,
   initiativeId: string,

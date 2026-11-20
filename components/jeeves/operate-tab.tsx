@@ -25,6 +25,7 @@ import type { TelemetrySeries } from "@/lib/data/dto";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { OFFLINE_COMPARISON_SLUG, OFFLINE_COMPARISON_VERSIONS } from "./eval-comparison";
+import { useDeploymentMode } from "@/lib/client/deployment-mode-context";
 import { SyntheticDataLabel } from "./synthetic-data-label";
 import { RunMonitorPanel } from "./run-monitor-panel";
 
@@ -291,20 +292,23 @@ function PromotionTooltip({
 }
 
 function PromotionComparisonPanel() {
+  const mode = useDeploymentMode();
   return (
     <Card data-slot="telemetry-panel" data-kind="promotion-comparison">
       <CardHeader>
         <CardTitle className="text-sm">Offline eval — {OFFLINE_CURRENT} vs {OFFLINE_CANDIDATE}</CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
-        <Alert>
-          <AlertTitle>Promotion gate: awaiting feedback-provenance sign-off</AlertTitle>
-          <AlertDescription>
-            {OFFLINE_CANDIDATE} checkpoint cannot be promoted until feedback-provenance
-            review is signed (RL/version-promotion story — not a training
-            dashboard).
-          </AlertDescription>
-        </Alert>
+        {mode !== "production" && (
+          <Alert>
+            <AlertTitle>Promotion gate: awaiting feedback-provenance sign-off</AlertTitle>
+            <AlertDescription>
+              {OFFLINE_CANDIDATE} checkpoint cannot be promoted until feedback-provenance
+              review is signed (RL/version-promotion story — not a training
+              dashboard).
+            </AlertDescription>
+          </Alert>
+        )}
         <SyntheticDataLabel>
           <div className="h-[200px] w-full">
             <ResponsiveContainer width="100%" height="100%">

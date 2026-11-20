@@ -10,6 +10,7 @@ import {
   type NavItem,
 } from "./nav-items";
 import { ShieldCheck } from "lucide-react";
+import { useDeploymentMode } from "@/lib/client/deployment-mode-context";
 
 // Governance Operations Console navigation (Codex design review): a charcoal
 // left rail, not a marketing top-nav. Inbox is the working dashboard; every
@@ -54,6 +55,7 @@ function SidebarLink({ item, active }: { item: NavItem; active: boolean }) {
 
 export function AppSidebar() {
   const pathname = usePathname();
+  const mode = useDeploymentMode();
 
   return (
     <aside className="relative hidden w-56 shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground md:flex">
@@ -96,15 +98,18 @@ export function AppSidebar() {
         </div>
       </nav>
 
-      <div className="border-t border-sidebar-border px-4 py-3">
-        <div className="flex items-center gap-1.5 text-[11px] font-medium text-sidebar-foreground">
-          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-status-good" aria-hidden />
-          Meridian Health
+      {/* The fictional payer and its synthetic workspace are the demo's. */}
+      {mode === "demo" ? (
+        <div className="border-t border-sidebar-border px-4 py-3">
+          <div className="flex items-center gap-1.5 text-[11px] font-medium text-sidebar-foreground">
+            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-status-good" aria-hidden />
+            Meridian Health
+          </div>
+          <div className="pl-3 text-[10.5px] leading-snug text-sidebar-foreground-muted">
+            Synthetic demo workspace
+          </div>
         </div>
-        <div className="pl-3 text-[10.5px] leading-snug text-sidebar-foreground-muted">
-          Synthetic demo workspace
-        </div>
-      </div>
+      ) : null}
     </aside>
   );
 }

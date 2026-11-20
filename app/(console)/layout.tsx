@@ -3,6 +3,9 @@ import { AppSidebar } from "@/components/jeeves/app-sidebar";
 import { AppTopBar } from "@/components/jeeves/app-topbar";
 import { AppMobileNav } from "@/components/jeeves/app-mobile-nav";
 import { ConsoleTopBar } from "@/components/jeeves/console-top-bar";
+import { DatabaseUnavailableNotice } from "@/components/jeeves/database-unavailable-notice";
+import { isDemoMode } from "@/lib/config/deployment-mode";
+import { consoleDatabaseReady } from "@/lib/http/database-gate";
 
 // Console chrome (sidebar + top bar + mobile nav strip + footer) lives here,
 // scoped to the (console) route group, so it wraps every ops route
@@ -16,6 +19,10 @@ export default function ConsoleLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  // A demo that could not verify its database serves the chrome and a notice.
+  // The data stays closed at getDb() whatever this check says; this only keeps
+  // the pages (and the top bar's search index) from being asked to render.
+  const databaseReady = consoleDatabaseReady();
   return (
     /* min-h-dvh, not min-h-screen: `100vh` on iOS Safari means the LARGE
        viewport (toolbars retracted), so a 100vh shell is always taller than
@@ -31,9 +38,13 @@ export default function ConsoleLayout({
             chrome and tests/ui/skip-link.test.tsx both depend on. The
             fallback is the same bar with an empty index: identical chrome,
             palette results stream in a moment later. */}
-        <Suspense fallback={<AppTopBar initiatives={[]} />}>
-          <ConsoleTopBar />
-        </Suspense>
+        {databaseReady ? (
+          <Suspense fallback={<AppTopBar initiatives={[]} />}>
+            <ConsoleTopBar />
+          </Suspense>
+        ) : (
+          <AppTopBar initiatives={[]} />
+        )}
         <AppMobileNav />
         {/* Content frame: hairline-separated from the chrome above/below so
             panels butt against the instrument deck rather than floating.
@@ -43,12 +54,16 @@ export default function ConsoleLayout({
           id="main-content"
           className="pad-safe-x scroll-thin scroll-x-pane mx-auto w-full max-w-[88rem] flex-1 overflow-y-auto px-4 py-4 sm:px-6 sm:py-6"
         >
-          {children}
+          {databaseReady ? children : <DatabaseUnavailableNotice />}
         </main>
-        <footer className="pad-safe-x pad-safe-b border-t px-4 py-4 text-center text-[11px] text-muted-foreground sm:px-6">
-          Fictional demo. Synthetic data only. Not affiliated with any real
-          organization.
-        </footer>
+        {/* The disclaimer is the demo's. Read per request: the root layout is
+            force-dynamic, so this is never baked in at build. */}
+        {isDemoMode() ? (
+          <footer className="pad-safe-x pad-safe-b border-t px-4 py-4 text-center text-[11px] text-muted-foreground sm:px-6">
+            Fictional demo. Synthetic data only. Not affiliated with any real
+            organization.
+          </footer>
+        ) : null}
       </div>
     </div>
   );

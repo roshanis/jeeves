@@ -4,7 +4,7 @@
  * Pure evaluation of an `IntakePayload` against the three-level rules
  * table: BLOCKING (always evaluated, gates submit), REQUIRED-FOR-TIER
  * (evaluated once a tier is known — fired against overlay-flag/tier trigger
- * conditions, does not block initial submit), and ADVISORY (warnings only,
+ * conditions, does not block initial submit but blocks passing QC), and ADVISORY (warnings only,
  * never block anything).
  *
  * `evaluateCompleteness` never reads the wall clock, never mutates its
@@ -333,14 +333,16 @@ const ADVISORY_RULES: AdvisoryRuleCheck[] = [
  * Evaluate the full intake-spec §2 completeness model against a payload.
  *
  * `tier` is optional: pass it once `lib/triage/rules.ts`'s `deriveTier` has
- * run against the payload's overlay flags. Until then, REQUIRED-FOR-TIER
- * rules keyed off a derived tier (currently only `RFT-07`) are skipped —
- * they simply don't trigger pre-triage, matching intake-spec §2 Level 2's
- * "computed after triage runs" scoping. Rules keyed off raw overlay flags
- * (RFT-01..06, RFT-08) evaluate regardless of whether `tier` is supplied.
+ * run against the payload's overlay flags. Until a tier is passed,
+ * REQUIRED-FOR-TIER rules keyed off a derived tier (currently only `RFT-07`)
+ * are skipped. The form passes the previewed tier; `triage()` passes the
+ * derived one and refuses the QC pass on any REQUIRED-FOR-TIER gap. Rules
+ * keyed off raw overlay flags (RFT-01..06, RFT-08) evaluate regardless of
+ * whether `tier` is supplied.
  *
  * `canSubmit` reflects Level 1 (BLOCKING) only — per intake-spec §2 Level 2
- * preamble, REQUIRED-FOR-TIER gaps do not block the initial submit action,
+ * preamble, REQUIRED-FOR-TIER gaps do not block the initial submit action
+ * (they block passing QC: `triage()` refuses with `IntakeTierGapsError`),
  * and ADVISORY gaps never block anything.
  */
 export function evaluateCompleteness(payload: IntakePayload, tier?: Tier): CompletenessResult {

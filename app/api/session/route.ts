@@ -1,8 +1,10 @@
 /** Public demo entry and persona switching. Every action still needs a
  * server-issued, workspace-bound session. No visitor password is required. */
 import { z } from "zod";
+import { demoDoorClosed, demoDoorFallbacks } from "@/lib/config/demo-doors";
 import { checkReadOnlyMode, checkSessionAttempt, clientKeyFor, guardFailureResponse, issueDemoSession, extractSessionToken, resolveSession, revokeSession, runMutationGuard } from "@/lib/services/route-guard";
 import { isPersonaKey, resolveActor } from "@/lib/services/actors";
+import { safeDriverCode } from "@/lib/db/driver-error";
 import { isSameOriginRequest } from "@/lib/security/same-origin";
 import { BodyReadError, PRE_SESSION_BODY_MAX_BYTES, readJsonBody } from "@/lib/http/read-json-body";
 import {
@@ -10,6 +12,7 @@ import {
   signWorkspaceId,
   verifyWorkspaceCookie,
 } from "@/lib/security/workspace-cookie";
+import { databaseNotReady } from "@/lib/http/database-gate";
 
 // Per-browser workspace cookie (M2.5 inc.2b). Read-scoping ONLY — it is not
 // an auth credential (mutations still require the Bearer token, which a
@@ -63,21 +66,9 @@ const bodySchema = z.object({
   personaKey: z.string().min(1).max(100),
 });
 
-const SAFE_DRIVER_CODES = new Set([
-  "EROFS", "ECONNREFUSED", "ECONNRESET", "ETIMEDOUT", "ENOTFOUND",
-  "08000", "08003", "08006", "53300", "57P01",
-  "42P01", "42703", "28P01", "28000", "42501", "3D000",
-  "CERT_HAS_EXPIRED", "DEPTH_ZERO_SELF_SIGNED_CERT",
-  "UNABLE_TO_VERIFY_LEAF_SIGNATURE", "ERR_TLS_CERT_ALTNAME_INVALID",
-  "SELF_SIGNED_CERT_IN_CHAIN", "CERT_REJECTED",
-]);
-
 function storageUnavailable(error: unknown): Response {
   const requestId = crypto.randomUUID();
-  const outer = error && typeof error === "object" ? error as { code?: unknown; cause?: unknown } : {};
-  const inner = outer.cause && typeof outer.cause === "object" ? outer.cause as { code?: unknown } : {};
-  const rawCode = typeof outer.code === "string" ? outer.code : inner.code;
-  const causeCode = typeof rawCode === "string" && SAFE_DRIVER_CODES.has(rawCode) ? rawCode : "UNKNOWN";
+  const causeCode = safeDriverCode(error) ?? "UNKNOWN";
   console.error("Demo session storage unavailable", { requestId, causeCode });
   return Response.json(
     { error: "Demo session storage is temporarily unavailable. Please try again later.", code: "DEMO_STORAGE_UNAVAILABLE", requestId },
@@ -85,12 +76,23 @@ function storageUnavailable(error: unknown): Response {
   );
 }
 
+// Production has no persona sessions: 404 first, before the body is parsed or
+// any limiter or database is touched (lib/config/demo-doors.ts). POST and
+// DELETE each answer it themselves.
+export const { GET, HEAD, PUT, PATCH, OPTIONS } = demoDoorFallbacks("POST", "DELETE");
+
 export async function POST(req: Request): Promise<Response> {
+  const closed = demoDoorClosed();
+  if (closed) return closed;
   // A cross-site form can POST here (req.json() ignores Content-Type) and replace the victim's workspace cookie.
   if (!isSameOriginRequest(req)) return Response.json({ error: "cross-origin requests are not permitted" }, { status: 403 });
   if (!req.headers.get("content-type")?.toLowerCase().startsWith("application/json")) {
     return Response.json({ error: "content-type must be application/json" }, { status: 415 });
   }
+
+  const unavailable = databaseNotReady();
+  if (unavailable) return unavailable;
+
   const readOnlyFailure = checkReadOnlyMode();
   if (readOnlyFailure) {
     return Response.json({ error: readOnlyFailure.message }, { status: readOnlyFailure.status });
@@ -176,7 +178,11 @@ export async function POST(req: Request): Promise<Response> {
 
 /** Exit: delete exactly the presented token's row. A persona session only (the guard refuses `public`), same session and rate limit as every mutation. */
 export async function DELETE(req: Request): Promise<Response> {
+  const closed = demoDoorClosed();
+  if (closed) return closed;
   if (!isSameOriginRequest(req)) return Response.json({ error: "cross-origin requests are not permitted" }, { status: 403 });
+  const unavailable = databaseNotReady();
+  if (unavailable) return unavailable;
   const guard = await runMutationGuard(req, undefined);
   if (!guard.ok) return guardFailureResponse(guard.failure);
   const token = extractSessionToken(req);

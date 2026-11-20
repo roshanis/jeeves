@@ -5,15 +5,26 @@
 # were only ever run by hand. This workflow makes the gate in CLAUDE.md §5
 # ("run full test suite, fix regressions") actually enforceable on a PR.
 #
-# Two jobs so a lint/type/unit failure reports without waiting on the e2e
+# Three jobs so a lint/type/unit failure reports without waiting on the e2e
 # build:
-#   verify — typecheck, lint, unit tests WITH coverage (vitest.config.ts's
-#            thresholds fail the run on regression).
-#   e2e    — the Playwright golden path. playwright.config.ts owns its own
-#            webServer (db:seed && build && start on port 3117), so this job
-#            only installs the browser and runs the suite.
+#   verify    — typecheck, lint, unit tests WITH coverage (vitest.config.ts's
+#               thresholds fail the run on regression).
+#   e2e       — the Playwright golden path. playwright.config.ts owns its own
+#               webServer (db:seed && build && start on port 3117), so this job
+#               only installs the browser and runs the suite.
+#   container — the deploy/podman/Containerfile image builds. Build only: nothing
+#               is pushed. Nothing else exercises the Containerfile, so a COPY of
+#               a deleted path (public/, a667ec3) broke the image unnoticed.
+#   production-smoke — starts a real production-mode server against a throwaway
+#               Postgres and checks the wire (scripts/smoke-production.ts). Every
+#               other job runs the demo, so a production-only failure (proxy.ts
+#               once answered 500 to every signed-out page) stayed green.
 #
 # Playwright supplies an independent test-only signing key; visitor entry is passwordless.
+#
+# JEEVES_MODE=demo is set on the verify and e2e jobs: an unset mode is
+# production, which closes the demo doors these jobs exercise. The
+# production-smoke job deliberately sets no mode at all.
 name: CI
 
 on:
@@ -33,6 +44,10 @@ jobs:
     name: Typecheck, lint, unit tests
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      # An unset JEEVES_MODE means production (lib/config/deployment-mode.ts).
+      # These jobs build and test the demo, so they say so explicitly.
+      JEEVES_MODE: demo
     steps:
       - uses: actions/checkout@v4
 
@@ -69,6 +84,10 @@ jobs:
     name: Playwright golden path
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      # An unset JEEVES_MODE means production (lib/config/deployment-mode.ts).
+      # These jobs build and test the demo, so they say so explicitly.
+      JEEVES_MODE: demo
     steps:
       - uses: actions/checkout@v4
 
@@ -99,3 +118,84 @@ jobs:
       # relocates only deployable files and forbids network/source-tree reads.
       - name: Verify packaged agent runtime
         run: node scripts/check-agent-bundle.cjs
+
+  container:
+    name: Container image builds
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      # The same command docs/deploy-podman.md gives, with docker in place of
+      # podman. Build context is the repo root; .dockerignore keeps it small.
+      # No push, no registry login: this only proves the image can be built.
+      - name: Build image
+        run: docker build -f deploy/podman/Containerfile -t jeeves:ci .
+
+  production-smoke:
+    name: Production-mode smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # A throwaway database for this job only. The smoke test stamps its
+    # database "production" for good, so it refuses any database that is not
+    # named jeeves_smoke_<name>; the password below guards nothing.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: jeeves
+          POSTGRES_PASSWORD: jeeves-ci-only
+          POSTGRES_DB: jeeves_smoke_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U jeeves -d jeeves_smoke_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    # No JEEVES_MODE and no DATA_PROVIDER here: unset is production, and the
+    # smoke test builds the server's environment from scratch anyway. Only the
+    # build steps name a mode, exactly as the Containerfile's builder stage does.
+    env:
+      SMOKE_DATABASE_URL: postgres://jeeves:jeeves-ci-only@localhost:5432/jeeves_smoke_ci
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+
+      # The build the container image ships today: demo-capable, mock data at
+      # build time (deploy/podman/Containerfile, builder stage).
+      - name: Build as the container image does
+        run: npm run build
+        env:
+          DATA_PROVIDER: mock
+          JEEVES_MODE: demo
+
+      # Migrates and stamps the database, proves four bad configurations refuse
+      # to boot, then checks redirects, 404s, 401s and headers on the wire.
+      - name: Smoke test in production mode
+        run: npm run smoke:production
+
+      # A production image compiles demo mode out (JEEVES_DEMO_ENABLED=0).
+      # JEEVES_MODE=demo must then be ignored at run time.
+      - name: Build with demo mode compiled out
+        run: npm run build
+        env:
+          DATA_PROVIDER: mock
+          JEEVES_DEMO_ENABLED: "0"
+
+      # Starts the server WITH JEEVES_MODE=demo; every production check must
+      # still pass.
+      - name: Smoke test the demo-locked build
+        run: npm run smoke:production
+        env:
+          SMOKE_DEMO_LOCKED: "1"

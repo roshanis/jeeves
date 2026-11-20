@@ -12,6 +12,8 @@ M2 conversational intake uses the same shape (plan §13 and agents/intake/instru
 Field `key` values are the canonical keys used in the `IntakeVersion.payload` JSON (§3). Types are
 TypeScript-ish; validation is enforced client-side on submit and server-side on write (server is the
 source of truth).
+Saving a draft (create and edit-draft) checks only the schema caps; the BLOCKING completeness rules
+gate submit only.
 
 ### (a) Basics
 
@@ -160,13 +162,18 @@ The submit action is disabled/rejected until all BLOCKING rules pass. These do n
 | `BLK-10` | `overlay.individualImpact` | is `true` or `false` |
 | `BLK-11` | `dataSources` | array length ≥ 1, each entry 2–200 chars |
 
-### Level 2 — REQUIRED-FOR-TIER (computed after triage runs; blocks tier-appropriate downstream review assignment, not the initial submit)
+### Level 2 — REQUIRED-FOR-TIER (does not block submit; blocks passing QC)
 
-These fire once `lib/triage/rules.ts` has computed a tier and the flag values are known. A failing
-REQUIRED-FOR-TIER rule keeps the initiative in `intake-draft` state (or flags it "incomplete" once
-submitted) and prevents `ReviewCycle` creation for the domains that need the missing field, but does
-**not** block the initial form submission itself (per plan §2 step 1, the champion case is submitted
-with a known gap and the completeness check flags it after the fact).
+`RFT-01`…`RFT-06` and `RFT-08` fire on the overlay flags and answers, and `RFT-07` once `lib/triage/rules.ts`
+has derived the tier (High or Critical). The structured form's completeness meter evaluates them before
+submit with the previewed tier; the QC pass (`POST /api/initiatives/[id]/triage`) enforces them with the
+tier it derives. A failing REQUIRED-FOR-TIER rule blocks passing
+QC: the pass is refused with HTTP 400 and code `INTAKE_TIER_GAPS`, the body lists every open REQUIRED-FOR-TIER gap
+(`ruleId`, `level`, `field`, `message`), the initiative stays in `in_qc`, and nothing else is written
+(no tier, no risk assessment, no `ReviewCycle`, no review rows, no `qc_passed` event). The Program
+Office returns the intake to the requester with a reason, the requester answers and resubmits, and QC
+is opened again. A failing rule does **not** block the initial form submission itself (the form and
+the completeness meter flag the gap, and the requester can submit with it open).
 
 | Rule ID | Trigger condition | Field(s) required | Condition to pass |
 |---|---|---|---|
@@ -346,9 +353,10 @@ human-in-the-loop=N / individual-impact=Y**. Per plan §2 step 1, this prefill d
 }
 ```
 
-Field deliberately left blank for the live demo: **`data.retentionIntent`** (and its paired
-`retentionIntentNote`). Everything else above is fully populated and passes BLOCKING and all other
-REQUIRED-FOR-TIER rules.
+Field deliberately left blank in this partial prefill to show the gap: **`data.retentionIntent`** (and its
+paired `retentionIntentNote`). It must be answered, before submitting or after a QC return, before QC
+can pass (the sample initiative fills it). Everything else above is fully populated and passes BLOCKING
+and all other REQUIRED-FOR-TIER rules.
 
 ---
 
@@ -358,12 +366,12 @@ REQUIRED-FOR-TIER rules.
 answers are set (including `humanInTheLoop = false`, which is a valid answer, not a missing one), and
 `dataSources` has 4 entries. **Result: submission is allowed.**
 
-**Step 2 — Triage runs** (`lib/triage/rules.ts`, seed-spec §2.1, first match wins):
+**Step 2 — At the QC pass: tier derived** (`lib/triage/rules.ts`, seed-spec §2.1, first match wins):
 - Flags: PHI=Y, member-facing=Y, care-coverage=Y, vendor-hosted=Y, human-in-loop=N, individual-impact=Y.
 - Rule 1: `care-coverage ∧ ¬human-in-loop` → **matches** → **Tier = Critical**.
 - Required domains: Critical → all 8 domains (Legal, Procurement, Tech Architecture, Responsible AI, Security, Privacy/HIPAA, Clinical Safety, Data Governance).
 
-**Step 3 — REQUIRED-FOR-TIER evaluation** (now that tier and flags are known):
+**Step 3 — REQUIRED-FOR-TIER evaluation** (refuses the QC pass on any failure; tier and flags are known):
 
 | Rule ID | Trigger present? | Field checked | Result |
 |---|---|---|---|
@@ -392,14 +400,15 @@ answers are set (including `humanInTheLoop = false`, which is a valid answer, no
 **What the completeness meter shows in the demo:**
 
 - Submission is **not blocked** (all BLOCKING rules green) — the requester can submit.
-- Immediately after triage computes **Tier = Critical**, the completeness panel shows:
-  - **1 REQUIRED-FOR-TIER gap**: "PHI data retention intent is required for PHI-touching initiatives — please specify how long this data will be retained." (rule `RFT-02`), displayed as a red/amber flag on the initiative's intake tab, blocking `ReviewCycle` creation for the domains that need it (Privacy/HIPAA's D-02/H-01 evidence expectations depend on stated retention intent) until resolved.
+- Before submit, the form's completeness meter (previewed tier Critical) shows:
+  - **1 REQUIRED-FOR-TIER gap**: "PHI data retention intent is required for PHI-touching initiatives — please specify how long this data will be retained." (rule `RFT-02`), which does not block submit but blocks passing QC (Privacy/HIPAA's D-02/H-01 evidence expectations depend on stated retention intent).
   - **1 ADVISORY note**: "No evidence pre-attached — attaching existing artifacts (vendor addendum, model card, etc.) speeds up review." (rule `ADV-05`), non-blocking.
-- First-pass completeness score for this submission: 6 of 8 evaluated non-blocking checks pass
-  (2 REQUIRED-FOR-TIER applicable rules pass out of 3 applicable, plus 5 of 6 advisory rules pass) —
+- At the QC pass the pass is refused (400 `INTAKE_TIER_GAPS`) and the QC panel lists `RFT-02` only (ADVISORY gaps are never listed there), until the intake is returned, answered and resubmitted (QC return/resubmit loop).
+- First-pass completeness score for this submission: 10 of 12 evaluated non-blocking checks pass
+  (5 of 6 applicable REQUIRED-FOR-TIER rules, plus 5 of 6 advisory rules) —
   this submission counts as a **first-pass-incomplete** case in the aggregate "first-pass completeness
   rate" outcome metric (seed-spec §6 baseline ~60%), which is the intended demo beat: the champion case
-  visibly is not perfect on first pass, and the reviewer/requester loop to fill in retention intent is
+  visibly is not perfect on first pass, and the QC return/resubmit loop to fill in retention intent is
   part of the governance story, not a bug.
 
 ---

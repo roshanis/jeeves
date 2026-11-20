@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { Metadata } from "next";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { isDemoMode } from "@/lib/config/deployment-mode";
 
 // Root 404 — the one that catches everything OUTSIDE the console route
 // group: a mistyped marketing URL, a stale /pilot link, a crawler probing
@@ -11,19 +12,32 @@ import { cn } from "@/lib/utils";
 // Rendered by the ROOT layout, which supplies no chrome of its own, so this
 // page carries its own header link and footer rather than inheriting the
 // console sidebar or the marketing nav.
-export const metadata: Metadata = {
-  title: "Page not found",
-  description: "That page doesn't exist. Links onward to the console and the public site.",
-};
+// Mode-aware: a production install has no public site to link onward to.
+export function generateMetadata(): Metadata {
+  return {
+    title: "Page not found",
+    description: isDemoMode()
+      ? "That page doesn't exist. Links onward to the console and the public site."
+      : "That page doesn't exist.",
+  };
+}
 
-const DESTINATIONS = [
+const DEMO_DESTINATIONS = [
   { href: "/", label: "Home", detail: "What Jeeves is, and who it is for" },
   { href: "/inbox", label: "Console", detail: "The live demo — what needs attention now" },
   { href: "/portfolio", label: "Portfolio", detail: "All 12 demo initiatives" },
   { href: "/frameworks", label: "Frameworks", detail: "NIST AI RMF and EU AI Act crosswalks" },
 ];
 
+// A production install has no public site, no demo and no framework pages
+// (they 404 there): only the console, which sends anyone signed out to sign-in.
+const PRODUCTION_DESTINATIONS = [
+  { href: "/inbox", label: "Console", detail: "What needs attention now" },
+  { href: "/portfolio", label: "Portfolio", detail: "All AI initiatives" },
+];
+
 export default function NotFound() {
+  const DESTINATIONS = isDemoMode() ? DEMO_DESTINATIONS : PRODUCTION_DESTINATIONS;
   return (
     <main id="main-content" tabIndex={-1} className="mx-auto flex min-h-dvh max-w-2xl flex-col items-center justify-center gap-6 px-4 py-16 text-center">
       <div className="flex flex-col gap-2">
@@ -38,15 +52,23 @@ export default function NotFound() {
       </div>
 
       <div className="flex flex-wrap items-center justify-center gap-2">
-        <Link href="/" className={cn(buttonVariants({ size: "sm" }))}>
-          Back to home
-        </Link>
-        <Link
-          href="/inbox"
-          className={cn(buttonVariants({ size: "sm", variant: "outline" }))}
-        >
-          Open the console
-        </Link>
+        {isDemoMode() ? (
+          <>
+            <Link href="/" className={cn(buttonVariants({ size: "sm" }))}>
+              Back to home
+            </Link>
+            <Link
+              href="/inbox"
+              className={cn(buttonVariants({ size: "sm", variant: "outline" }))}
+            >
+              Open the console
+            </Link>
+          </>
+        ) : (
+          <Link href="/inbox" className={cn(buttonVariants({ size: "sm" }))}>
+            Open the console
+          </Link>
+        )}
       </div>
 
       <div className="w-full border-t pt-5 text-left">

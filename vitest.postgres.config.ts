@@ -11,6 +11,9 @@ export default defineConfig({
   resolve: { alias: { "@": path.resolve(__dirname, ".") } },
   test: {
     environment: "node",
+    // Unset JEEVES_MODE means production (lib/config/deployment-mode.ts); these
+    // integrity tests exercise the demo schema and services.
+    env: { JEEVES_MODE: "demo" },
     include: ["tests/postgres/review-integrity.test.ts"],
     fileParallelism: false,
     testTimeout: 20_000,

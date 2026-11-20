@@ -25,6 +25,7 @@ import {
 } from "@/lib/services/initiative-service";
 import { guardFailureResponse, runMutationGuard } from "@/lib/services/route-guard";
 import { isRouteId, notFoundResponse } from "@/lib/http/route-id";
+import { databaseNotReady } from "@/lib/http/database-gate";
 
 const bodySchema = z.object({
   decision: z.enum(["approved", "conditionally_approved", "rejected"]),
@@ -38,6 +39,8 @@ export async function POST(
   req: Request,
   context: { params: Promise<{ id: string }> },
 ): Promise<Response> {
+  const unavailable = databaseNotReady();
+  if (unavailable) return unavailable;
   const guard = await runMutationGuard(req, () => undefined);
   if (!guard.ok) {
     return guardFailureResponse(guard.failure);

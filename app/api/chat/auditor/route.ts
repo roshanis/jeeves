@@ -29,10 +29,11 @@
 import { z } from "zod";
 import { getAgentPort } from "@/lib/agents";
 import type { AgentPort, PortFailure } from "@/lib/agents/ports";
-import { agentInitializationResponse } from "@/lib/services/agent-error-response";
+import { agentInitializationResponse, llmNotConfigured, llmNotConfiguredResponse } from "@/lib/services/agent-error-response";
 import { getProvider } from "@/lib/data";
 import type { AuditQueryRow, CannedAuditQueryId } from "@/lib/data/dto";
 import { guardFailureResponse, reserveDailyBudget, runMutationGuard } from "@/lib/services/route-guard";
+import { databaseNotReady } from "@/lib/http/database-gate";
 
 const bodySchema = z.object({
   question: z.string().min(1).max(2000),
@@ -155,6 +156,13 @@ function statusForFailure(error: PortFailure): number {
 }
 
 export async function POST(req: Request): Promise<Response> {
+  const unavailable = databaseNotReady();
+  if (unavailable) return unavailable;
+  // A production install with no LLM has nothing to answer with. The guard
+  // still authenticates first (an anonymous caller gets its 401); the 503
+  // follows once the caller is accepted, before any budget is reserved.
+  const noLlm = llmNotConfigured();
+
   const guard = await runMutationGuard(req, (json) => {
     const bodyText: Record<string, string> = {
       question: typeof (json as { question?: unknown })?.question === "string"
@@ -175,6 +183,9 @@ export async function POST(req: Request): Promise<Response> {
   if (!parsed.success) {
     return Response.json({ error: "invalid request body" }, { status: 400 });
   }
+
+  // Refuse before the grounding queries below: there is no provider to answer.
+  if (noLlm) return llmNotConfiguredResponse();
 
   const provider = getProvider();
 

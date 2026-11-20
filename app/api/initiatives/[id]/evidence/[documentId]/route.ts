@@ -1,13 +1,18 @@
 import { getDb } from '@/lib/db/client';
-import { resolveSession, extractSessionToken } from '@/lib/services/route-guard';
+import { requireViewerForRequest } from '@/lib/services/require-viewer';
 import { downloadEvidence } from '@/lib/services/evidence-service';
 import { evidenceResponseError, privateHeaders } from '@/lib/evidence/http';
 import { isRouteId } from '@/lib/http/route-id';
 import { EvidenceError } from '@/lib/evidence/files';
+import { databaseNotReady } from "@/lib/http/database-gate";
 export const runtime='nodejs';
 export async function GET(req:Request,context:{params:Promise<{id:string;documentId:string}>}):Promise<Response> {
+  const unavailable = databaseNotReady();
+  if (unavailable) return unavailable;
  try{
-  const viewer=await resolveSession(extractSessionToken(req));
+  const gate=await requireViewerForRequest(req);
+  if(!gate.ok)return gate.response;
+  const viewer=gate.viewer;
   if(!viewer.actor)throw new EvidenceError(401,'Start the demo to download evidence.');
   const {id,documentId}=await context.params;
   if(!isRouteId(id)||!isRouteId(documentId))throw new EvidenceError(404,'Evidence not found.');

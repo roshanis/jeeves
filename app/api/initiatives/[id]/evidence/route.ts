@@ -1,11 +1,13 @@
 import { z } from 'zod';
 import { getDb } from '@/lib/db/client';
-import { guardFailureResponse, runMutationGuard, resolveSession, extractSessionToken } from '@/lib/services/route-guard';
+import { guardFailureResponse, runMutationGuard } from '@/lib/services/route-guard';
+import { requireViewerForRequest } from '@/lib/services/require-viewer';
 import { getEvidence, uploadEvidence, saveEvidenceDraft, submitEvidence, assessEvidence } from '@/lib/services/evidence-service';
 import { evidenceResponseError, privateHeaders, readEvidenceJson } from '@/lib/evidence/http';
 import { EvidenceError } from '@/lib/evidence/files';
 import { isRouteId } from '@/lib/http/route-id';
 import { isSameOriginRequest } from '@/lib/security/same-origin';
+import { databaseNotReady } from "@/lib/http/database-gate";
 export const runtime='nodejs';
 const id=z.string().min(1).max(150);
 const entry=z.object({controlId:id,documentId:id,pageReference:z.string().max(120),note:z.string().max(2000)}).strict();
@@ -17,8 +19,12 @@ const schema=z.discriminatedUnion('action',[
 ]);
 type Context={params:Promise<{id:string}>};
 export async function GET(req:Request,context:Context):Promise<Response> {
+  const unavailable = databaseNotReady();
+  if (unavailable) return unavailable;
  try {
-  const viewer=await resolveSession(extractSessionToken(req));
+  const gate=await requireViewerForRequest(req);
+  if(!gate.ok)return gate.response;
+  const viewer=gate.viewer;
   if(!viewer.actor)throw new EvidenceError(401,'Start the demo to view private evidence.');
   const ref=(await context.params).id;
   if(!isRouteId(ref))throw new EvidenceError(404,'Evidence not found.');
@@ -26,6 +32,8 @@ export async function GET(req:Request,context:Context):Promise<Response> {
  }catch(error){return evidenceResponseError(error);}
 }
 export async function POST(req:Request,context:Context):Promise<Response> {
+  const unavailable = databaseNotReady();
+  if (unavailable) return unavailable;
  try {
   const guard=await runMutationGuard(req,undefined);
   if(!guard.ok)return guardFailureResponse(guard.failure,privateHeaders);

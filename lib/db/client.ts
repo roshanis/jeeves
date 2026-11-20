@@ -10,6 +10,8 @@ import { drizzle as drizzleNeon, type NeonDatabase } from "drizzle-orm/neon-serv
 import { drizzle as drizzleNodePg, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { drizzle as drizzlePglite, type PgliteDatabase } from "drizzle-orm/pglite";
 import { PGlite } from "@electric-sql/pglite";
+import { installationGateClosed } from "../config/boot-state";
+import { ProductionConfigError, isProductionMode } from "../config/deployment-mode";
 import { postgresPoolConfig } from "./connection-config";
 import { assertRuntimeDatabaseConfigured, runtimeDatabaseUrl } from "./runtime-config";
 import ws from "ws";
@@ -52,6 +54,25 @@ export function getDbDriverForHandle(db: Db): DbDriver | undefined {
 }
 
 /**
+ * node-postgres emits 'error' on the POOL when an idle client's connection
+ * dies underneath it (an RDS failover or restart, a NAT idle timeout, a
+ * proxy reset). EventEmitter rethrows an 'error' with no listener, so without
+ * this handler one dropped idle connection is an uncaught exception that
+ * takes the whole server down. The pool has already discarded the dead
+ * client; the next query opens a fresh one, so logging is the whole job.
+ *
+ * Logs the message only: never the connection string, which carries the
+ * password.
+ */
+function createPgPool(databaseUrl: string): PgPool {
+  const pool = new PgPool(postgresPoolConfig(databaseUrl, process.env.DATABASE_SSL_CA));
+  pool.on("error", (err: Error) => {
+    console.error(`PostgreSQL pool error on an idle connection (it will be replaced): ${err.message}`);
+  });
+  return pool;
+}
+
+/**
  * Neon pool with a bounded connect time and an 'error' listener: an idle
  * client error (Neon suspends compute) with no listener is an uncaught
  * exception. Logs a fixed message only, never the error or the URL.
@@ -63,11 +84,40 @@ export function createNeonPool(connectionString: string): Pool {
 }
 
 /**
+ * Thrown by getDb() while a demo's installation check has not passed in this
+ * process (lib/config/boot-state.ts). The message is fixed: no host, no URL.
+ */
+export class DatabaseUnavailableError extends Error {
+  constructor() {
+    super("The database has not been verified yet; it is not available.");
+    this.name = "DatabaseUnavailableError";
+  }
+}
+
+/**
  * Returns the process-wide DB handle, creating it on first use. Safe to
  * call repeatedly (e.g. from multiple route handlers) — the underlying
  * connection/instance is memoized on globalThis (see above).
+ *
+ * This is the single choke point of the demo's installation gate: while the
+ * gate is closed (the demo booted without being able to verify the database)
+ * it throws, so no caller can read or write an unverified database.
  */
 export function getDb(): Db {
+  if (installationGateClosed()) throw new DatabaseUnavailableError();
+  return openDb();
+}
+
+/**
+ * The one bypass of the gate: the boot check and its recheck
+ * (lib/config/boot-checks.ts) must read the installation stamp BEFORE the gate
+ * can open. Nothing else may call it.
+ */
+export function getDbForInstallationCheck(): Db {
+  return openDb();
+}
+
+function openDb(): Db {
   const databaseUrl = runtimeDatabaseUrl();
   assertRuntimeDatabaseConfigured(databaseUrl, process.env.VERCEL);
   if (dbSlot.db) {
@@ -92,13 +142,21 @@ export function getDb(): Db {
     // node-postgres: a real connection pool over the wire protocol. This is
     // the right driver for any long-lived process (a container), and the only
     // one that works against a non-Neon server.
-    dbSlot.pgPool ??= new PgPool(postgresPoolConfig(databaseUrl!, process.env.DATABASE_SSL_CA));
+    dbSlot.pgPool ??= createPgPool(databaseUrl!);
     dbSlot.db = redactTransactionErrors(drizzleNodePg({ client: dbSlot.pgPool, schema }));
     handleDrivers.set(dbSlot.db, "pg");
     return dbSlot.db;
   }
 
-  // No DATABASE_URL: local persistent PGlite store, not a network call.
+  // No DATABASE_URL: local persistent PGlite store, not a network call. That
+  // is a demo and development convenience; a production process that reaches
+  // this line is misconfigured, and silently serving an empty on-disk database
+  // instead of the customer's would be far worse than not starting.
+  if (isProductionMode()) {
+    throw new ProductionConfigError([
+      "DATABASE_URL (or POSTGRES_URL) is required: production never falls back to the local PGlite store (local development sets JEEVES_MODE=demo)",
+    ]);
+  }
   const client = new PGlite(localPgliteDirectory());
   dbSlot.db = redactTransactionErrors(drizzlePglite({ client, schema }));
   handleDrivers.set(dbSlot.db, "pglite");

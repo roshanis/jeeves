@@ -3,7 +3,7 @@ import { afterEach, beforeEach, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { createTestDb, closeTestDb, type TestDb } from "../db/test-client";
 import { initiativeDecisions, reviewCycles, reviewDecisions } from "../db/schema";
-import { CHAMPION_PREFILL_PAYLOAD } from "../intake/champion-prefill";
+import { TRIAGE_READY_CHAMPION_PAYLOAD } from "../../tests/fixtures/triage-ready-intake";
 import { createMockAgentPort } from "../agents/mock-adapter";
 import { createDraft, submitIntake, startQc, triage, decide } from "../services/initiative-service";
 import { startDraftRun } from "../workflow/review-run";
@@ -16,7 +16,7 @@ afterEach(async () => { await closeTestDb(db); });
 it("uses the same descending cycle ID for equal timestamps in drafting, projection and approval", async () => {
   const requester = { id: "priya-raman", role: "requester" as const };
   const { initiativeId, slug } = await createDraft(db, {
-    payload: CHAMPION_PREFILL_PAYLOAD, requesterActor: requester, requesterName: "Priya Raman",
+    payload: TRIAGE_READY_CHAMPION_PAYLOAD, requesterActor: requester, requesterName: "Priya Raman",
   });
   await submitIntake(db, initiativeId, requester);
   // QC gate: `submitted --triage-->` no longer exists — the fan-out is

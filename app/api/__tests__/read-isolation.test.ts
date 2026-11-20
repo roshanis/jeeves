@@ -92,7 +92,7 @@ const CHAMPION_PAYLOAD = {
     dataSources: ["Clinical notes (Epic)"],
     phiCategories: ["Diagnosis/ICD codes"],
     phiCategoriesOtherText: null,
-    retentionIntent: null,
+    retentionIntent: "<=30 days",
     retentionIntentNote: null,
     trainingVsInference: "Inference-only",
   },

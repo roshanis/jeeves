@@ -7,6 +7,8 @@ import { GOVERNANCE_AGENTS, AGENT_GUARDRAIL } from "@/lib/agents/registry";
 import { DOMAIN_LABEL } from "@/components/jeeves/domain-labels";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { requireViewer } from "@/lib/services/require-viewer";
+import { isDemoMode } from "@/lib/config/deployment-mode";
 
 // Per-agent detail page — the drill-down from the Governance agents catalog
 // (app/agents/page.tsx). Reads the agent's actual instructions file(s) off
@@ -42,6 +44,10 @@ export async function generateMetadata({
 }: {
   params: Promise<{ id: string }>;
 }): Promise<Metadata> {
+  // Same gate as the page, and first for the same reason: metadata is resolved
+  // apart from the page body, so without this a signed-out visitor's <head>
+  // names the agent (or says "Agent not found") and tells them which ids exist.
+  await requireViewer();
   const { id } = await params;
   const agent = GOVERNANCE_AGENTS.find((a) => a.id === id);
   if (!agent) {
@@ -58,6 +64,8 @@ export default async function AgentDetailPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
+  // First, so an unauthenticated visitor cannot tell which agent ids exist.
+  await requireViewer();
   const { id } = await params;
   const agent = GOVERNANCE_AGENTS.find((a) => a.id === id);
   if (!agent) {
@@ -101,7 +109,7 @@ export default async function AgentDetailPage({
           <span>
             Accountable reviewer:{" "}
             <span className="font-medium text-foreground">
-              {agent.accountablePersonaName ?? "Rotational — no fixed reviewer"}
+              {(isDemoMode() ? agent.accountablePersonaName : null) ?? "Rotational — no fixed reviewer"}
             </span>
           </span>
           <span>
@@ -180,10 +188,12 @@ export default async function AgentDetailPage({
         </Card>
       )}
 
-      <p className="text-xs text-muted-foreground">
-        Synthetic data — demo. Meridian Health is a fictional payer; not
-        affiliated with any real organization.
-      </p>
+      {isDemoMode() ? (
+        <p className="text-xs text-muted-foreground">
+          Synthetic data — demo. Meridian Health is a fictional payer; not
+          affiliated with any real organization.
+        </p>
+      ) : null}
     </div>
   );
 }

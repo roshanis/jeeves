@@ -80,10 +80,13 @@ import { ConflictError } from "./initiative-service";
 // across every CAS-guarded mutation in the codebase.
 export { ConflictError };
 
-/** A paused or re_review initiative is out of service: only an admin resume brings it back. */
+/** A paused or re_review initiative is out of service: only an admin resume brings it back (after an approved reassessment, for re_review). */
 function requireInServiceLifecycle(initiative: { id: string; state: string }, what: string): void {
-  if (initiative.state === "paused" || initiative.state === "re_review") {
+  if (initiative.state === "paused") {
     throw new ConflictError(`cannot ${what}: initiative ${initiative.id} is ${initiative.state}; an admin resume is required first`);
+  }
+  if (initiative.state === "re_review") {
+    throw new ConflictError(`cannot ${what}: initiative ${initiative.id} is under reassessment; the Approver must approve the reassessment and an Admin resume the deployment first`);
   }
 }
 

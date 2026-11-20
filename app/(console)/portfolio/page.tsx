@@ -3,14 +3,20 @@ import { OutcomeMetricsStrip } from "@/components/jeeves/outcome-metrics-strip";
 import { RiskHeatmap } from "@/components/jeeves/risk-heatmap";
 import { PortfolioView } from "@/components/jeeves/portfolio-view";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { isProductionMode } from "@/lib/config/deployment-mode";
 import type { Metadata } from "next";
 
 
-export const metadata: Metadata = {
-  title: "Portfolio",
-  description:
-    "Every Meridian Health AI initiative with its risk tier, lifecycle state, review progress and next action. Sortable, with saved views per role.",
-};
+// Mode-aware, so resolved per request: Meridian Health is the demo's fictional
+// payer; a production install is someone else's.
+export function generateMetadata(): Metadata {
+  return {
+    title: "Portfolio",
+    description: `Every ${
+      isProductionMode() ? "" : "Meridian Health "
+    }AI initiative with its risk tier, lifecycle state, review progress and next action. Sortable, with saved views per role.`,
+  };
+}
 
 export default async function PortfolioPage() {
   const provider = getAppProvider();
@@ -30,7 +36,7 @@ export default async function PortfolioPage() {
           All {initiatives.length} initiatives
         </h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Every Meridian Health AI initiative, its risk tier, lifecycle state,
+          Every {isProductionMode() ? "" : "Meridian Health "}AI initiative, its risk tier, lifecycle state,
           review progress, and next action. Sort any column; filter with saved views.
         </p>
       </div>

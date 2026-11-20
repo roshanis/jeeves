@@ -6,9 +6,7 @@ import type { DataProvider } from "@/lib/data/provider";
 import type { InitiativeDetail, InitiativeSummary } from "@/lib/data/dto";
 import { getProvider } from "@/lib/data";
 import { resolveDataProviderMode } from "@/lib/data/provider-mode";
-import { resolveWorkspaceCookieSecret, verifyWorkspaceCookie } from "@/lib/security/workspace-cookie";
-
-const WORKSPACE_COOKIE = "jeeves_workspace";
+import { requireViewer, WORKSPACE_COOKIE_NAME } from "@/lib/services/require-viewer";
 
 /** Keep app callers on the same provider factory as API read callers. */
 export function getAppProvider(): DataProvider {
@@ -23,21 +21,22 @@ export function getAppProvider(): DataProvider {
 const requestSnapshotHolder = cache(() => ({}));
 
 /**
- * The current browser's demo workspace id, or null for a public/no-session
- * visitor (M2.5 inc.2b). This reads the `jeeves_workspace` cookie set by
- * POST /api/session — it is a READ-SCOPING hint, never an auth credential.
- * null => seeded-only; a value => seeded + that workspace's live-created rows.
+ * The workspace id the current page request reads as, behind the viewer gate
+ * (lib/services/require-viewer.ts).
  *
- * Security-hardening pass: POST /api/session now signs this cookie
- * (lib/security/workspace-cookie.ts) so a caller cannot simply set an
- * arbitrary `jeeves_workspace` value to read another workspace's
- * live-created rows. Verified here the same way; an invalid/unsigned/
- * tampered cookie degrades to null (seeded-only view), never an error.
+ * Demo: the signed `jeeves_workspace` cookie set by POST /api/session, or null
+ * for a visitor with none (seeded-only view). It is a READ-SCOPING hint, never
+ * an auth credential, and POST /api/session signs it
+ * (lib/security/workspace-cookie.ts) so a caller cannot set an arbitrary value
+ * to read another workspace's live-created rows; an invalid, unsigned or
+ * tampered cookie degrades to null, never an error.
+ *
+ * Production: the workspace of the signed-in session, and a request with no
+ * session is redirected to /sign-in here, before any data is read. Every page
+ * that reads through this module is gated by it.
  */
 export async function getCurrentWorkspaceId(): Promise<string | null> {
-  const cookieStore = await cookies();
-  const raw = cookieStore.get(WORKSPACE_COOKIE)?.value ?? null;
-  return verifyWorkspaceCookie(raw, resolveWorkspaceCookieSecret());
+  return (await requireViewer()).workspaceId;
 }
 
 /** `listInitiatives` scoped to the current viewer's workspace (seeded + own). */
@@ -65,7 +64,9 @@ export async function getInitiativeDetailForViewer(
 export async function getInitiativeDetailCoherent(
   slug: string,
 ): Promise<InitiativeDetail | null> {
-  return loadInitiativeDetailCoherent(slug, await getCurrentWorkspaceId());
+  // requireViewer() is the viewer gate. The HTTP hop in the loader bypasses
+  // getInitiativeDetailForViewer, so the gate runs here, first.
+  return loadInitiativeDetailCoherent(slug, (await requireViewer()).workspaceId);
 }
 
 /**
@@ -87,7 +88,7 @@ const loadInitiativeDetailCoherent = cache(async (
   // Fixed loopback origin: the Host and X-Forwarded-Proto of the incoming
   // request are caller-controlled and must never choose where this hop goes.
   const cookieStore = await cookies();
-  const rawWorkspace = cookieStore.get(WORKSPACE_COOKIE)?.value ?? "";
+  const rawWorkspace = cookieStore.get(WORKSPACE_COOKIE_NAME)?.value ?? "";
   // Assumes the server answers plain HTTP on 127.0.0.1:PORT (true for next
   // start, next dev and the container). Under HTTPS or a non-loopback bind,
   // use a real database URL instead of PGlite.
@@ -99,7 +100,7 @@ const loadInitiativeDetailCoherent = cache(async (
       // Forward only the signed workspace cookie (read-scoping hint) so the
       // detail-data route scopes to the same viewer. The session cookie and
       // any other cookie are deliberately not forwarded.
-      headers: { cookie: rawWorkspace ? `${WORKSPACE_COOKIE}=${rawWorkspace}` : "" },
+      headers: { cookie: rawWorkspace ? `${WORKSPACE_COOKIE_NAME}=${rawWorkspace}` : "" },
     },
   );
   if (res.status === 404) {

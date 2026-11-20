@@ -16,6 +16,7 @@ vi.mock("@/lib/client/api", async (importOriginal) => ({
   submitIntake: mocks.submit,
 }));
 
+import { DeploymentModeProvider } from "@/lib/client/deployment-mode-context";
 import { IntakeForm } from "@/components/jeeves/intake-form";
 
 describe("IntakeForm 409 messages", () => {
@@ -27,7 +28,7 @@ describe("IntakeForm 409 messages", () => {
   it("tells a requester whose draft was already submitted to open the case file, not to reload", async () => {
     const { ApiError } = await import("@/lib/client/api");
     mocks.create.mockRejectedValue(new ApiError(409, "intake is no longer editable", undefined, "INTAKE_NOT_EDITABLE"));
-    render(<IntakeForm />);
+    render(<DeploymentModeProvider mode="demo"><IntakeForm /></DeploymentModeProvider>);
     fireEvent.click(screen.getByRole("button", { name: "Use a sample initiative" }));
     fireEvent.click(screen.getByRole("button", { name: "Submit intake" }));
     const alert = await screen.findByRole("alert");
@@ -38,7 +39,7 @@ describe("IntakeForm 409 messages", () => {
   it("warns that reloading discards input on a version conflict", async () => {
     const { ApiError } = await import("@/lib/client/api");
     mocks.create.mockRejectedValue(new ApiError(409, "draft changed concurrently (expected version 1)"));
-    render(<IntakeForm />);
+    render(<DeploymentModeProvider mode="demo"><IntakeForm /></DeploymentModeProvider>);
     fireEvent.click(screen.getByRole("button", { name: "Use a sample initiative" }));
     fireEvent.click(screen.getByRole("button", { name: "Submit intake" }));
     const alert = await screen.findByRole("alert");

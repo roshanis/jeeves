@@ -113,9 +113,10 @@ describe("docs/deploy.md section 4 backups (docs-F28)", () => {
   it("says to restore into a new database because of the append-only triggers", () => {
     expect(section).toMatch(/new database/);
     expect(section).toMatch(/drops and recreates every\s+table/);
-    // Only while no migration guards TRUNCATE: the production-mode line's 0014 does.
+    // TRUNCATE is named exactly when a migration guards it: the production-mode line's 0014 does.
     const migrations = readdirSync("drizzle").filter((f) => f.endsWith(".sql")).map((f) => read(`drizzle/${f}`)).join("\n");
-    if (!/BEFORE\s+TRUNCATE/i.test(migrations)) expect(section).not.toMatch(/TRUNCATE/);
+    if (/BEFORE\s+TRUNCATE/i.test(migrations)) expect(section).toMatch(/rejects `UPDATE`, `DELETE` and[\s\S]{0,40}`TRUNCATE`/);
+    else expect(section).not.toMatch(/TRUNCATE/);
     expect(section).toMatch(/Restore to a New Project/i);
   });
   it("checks the migration journal and health after a restore", () => {
@@ -172,5 +173,84 @@ describe("docs/deploy-podman.md image healthcheck (deploy-F16)", () => {
     const doc = read("docs/deploy-podman.md");
     expect(doc).toMatch(/--format docker/);
     expect(doc).toMatch(/HEALTHCHECK/);
+  });
+});
+
+describe("docs/intake-spec.md REQUIRED-FOR-TIER gate (d01)", () => {
+  const spec = read("docs/intake-spec.md");
+  it("no longer describes the old review-creation or draft-state behaviour", () => {
+    expect(spec).not.toMatch(/prevents `ReviewCycle` creation/);
+    expect(spec).not.toMatch(/blocking `ReviewCycle` creation/);
+    expect(spec).not.toMatch(/keeps the initiative in `intake-draft` state/);
+  });
+  it("says a failing rule blocks passing QC, with the typed code", () => {
+    expect(spec).toMatch(/INTAKE_TIER_GAPS/);
+    expect(spec).toMatch(/blocks passing QC/);
+  });
+});
+
+describe("the demo script plays in the visitor playground (docs-F19)", () => {
+  const doc = read("docs/demo-script.md");
+  const start = doc.indexOf("## The Loop");
+  const end = doc.indexOf("## Audit Query");
+  const loop = doc.slice(start, end);
+  it("finds the Loop section", () => {
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+  });
+  it("numbers every step heading once", () => {
+    const steps = [...doc.matchAll(/^### Step (\w+):/gm)].map((m) => m[1]);
+    expect(steps.length).toBeGreaterThan(0);
+    expect(new Set(steps).size).toBe(steps.length);
+  });
+  it("does not stage the breach on a Run monitor click", () => {
+    expect(loop).not.toMatch(/clicks "Run Monitor"/i);
+    expect(loop).toMatch(/\/api\/cron\/monitor/);
+    expect(loop).toMatch(/CRON_SECRET/);
+  });
+  it("dates the threshold crossing from the seeded series", () => {
+    expect(loop).not.toMatch(/around Jul 10|nine days|day 9/i);
+    expect(loop).toMatch(/Jul(y)? 12/);
+  });
+  it("does not claim a real install runs the monitor", () => {
+    expect(loop).not.toMatch(/in a real install/i);
+    expect(loop).toMatch(/any deployment the scheduled monitor finds in breach/i);
+  });
+  it("describes the screens and the visitor workspace precisely", () => {
+    expect(loop).toMatch(/Run monitor button, on this tab and on the Admin console/);
+    expect(loop).toMatch(/badge should read \*\*Reassessment\*\*, with a red \*\*Deployment paused\*\* banner below it/);
+    expect(loop).toMatch(/which has no live deployment/);
+    expect(loop).not.toMatch(/has no deployment/);
+    expect(loop).toMatch(/dated 2026-06-01/);
+    expect(loop).not.toMatch(/30 days earlier/);
+  });
+  it("drops the 'two clicks apart' aside and keeps the footer word count honest", () => {
+    expect(loop).not.toMatch(/two clicks apart/);
+    const words = doc.slice(0, doc.indexOf("**End of script.")).split(/\s+/).filter(Boolean).length;
+    const claimed = Number(/Approximate word count: ([\d,]+) words/.exec(doc)?.[1]?.replace(",", ""));
+    expect(Math.abs(words - claimed) / words).toBeLessThan(0.05);
+  });
+  it("does not edit a shared threshold on stage", () => {
+    expect(loop).not.toMatch(/changes the threshold for this initiative/i);
+    expect(loop).not.toMatch(/tightens the eval threshold from 0\.08 to 0\.06/i);
+  });
+  it("leaves reassessment through the approved reassessment", () => {
+    expect(loop).toMatch(/approves the reassessment/i);
+    expect(loop).not.toMatch(/resumes? (it )?(straight |directly )?(out of|from) re-?review/i);
+  });
+  it("describes shipped features as shipped", () => {
+    expect(doc).not.toMatch(/plan conversational intake/i);
+    expect(doc).not.toMatch(/that.s M3/i);
+  });
+  it("calls nothing production-ready", () => {
+    const stale = doc.split("\n").filter((l) => /production-ready/i.test(l) && !/not production-ready/i.test(l));
+    expect(stale).toEqual([]);
+  });
+  it("ui-spec flags the Run-monitor climax as not live in the playground", () => {
+    const ui = read("docs/ui-spec.md");
+    expect(ui).not.toMatch(/which has no deployment/);
+    expect((ui.match(/Playground note/g) ?? []).length).toBeGreaterThanOrEqual(3);
+    expect(ui).toMatch(/docs\/demo-script\.md/);
+    expect(ui).toMatch(/\/api\/cron\/monitor/);
   });
 });

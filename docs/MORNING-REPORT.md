@@ -98,8 +98,8 @@ the RL checkpoint-promotion flow and a natural-language audit console.
 
 ```
 npm install
-npm run db:seed                                  # seeds local PGlite
-DATA_PROVIDER=db DEMO_PASSCODE=<choose> npm run dev
+JEEVES_MODE=demo npm run db:seed                              # seeds local PGlite
+JEEVES_MODE=demo DATA_PROVIDER=db DEMO_PASSCODE=<choose> npm run dev
 ```
 Then open `/` (landing) → `/dashboard` (console). Browsing is open; the live
 loop needs the passcode. `npm test` (572) · `npm run test:e2e` (golden path).

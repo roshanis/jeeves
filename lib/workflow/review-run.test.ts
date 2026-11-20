@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createTestDb, closeTestDb, type TestDb } from "../db/test-client";
-import { CHAMPION_PREFILL_PAYLOAD } from "../intake/champion-prefill";
+import { TRIAGE_READY_CHAMPION_PAYLOAD } from "../../tests/fixtures/triage-ready-intake";
 import { createMockAgentPort } from "../agents/mock-adapter";
 import { createOpenAiAgentsAdapterWithRunner } from "../agents/openai-agents-adapter";
 import type { AgentPort, DraftReviewInput, PortResult, DraftReviewOutput } from "../agents/ports";
@@ -14,7 +14,7 @@ const PROGRAM = { id: "nia-okafor", role: "program" as const };
 
 async function setUpChampionInReview(db: TestDb) {
   const draft = await svc.createDraft(db, {
-    payload: CHAMPION_PREFILL_PAYLOAD,
+    payload: TRIAGE_READY_CHAMPION_PAYLOAD,
     requesterActor: REQUESTER,
     requesterName: "Priya Raman",
   });

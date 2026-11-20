@@ -11,6 +11,7 @@
 import { describe, expect, it } from "vitest";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { rootMetadata } from "@/lib/config/site-metadata";
 
 const APP_DIR = join(process.cwd(), "app");
 
@@ -36,8 +37,12 @@ describe("page metadata", () => {
 
   it.each(PAGES.map((p) => [rel(p), p]))("%s exports metadata", (_name, path) => {
     const src = readFileSync(path, "utf8");
+    // generateMetadata may be async or sync, or a const built by a helper
+    // (demo-only pages wrap their static metadata so production can 404).
     const hasMetadata =
-      /export const metadata\b/.test(src) || /export async function generateMetadata\b/.test(src);
+      /export const metadata\b/.test(src) ||
+      /export (async )?function generateMetadata\b/.test(src) ||
+      /export const generateMetadata\b/.test(src);
     expect(hasMetadata).toBe(true);
   });
 
@@ -50,28 +55,38 @@ describe("page metadata", () => {
 });
 
 describe("site-wide head", () => {
-  it("gives the root layout a title template so per-page titles stay branded", () => {
+  // The root metadata is mode-aware, so the layout takes it from
+  // lib/config/site-metadata.ts (behaviour covered by mode-metadata.test.ts)
+  // instead of declaring it inline.
+  const ROOT_METADATA_SOURCE = join(process.cwd(), "lib", "config", "site-metadata.ts");
+
+  it("builds the root layout's metadata from the mode-aware helper", () => {
     const src = readFileSync(join(APP_DIR, "layout.tsx"), "utf8");
+    expect(/export function generateMetadata\b/.test(src)).toBe(true);
+    expect(/rootMetadata\(/.test(src)).toBe(true);
+  });
+
+  it("gives the root layout a title template so per-page titles stay branded", () => {
+    const src = readFileSync(ROOT_METADATA_SOURCE, "utf8");
     expect(/template:/.test(src)).toBe(true);
   });
 
   it("declares a metadataBase so Open Graph URLs resolve absolutely", () => {
-    const src = readFileSync(join(APP_DIR, "layout.tsx"), "utf8");
+    const src = readFileSync(ROOT_METADATA_SOURCE, "utf8");
     expect(/metadataBase/.test(src)).toBe(true);
   });
 
-  it("does not pin openGraph.url to the site root for every page", () => {
+  it.each([
+    ["demo", { JEEVES_MODE: "demo" }],
+    ["production", { JEEVES_MODE: "production", APP_BASE_URL: "https://jeeves.acme.example" }],
+  ])("does not pin openGraph.url to the site root for every page (%s)", (_mode, env) => {
     // A root-level og:url makes /frameworks/eu-ai-act claim the homepage as
     // its canonical URL. Without it Next (resolve-opengraph.js) resolves
     // og:url to null, so no page emits one and crawlers use the URL fetched.
-    const src = readFileSync(join(APP_DIR, "layout.tsx"), "utf8");
-    const start = src.indexOf("openGraph: {");
-    const end = src.indexOf("twitter: {");
-    // Guard the slice itself: a missing or reordered block must not pass vacuously.
-    expect(start).toBeGreaterThanOrEqual(0);
-    expect(end).toBeGreaterThan(start);
-    const og = src.slice(start, end);
-    expect(/\burl:/.test(og)).toBe(false);
+    // The layout takes its metadata from rootMetadata(), so check its output.
+    const og = rootMetadata(env).openGraph;
+    expect(og).toBeDefined();
+    expect(og).not.toHaveProperty("url");
   });
 
   it("has a root not-found page, not just the console one", () => {

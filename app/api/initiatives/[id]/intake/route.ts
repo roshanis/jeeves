@@ -1,10 +1,12 @@
 import { getDb } from "@/lib/db/client";
 import { intakePayloadSchema } from "@/lib/services/intake-payload-schema";
 import { ConflictError, IllegalTransitionError, NotFoundError, getIntakeDraft, updateIntakeDraft } from "@/lib/services/initiative-service";
-import { extractSessionToken, guardFailureResponse, resolveSession, runMutationGuard } from "@/lib/services/route-guard";
+import { guardFailureResponse, runMutationGuard } from "@/lib/services/route-guard";
+import { requireViewerForRequest } from "@/lib/services/require-viewer";
 import { BodyReadError, hasNul, readBodyText } from "@/lib/http/read-json-body";
 import { isRouteId, notFoundResponse } from "@/lib/http/route-id";
 import { INTAKE_AUTHOR_ROLES } from "@/lib/services/intake-author-roles";
+import { databaseNotReady } from "@/lib/http/database-gate";
 
 function failure(error: unknown): Response {
   if (error instanceof NotFoundError) return Response.json({ error: error.message }, { status: 404 });
@@ -14,16 +16,22 @@ function failure(error: unknown): Response {
 }
 
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }): Promise<Response> {
-  const session = await resolveSession(extractSessionToken(req));
-  if (!session.actor) return Response.json({ error: "invalid or missing session" }, { status: 401 });
-  if (!INTAKE_AUTHOR_ROLES.has(session.actor.role)) return Response.json({ error: "only requesters may edit an intake draft" }, { status: 403 });
+  const unavailable = databaseNotReady();
+  if (unavailable) return unavailable;
+  const gate = await requireViewerForRequest(req);
+  if (!gate.ok) return gate.response;
+  const { actor, workspaceId } = gate.viewer;
+  if (!actor) return Response.json({ error: "invalid or missing session" }, { status: 401 });
+  if (!INTAKE_AUTHOR_ROLES.has(actor.role)) return Response.json({ error: "only requesters may edit an intake draft" }, { status: 403 });
   const { id } = await params;
   if (!isRouteId(id)) return notFoundResponse();
-  try { return Response.json(await getIntakeDraft(getDb(), id, session.actor, session.workspaceId)); }
+  try { return Response.json(await getIntakeDraft(getDb(), id, actor, workspaceId)); }
   catch (error) { return failure(error); }
 }
 
 export async function PUT(req: Request, { params }: { params: Promise<{ id: string }> }): Promise<Response> {
+  const unavailable = databaseNotReady();
+  if (unavailable) return unavailable;
   const guard = await runMutationGuard(req, undefined, { allowPublic: true });
   if (!guard.ok) return guardFailureResponse(guard.failure);
   if (!INTAKE_AUTHOR_ROLES.has(guard.actor.role)) return Response.json({ error: "only requesters may edit an intake draft" }, { status: 403 });

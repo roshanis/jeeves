@@ -25,11 +25,12 @@
 import { z } from "zod";
 import { getAgentPort } from "@/lib/agents";
 import type { AgentPort, PortFailure } from "@/lib/agents/ports";
-import { agentInitializationResponse } from "@/lib/services/agent-error-response";
+import { agentInitializationResponse, llmNotConfigured } from "@/lib/services/agent-error-response";
 import { evaluateCompleteness } from "@/lib/intake/completeness";
 import type { IntakePayload } from "@/lib/intake/types";
 import { EMPTY_INTAKE_PAYLOAD } from "@/lib/intake/defaults";
 import { guardFailureResponse, reserveDailyBudget, runMutationGuard } from "@/lib/services/route-guard";
+import { databaseNotReady } from "@/lib/http/database-gate";
 
 const MAX_MESSAGES = 50;
 const MAX_MESSAGE_CHARS = 4000;
@@ -105,6 +106,13 @@ function coerceToIntakePayload(portPayload: Readonly<Record<string, unknown>>): 
 }
 
 export async function POST(req: Request): Promise<Response> {
+  const unavailable = databaseNotReady();
+  if (unavailable) return unavailable;
+  // A production install with no LLM has nothing to spend tokens on, so no
+  // budget is reserved below; the 503 comes from getAgentPort() once the
+  // caller is accepted (the guard still authenticates first).
+  const noLlm = llmNotConfigured();
+
   let flattenedConversation = "";
   let serializedPartialPayload = "";
   const guard = await runMutationGuard(req, (json) => {
@@ -168,8 +176,10 @@ export async function POST(req: Request): Promise<Response> {
 
   // Reserve only now that the caller is authenticated, is a requester and
   // sent a valid body: a refused call never spends the shared daily cap.
-  const budget = await reserveDailyBudget(estimatedTokens);
-  if (budget) return Response.json({ error: budget.message }, { status: budget.status });
+  if (!noLlm) {
+    const budget = await reserveDailyBudget(estimatedTokens);
+    if (budget) return Response.json({ error: budget.message }, { status: budget.status });
+  }
 
   let port: AgentPort;
   try {
@@ -197,7 +207,7 @@ export async function POST(req: Request): Promise<Response> {
 
   // "done" semantics (judgment call, documented per task brief): the
   // intake-spec §2 completeness model gates initial submit on BLOCKING rules
-  // only (REQUIRED-FOR-TIER and ADVISORY never block) — so we mirror that
+  // only (REQUIRED-FOR-TIER and ADVISORY never block submit) — so we mirror that
   // exact precedent here: the conversational interview is "done" once there
   // are no remaining BLOCKING-level gaps, matching evaluateCompleteness's
   // own `canSubmit` semantics (canSubmit === no BLOCKING gaps). We reuse

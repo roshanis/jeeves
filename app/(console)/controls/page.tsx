@@ -7,18 +7,26 @@ import { logUnexpectedError } from "@/lib/http/log-error";
 import { listExceptions, type ExceptionRow } from "@/lib/services/exception-service";
 import { ControlCatalog } from "@/components/jeeves/control-catalog";
 import { ExceptionsPanel } from "@/components/jeeves/exceptions-panel";
+import { isDemoMode, isProductionMode } from "@/lib/config/deployment-mode";
 import { BASE_DATE_MS } from "@/lib/demo/reference-data";
 import type { Metadata } from "next";
 
 
-export const metadata: Metadata = {
-  title: "Control catalog",
-  description:
-    "Every governance control Meridian Health enforces, across all eight domains — policy source, status and evidence, read-only.",
-};
+// Mode-aware, so resolved per request: Meridian Health is the demo's fictional
+// payer; a production install is someone else's.
+export function generateMetadata(): Metadata {
+  return {
+    title: "Control catalog",
+    description: isProductionMode()
+      ? "Every governance control enforced, across all eight domains — policy source, status and evidence, read-only."
+      : "Every governance control Meridian Health enforces, across all eight domains — policy source, status and evidence, read-only.",
+  };
+}
 
 // The demo timeline is frozen at 2026-07-01 and the monitor evaluates at base+14d
-// (same constant as app/api/monitor/run/route.ts); evidence freshness uses that clock.
+// (same constant as app/api/monitor/run/route.ts); in the demo, evidence freshness
+// uses that clock. A production install has real evidence dates and no frozen
+// timeline, so there the catalog falls back to the browser's clock.
 const DEMO_AS_OF_MS = BASE_DATE_MS + 14 * 24 * 60 * 60 * 1000;
 
 // Control catalog (plan §6): the full ControlDefinition catalog across all 8
@@ -55,20 +63,23 @@ export default async function ControlsPage() {
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Control catalog</h1>
         <p className="text-sm text-muted-foreground">
-          Every governance control Meridian enforces, across every domain —
+          Every governance control {isProductionMode() ? "enforced" : "Meridian enforces"}, across every domain —
           policy source, status, and evidence, read-only.
         </p>
         <p className="mt-1 text-sm text-muted-foreground">
           {controls.length} controls across {domainCount} domains + runtime.
         </p>
-        <Link
-          href="/frameworks"
-          className="mt-1 inline-block text-sm font-medium text-primary hover:underline"
-        >
-          Framework mappings (NIST AI RMF · EU AI Act) →
-        </Link>
+        {/* /frameworks is a marketing path: a production install answers it with an empty 404. */}
+        {isDemoMode() ? (
+          <Link
+            href="/frameworks"
+            className="mt-1 inline-block text-sm font-medium text-primary hover:underline"
+          >
+            Framework mappings (NIST AI RMF · EU AI Act) →
+          </Link>
+        ) : null}
       </div>
-      <ControlCatalog controls={controls} asOfMs={DEMO_AS_OF_MS} />
+      <ControlCatalog controls={controls} asOfMs={isProductionMode() ? undefined : DEMO_AS_OF_MS} />
       <ExceptionsPanel exceptions={exceptions} loadFailed={exceptionsLoadFailed} />
     </div>
   );

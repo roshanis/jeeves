@@ -34,7 +34,9 @@ governance, end to end:
    completeness check flags missing answers without blocking submission.
 2. **QC gate** — a submitted intake waits for a Program Office or Admin
    persona to open QC, then to route it on or return it to the requester
-   with a reason. Nothing reaches triage without passing QC.
+   with a reason. Nothing reaches triage without passing QC, and QC cannot
+   pass while an answer the risk tier requires is missing: the Program Office
+   returns the intake instead.
 3. **Deterministic risk triage** — the overlay answers are run through fixed
    rules (`lib/triage/rules.ts`) to assign a tier: **Low / Medium / High /
    Critical**. No LLM is involved in the tier decision itself.
@@ -165,9 +167,17 @@ persistent rate limits; all existing model-budget limits still apply.
 ### Zero-setup local run (no `DATABASE_URL` → PGlite)
 
 ```bash
-npm run db:seed   # seeds a persistent local PGlite store at ./.pglite
-npm run dev       # http://localhost:3000
+JEEVES_MODE=demo npm run db:seed   # seeds a persistent local PGlite store at ./.pglite
+JEEVES_MODE=demo npm run dev       # http://localhost:3000
 ```
+
+The deployment mode defaults to **production**, which never falls back to the
+local PGlite store, the mock data provider or the mock LLM, so a local run says
+`JEEVES_MODE=demo` out loud (`next dev` also reads it from `.env.local`; the
+`tsx` scripts do not read `.env` files). The seed and reset scripts
+(`npm run db:seed`, `npm run reset:demo`) need it for every database, not only
+for PGlite: they refuse to run outside demo mode even with `DATABASE_URL` set,
+so they can never stamp a database that was not meant to be a demo.
 
 `http://localhost:3000` (`/`) is the public marketing landing page; click
 through (or go straight to `/inbox`) for the governance operations
@@ -177,7 +187,7 @@ further configuration.
 ### Interactive visitor demo
 
 ```bash
-DATA_PROVIDER=db JEEVES_COOKIE_SECRET=<server-signing-key> npm run dev
+JEEVES_MODE=demo DATA_PROVIDER=db JEEVES_COOKIE_SECRET=<server-signing-key> npm run dev
 ```
 
 Click **Try the demo** to enter as a requester and open intake. Click **Use a
@@ -192,11 +202,14 @@ An explicit nonblank `DATABASE_URL` takes precedence. On Vercel, a hosted databa
 and signing key are required; local PGlite is not a serverless fallback. Keep
 `DATA_PROVIDER=mock` only for an intentional read-only preview, and
 set `OPENAI_API_KEY` (+ optionally `OPENAI_MODEL`) only if you want genuinely
-live-generated draft text — see `.env.example` for the main variables (it is a starting template, not an exhaustive list; the code reads a few more, such as `CRON_SECRET`, `JEEVES_PGLITE_DIR`, `JEEVES_DB_DRIVER` and the Phoenix tracing variables). Leave `OPENAI_API_KEY` empty or commented out unless you have a real key: any non-empty value, including the template's placeholder, switches the app to the live OpenAI adapter.
+live-generated draft text — see [`docs/environment-reference.md`](docs/environment-reference.md) for every variable the code reads. `.env.example` is a starting template, not an exhaustive list (the code reads more, such as `CRON_SECRET`, `JEEVES_PGLITE_DIR`, `JEEVES_DB_DRIVER` and the Phoenix tracing variables). Leave `OPENAI_API_KEY` empty or commented out unless you have a real key: any non-empty value, including the template's placeholder, switches the app to the live OpenAI adapter.
 
 Note: `scripts/seed.ts` refuses to run when `NODE_ENV=production` unless
 `ALLOW_SEED=1` is explicitly set, to prevent an accidental reseed of a live
-hosted demo.
+hosted demo. Independently of that, the database carries an installation stamp
+(`installation.deploy_mode`, migration 0015): `scripts/seed.ts` and
+`scripts/reset-demo.ts` stamp a database `demo` and refuse one stamped
+`production`, even with `ALLOW_SEED=1`.
 
 **Optional env vars** (all default to a safe, honest fallback):
 
@@ -241,14 +254,25 @@ Whichever runtime is selected, the hard rule is unchanged: **agents draft,
 recommend, route, and flag missing evidence — they never approve.**
 
 **Demo reset** — never run `npm run reset:demo` or `npm run db:seed` against a
-shared or hosted database: they delete every visitor workspace, the audit log
-and any real inbound requests, and sign every visitor out. Use them only on a
+shared or hosted database: they delete every visitor workspace and the audit
+log and sign every visitor out. (They refuse to run at all once the database
+holds evidence, or real inbound requests unless
+`ALLOW_DISCARD_PUBLIC_REQUESTS` names how many to discard.) Use them only on a
 local or disposable database (local PGlite, a Neon branch, a second project).
 To start over on the live demo, use **Exit demo** to get a fresh workspace.
-`npm run reset:demo` on a disposable database re-seeds to the canonical state,
-clears session and budget state, and prints a pre-flight checklist (workspace
-signing, agent/telemetry connector status, cron secret, build SHA, and a
-12-initiative smoke count).
+On a disposable database, before a live walkthrough, run:
+
+```bash
+JEEVES_MODE=demo npm run reset:demo
+```
+
+It re-seeds to the canonical state, clears live session + budget state, and
+prints a pre-flight checklist (workspace signing, agent/telemetry connector status,
+cron secret, build SHA, and a 12-initiative smoke count).
+
+Run it on a fresh or disposable database only: it refuses once evidence exists,
+and while real inbound requests (public- workspaces) are present unless
+`ALLOW_DISCARD_PUBLIC_REQUESTS=<count>` confirms discarding them.
 
 See `docs/deploy.md` for the full Vercel + Neon deployment runbook, known
 gaps, and a demo-day checklist. Use `npm run db:migrate` (non-destructive) to

@@ -16,7 +16,11 @@
  * 403:   read-only preview (answered before the token is looked at)
  * 404:   no operator token configured — the queue is off, not merely locked
  * 429:   too many failed attempts from this client
+ *
+ * Production mode has no operator queue: every method answers 404 before the
+ * token, the rate limiter or the database is consulted.
  */
+import { demoDoorClosed, demoDoorFallbacks } from "@/lib/config/demo-doors";
 import { getDb } from "@/lib/db/client";
 import { listPublicSubmissions } from "@/lib/services/public-intake-service";
 import {
@@ -27,10 +31,19 @@ import {
   isOperatorAuthorized,
   operatorAttemptStatus,
 } from "@/lib/services/route-guard";
+import { databaseNotReady } from "@/lib/http/database-gate";
 
 const NO_STORE = { "Cache-Control": "no-store" };
 
+export const { POST, PUT, PATCH, DELETE, OPTIONS } = demoDoorFallbacks("GET");
+
 export async function GET(req: Request): Promise<Response> {
+  const closed = demoDoorClosed();
+  if (closed) return closed;
+
+  const unavailable = databaseNotReady();
+  if (unavailable) return unavailable;
+
   const expected = configuredOperatorToken();
   if (!expected) {
     return Response.json({ error: "not found" }, { status: 404, headers: NO_STORE });

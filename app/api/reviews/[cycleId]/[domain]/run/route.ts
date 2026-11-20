@@ -17,6 +17,7 @@ import { isRouteId, notFoundResponse } from "@/lib/http/route-id";
 import { BodyReadError, DEFAULT_BODY_MAX_BYTES, readBodyText } from "@/lib/http/read-json-body";
 import type { Domain } from "@/lib/domain/types";
 import { agentInitializationResponse } from "@/lib/services/agent-error-response";
+import { databaseNotReady } from "@/lib/http/database-gate";
 
 const DOMAINS = [
   "legal",
@@ -35,6 +36,8 @@ export async function POST(
   req: Request,
   context: { params: Promise<{ cycleId: string; domain: string }> },
 ): Promise<Response> {
+  const unavailable = databaseNotReady();
+  if (unavailable) return unavailable;
   const guard = await runMutationGuard(req, undefined);
   if (!guard.ok) {
     return guardFailureResponse(guard.failure);

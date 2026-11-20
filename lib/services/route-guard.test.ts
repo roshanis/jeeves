@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq, sql } from "drizzle-orm";
+import { markBootFailed, resetBootStateForTests } from "../config/boot-state";
 import { closeTestDb, createTestDb, type TestDb } from "../db/test-client";
 import { rateLimitBuckets, runBudget, sessions } from "../db/schema";
 import { reserve } from "../security/budget";
@@ -321,6 +322,124 @@ describe("lib/services/route-guard", () => {
   });
 });
 
+// Pure header parsing: kept outside the DB-backed describe above so these do
+// not each pay for a fresh PGlite instance.
+describe("clientKeyFor — JEEVES_TRUSTED_PROXY_HOPS", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+  });
+
+  const withXff = (value: string | null): Request =>
+    new Request("http://localhost/api/x", value === null ? {} : { headers: { "x-forwarded-for": value } });
+
+  // Vercel overwrites the header, so the leftmost entry is the client.
+  // That default must not change: it is what the live demo runs on.
+  it.each([undefined, "", "   ", "0", " 0 ", "00"])(
+    "keeps the leftmost entry (today's behaviour) when set to %j",
+    (value) => {
+      if (value !== undefined) vi.stubEnv("JEEVES_TRUSTED_PROXY_HOPS", value);
+      expect(clientKeyFor(withXff("9.9.9.9, 1.1.1.1, 2.2.2.2"))).toBe("9.9.9.9");
+    },
+  );
+
+  it("with 1 hop (ALB) takes the rightmost entry, which the ALB appended", () => {
+    vi.stubEnv("JEEVES_TRUSTED_PROXY_HOPS", "1");
+    expect(clientKeyFor(withXff("203.0.113.9"))).toBe("203.0.113.9");
+  });
+
+  it("with 1 hop ignores spoofed entries to the left of the one the proxy appended", () => {
+    vi.stubEnv("JEEVES_TRUSTED_PROXY_HOPS", "1");
+    // The attacker sent "X-Forwarded-For: 10.0.0.1, 10.0.0.2"; the ALB
+    // appended the address it actually saw.
+    expect(clientKeyFor(withXff("10.0.0.1, 10.0.0.2, 203.0.113.9"))).toBe("203.0.113.9");
+  });
+
+  it("rotating a spoofed left entry does not change the key", () => {
+    vi.stubEnv("JEEVES_TRUSTED_PROXY_HOPS", "1");
+    const a = clientKeyFor(withXff("1.1.1.1, 203.0.113.9"));
+    const b = clientKeyFor(withXff("2.2.2.2, 203.0.113.9"));
+    expect(a).toBe(b);
+  });
+
+  it("with 2 hops (CloudFront then ALB) skips the edge address and takes the viewer", () => {
+    vi.stubEnv("JEEVES_TRUSTED_PROXY_HOPS", "2");
+    // spoofed, viewer (appended by CloudFront), edge (appended by the ALB)
+    expect(clientKeyFor(withXff("6.6.6.6, 198.51.100.7, 130.176.0.1"))).toBe("198.51.100.7");
+  });
+
+  it("tolerates whitespace around the setting and the entries", () => {
+    vi.stubEnv("JEEVES_TRUSTED_PROXY_HOPS", " 1 ");
+    expect(clientKeyFor(withXff("  6.6.6.6 ,   203.0.113.9  "))).toBe("203.0.113.9");
+  });
+
+  it("falls back to the constant key when the header is absent", () => {
+    vi.stubEnv("JEEVES_TRUSTED_PROXY_HOPS", "1");
+    expect(clientKeyFor(withXff(null))).toBe("unknown-client");
+  });
+
+  it("does not trust a shorter chain than configured (a request that skipped a proxy)", () => {
+    vi.stubEnv("JEEVES_TRUSTED_PROXY_HOPS", "2");
+    // One entry cannot have passed through two trusted proxies, so it is
+    // whatever the caller typed. Never use it.
+    expect(clientKeyFor(withXff("6.6.6.6"))).toBe("unknown-client");
+  });
+
+  it("falls back to the constant key when the selected entry is empty", () => {
+    vi.stubEnv("JEEVES_TRUSTED_PROXY_HOPS", "1");
+    expect(clientKeyFor(withXff("1.1.1.1,,"))).toBe("unknown-client");
+  });
+
+  // `none`: nothing in front of the app appends to or overwrites the header
+  // (a directly published port), so any X-Forwarded-For is forged.
+  describe("none (no proxy in front)", () => {
+    it("is a valid value: it logs no warning", () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      vi.stubEnv("JEEVES_TRUSTED_PROXY_HOPS", "none");
+      clientKeyFor(withXff("203.0.113.9"));
+      expect(warn).not.toHaveBeenCalled();
+    });
+
+    it("ignores the header: every caller gets the same key as a request with no header", () => {
+      vi.stubEnv("JEEVES_TRUSTED_PROXY_HOPS", "none");
+      const bare = clientKeyFor(withXff(null));
+      expect(bare).toBe("unknown-client");
+      expect(clientKeyFor(withXff("203.0.113.9, 198.51.100.7"))).toBe(bare);
+      expect(clientKeyFor(withXff("6.6.6.6"))).toBe(bare);
+    });
+
+    it.each(["NONE", " none ", " None "])("accepts %j case-insensitively after trimming", (value) => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      vi.stubEnv("JEEVES_TRUSTED_PROXY_HOPS", value);
+      expect(clientKeyFor(withXff("203.0.113.9, 198.51.100.7"))).toBe("unknown-client");
+      expect(warn).not.toHaveBeenCalled();
+    });
+  });
+
+  // A malformed value must not silently degrade to "trust the leftmost
+  // entry" - that would reopen the spoofing hole on exactly the install
+  // that tried to close it. Fail closed: one shared bucket, loud log.
+  it.each(["abc", "-1", "1.5", "1e2", "0x1", "+1", "NaN", "Infinity", "one", "1,2", "99999999999999999999"])(
+    "treats malformed value %j as misconfiguration: ignores the header and warns",
+    (value) => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      vi.stubEnv("JEEVES_TRUSTED_PROXY_HOPS", value);
+      expect(clientKeyFor(withXff("6.6.6.6, 203.0.113.9"))).toBe("unknown-client");
+      expect(warn).toHaveBeenCalled();
+      expect(String(warn.mock.calls[0]![0])).toContain("JEEVES_TRUSTED_PROXY_HOPS");
+    },
+  );
+
+  it("warns once per malformed value, not on every request", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.stubEnv("JEEVES_TRUSTED_PROXY_HOPS", "not-a-number-once");
+    clientKeyFor(withXff("1.1.1.1"));
+    clientKeyFor(withXff("1.1.1.1"));
+    clientKeyFor(withXff("1.1.1.1"));
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("client addresses in rate-limit buckets", () => {
   beforeEach(async () => {
     testDb = await createTestDb();
@@ -431,5 +550,29 @@ describe("public role is denied by default", () => {
     expect(denied.failure.status).toBe(403);
     const allowed = await runMutationGuard(reqWithBearer(issued.token, "10.1.0.3"), undefined, { allowPublic: true });
     expect(allowed).toMatchObject({ ok: true, actor: { role: "public" } });
+  });
+});
+
+describe("a server that failed its boot checks", () => {
+  beforeEach(async () => {
+    testDb = await createTestDb();
+  });
+
+  afterEach(async () => {
+    resetBootStateForTests();
+    await closeTestDb(testDb);
+  });
+
+  it("refuses mutations and session minting with a bare 503, before any session lookup", async () => {
+    const session = (await issueDemoSession("priya-raman"))!;
+    const pub = await issuePublicSession("10.2.0.1");
+    markBootFailed("database is stamped production");
+
+    const denied = await runMutationGuard(reqWithBearer(session.token, "10.2.0.2"), undefined);
+    expect(denied).toMatchObject({ ok: false, failure: { status: 503 } });
+    expect(JSON.stringify(denied)).not.toContain("stamped");
+    expect(await issueDemoSession("priya-raman")).toBeNull();
+    expect(await issuePublicSession("10.2.0.3")).toHaveProperty("readOnly");
+    expect("token" in pub).toBe(true);
   });
 });

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTestDb, closeTestDb, type TestDb } from "../db/test-client";
 import { recordLocks } from "../db/test-lock-recorder";
 import { CHAMPION_PREFILL_PAYLOAD } from "../intake/champion-prefill";
+import { TRIAGE_READY_CHAMPION_PAYLOAD } from "../../tests/fixtures/triage-ready-intake";
 import type { IntakePayload } from "../intake/types";
 import {
   auditEvents,
@@ -120,7 +121,7 @@ describe("lib/services/initiative-service", () => {
   describe("review integrity regression", () => {
     async function reviewFixture(workspaceId?: string) {
       const draft = await svc.createDraft(db, {
-        payload: CHAMPION_PREFILL_PAYLOAD, requesterActor: REQUESTER,
+        payload: TRIAGE_READY_CHAMPION_PAYLOAD, requesterActor: REQUESTER,
         requesterName: "Priya Raman", workspaceId,
       });
       await svc.submitIntake(db, draft.initiativeId, REQUESTER, workspaceId ?? null);
@@ -271,7 +272,7 @@ describe("lib/services/initiative-service", () => {
   describe("champion happy path (plan.md §2 steps 1-4)", () => {
     it("createDraft -> submit -> triage(critical, 8 domains) -> draft-run -> sign -> conditional decide -> effective controls", async () => {
       const draft = await svc.createDraft(db, {
-        payload: CHAMPION_PREFILL_PAYLOAD,
+        payload: TRIAGE_READY_CHAMPION_PAYLOAD,
         requesterActor: REQUESTER,
         requesterName: "Priya Raman",
       });
@@ -280,7 +281,7 @@ describe("lib/services/initiative-service", () => {
       const initRow = (await db.select().from(initiatives).where(eq(initiatives.id, draft.initiativeId)))[0]!;
       expect(initRow.state).toBe("intake_draft");
 
-      // BLOCKING passes (retentionIntent gap is REQUIRED_FOR_TIER, not BLOCKING) -> submit succeeds.
+      // BLOCKING passes -> submit succeeds (the champion's open retention gap is REQUIRED_FOR_TIER, which blocks QC, not submit; the fixture answers it).
       const submitResult = await svc.submitIntake(db, draft.initiativeId, REQUESTER);
       expect(submitResult.submitted).toBe(true);
 
@@ -431,7 +432,6 @@ describe("lib/services/initiative-service", () => {
     });
 
     it.each([
-      ["a REQUIRED_FOR_TIER gap (vendor name missing, RFT-03)", (p: IntakePayload): IntakePayload => ({ ...p, modelVendor: { ...p.modelVendor, vendorName: null } })],
       ["no data-retention answer (FL-2.1(2))", (p: IntakePayload): IntakePayload => ({ ...p, data: { ...p.data, retentionIntent: null } })],
     ])("an incomplete intake is never fast-lane eligible: %s routes to full review", async (_label, mutate) => {
       const draft = await svc.createDraft(db, {
@@ -446,6 +446,21 @@ describe("lib/services/initiative-service", () => {
       expect(result.branch).toBe("review");
       const row = (await db.select().from(initiatives).where(eq(initiatives.id, draft.initiativeId)))[0]!;
       expect(row.state).toBe("in_review");
+    });
+
+    it("RFT-03 on a Low-tier intake is refused at QC (was: routed to full review before d01)", async () => {
+      const draft = await svc.createDraft(db, {
+        payload: { ...lowTierPayload(), modelVendor: { ...lowTierPayload().modelVendor, vendorName: null } },
+        requesterActor: { id: "dan-kowalski", role: "requester" },
+        requesterName: "Dan Kowalski",
+      });
+      await svc.submitIntake(db, draft.initiativeId, { id: "dan-kowalski", role: "requester" });
+      await svc.startQc(db, draft.initiativeId, PROGRAM);
+      const err = await svc.triage(db, draft.initiativeId).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(svc.IntakeTierGapsError);
+      expect((err as InstanceType<typeof svc.IntakeTierGapsError>).gaps.map((g) => g.ruleId)).toEqual(["RFT-03"]);
+      const row = (await db.select().from(initiatives).where(eq(initiatives.id, draft.initiativeId)))[0]!;
+      expect(row.state).toBe("in_qc");
     });
 
     it("fast-lane approval records the eligibility snapshot, policy version and accountable approver on the audit trail", async () => {
@@ -527,7 +542,7 @@ describe("lib/services/initiative-service", () => {
   describe("separation of duties (SoD)", () => {
     async function setUpInReview() {
       const draft = await svc.createDraft(db, {
-        payload: CHAMPION_PREFILL_PAYLOAD,
+        payload: TRIAGE_READY_CHAMPION_PAYLOAD,
         requesterActor: REQUESTER,
         requesterName: "Priya Raman",
       });
@@ -589,7 +604,7 @@ describe("lib/services/initiative-service", () => {
   describe("reviewer-domain assignment authz", () => {
     async function setUpInReview() {
       const draft = await svc.createDraft(db, {
-        payload: CHAMPION_PREFILL_PAYLOAD,
+        payload: TRIAGE_READY_CHAMPION_PAYLOAD,
         requesterActor: REQUESTER,
         requesterName: "Priya Raman",
       });
@@ -664,7 +679,7 @@ describe("lib/services/initiative-service", () => {
   describe("runReviewAgent (on-demand agent run authz)", () => {
     async function setUpInReview() {
       const draft = await svc.createDraft(db, {
-        payload: CHAMPION_PREFILL_PAYLOAD,
+        payload: TRIAGE_READY_CHAMPION_PAYLOAD,
         requesterActor: REQUESTER,
         requesterName: "Priya Raman",
       });
@@ -771,7 +786,7 @@ describe("lib/services/initiative-service", () => {
 
     async function setUpInReview() {
       const draft = await svc.createDraft(db, {
-        payload: CHAMPION_PREFILL_PAYLOAD,
+        payload: TRIAGE_READY_CHAMPION_PAYLOAD,
         requesterActor: REQUESTER,
         requesterName: "Priya Raman",
       });
@@ -941,7 +956,7 @@ describe("lib/services/initiative-service", () => {
   describe("transactionality", () => {
     it("a forced failure mid-triage rolls back both the state change and any partial rows", async () => {
       const draft = await svc.createDraft(db, {
-        payload: CHAMPION_PREFILL_PAYLOAD,
+        payload: TRIAGE_READY_CHAMPION_PAYLOAD,
         requesterActor: REQUESTER,
         requesterName: "Priya Raman",
       });
@@ -984,7 +999,7 @@ describe("lib/services/initiative-service", () => {
 
     it.each(["approved", "rejected"] as const)("decide() refuses conditions on a '%s' decision before any write", async (decision) => {
       const draft = await svc.createDraft(db, {
-        payload: CHAMPION_PREFILL_PAYLOAD,
+        payload: TRIAGE_READY_CHAMPION_PAYLOAD,
         requesterActor: REQUESTER,
         requesterName: "Priya Raman",
       });
@@ -1005,7 +1020,7 @@ describe("lib/services/initiative-service", () => {
 
     it("decide() with an invalid conditionally_approved (no conditions) throws before any write", async () => {
       const draft = await svc.createDraft(db, {
-        payload: CHAMPION_PREFILL_PAYLOAD,
+        payload: TRIAGE_READY_CHAMPION_PAYLOAD,
         requesterActor: REQUESTER,
         requesterName: "Priya Raman",
       });
@@ -1080,7 +1095,7 @@ describe("lib/services/initiative-service", () => {
     /** Champion payload, drafted + fully signed across all 8 required domains, ready for decide(). */
     async function setUpSignedInReview(): Promise<{ initiativeId: string; cycleId: string }> {
       const draft = await svc.createDraft(db, {
-        payload: CHAMPION_PREFILL_PAYLOAD,
+        payload: TRIAGE_READY_CHAMPION_PAYLOAD,
         requesterActor: REQUESTER,
         requesterName: "Priya Raman",
       });
@@ -1293,7 +1308,7 @@ describe("lib/services/initiative-service", () => {
       requiredDomains: Domain[];
     }> {
       const draft = await svc.createDraft(db, {
-        payload: CHAMPION_PREFILL_PAYLOAD,
+        payload: TRIAGE_READY_CHAMPION_PAYLOAD,
         requesterActor: REQUESTER,
         requesterName: "Priya Raman",
       });
@@ -1347,7 +1362,7 @@ describe("lib/services/initiative-service", () => {
 
     it("rejects a cycle linked to another initiative's assessment instead of substituting the latest assessment", async () => {
       const { initiativeId, reassessCycleId } = await setUpZeroRowReassessmentCycle();
-      const other = await svc.createDraft(db, { payload: CHAMPION_PREFILL_PAYLOAD, requesterActor: REQUESTER, requesterName: "Priya Raman" });
+      const other = await svc.createDraft(db, { payload: TRIAGE_READY_CHAMPION_PAYLOAD, requesterActor: REQUESTER, requesterName: "Priya Raman" });
       await svc.submitIntake(db, other.initiativeId, REQUESTER);
       // QC gate: `submitted --triage-->` no longer exists — the fan-out is
       // reachable only through `in_qc`, which the Program Office opens.
@@ -1465,7 +1480,7 @@ describe("lib/services/initiative-service", () => {
   describe("system actor default for triage()", () => {
     it("defaults actor to system when omitted", async () => {
       const draft = await svc.createDraft(db, {
-        payload: CHAMPION_PREFILL_PAYLOAD,
+        payload: TRIAGE_READY_CHAMPION_PAYLOAD,
         requesterActor: REQUESTER,
         requesterName: "Priya Raman",
       });
@@ -1653,7 +1668,7 @@ describe("lib/services/initiative-service", () => {
 
       it("triage checks workspace before lifecycle validation, and permits owner/internal null-workspace calls", async () => {
         const foreignWrongState = await svc.createDraft(db, {
-          payload: CHAMPION_PREFILL_PAYLOAD,
+          payload: TRIAGE_READY_CHAMPION_PAYLOAD,
           requesterActor: REQUESTER,
           requesterName: "Priya Raman",
           workspaceId: "ws-A",
@@ -1669,7 +1684,7 @@ describe("lib/services/initiative-service", () => {
         ).resolves.toMatchObject({ branch: "review" });
 
         const seededStyle = await svc.createDraft(db, {
-          payload: { ...CHAMPION_PREFILL_PAYLOAD, basics: { ...CHAMPION_PREFILL_PAYLOAD.basics, title: "Shared triage" } },
+          payload: { ...TRIAGE_READY_CHAMPION_PAYLOAD, basics: { ...TRIAGE_READY_CHAMPION_PAYLOAD.basics, title: "Shared triage" } },
           requesterActor: REQUESTER,
           requesterName: "Priya Raman",
           workspaceId: null,
@@ -1686,7 +1701,7 @@ describe("lib/services/initiative-service", () => {
       workspaceId: string | null,
     ): Promise<{ initiativeId: string; cycleId: string }> {
       const draft = await svc.createDraft(db, {
-        payload: CHAMPION_PREFILL_PAYLOAD,
+        payload: TRIAGE_READY_CHAMPION_PAYLOAD,
         requesterActor: REQUESTER,
         requesterName: "Priya Raman",
         workspaceId,
@@ -1818,7 +1833,7 @@ describe("lib/services/initiative-service", () => {
       // would test the QC gate rather than the workspace check this block is about.
       async function inQcInWorkspace(workspaceId: string | null): Promise<string> {
         const draft = await svc.createDraft(db, {
-          payload: CHAMPION_PREFILL_PAYLOAD,
+          payload: TRIAGE_READY_CHAMPION_PAYLOAD,
           requesterActor: REQUESTER,
           requesterName: "Priya Raman",
           workspaceId,
@@ -1943,7 +1958,7 @@ describe("lib/services/initiative-service", () => {
   describe("concurrency: compare-and-set + unique constraint (external-review finding #3)", () => {
     it("initiative_decisions_cycle_uq: a second row for the same cycle violates the unique index", async () => {
       const draft = await svc.createDraft(db, {
-        payload: CHAMPION_PREFILL_PAYLOAD,
+        payload: TRIAGE_READY_CHAMPION_PAYLOAD,
         requesterActor: REQUESTER,
         requesterName: "Priya Raman",
       });
@@ -1981,7 +1996,7 @@ describe("lib/services/initiative-service", () => {
 
     it("decide() called twice sequentially on the same cycle: the second is rejected and no second decision row is written", async () => {
       const draft = await svc.createDraft(db, {
-        payload: CHAMPION_PREFILL_PAYLOAD,
+        payload: TRIAGE_READY_CHAMPION_PAYLOAD,
         requesterActor: REQUESTER,
         requesterName: "Priya Raman",
       });
@@ -2011,7 +2026,7 @@ describe("lib/services/initiative-service", () => {
 
     it("decide(): a write that lands between this transaction's read and its CAS update throws ConflictError, and the whole transaction rolls back", async () => {
       const draft = await svc.createDraft(db, {
-        payload: CHAMPION_PREFILL_PAYLOAD,
+        payload: TRIAGE_READY_CHAMPION_PAYLOAD,
         requesterActor: REQUESTER,
         requesterName: "Priya Raman",
       });
@@ -2086,7 +2101,7 @@ describe("lib/services/initiative-service", () => {
 
     it("signReview(): a write that lands between this transaction's read and its CAS update throws ConflictError, and the whole transaction rolls back", async () => {
       const draft = await svc.createDraft(db, {
-        payload: CHAMPION_PREFILL_PAYLOAD,
+        payload: TRIAGE_READY_CHAMPION_PAYLOAD,
         requesterActor: REQUESTER,
         requesterName: "Priya Raman",
       });
@@ -2230,7 +2245,7 @@ describe("lib/services/initiative-service", () => {
 
     it("triage(): a write that lands between this transaction's read and its first CAS update throws ConflictError, and the whole transaction rolls back — no duplicate risk assessment or review cycle", async () => {
       const draft = await svc.createDraft(db, {
-        payload: CHAMPION_PREFILL_PAYLOAD,
+        payload: TRIAGE_READY_CHAMPION_PAYLOAD,
         requesterActor: REQUESTER,
         requesterName: "Priya Raman",
       });
@@ -2314,7 +2329,7 @@ describe("lib/services/initiative-service", () => {
   describe("triage() row lock (domain-F27)", () => {
     it("takes the initiative row lock like the sibling transitions", async () => {
       const draft = await svc.createDraft(db, {
-        payload: CHAMPION_PREFILL_PAYLOAD,
+        payload: TRIAGE_READY_CHAMPION_PAYLOAD,
         requesterActor: REQUESTER,
         requesterName: "Priya Raman",
       });

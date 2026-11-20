@@ -11,9 +11,10 @@ import { startDraftRun, getRunProgress } from "@/lib/workflow/review-run";
 import { guardFailureResponse, runMutationGuard } from "@/lib/services/route-guard";
 import { isRouteId, notFoundResponse } from "@/lib/http/route-id";
 import { workspaceMismatch, mutationWorkspaceMismatch } from "@/lib/services/workspace-guard";
-import { resolveViewerWorkspaceId } from "@/lib/services/viewer-workspace";
+import { requireViewerForRequest } from "@/lib/services/require-viewer";
 import type { Domain } from "@/lib/domain/types";
 import { agentInitializationResponse } from "@/lib/services/agent-error-response";
+import { databaseNotReady } from "@/lib/http/database-gate";
 
 /** See file-level comment: only these roles trigger draft-run in any real flow. */
 const DRAFT_RUN_ALLOWED_ROLES = new Set(["requester", "admin"]);
@@ -37,6 +38,8 @@ export async function POST(
   req: Request,
   context: { params: Promise<{ id: string }> },
 ): Promise<Response> {
+  const unavailable = databaseNotReady();
+  if (unavailable) return unavailable;
   const guard = await runMutationGuard(req, () => undefined, { bodyOptional: true });
   if (!guard.ok) {
     return guardFailureResponse(guard.failure);
@@ -89,6 +92,12 @@ export async function POST(
 }
 
 export async function GET(req: Request): Promise<Response> {
+  const unavailable = databaseNotReady();
+  if (unavailable) return unavailable;
+  // Progress polling is a read: demo leaves it open to anonymous visitors
+  // (scoped below), production requires a session (lib/services/require-viewer.ts).
+  const gate = await requireViewerForRequest(req);
+  if (!gate.ok) return gate.response;
   const url = new URL(req.url);
   const cycleId = url.searchParams.get("cycleId");
   if (!cycleId) {
@@ -97,7 +106,7 @@ export async function GET(req: Request): Promise<Response> {
   if (!isRouteId(cycleId)) return Response.json({ error: "invalid cycleId" }, { status: 400 });
 
   const db = getDb();
-  const viewerWorkspaceId = await resolveViewerWorkspaceId(req);
+  const viewerWorkspaceId = gate.viewer.workspaceId;
 
   const [cycle] = await db
     .select({ initiativeId: reviewCycles.initiativeId })

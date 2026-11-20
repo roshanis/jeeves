@@ -16,6 +16,7 @@ vi.mock("@/lib/client/api", async (importOriginal) => ({
   submitIntake: mocks.submit,
 }));
 
+import { DeploymentModeProvider } from "@/lib/client/deployment-mode-context";
 import { IntakeForm } from "@/components/jeeves/intake-form";
 
 const created = { initiativeId: "init-1", slug: "draft-one", intakeVersionId: "iv-1", version: 1 };
@@ -29,7 +30,7 @@ describe("IntakeForm other PHI category", () => {
   it("drops the 'Other PHI category' text when Other is unticked", async () => {
     mocks.create.mockResolvedValue(created);
     mocks.submit.mockResolvedValue({ submitted: true, completenessPct: 95 });
-    render(<IntakeForm />);
+    render(<DeploymentModeProvider mode="demo"><IntakeForm /></DeploymentModeProvider>);
     fireEvent.click(screen.getByRole("button", { name: "Use a sample initiative" }));
     fireEvent.click(screen.getByRole("checkbox", { name: "Other" }));
     fireEvent.change(screen.getByLabelText("Other PHI category"), { target: { value: "Genomic data" } });

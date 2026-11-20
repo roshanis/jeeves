@@ -14,17 +14,23 @@ import {
 } from "@/components/ui/table";
 import { LifecycleBadge } from "@/components/jeeves/lifecycle-badge";
 import { RunMonitorPanel } from "@/components/jeeves/run-monitor-panel";
+import { isDemoMode, isProductionMode } from "@/lib/config/deployment-mode";
 import { ThresholdEditAction } from "@/components/jeeves/threshold-edit-action";
 import { DeploymentActionButton } from "@/components/jeeves/deployment-action-button";
 import type { ThresholdInitiativeOption } from "@/components/jeeves/threshold-edit-dialog";
 import type { Metadata } from "next";
 
 
-export const metadata: Metadata = {
-  title: "Administration",
-  description:
-    "Threshold edits and deployment pause/resume for Meridian Health's AI governance demo — both logged, and deliberately narrow: Admin never approves or rejects, and never signs or returns a review.",
-};
+// Mode-aware, so resolved per request: Meridian Health is the demo's fictional
+// payer; a production install is someone else's.
+export function generateMetadata(): Metadata {
+  return {
+    title: "Administration",
+    description: `Threshold edits and deployment pause/resume${
+      isProductionMode() ? "" : " for Meridian Health's AI governance demo"
+    } — both logged, and deliberately narrow: Admin never approves or rejects, and never signs or returns a review.`,
+  };
+}
 
 // The Admin console (ui-spec §7) is the narrowest screen by design: exactly
 // two mutable action shapes (Q-01 threshold edit, pause/resume) plus "Run
@@ -116,7 +122,7 @@ export default async function AdminPage() {
                 </TableRow>
                 <TableRow>
                   <TableCell className="font-medium">Critical-tier default</TableCell>
-                  <TableCell className="tabular-nums">0.05</TableCell>
+                  <TableCell className="tabular-nums">{isProductionMode() ? "Per control definition" : "0.05"}</TableCell>
                   <TableCell className="text-xs text-muted-foreground">
                     block · 3-point window
                   </TableCell>
@@ -148,20 +154,24 @@ export default async function AdminPage() {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Run monitor</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <p className="text-sm text-muted-foreground">
-              Synchronously evaluates Q-01 against current observation data
-              for deployed versions in your workspace. A sustained breach creates
-              an incident, pauses the deployment, and opens reassessment.
-              Re-running does not duplicate an existing incident.
-            </p>
-            <RunMonitorPanel withSelector />
-          </CardContent>
-        </Card>
+        {/* The monitor runs over the demo's synthetic observations, and its
+            route (POST /api/monitor/run) answers 404 in production. */}
+        {isDemoMode() ? (
+          <Card>
+            <CardHeader>
+              <CardTitle>Run monitor</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <p className="text-sm text-muted-foreground">
+                Synchronously evaluates Q-01 against current observation data
+                for deployed versions in your workspace. A sustained breach creates
+                an incident, pauses the deployment, and opens reassessment.
+                Re-running does not duplicate an existing incident.
+              </p>
+              <RunMonitorPanel withSelector />
+            </CardContent>
+          </Card>
+        ) : null}
       </div>
 
       <Card>
@@ -266,6 +276,7 @@ export default async function AdminPage() {
                       title={row.title}
                       initiativeId={row.initiativeId}
                       status={row.deployment.status}
+                      lifecycleState={row.state}
                     /> : <span className="text-xs text-muted-foreground">Read-only example</span>}
                   </TableCell>
                 </TableRow>

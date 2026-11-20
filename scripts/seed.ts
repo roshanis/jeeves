@@ -10,6 +10,9 @@ import { ACTORS, BASE_DATE_MS, CONTROL_SEEDS, INITIATIVE_SEEDS, type InitiativeS
 import { reviewerNameForDomain } from "../lib/demo/personas";
 export { ACTORS, BASE_DATE_MS, CONTROL_SEEDS, INITIATIVE_SEEDS } from "../lib/demo/reference-data";
 
+import { sql } from "drizzle-orm";
+import { assertDemoMode, DemoOnlyError } from "../lib/config/demo-doors";
+import { assertDemoDatabase, refuseProductionDatabase } from "../lib/demo/bootstrap";
 import { deriveTier } from "../lib/triage/rules";
 import { requiredDomains } from "../lib/triage/routing";
 import type { Domain, OverlayFlags, Tier } from "../lib/domain/types";
@@ -29,9 +32,11 @@ import {
   observations,
   reviewCycles,
   reviewDecisions,
+  reviewNotifications,
   riskAssessments,
   runBudget,
 } from "../lib/db/schema";
+import { isMain } from "./is-main";
 
 /* -------------------------------------------------------------------------
  * Deterministic PRNG — mulberry32, keyed by a string seed.
@@ -294,10 +299,33 @@ export async function seedDatabase(
 }
 
 async function seedInTransaction(db: SeedDb): Promise<RowCounts> {
+  // The database's own stamp decides whether this wipe may run, not the
+  // environment: stamp 'demo' when there is no stamp, refuse when it says
+  // 'production' (even with ALLOW_SEED=1). First, so a production database is
+  // refused for the right reason before any other check or write; inside the
+  // seed's transaction, so a seed that then refuses or fails leaves no stamp.
+  // The wipe below deletes by table and never lists `installation`, so the
+  // stamp survives every reseed.
+  await assertDemoDatabase(db);
+
   const documents = await db.select({ id: evidenceDocuments.id }).from(evidenceDocuments).limit(1);
   const packets = await db.select({ id: evidencePackets.id }).from(evidencePackets).limit(1);
   if (documents.length || packets.length) {
     throw new Error("Refusing reset to preserve evidence history. Use a fresh disposable database.");
+  }
+  // Real requests (initiatives in a `public-` workspace, listed in /operator)
+  // go with the wipe below, audit events included. Refuse unless the operator
+  // names exactly how many they mean to discard.
+  const realRequests = await db.execute(
+    sql`SELECT count(*)::int AS n FROM initiatives WHERE starts_with(workspace_id, 'public-')`,
+  );
+  const realCount = Number((((Array.isArray(realRequests) ? realRequests : realRequests.rows) as { n: number }[])[0]?.n) ?? 0);
+  if (realCount > 0 && process.env.ALLOW_DISCARD_PUBLIC_REQUESTS !== String(realCount)) {
+    throw new Error(
+      `Refusing reset: this database holds ${realCount} real inbound request${realCount === 1 ? "" : "s"} (public- workspaces) ` +
+        `that the wipe would delete with their audit events. Use a fresh database, or set ALLOW_DISCARD_PUBLIC_REQUESTS=${realCount} ` +
+        "to confirm discarding them.",
+    );
   }
   resetIdCounters();
   const now = new Date(BASE_DATE_MS);
@@ -307,19 +335,27 @@ async function seedInTransaction(db: SeedDb): Promise<RowCounts> {
   // append-only via trigger for UPDATE/DELETE from application code, but a
   // wipe-and-reinsert seed needs to clear prior rows too — DELETE is
   // rejected by the same trigger that protects audit_events in normal app
-  // operation, so seeding truncates via a superuser-style raw statement
-  // that temporarily disables the trigger for this one maintenance
-  // operation, then re-enables it. This keeps the append-only guarantee
-  // intact for the application role while still allowing deterministic
-  // reseeds in dev/test.
-  await db.execute(`ALTER TABLE audit_events DISABLE TRIGGER ALL;`);
+  // operation, so seeding disables the table's USER triggers for this one
+  // maintenance operation, then re-enables them. This keeps the append-only
+  // guarantee intact for the application role while still allowing
+  // deterministic reseeds in dev/test.
+  //
+  // USER, not ALL: ALL also disables the internal foreign-key triggers, which
+  // Postgres reserves for superusers, and an RDS master user is not one. USER
+  // covers the append-only triggers (0002 row-level, 0014 TRUNCATE guard) and
+  // needs only table ownership. The ALTERs are transactional, so a failed wipe
+  // rolls the triggers back to enabled.
+  await db.execute(`ALTER TABLE audit_events DISABLE TRIGGER USER;`);
   await db.delete(auditEvents);
-  await db.execute(`ALTER TABLE audit_events ENABLE TRIGGER ALL;`);
+  await db.execute(`ALTER TABLE audit_events ENABLE TRIGGER USER;`);
   await db.delete(incidents);
   await db.delete(observations);
   await db.delete(controlExceptions);
   await db.delete(effectiveControls);
   await db.delete(initiativeDecisions);
+  // Live triage queues these (0013); they reference both review_cycles and
+  // initiatives, so they go before either.
+  await db.delete(reviewNotifications);
   await db.delete(reviewDecisions);
   await db.delete(reviewCycles);
   await db.delete(riskAssessments);
@@ -2227,8 +2263,19 @@ async function seedInTransaction(db: SeedDb): Promise<RowCounts> {
  * CLI entry point — `npm run db:seed`
  * ---------------------------------------------------------------------- */
 async function main() {
+  // The seed is a demo tool: it wipes every seeded table and stamps the database
+  // 'demo' for good. The mode defaults to production, which only refuses the
+  // PGlite fallback, so with DATABASE_URL set it would otherwise seed whatever
+  // database that names. Refuse before any database is opened.
+  assertDemoMode("scripts/seed.ts");
+
   const { getDb, closeDb } = await import("../lib/db/client");
   const db = getDb();
+
+  // Refuse a production database before migrating it: this script has no
+  // business applying anything to one (install/upgrade owns that), and
+  // ALLOW_SEED does not override the stamp.
+  await refuseProductionDatabase(db);
 
   // Ensure the schema exists before seeding. Shared with `npm run db:migrate`
   // (lib/db/migrate.ts) so the two can never disagree about which migrator
@@ -2246,12 +2293,14 @@ async function main() {
 }
 
 // Only run when executed directly (not when imported by tests).
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isMain(import.meta.url, process.argv[1])) {
   // Production guard: this CLI wipes and repopulates every seeded table
   // (see the DISABLE/ENABLE TRIGGER dance in seedDatabase above), so it
   // must never fire against a real deployment by accident. Refuse to run
   // when NODE_ENV=production unless the operator explicitly opts in via
   // ALLOW_SEED=1 (e.g. a one-off, deliberate reseed of a hosted demo env).
+  // ALLOW_SEED is a confirmation, not a credential: a database stamped
+  // 'production' (installation.deploy_mode) is refused regardless of it.
   if (process.env.NODE_ENV === "production" && process.env.ALLOW_SEED !== "1") {
     console.error(
       "Refusing to run scripts/seed.ts: NODE_ENV=production and ALLOW_SEED is not set to \"1\". " +
@@ -2261,8 +2310,11 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     process.exitCode = 1;
   } else {
     main().catch((err) => {
-
-      console.error(err);
+      console.error(
+        err instanceof DemoOnlyError
+          ? `${err.message}. Set JEEVES_MODE=demo to seed a demo database.`
+          : err,
+      );
       process.exit(1);
     });
   }

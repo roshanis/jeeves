@@ -152,12 +152,13 @@ describe("transition — happy-path lifecycle graph", () => {
     expect(result.after).toBe("approved");
   });
 
-  it("re_review -> deployed (resume) by admin with reason", () => {
-    const result = transition("re_review", "resume", actor("admin"), {
-      ts: NOW,
-      reason: "Reassessment passed, resuming",
-    });
-    expect(result.after).toBe("deployed");
+  it.each(["admin", "system"] as const)("re_review -> resume is illegal for %s: leaving re_review needs the approved reassessment", (role) => {
+    expect(() =>
+      transition("re_review", "resume", actor(role), { ts: NOW, reason: "Reassessment passed, resuming" }),
+    ).toThrow(IllegalTransitionError);
+    expect(() =>
+      transition("re_review", "resume", actor(role), { ts: NOW, reason: "Reassessment passed, resuming" }),
+    ).toThrow("no transition for action 'resume' from state 're_review'");
   });
 
   it("re_review -> retired by admin", () => {

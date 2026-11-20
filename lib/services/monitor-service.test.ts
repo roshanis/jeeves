@@ -5,6 +5,7 @@
  * seed-spec §4 (days 11-13 sustained breach within base+14d).
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { createTestDb, closeTestDb, type TestDb } from "../db/test-client";
 import { seedDatabase, BASE_DATE_MS } from "../../scripts/seed";
@@ -13,6 +14,7 @@ import {
   deploymentVersions,
   effectiveControls,
   incidents,
+  initiativeDecisions,
   initiatives,
   observations,
   reviewCycles,
@@ -361,7 +363,17 @@ describe("lib/services/monitor-service", () => {
       const { init, dep } = await memberChatCopilot(db);
       const first = await runMonitor(db, SYSTEM_ACTOR, PLUS_14D, UNSCOPED_WORKSPACE);
       expect(first.incidentsCreated).toBe(1);
-      await resumeDeployment(db, RAY_CHEN, null, init.id, "Reassessed; resume.");
+      // Leaving re_review needs the approved reassessment. decide() is bypassed on purpose (as in
+      // admin-service.test.ts): close the breach cycle, record the approval, then resume.
+      const cycleId = first.breaches[0]!.reviewCycleId;
+      if (!cycleId) throw new Error("breach must open a reassessment cycle");
+      await db.update(reviewCycles).set({ closedAt: new Date() }).where(eq(reviewCycles.id, cycleId));
+      await db.insert(initiativeDecisions).values({
+        id: `decision-${randomUUID()}`, initiativeId: init.id, cycleId, type: "approved",
+        approver: "angela-torres", decidedAt: new Date(),
+      });
+      await db.update(initiatives).set({ state: "approved" }).where(eq(initiatives.id, init.id));
+      await resumeDeployment(db, RAY_CHEN, null, init.id, "Reassessment approved; resume.");
       for (const [d, value] of [[20, 0.01], [30, 0.99], [31, 0.99], [32, 0.99], [33, 0.99]] as const) {
         await db.insert(observations).values({
           id: `obs-rebreach-${d}`, deploymentId: dep.id, kind: "eval_hallucination",

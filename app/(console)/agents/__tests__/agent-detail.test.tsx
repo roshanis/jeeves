@@ -3,6 +3,14 @@ import { GOVERNANCE_AGENTS, AGENT_GUARDRAIL } from "@/lib/agents/registry";
 import { renderWithProviders } from "@/tests/ui/helpers";
 import AgentDetailPage from "../[id]/page";
 
+// The page is behind the viewer gate (lib/services/require-viewer.ts), which
+// reads the request's cookies; a bare call has no request scope. Demo mode
+// (the suite default) lets an anonymous visitor through, so stand in for it.
+vi.mock("next/headers", () => ({
+  cookies: async () => ({ get: () => undefined }),
+  headers: async () => new Headers(),
+}));
+
 const missing = vi.hoisted(() => ({ on: false }));
 vi.mock("@/lib/agents/adapter-shared", async (orig) => {
   const actual = await orig<typeof import("@/lib/agents/adapter-shared")>();

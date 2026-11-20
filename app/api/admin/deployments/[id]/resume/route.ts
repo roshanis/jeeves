@@ -4,10 +4,9 @@
  * task brief deliverable 3). Admin-only + non-empty reason. `[id]` is the
  * INITIATIVE id, same convention as the pause route.
  *
- * `resumeDeployment` accepts both `paused` and `re_review` as valid "before"
- * states (lib/lifecycle/transitions.ts's `resume` rule) — so this same
- * route both un-pauses a manually-paused deployment and closes out a
- * post-breach reassessment once satisfied.
+ * This route un-pauses a manually paused deployment, or restores a breached
+ * one after its reassessment is approved. `resume` is legal only from
+ * `paused` (lifecycle/transitions.ts); a `re_review` initiative is refused.
  *
  * Body:  { reason: string }
  * 200:   { initiativeId, deploymentId, before, after }
@@ -17,7 +16,8 @@
  * 404:   { error: string }  (unknown initiative / no deployment / a
  *        workspace-tagged initiative belonging to a DIFFERENT workspace than
  *        this session's — same shape, no existence leak; P1 fix)
- * 409:   { error: string }  (compare-and-set conflict — the initiative's or
+ * 409:   { error: string }  (the reassessment is still open and must be
+ *        approved first, or a compare-and-set conflict — the initiative's or
  *        deployment's state changed concurrently since this request's read)
  */
 import { z } from "zod";
@@ -32,6 +32,7 @@ import {
 } from "@/lib/services/admin-service";
 import { guardFailureResponse, runMutationGuard } from "@/lib/services/route-guard";
 import { isRouteId, notFoundResponse } from "@/lib/http/route-id";
+import { databaseNotReady } from "@/lib/http/database-gate";
 
 const bodySchema = z.object({
   reason: z.string().min(1).max(2000),
@@ -41,6 +42,8 @@ export async function POST(
   req: Request,
   context: { params: Promise<{ id: string }> },
 ): Promise<Response> {
+  const unavailable = databaseNotReady();
+  if (unavailable) return unavailable;
   const guard = await runMutationGuard(req, (json) => {
     const bodyText: Record<string, string> = {
       reason: typeof (json as { reason?: unknown })?.reason === "string" ? (json as { reason: string }).reason : "",

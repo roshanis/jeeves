@@ -65,7 +65,7 @@ No route requires a role parameter. The current server-issued session determines
 - Reviewer: "My queue" saved view → `/reviews`; no mutation actions on this screen.
 - Program Office: filter/sort controls, export nothing (no live export in M1), click-through only.
 - Audit/Leadership: saved views → `/audit`; read-only everywhere.
-- Admin: "Paused deployments" saved view → highlights any paused card with a "Resume" quick-action button inline (only admin sees this button on the board itself; everyone else sees a plain "Paused" badge).
+- Admin: "Paused deployments" saved view → highlights any paused card with a "Resume" quick-action button inline (disabled with its reason while a reassessment is open; only admin sees this button on the board itself, and everyone else sees a plain "Paused" badge).
 
 **States:**
 - *Loading:* skeleton cards for outcome strip (5 shimmering boxes), skeleton columns for pipeline board.
@@ -75,6 +75,8 @@ No route requires a role parameter. The current server-issued session determines
 - *Breach:* not a Home-level state per se — the breach is discovered via Operate tab / triggered via Admin "Run monitor" — but once fired, initiative #4's card flips to "Paused" with a small red incident icon, and a new SLA callout appears: "Incident opened — #4 member-chat-copilot."
 
 **Demo money-shot:** the pipeline board visibly containing all 12 initiatives in different real lifecycle states (not a mockup — actual seeded diversity), plus the outcome-metrics strip proving this is about outcomes, not vanity activity counts. The moment the breach fires later in the demo and the presenter returns to `/`, initiative #4's card visibly flips state live — that's the "it's a real system, not slides" beat.
+
+> **Playground note (2026-11-15):** in the visitor playground this beat is not played live. Shared examples are read-only, and "Run monitor" evaluates only the visitor's own workspace, which has no live deployment, so it answers "No new breaches detected." The breach on #4 is fired by the scheduled monitor (`GET /api/cron/monitor`, behind `CRON_SECRET`), so the walkthrough opens on #4 already paused in reassessment — see "The Loop" in `docs/demo-script.md`. Giving each visitor workspace its own deployed copy, so the click works again, is a later feature.
 
 ---
 
@@ -128,6 +130,8 @@ Chronological `AuditEvent` timeline for this initiative only: intake submitted �
 
 **Demo money-shot:** watching the *same* Operate tab, on the *same* initiative, go from a normal-looking eval line chart to a red-annotated breach banner to a "Paused" header badge to a new reassessment ReviewCycle appearing on the Reviews tab — all from one click of "Run monitor" — proving state transitions are real and connected, not staged screens.
 
+> **Playground note (2026-11-15):** in the visitor playground this beat is not played live. Shared examples are read-only, and "Run monitor" evaluates only the visitor's own workspace, which has no live deployment, so it answers "No new breaches detected." The breach on #4 is fired by the scheduled monitor (`GET /api/cron/monitor`, behind `CRON_SECRET`), so the walkthrough opens on #4 already paused in reassessment — see "The Loop" in `docs/demo-script.md`. Giving each visitor workspace its own deployed copy, so the click works again, is a later feature.
+
 ---
 
 ## 4. Intake flow — `/initiatives/new`
@@ -148,6 +152,9 @@ Chronological `AuditEvent` timeline for this initiative only: intake submitted �
 5. **Live tier preview panel** (sidebar or inline card) — as the user answers the 6 questions, this panel recomputes and displays the resulting tier + required domains in real time, using the same rule logic as `lib/triage/rules.ts` (client mirrors server rule so the preview never contradicts the server-side triage that runs on submit). Shows the rule that matched (e.g., "Rule 1: care-coverage ∧ ¬human-in-loop → Critical").
 6. **Completeness meter** — a progress indicator (e.g., "5 of 6 required fields complete") that turns red/incomplete when the data-retention field is blank, with inline messaging: "Missing: data-retention answer. Intake cannot be submitted until complete." This is the literal UI surface for the champion's "completeness check flags a missing data-retention answer" beat.
 7. **Submit button** — disabled until completeness meter is 100%; submitting creates the `IntakeVersion`, runs server-side triage, and redirects to `/initiatives/[slug]` (Overview tab) showing the new tier badge and required-domains checklist.
+8. **Save draft** — keeps unfinished work without the completeness checks (a title is enough). A requester persona saves through the same create / edit-draft routes as Submit and lands on the draft's edit page (`/initiatives/[slug]/edit`), which is also where the draft is found again. A real request (`public` session) saves to this browser tab only (sessionStorage): nothing is sent until Submit, and the copy is restored into a public session in the same tab, never into a persona session.
+9. **Leave warning** — while there are unsaved changes the browser's own unload prompt is armed, and a plain same-origin link click asks first (native confirm, no focus trap). A real request also keeps the unload prompt while it holds unsent content, even right after a tab-local save. It is off after a successful save (persona) or submit. Not covered: browser Back/Forward, command-palette navigation (Cmd/Ctrl-K), and any session change on the edit page (expiry, Exit demo, persona switch, a 401 on save).
+10. **Sample initiative** — hidden for real requests (a sample must not become the text of one; a sample loaded in the no-session preview is cleared when that door opens). For personas and the preview, loading it over typed content asks first.
 
 **M2 slot-in note:** the conversational intake chat (plan §11) replaces this form's steps 3–4 with a chat panel that asks the same 6 questions plus the retention question conversationally, then populates the identical `IntakeVersion` fields and hands off to the same live tier-preview panel and completeness meter — i.e., M2 swaps the *input surface*, not the underlying data model or the preview/completeness components. Recommend building the tier-preview and completeness-meter as standalone components now so M2 can reuse them unchanged.
 
@@ -238,7 +245,7 @@ Chronological `AuditEvent` timeline for this initiative only: intake submitted �
 **Layout:**
 1. Chrome banner.
 2. **Action 1 — Q-01 threshold edit card:** shows current threshold per tier (High default 0.08, Critical default 0.05, per seed-spec §3) and any deployment-level overrides. "Edit threshold" button opens a dialog: new value input, **mandatory reason field** (cannot submit without text), preview of which deployments this affects, Confirm/Cancel. On confirm, writes an `AuditEvent` (control-change type) and updates the effective control. This is the same action-shape as the historical seeded event (Ray Chen, 0.10→0.08, "Q2 quality initiative," base−30d) — the UI should make that historical precedent visible right on this card ("Last changed: 30 days ago by Ray Chen — 'Q2 quality initiative'") so the live action reads as a continuation of a real audit trail, not a one-off demo button.
-3. **Action 2 — Pause/Resume deployment card:** a searchable/selectable list of active deployments; each row has a "Pause" (or "Resume" if already paused) button. Clicking opens a dialog: **mandatory reason field**, Confirm/Cancel. On confirm, writes an `AuditEvent`, updates `DeploymentVersion` state, and (if pausing) surfaces the same paused-state UI described in §3 Operate tab. This is also the mechanism the champion breach uses when the presenter manually pauses (or the automated monitor pauses on Q-01 breach — see "Run monitor" below).
+3. **Action 2 — Pause/Resume deployment card:** a searchable/selectable list of active deployments; each row has a "Pause" (or "Resume" if already paused; disabled with its reason while a reassessment is open) button. Clicking opens a dialog: **mandatory reason field**, Confirm/Cancel. On confirm, writes an `AuditEvent`, updates `DeploymentVersion` state, and (if pausing) surfaces the same paused-state UI described in §3 Operate tab. This is also the mechanism the champion breach uses when the presenter manually pauses (or the automated monitor pauses on Q-01 breach — see "Run monitor" below).
 4. **Run monitor button** — a distinct, clearly-labeled action ("Run monitor now") that synchronously evaluates Q-01 against current Observation data for all deployments and applies pause+incident+reassessment if a breach condition is met. This is the actual trigger for the champion's breach beat (plan §2 step 5). Idempotent — re-running when already breached/paused does nothing further and shows a confirmation toast "No new breaches detected" rather than erroring or duplicating.
 5. **Control-change audit log** (bottom section) — a filtered view of AuditEvents scoped to control-change and deployment-state-change events only (i.e., exactly the events this page can produce), so Admin's own action history is immediately visible on the same page — reinforcing "everything Admin does is logged, nothing more, nothing less."
 
@@ -254,10 +261,12 @@ Chronological `AuditEvent` timeline for this initiative only: intake submitted �
 - *Loading:* skeleton cards for both action panels.
 - *Empty:* n/a — Q-01 and at least one deployment always exist in seed data.
 - *Read-only public:* both dialogs are unreachable — buttons hidden with a banner: "Admin actions require a demo workspace and Admin persona."
-- *Paused:* the pause/resume card is the literal source of truth for this state — a paused deployment shows "Resume" instead of "Pause," with the original pause reason displayed inline.
+- *Paused:* the pause/resume card is the literal source of truth for this state — a paused deployment shows "Resume" instead of "Pause," with the original pause reason displayed inline. After a monitor breach the initiative is in reassessment and Resume is disabled with the reason in words (the Approver must approve the reassessment first).
 - *Breach:* immediately after "Run monitor" detects a breach, this page shows a success/alert toast ("Breach detected on member-chat-copilot — deployment paused, incident #… opened, reassessment cycle #… created") and the pause/resume card updates live to reflect the new paused state without a full page reload.
 
 **Demo money-shot:** clicking "Run monitor" and watching the toast announce the full cascade (breach → pause → incident → reassessment) in one sentence, then the audit log at the bottom of the same page immediately showing the new event rows — the whole governance consequence of a threshold crossing, visible on one screen, with zero approve/sign buttons anywhere in sight.
+
+> **Playground note (2026-11-15):** in the visitor playground this beat is not played live. Shared examples are read-only, and "Run monitor" evaluates only the visitor's own workspace, which has no live deployment, so it answers "No new breaches detected." The breach on #4 is fired by the scheduled monitor (`GET /api/cron/monitor`, behind `CRON_SECRET`), so the walkthrough opens on #4 already paused in reassessment — see "The Loop" in `docs/demo-script.md`. Giving each visitor workspace its own deployed copy, so the click works again, is a later feature.
 
 ---
 

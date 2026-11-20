@@ -8,7 +8,7 @@ import {
   reviewCycles,
   reviewDecisions,
 } from "@/lib/db/schema";
-import { CHAMPION_PREFILL_PAYLOAD } from "@/lib/intake/champion-prefill";
+import { TRIAGE_READY_CHAMPION_PAYLOAD } from "@/tests/fixtures/triage-ready-intake";
 import { seedDatabase } from "@/scripts/seed";
 
 let testDb: TestDb;
@@ -69,9 +69,9 @@ async function issueSession(
 }
 
 const CHAMPION_PAYLOAD = {
-  ...CHAMPION_PREFILL_PAYLOAD,
+  ...TRIAGE_READY_CHAMPION_PAYLOAD,
   basics: {
-    ...CHAMPION_PREFILL_PAYLOAD.basics,
+    ...TRIAGE_READY_CHAMPION_PAYLOAD.basics,
     title: "Workspace Boundary Initiative",
   },
 };

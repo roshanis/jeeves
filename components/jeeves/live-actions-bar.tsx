@@ -13,7 +13,9 @@
  *  - in_qc      -> "Run triage" (Program Office / Admin pass QC; the
  *                  server records them and the system actor) or
  *                  "Return to requester" (Program Office / Admin, reason
- *                  required).
+ *                  required). Passing is refused while a REQUIRED_FOR_TIER
+ *                  intake gap is open: the gaps are listed here and the
+ *                  Program Office returns the intake to the requester.
  *  - decision   -> shown when the server's decision readiness allows it.
  */
 import * as React from "react";
@@ -25,6 +27,7 @@ import type { ReviewRow } from "@/lib/data/dto";
 import {
   apiErrorToMessage,
   decide,
+  intakeTierGaps,
   isApiError,
   runTriage,
   type DecideInput,
@@ -69,6 +72,7 @@ export function LiveActionsBar({ initiativeId, isSeeded, state, decisionReadines
   const [returnOpen, setReturnOpen] = React.useState(false);
   const [returnPending, setReturnPending] = React.useState(false);
   const [returnError, setReturnError] = React.useState<string | null>(null);
+  const [qcGaps, setQcGaps] = React.useState<{ ruleId: string; message: string }[] | null>(null);
 
   if (!session || !initiativeId || isSeeded !== false) {
     return null;
@@ -77,6 +81,7 @@ export function LiveActionsBar({ initiativeId, isSeeded, state, decisionReadines
   async function handleTriage() {
     if (!session || !initiativeId) return;
     setTriaging(true);
+    setQcGaps(null);
     try {
       const result = await runTriage(session.token, initiativeId);
       setTriageResult(result);
@@ -87,6 +92,11 @@ export function LiveActionsBar({ initiativeId, isSeeded, state, decisionReadines
       );
       router.refresh();
     } catch (err) {
+      const gaps = intakeTierGaps(err);
+      if (gaps && gaps.length > 0) {
+        setQcGaps(gaps);
+        return;
+      }
       toast.error(isApiError(err) ? apiErrorToMessage(err) : "Triage failed.");
       if (isApiError(err) && err.status === 401) live?.logout();
     } finally {
@@ -123,6 +133,7 @@ export function LiveActionsBar({ initiativeId, isSeeded, state, decisionReadines
     try {
       await returnFromQc(session.token, initiativeId, reason);
       setReturnOpen(false);
+      setQcGaps(null);
       toast.success("Returned to the requester with your reason on the audit trail.");
       router.refresh();
     } catch (err) {
@@ -170,6 +181,7 @@ export function LiveActionsBar({ initiativeId, isSeeded, state, decisionReadines
         ) : null}
 
         {showTriage ? (
+          <div className="space-y-2">
           <div className="flex items-center gap-3">
             <DisableWithTooltip
               label="Run triage"
@@ -190,7 +202,26 @@ export function LiveActionsBar({ initiativeId, isSeeded, state, decisionReadines
             <span className="text-xs text-muted-foreground">
               Passing QC runs deterministic tier + required-domain routing and
               opens all of them at once. Returning sends it back with a reason.
+              QC cannot pass while an answer the risk tier requires is missing.
             </span>
+          </div>
+          {qcGaps && state === "in_qc" ? (
+            <div role="alert" data-slot="qc-tier-gaps" className="space-y-1 text-xs">
+              <p className="font-medium text-amber-700 dark:text-amber-400">
+                QC cannot pass: the intake is missing answers its risk tier requires.
+              </p>
+              <ul className="list-disc space-y-0.5 pl-4 text-muted-foreground">
+                {qcGaps.map((g) => (
+                  <li key={g.ruleId}>
+                    {g.ruleId}: {g.message}
+                  </li>
+                ))}
+              </ul>
+              <p className="text-muted-foreground">
+                Use Return to requester so they can answer and resubmit.
+              </p>
+            </div>
+          ) : null}
           </div>
         ) : null}
 
