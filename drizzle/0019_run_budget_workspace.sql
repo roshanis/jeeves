@@ -7,7 +7,10 @@
 -- table counts what each workspace has reserved that day; the app refuses a
 -- reservation that would take a workspace past 10 percent of the daily cap, and
 -- makes it in the same transaction as the run_budget increment.
-CREATE TABLE "run_budget_workspace" (
+--
+-- IF NOT EXISTS so that re-applying the journal over a database that already has
+-- the table (the wind-back in lib/demo/bootstrap.test.ts) is a no-op.
+CREATE TABLE IF NOT EXISTS "run_budget_workspace" (
 	"day" text NOT NULL,
 	"workspace_id" text NOT NULL,
 	"tokens_used" integer DEFAULT 0 NOT NULL,
