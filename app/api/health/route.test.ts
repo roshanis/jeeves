@@ -54,6 +54,16 @@ describe("GET /api/health", () => {
     await expect(res.json()).resolves.toEqual({ status: "degraded", database: "unreachable" });
   });
 
+  it("logs a failed probe as one line, not the error object", async () => {
+    failNext = true;
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    await GET();
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy.mock.calls[0]).toHaveLength(1);
+    expect(String(spy.mock.calls[0][0])).not.toContain("\n");
+    spy.mockRestore();
+  });
+
   it("leaks nothing about the database on failure", async () => {
     failNext = true;
     const body = await (await GET()).text();

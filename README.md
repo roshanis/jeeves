@@ -220,7 +220,7 @@ hosted demo. Independently of that, the database carries an installation stamp
 | `OPENAI_LUNA_MODEL` / `OPENAI_TERRA_MODEL` | Override the two models the `agents-sdk` runtime routes between | `gpt-5.6-luna` / `gpt-5.6-terra` |
 | `OPENAI_REASONING_EFFORT` | Reasoning effort for the `agents-sdk` runtime | `low` — demo latency over depth |
 | `JEEVES_DEEP_REVIEW` | `1` makes `draftReview` a tool-using loop that reads the policy corpus first (`agents-sdk` runtime only) | Standard single-call drafting |
-| `PHOENIX_ENDPOINT` | Monitoring shows a configured telemetry connector | "Synthetic telemetry (demo)" — in-repo synthetic series |
+| `PHOENIX_ENDPOINT` | Monitoring shows an amber "endpoint set, not polled" state (or "not a valid URL"). Nothing contacts the endpoint yet; every series stays synthetic | "Synthetic telemetry (demo)" — in-repo synthetic series |
 | `CRON_SECRET` | `GET /api/cron/monitor` runs scheduled monitoring (bearer-authenticated; wired to a 6-hourly Vercel cron in `vercel.json`) | The cron endpoint returns 503; the manual `POST /api/monitor/run` admin action still works |
 
 ### Agent runtimes — two implementations, one port

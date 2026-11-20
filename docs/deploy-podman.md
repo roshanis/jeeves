@@ -210,9 +210,12 @@ podman compose ps                          # STATUS shows (healthy)
 curl -s localhost:3000/api/health          # {"status":"ok","database":"ok"}
 ```
 
-`GET /api/health` round-trips `select 1`, so a container that is running but
-cannot reach Postgres reports unhealthy rather than up — verified by stopping
-Postgres under a live server (200 → 503) and restarting it (503 → 200). It is
+`GET /api/health` is the readiness check: it round-trips `select 1`, so an
+instance that is running but cannot reach Postgres answers 503 (200 → 503 when
+Postgres stops, back to 200 when it returns), within about 2 seconds. The
+container health check in the Containerfile, compose file and Quadlet unit uses
+`GET /api/health/live` instead, which never touches the database: a short
+database outage must not get healthy containers restarted. Both are
 unauthenticated, so it deliberately returns nothing but a status word: no
 version, no hostname, no driver, and no database error text, since connection
 errors carry the host and port.

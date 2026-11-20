@@ -57,13 +57,13 @@ afterEach(() => {
 
 describe("database gate on every route handler", () => {
   it("finds the handlers (guards the walker itself)", () => {
-    expect(handlers.length).toBe(41);
+    expect(handlers.length).toBe(42);
     for (const needle of ["session/route", "public-session/route", "public-intake/route", "cron/monitor/route", "detail-data/route"]) {
       expect(handlers.some((h) => h.file.includes(needle))).toBe(true);
     }
   });
 
-  it.each(handlers.filter((h) => !h.file.endsWith("/api/health/route.ts")).map((h) => [h.file.slice(REPO.length), h.method, h]))(
+  it.each(handlers.filter((h) => !h.file.endsWith("/api/health/route.ts") && !h.file.endsWith("/api/health/live/route.ts")).map((h) => [h.file.slice(REPO.length), h.method, h]))(
     "%s %s answers 503 with Retry-After and never opens the database",
     async (_path, method, h) => {
       const handler = h as { file: string; method: string };
@@ -87,6 +87,13 @@ describe("database gate on every route handler", () => {
     expect(res.status).toBe(503);
     expect(res.headers.get("retry-after")).toBe("15");
     await expect(res.json()).resolves.toEqual({ status: "degraded", database: "unreachable" });
+    expect(dbCalls).toEqual([]);
+  });
+
+  it("/api/health/live stays 200 with the gate closed: liveness never depends on the database", async () => {
+    const mod = (await modules["/app/api/health/live/route.ts"]!()) as { GET: () => Promise<Response> };
+    const res = await mod.GET();
+    expect(res.status).toBe(200);
     expect(dbCalls).toEqual([]);
   });
 

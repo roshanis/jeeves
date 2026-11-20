@@ -49,18 +49,25 @@ export function LegalPage({
         data-slot="legal-contact"
       >
         <p className="font-medium">How to reach us</p>
-        <p className="mt-1 text-muted-foreground">
-          Email{" "}
-          <a
-            href={PRIVACY_CONTACT}
-            className="underline underline-offset-4 hover:text-foreground"
-          >
-            {contactEmailLabel(PRIVACY_CONTACT)}
-          </a>{" "}
-          for anything on this page, including a request to delete something
-          you submitted. Email is the only contact point for this
-          demonstration — no postal address is published.
-        </p>
+        {PRIVACY_CONTACT ? (
+          <p className="mt-1 text-muted-foreground">
+            Email{" "}
+            <a
+              href={PRIVACY_CONTACT}
+              className="underline underline-offset-4 hover:text-foreground"
+            >
+              {contactEmailLabel(PRIVACY_CONTACT)}
+            </a>{" "}
+            for anything on this page, including a request to delete something
+            you submitted. Email is the only contact point for this
+            demonstration — no postal address is published.
+          </p>
+        ) : (
+          <p className="mt-1 text-muted-foreground">
+            Contact for this installation is not configured. No address is
+            published here, and no postal address either.
+          </p>
+        )}
       </div>
 
       <div className="flex flex-col gap-6 text-sm leading-relaxed">{children}</div>

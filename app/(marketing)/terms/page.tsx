@@ -94,11 +94,17 @@ export default function TermsPage() {
 
       <LegalSection heading="Contact">
         <p>
-          Questions about these terms:{" "}
-          <a href={CONTACT_URL} className="underline underline-offset-4 hover:text-foreground">
-            get in touch
-          </a>
-          .
+          {CONTACT_URL ? (
+            <>
+              Questions about these terms:{" "}
+              <a href={CONTACT_URL} className="underline underline-offset-4 hover:text-foreground">
+                get in touch
+              </a>
+              .
+            </>
+          ) : (
+            "Contact for this installation is not configured."
+          )}
         </p>
       </LegalSection>
     </LegalPage>

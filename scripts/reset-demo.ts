@@ -33,7 +33,7 @@ import { initiatives, rateLimitBuckets, runBudget, sessions } from "../lib/db/sc
 import { assertDemoDatabase } from "../lib/demo/bootstrap";
 import { seedDatabase } from "./seed";
 import { agentRuntimeStatus } from "../lib/agents/registry";
-import { telemetryConnectorStatus } from "../lib/telemetry/connector";
+import { telemetryChecklistLine, telemetryConnectorStatus } from "../lib/telemetry/connector";
 import { isMain } from "./is-main";
 
 function ok(label: string, value: string): void {
@@ -94,8 +94,8 @@ export async function resetDemo(database?: Db): Promise<void> {
   else warn("Agent connector", `deterministic mock (${agent.model}) — set OPENAI_API_KEY to run agents live`);
 
   const telemetry = telemetryConnectorStatus();
-  if (telemetry.configured) ok("Telemetry connector", telemetry.provider);
-  else warn("Telemetry connector", "synthetic (PHOENIX_ENDPOINT unset) — telemetry is the in-repo synthetic series");
+  const telemetryLine = telemetryChecklistLine(telemetry);
+  warn(telemetryLine.label, telemetryLine.value);
 
   if (process.env.CRON_SECRET && process.env.CRON_SECRET.length > 0) {
     ok("Scheduled monitoring", "CRON_SECRET set");

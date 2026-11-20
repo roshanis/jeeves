@@ -22,6 +22,8 @@ export async function register(deps?: BootCheckDeps): Promise<void> {
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
   if (process.env.NEXT_PHASE === "phase-production-build") return;
 
+  const { installShutdownDeadline } = await import("./lib/config/shutdown");
+  installShutdownDeadline();
   const { runBootChecks } = await import("./lib/config/boot-checks");
   await runBootChecks(deps);
 }

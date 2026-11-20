@@ -80,6 +80,13 @@ describe("lib/security/workspace-cookie", () => {
       expect(resolveWorkspaceCookieSecret()).toBe("explicit-secret");
     });
 
+    it("uses the trimmed value, the one the boot check validated", () => {
+      process.env.JEEVES_COOKIE_SECRET = "  explicit-secret \n";
+      expect(resolveWorkspaceCookieSecret()).toBe("explicit-secret");
+      process.env.JEEVES_COOKIE_SECRET = "   ";
+      expect(resolveWorkspaceCookieSecret()).toBeNull();
+    });
+
     it("derives a secret from DEMO_PASSCODE when JEEVES_COOKIE_SECRET is unset", () => {
       process.env.DEMO_PASSCODE = "some-passcode";
       const derived = resolveWorkspaceCookieSecret();

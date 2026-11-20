@@ -14,23 +14,29 @@ describe("TelemetryConnectorCard", () => {
 
     expect(screen.getByText("Synthetic telemetry (demo)")).toBeDefined();
     expect(container.querySelector('[data-slot="connector-synthetic-indicator"]')).not.toBeNull();
-    expect(container.querySelector('[data-slot="connector-configured-indicator"]')).toBeNull();
+    expect(container.querySelector('[data-slot="connector-endpoint-indicator"]')).toBeNull();
     expect(container.querySelectorAll("a")).toHaveLength(0);
     expect(screen.getByText("Synthetic data — demo")).toBeDefined();
     expect(screen.getByText("Synthetic OTel traces — demo")).toBeDefined();
   });
 
-  it("renders the configured state with a green check indicator", () => {
+  it.each([
+    ["https://phoenix.example.internal", /endpoint set, not polled/i],
+    ["not a url", /endpoint is not a valid URL/i],
+  ])("renders PHOENIX_ENDPOINT=%j in amber, never as configured", (endpoint, label) => {
     const originalEndpoint = process.env.PHOENIX_ENDPOINT;
-    process.env.PHOENIX_ENDPOINT = "https://phoenix.example.internal";
+    process.env.PHOENIX_ENDPOINT = endpoint;
     try {
       const status = telemetryConnectorStatus();
-      const traces = syntheticTraces("claims-ocr-coder");
       const { container } = renderWithProviders(
-        <TelemetryConnectorCard status={status} traces={traces} />,
+        <TelemetryConnectorCard status={status} traces={syntheticTraces("claims-ocr-coder")} />,
       );
-      expect(container.querySelector('[data-slot="connector-configured-indicator"]')).not.toBeNull();
-      expect(screen.getByText("Phoenix (Arize)")).toBeDefined();
+      const pill = container.querySelector('[data-slot="connector-endpoint-indicator"]');
+      expect(pill?.textContent).toMatch(label);
+      expect(pill?.className).not.toContain("status-good");
+      expect(container.querySelector('[data-slot="connector-configured-indicator"]')).toBeNull();
+      expect(container.textContent?.toLowerCase()).not.toContain("configured");
+      expect(container.textContent).not.toMatch(/Example timestamp|UTC/);
     } finally {
       if (originalEndpoint === undefined) delete process.env.PHOENIX_ENDPOINT;
       else process.env.PHOENIX_ENDPOINT = originalEndpoint;

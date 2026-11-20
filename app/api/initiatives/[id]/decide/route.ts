@@ -13,6 +13,7 @@
  * 400:   { error: string }  (invalid body, e.g. conditionally_approved with no conditions)
  * 403:   { error: string }  (non-approver actor)
  * 404:   { error: string }  (unknown initiative id)
+ * 409:   { error: string }  (stale view, or the control catalog is empty: approvals need one)
  */
 import { z } from "zod";
 import { getDb } from "@/lib/db/client";

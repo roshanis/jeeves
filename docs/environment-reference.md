@@ -23,6 +23,7 @@ has no effect. Secrets are marked; never log or commit them.
 | `JEEVES_DEMO_ENABLED` | optional | `0` | build | no | `1` | `0` compiles the demo out: `JEEVES_MODE=demo` at runtime then has no effect. Build a production image with `0`. | `next.config.ts`, `lib/config/deployment-mode.ts` |
 | `NODE_ENV` | `production` when built | `production` | build/run | no | set by Next | Adds `Secure` to the workspace cookie; `scripts/seed.ts` refuses to run under `production` without `ALLOW_SEED=1`. | `app/api/session/route.ts`, `scripts/seed.ts` |
 | `VERCEL` | set by Vercel | set by Vercel | runtime | no | unset | Only used by the boot check: off Vercel, an unset `JEEVES_TRUSTED_PROXY_HOPS` logs a warning in demo. | `lib/config/boot-checks.ts` |
+| `VERCEL_ENV` | set by Vercel | set by Vercel | build | no | unset | Only used by `next.config.ts`: `production` on a Vercel build with `JEEVES_MODE=demo` makes `NEXT_PUBLIC_PRIVACY_CONTACT` mandatory. | `lib/marketing/contact.ts` |
 
 ## 2. Database
 
@@ -114,36 +115,41 @@ deterministic keyless mock adapter and cannot spend; production answers 503
 |---|---|---|---|---|---|---|---|
 | `OPERATOR_TOKEN` | needed to read real requests | unused | runtime | yes | none | Bearer token for `/api/public-intake` and `/operator`. Under 32 characters counts as unset and switches the queue off. | `lib/services/route-guard.ts` |
 | `CRON_SECRET` | optional | unused | runtime | yes | none | Bearer token for `GET /api/cron/monitor`. Unset answers 503; in production the route answers 404. | `app/api/cron/monitor/route.ts`, `scripts/reset-demo.ts` |
-| `PHOENIX_ENDPOINT` | optional | unused | runtime | no | none | When set, the telemetry page reports a Phoenix connector as configured. The data stays synthetic ("Synthetic data — demo"). | `lib/telemetry/connector.ts` |
-| `PHOENIX_PROVIDER_NAME` | optional | unused | runtime | no | built-in name | Label for that connector. | `lib/telemetry/connector.ts` |
+| `PHOENIX_ENDPOINT` | optional | unused | runtime | no | none | When set to an http(s) URL, the telemetry page shows an amber "endpoint set, not polled" state; an invalid value shows "endpoint is not a valid URL". Nothing contacts the endpoint yet, and the data stays synthetic ("Synthetic data — demo"). | `lib/telemetry/connector.ts` |
+| `PHOENIX_PROVIDER_NAME` | optional | unused | runtime | no | built-in name | Label shown for that endpoint. | `lib/telemetry/connector.ts` |
 
 ## 7. Marketing site (build time)
 
-Inlined by Next.js at build; set them in the build environment.
+Inlined by Next.js at build: set them in the build environment (Vercel project
+settings; `--build-arg` for the container image, whose Containerfile declares
+them). Setting them when a container runs has no effect. None has a built-in
+contact address: unset, the pages render no contact links and the legal pages
+say "Contact for this installation is not configured."
 
 | Variable | Default | Effect | Source |
 |---|---|---|---|
 | `NEXT_PUBLIC_SITE_URL` | `http://localhost:3000` | Origin used by the sitemap and robots. | `lib/marketing/site-config.ts` |
-| `NEXT_PUBLIC_CONTACT_URL` | a `mailto:` link | Where marketing calls to action point. | `lib/marketing/site-config.ts` |
+| `NEXT_PUBLIC_CONTACT_URL` | none | A `mailto:` or http(s) link that the marketing calls to action point at. Unset or invalid: no call-to-action links. | `lib/marketing/site-config.ts` |
 | `NEXT_PUBLIC_PILOT_PRICE` | none | Pilot price; unset renders "Contact for pricing". | `lib/marketing/site-config.ts` |
-| `NEXT_PUBLIC_PRIVACY_CONTACT` | the contact URL | Where privacy requests go. | `lib/marketing/site-config.ts` |
+| `NEXT_PUBLIC_PRIVACY_CONTACT` | none | Where privacy requests go; must be a `mailto:` address, and is shown as "Email ...". A Vercel production build with `JEEVES_MODE=demo` fails without it. | `lib/marketing/site-config.ts`, `lib/marketing/contact.ts` |
 
 ## 8. What the boot checks enforce
 
 `instrumentation.ts` runs them once per server start (not during `next build`).
-On failure the process logs, marks `/api/health` as 503 and exits with code 1.
+On failure the process logs, marks `/api/health` and `/api/health/live` as 503
+and exits with code 1.
 One exception, demo only: a database that cannot be reached at all (see the
 last paragraph of this section) does not exit the instance.
 
 Production reports every configuration problem at once
 (`production configuration is invalid: ...`), among them:
 
-- `DATABASE_URL (or POSTGRES_URL) is required`
+- `DATABASE_URL (or POSTGRES_URL) is required` / `is invalid`
 - `The database is on another host and the connection is not verified TLS` (see "Database TLS in production")
 - `JEEVES_DB_ALLOW_UNVERIFIED must be same-host or unset`
 - `DATA_PROVIDER=mock is not allowed in production`
-- `JEEVES_COOKIE_SECRET is required` / `is too short`
-- `APP_BASE_URL is required` / `must be an absolute https URL without embedded credentials`
+- `JEEVES_COOKIE_SECRET is required` / `is too short` / `is too weak` (one repeated character, or a placeholder word such as `changeme`)
+- `APP_BASE_URL is required` / `must be an https origin` (scheme, host and optional port only: no path, query, fragment or credentials)
 - `JEEVES_TENANT_ID is required`
 - `JEEVES_TRUSTED_PROXY_HOPS is required` / `must be a non-negative integer`
 
@@ -151,8 +157,13 @@ Then, in both modes, the installation stamp is verified against the database
 (`installation check failed: ...`): a production database must be stamped
 `production`, hold no demo data, and have every bundled migration applied
 (`npm run db:migrate`); demo stamps an unstamped database and refuses a
-`production` one, and retries a database read error with a short backoff. In
-demo a malformed `JEEVES_TRUSTED_PROXY_HOPS` also fails the boot.
+`production` one, and retries a database read error with a short backoff.
+Production retries only errors that say the database cannot be reached (refused,
+reset or timed-out connections, a database starting up), about five seconds in
+all, each attempt cut off after 3 seconds; a stamp mismatch, a missing migration,
+bad credentials or a TLS error stop it at once. A production database with an
+empty control catalog logs one warning: approvals are refused until a catalog is
+loaded. In demo a malformed `JEEVES_TRUSTED_PROXY_HOPS` also fails the boot.
 
 A demo that still cannot reach its database after the retries (each attempt is
 cut off after 3 seconds) does not exit: the marketing and legal pages need no
@@ -161,7 +172,8 @@ installation stamp has been verified in that process; database-backed routes
 answer `503` with `Retry-After: 15` and the console shows a notice;
 `/api/health` answers `503` `degraded`. The check is retried from requests, at
 most every 15 seconds. A stamp mismatch still exits at once; a credentials or TLS
-error exits after the retries; production never holds: it exits.
+error exits after the retries; production never holds: it exits after its
+retries.
 
 ## 9. Evidence storage
 

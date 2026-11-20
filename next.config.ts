@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import { assertPublicDemoContact } from "./lib/marketing/contact";
 
 // The lock must fail closed: only "0" and "1" are meaningful, and the runtime
 // check compares against "0" alone, so "false", "off" or "" would otherwise
@@ -7,6 +8,10 @@ const demoEnabled = process.env.JEEVES_DEMO_ENABLED ?? "1";
 if (demoEnabled !== "0" && demoEnabled !== "1") {
   throw new Error('JEEVES_DEMO_ENABLED must be "0" (production build) or "1" (demo-capable build)');
 }
+
+// The public demo's privacy page promises removal on request: refuse to build it
+// without a mailto address to send that request to.
+assertPublicDemoContact(process.env);
 
 const nextConfig: NextConfig = {
   // Inline the demo build constant into the compiled server code.

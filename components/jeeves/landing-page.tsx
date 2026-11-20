@@ -97,16 +97,18 @@ export function LandingPage() {
             </p>
 
             <div className="mt-8 flex flex-wrap items-center gap-3">
-              <Link
-                href={CONTACT_URL}
-                className={cn(buttonVariants({ size: "lg" }), "group gap-2")}
-              >
-                Book a governance assessment
-                <ArrowRight
-                  className="h-4 w-4 transition-transform duration-(--motion-base) ease-(--motion-ease) group-hover:translate-x-0.5"
-                  aria-hidden
-                />
-              </Link>
+              {CONTACT_URL ? (
+                <Link
+                  href={CONTACT_URL}
+                  className={cn(buttonVariants({ size: "lg" }), "group gap-2")}
+                >
+                  Book a governance assessment
+                  <ArrowRight
+                    className="h-4 w-4 transition-transform duration-(--motion-base) ease-(--motion-ease) group-hover:translate-x-0.5"
+                    aria-hidden
+                  />
+                </Link>
+              ) : null}
               <TryDemoButton variant="outline" className="border-sidebar-border bg-transparent text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground" />
             </div>
           </div>

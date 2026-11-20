@@ -1843,3 +1843,18 @@ Hard rules: no violations found.
 ### Recommendations / Next steps:
 - Codex: a new browser storage key needs a line on the privacy page and an entry in the storage-key test in tests/ui/site-essentials.test.tsx.
 - Owner: bump LEGAL_LAST_UPDATED when you have read the new bullet; the operator queue's own sessionStorage token (`jeeves_operator_token`) is not listed, since only the operator holds it.
+
+## [AGENT: Claude] [2026-11-20T16:30Z]
+### Action: implementer: production-install lane of the peer-review decisions (owner "go", 2026-11-20): L13, L8, L9, L11, L14, L22, on branch claude/w5-prod-install
+### Files changed: lib/config/deployment-mode.ts, lib/config/site-metadata.ts, lib/security/workspace-cookie.ts, app/api/health/route.ts, app/api/health/live/route.ts, lib/config/boot-checks.ts, lib/db/driver-error.ts, lib/config/shutdown.ts, instrumentation.ts, lib/services/initiative-service.ts, lib/telemetry/connector.ts, components/jeeves/telemetry-connector-card.tsx, scripts/reset-demo.ts, lib/marketing/contact.ts, lib/marketing/site-config.ts, next.config.ts, vitest.config.ts, the marketing pages, deploy/podman templates, docs (deploy.md, deploy-podman.md, environment-reference.md, README.md), and their tests
+### Diff summary:
+- L13 (prodmode-F17): APP_BASE_URL is an https origin through one function shared with installBaseUrl; a repeated-character or placeholder cookie secret is refused; the workspace cookie code uses the trimmed secret; a malformed database URL is listed as a DATABASE_URL problem.
+- L8 (api-ops-F7, prodmode-F6): GET /api/health/live answers from the process alone and the container health checks use it; /api/health stays readiness (its 2 s bound already existed) and logs one line; a production boot retries connection-class errors for about 5 s (1 s, 2 s, 2 s, each attempt capped at 3 s), anything else stops at once.
+- L9 (dyn-prod-F11): register() arms an unref'd 125 s exit timer on SIGTERM (Next already closes the listener); compose stop_grace_period 130s, Quadlet StopTimeout=130 and TimeoutStopSec=140; deploy.md documents ECS stopTimeout 130 and the Fargate 120 s cap.
+- L11 (domain-F17, db-F8, domain-F5): approval and fast-lane triage fail with a 409 ControlCatalogEmptyError while control_definitions is empty; a condition's control id must exist once a catalog is loaded; a production boot logs a warning for an empty catalog.
+- L14 (api-ops-F14, docs-F37): the Phoenix card is amber "endpoint set, not polled" or "endpoint is not a valid URL", the fixed timestamp is gone, reset-demo warns.
+- L22 (deploy-F10, ui-public-F12): no built-in contact address; unset settings render no links and the legal pages say contact is not configured; a Vercel production demo build needs a mailto NEXT_PUBLIC_PRIVACY_CONTACT; Containerfile build args.
+### Verified: each new test was written before its change and run against the old code; see the commit messages. Typecheck, lint on changed files, and the full unit suite (see the lane report for totals).
+### Recommendations / Next steps:
+- Codex: a test fixture that calls decide() needs at least one control_definitions row; the Fargate stopTimeout cap (120 s) is shorter than the 125 s drain deadline.
+- Owner: set NEXT_PUBLIC_PRIVACY_CONTACT (mailto) and NEXT_PUBLIC_CONTACT_URL on Vercel before this reaches main; a production install still has no way to load the control catalog (approvals answer 409 until one exists).

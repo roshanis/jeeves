@@ -41,6 +41,13 @@ services:
     build:
       context: ../..
       dockerfile: deploy/podman/Containerfile
+      # Build-time settings, passed through from your environment when set
+      # (see docs/environment-reference.md, "Marketing site (build time)").
+      args:
+        - NEXT_PUBLIC_SITE_URL
+        - NEXT_PUBLIC_CONTACT_URL
+        - NEXT_PUBLIC_PRIVACY_CONTACT
+        - NEXT_PUBLIC_PILOT_PRICE
     image: jeeves:local
     environment:
       # host `db` resolves on the compose network. lib/db/driver-select.ts
@@ -83,11 +90,14 @@ services:
       db:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3000/api/health/live').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 15s
+    # The app exits at most 125 s after SIGTERM (lib/config/shutdown.ts); wait
+    # longer than that before SIGKILL.
+    stop_grace_period: 130s
     restart: unless-stopped
 
   # One-shot: apply migrations. Deliberately NOT run by the app on boot —

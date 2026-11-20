@@ -18,7 +18,15 @@ export default defineConfig({
     // opt into DB-backed reads. Preview tests override this via vi.stubEnv.
     // JEEVES_MODE defaults to production when unset (lib/config/deployment-mode.ts),
     // so the suite, which exercises the demo, must say "demo" explicitly.
-    env: { DATA_PROVIDER: "db", JEEVES_MODE: "demo" },
+    // The contact settings are build-time and have no built-in value; the UI
+    // tests that exercise the contact links need some (tests/ui/contact-unset
+    // covers the unset case).
+    env: {
+      DATA_PROVIDER: "db",
+      JEEVES_MODE: "demo",
+      NEXT_PUBLIC_CONTACT_URL: "mailto:contact@example.test",
+      NEXT_PUBLIC_PRIVACY_CONTACT: "mailto:privacy@example.test",
+    },
     // Node >= 25 ships a non-functional `localStorage` global that blocks
     // jsdom's implementation — see tests/setup/web-storage.ts.
     setupFiles: ["tests/setup/web-storage.ts"],

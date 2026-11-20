@@ -127,15 +127,17 @@ export default function PilotPage() {
           <div className="mt-10">
             <h2 className="text-lg font-semibold tracking-tight">Pricing</h2>
             <p className="mt-3 text-sm text-muted-foreground md:text-base">
-              {PILOT_PRICE ?? "Contact for pricing"}
+              {PILOT_PRICE ?? (CONTACT_URL ? "Contact for pricing" : "No price is published for this installation.")}
             </p>
           </div>
 
-          <div className="mt-10 border-t pt-8">
-            <Link href={CONTACT_URL} className={buttonVariants({ size: "lg" })}>
-              Book an intro call
-            </Link>
-          </div>
+          {CONTACT_URL ? (
+            <div className="mt-10 border-t pt-8">
+              <Link href={CONTACT_URL} className={buttonVariants({ size: "lg" })}>
+                Book an intro call
+              </Link>
+            </div>
+          ) : null}
 
           <p className="mt-10 text-xs text-muted-foreground">
             {FRAMEWORK_DISCLAIMER}

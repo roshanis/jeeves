@@ -83,8 +83,9 @@ export function verifyWorkspaceCookie(
 // JEEVES_COOKIE_SECRET, this deprecated fallback signs new cookies and verifies
 // existing ones using the same deployment signing material.
 export function resolveWorkspaceCookieSecret(): string | null {
-  const explicit = process.env.JEEVES_COOKIE_SECRET;
-  if (explicit && explicit.length > 0) return explicit;
+  // Trimmed, like the production boot check that validated it.
+  const explicit = process.env.JEEVES_COOKIE_SECRET?.trim();
+  if (explicit) return explicit;
 
   const passcode = process.env.DEMO_PASSCODE;
   if (passcode && passcode.length > 0) {

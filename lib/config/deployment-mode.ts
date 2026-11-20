@@ -10,6 +10,7 @@
 //
 // Server-only, and deliberately never a NEXT_PUBLIC_ variable: the mode must
 // not be something the browser bundle can be built to believe.
+import { parsePostgresUrl } from "../db/connection-config";
 import { selectDriver } from "../db/driver-select";
 import { runtimeDatabaseUrl } from "../db/runtime-config";
 import { DB_TLS_OPT_OUT_VALUE, databaseTlsPosture, unverifiedDatabaseProblem } from "../db/tls-posture";
@@ -65,13 +66,40 @@ export class ProductionConfigError extends Error {
 /** Minimum length of the secret that signs workspace/session cookies. */
 const MIN_COOKIE_SECRET_LENGTH = 32;
 
-function isPlainHttpsUrl(value: string): boolean {
+/**
+ * The one rule for APP_BASE_URL, shared with installBaseUrl (site-metadata.ts):
+ * an https origin. The value becomes metadataBase and og:url, so a path, query
+ * or fragment would silently change what those resolve to. Returns the parsed
+ * URL, or null when the (trimmed) value is not one.
+ */
+export function parseOriginUrl(value: string | undefined): URL | null {
+  const raw = value?.trim();
+  if (!raw) return null;
   try {
-    const url = new URL(value);
-    return url.protocol === "https:" && url.hostname !== "" && !url.username && !url.password;
+    const url = new URL(raw);
+    const ok =
+      url.protocol === "https:" &&
+      url.hostname !== "" &&
+      !url.username &&
+      !url.password &&
+      url.pathname === "/" &&
+      !url.search &&
+      !url.hash &&
+      !raw.includes("?") &&
+      !raw.includes("#");
+    return ok ? url : null;
   } catch {
-    return false;
+    return null;
   }
+}
+
+const PLACEHOLDER_SECRETS = ["changeme", "change-me", "change_me", "secret", "password", "placeholder", "replaceme", "replace-me", "replace_me", "example", "default", "test", "jeeves"];
+
+/** A secret nobody chose: one repeated character, or a known placeholder word (alone or repeated). */
+function isWeakSecret(value: string): boolean {
+  if (new Set(value).size === 1) return true;
+  const lower = value.toLowerCase();
+  return PLACEHOLDER_SECRETS.some((word) => lower.length % word.length === 0 && lower === word.repeat(lower.length / word.length));
 }
 
 /**
@@ -119,6 +147,18 @@ export function assertProductionConfig(env: Env = process.env): void {
     );
   }
 
+  const databaseUrl = runtimeDatabaseUrl(env);
+  let databaseUrlInvalid = false;
+  if (databaseUrl && selectDriver(databaseUrl, env.JEEVES_DB_DRIVER) !== "pglite") {
+    try {
+      parsePostgresUrl(databaseUrl);
+    } catch (error) {
+      databaseUrlInvalid = true;
+      // The parser's message never echoes the URL, which carries the password.
+      problems.push(`DATABASE_URL (or POSTGRES_URL) is invalid: ${(error as Error).message}`);
+    }
+  }
+
   const optOut = env.JEEVES_DB_ALLOW_UNVERIFIED?.trim() ?? "";
   if (optOut && optOut !== DB_TLS_OPT_OUT_VALUE) {
     problems.push(
@@ -126,7 +166,7 @@ export function assertProductionConfig(env: Env = process.env): void {
         "without verified TLS; any other value is refused rather than read as off",
     );
   }
-  const tls = databaseTlsPosture(env);
+  const tls = databaseUrlInvalid ? ({ kind: "no_database" } as const) : databaseTlsPosture(env);
   if (tls.kind === "refused") problems.push(tls.message);
   else if (tls.kind === "unverified" && optOut !== DB_TLS_OPT_OUT_VALUE) problems.push(unverifiedDatabaseProblem(tls.cause));
 
@@ -135,7 +175,9 @@ export function assertProductionConfig(env: Env = process.env): void {
   }
 
   const cookieSecret = env.JEEVES_COOKIE_SECRET?.trim() ?? "";
-  if (!cookieSecret) {
+  if (cookieSecret && isWeakSecret(cookieSecret)) {
+    problems.push("JEEVES_COOKIE_SECRET is too weak: it looks like a placeholder or one repeated character (use `openssl rand -hex 32`)");
+  } else if (!cookieSecret) {
     problems.push(
       `JEEVES_COOKIE_SECRET is required (at least ${MIN_COOKIE_SECRET_LENGTH} characters; DEMO_PASSCODE is not accepted as a fallback in production)`,
     );
@@ -148,8 +190,8 @@ export function assertProductionConfig(env: Env = process.env): void {
   const baseUrl = env.APP_BASE_URL?.trim() ?? "";
   if (!baseUrl) {
     problems.push("APP_BASE_URL is required: the absolute https URL this install is served from");
-  } else if (!isPlainHttpsUrl(baseUrl)) {
-    problems.push("APP_BASE_URL must be an absolute https URL without embedded credentials");
+  } else if (!parseOriginUrl(baseUrl)) {
+    problems.push("APP_BASE_URL must be an https origin (scheme, host and optional port only: no path, query, fragment or credentials)");
   }
 
   if (!env.JEEVES_TENANT_ID?.trim()) {

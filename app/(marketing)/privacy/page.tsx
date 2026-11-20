@@ -142,18 +142,26 @@ export default function PrivacyPage() {
       </LegalSection>
 
       <LegalSection heading="Getting your data removed">
-        <p>
-          Write to{" "}
-          <a
-            href={PRIVACY_CONTACT}
-            className="underline underline-offset-4 hover:text-foreground"
-          >
-            the contact address for this deployment
-          </a>{" "}
-          describing what you submitted, and it will be deleted. Because this
-          is a demonstration, the simplest and fastest remedy is usually
-          deletion of the whole record.
-        </p>
+        {PRIVACY_CONTACT ? (
+          <p>
+            Write to{" "}
+            <a
+              href={PRIVACY_CONTACT}
+              className="underline underline-offset-4 hover:text-foreground"
+            >
+              the contact address for this deployment
+            </a>{" "}
+            describing what you submitted, and it will be deleted. Because this
+            is a demonstration, the simplest and fastest remedy is usually
+            deletion of the whole record.
+          </p>
+        ) : (
+          <p>
+            Contact for this installation is not configured, so this page has
+            no address to write to. Ask whoever runs this installation how to
+            reach them, and describe what you submitted.
+          </p>
+        )}
       </LegalSection>
 
       <LegalSection heading="Changes">

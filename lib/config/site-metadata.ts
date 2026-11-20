@@ -14,25 +14,18 @@
 // bake one origin into every customer's image.
 import type { Metadata } from "next";
 import { SITE_URL } from "../marketing/site-config";
-import { deploymentMode, type DeploymentMode } from "./deployment-mode";
+import { deploymentMode, parseOriginUrl, type DeploymentMode } from "./deployment-mode";
 
 type Env = Record<string, string | undefined>;
 
 /**
  * This installation's own origin from APP_BASE_URL, or null when it is unset
- * or not a plain https URL. Production boot refuses to start without a valid
+ * or not an https origin. Production boot refuses to start without a valid
  * one (assertProductionConfig); null here only means "omit the base" for a
  * caller that runs before or without that check, instead of inventing one.
  */
 export function installBaseUrl(env: Env = process.env): URL | null {
-  const raw = env.APP_BASE_URL?.trim();
-  if (!raw) return null;
-  try {
-    const url = new URL(raw);
-    return url.protocol === "https:" && url.hostname !== "" && !url.username && !url.password ? url : null;
-  } catch {
-    return null;
-  }
+  return parseOriginUrl(env.APP_BASE_URL);
 }
 
 export function rootMetadata(env: Env = process.env): Metadata {
