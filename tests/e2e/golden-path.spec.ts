@@ -21,12 +21,16 @@ test.describe("champion storyline: read-only golden path", () => {
 
     // Exact required banner string (lib/demo-banner.ts DEMO_BANNER_TEXT /
     // ui-spec §7-8.1) — the landing page renders the same disclaimer strip
-    // as the console's app-topbar.
+    // as the console's app-topbar. Visible only, like the assessment card
+    // below: when React renders a streamed boundary in the browser it keeps
+    // the server-rendered copy in a hidden container for up to about 300 ms.
     await expect(
-      page.getByText(
-        "Fictional demo — synthetic data. Meridian Health is a fictional payer; not affiliated with any real organization.",
-        { exact: true },
-      ),
+      page
+        .getByText(
+          "Fictional demo — synthetic data. Meridian Health is a fictional payer; not affiliated with any real organization.",
+          { exact: true },
+        )
+        .filter({ visible: true }),
     ).toBeVisible();
 
     await page.getByRole("button", { name: "Try the demo" }).first().click();
@@ -49,11 +53,15 @@ test.describe("champion storyline: read-only golden path", () => {
     await page.goto("/inbox");
 
     // Exact required banner string (app-topbar DEMO_BANNER_TEXT / ui-spec §7-8.1).
+    // Visible only: a hidden server-rendered copy can sit in the document for
+    // a moment (see the landing test above); two visible banners still fail.
     await expect(
-      page.getByText(
-        "Fictional demo — synthetic data. Meridian Health is a fictional payer; not affiliated with any real organization.",
-        { exact: true },
-      ),
+      page
+        .getByText(
+          "Fictional demo — synthetic data. Meridian Health is a fictional payer; not affiliated with any real organization.",
+          { exact: true },
+        )
+        .filter({ visible: true }),
     ).toBeVisible();
 
     // Operations console inbox — attention heading + a needs-attention table.

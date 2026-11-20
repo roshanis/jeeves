@@ -25,12 +25,14 @@ export const DEMO_PERSONAS = [
 ] as const satisfies readonly DemoPersona[];
 
 export type PersonaKey = (typeof DEMO_PERSONAS)[number]["id"];
-export const DEMO_PERSONA_DIRECTORY = Object.fromEntries(
-  DEMO_PERSONAS.map((persona) => [persona.id, persona]),
+// The /* @__PURE__ */ marks tell the bundler these top-level calls have no side
+// effects, so a demo-disabled client build can drop this module (L18).
+export const DEMO_PERSONA_DIRECTORY = /* @__PURE__ */ Object.fromEntries(
+  /* @__PURE__ */ DEMO_PERSONAS.map((persona) => [persona.id, persona]),
 ) as Readonly<Record<PersonaKey, DemoPersona & { readonly id: PersonaKey }>>;
 
-export const REVIEWER_DOMAIN: Readonly<Record<string, Domain>> = Object.fromEntries(
-  DEMO_PERSONAS.flatMap((persona) => persona.reviewDomain ? [[persona.id, persona.reviewDomain]] : []),
+export const REVIEWER_DOMAIN: Readonly<Record<string, Domain>> = /* @__PURE__ */ Object.fromEntries(
+  /* @__PURE__ */ DEMO_PERSONAS.flatMap((persona) => persona.reviewDomain ? [[persona.id, persona.reviewDomain]] : []),
 );
 
 export function reviewerDomainForPersona(personaKey: string): Domain | null {

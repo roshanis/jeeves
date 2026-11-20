@@ -1858,3 +1858,16 @@ Hard rules: no violations found.
 ### Recommendations / Next steps:
 - Codex: a test fixture that calls decide() needs at least one control_definitions row; the Fargate stopTimeout cap (120 s) is shorter than the 125 s drain deadline.
 - Owner: set NEXT_PUBLIC_PRIVACY_CONTACT (mailto) and NEXT_PUBLIC_CONTACT_URL on Vercel before this reaches main; a production install still has no way to load the control catalog (approvals answer 409 until one exists).
+
+## [AGENT: Claude] [2026-11-20T18:00Z]
+### Action: implementer: production-copy lane of the peer-review decisions (owner "go", 2026-11-20): L16, L17, L19, L18, on branch claude/w5-prod-copy
+### Files changed: lib/data/canned-audit-queries.ts, lib/data/available-audit-queries.ts, lib/data/db-provider.ts, components/jeeves/audit-console.tsx, app/(console)/audit/page.tsx, app/api/chat/auditor/route.ts, lib/intake/hosting.ts, lib/intake/hosting-alias.ts, lib/intake/schema.ts, lib/intake/completeness.ts, lib/services/initiative-service.ts, lib/workflow/review-context.ts, the two intake API routes, lib/client/mode-copy.ts, lib/client/demo-copy.ts, lib/client/personas.ts, lib/client/session-context.tsx, lib/demo-banner.ts, lib/demo/personas.ts, scripts/check-demo-free-bundle.cjs, package.json, components/jeeves (intake-form, evidence-tab, intake-chat, live-actions-bar, role-gate, role-context, role-aware-inbox, app-sidebar, sign-in-link and the other signed-out prompts), docs/intake-spec.md, and their tests
+### Diff summary:
+- L16 (db-F28): the approved-by-Torres audit query is not fetched, listed or picked by the auditor chat in production, and auditQuery("approved-by-torres") throws "Unknown audit query"; demo unchanged.
+- L17 (prodmode-F11, ui-intake-F22): the stored hosting value is "Self-hosted" in every mode; rows holding "Self-hosted (Meridian infra)" read as the new value through withCurrentHosting (no migration). In production the evidence tab and intake form lose the fictional-document tick and the demo/Meridian/persona wording.
+- L19 (ui-review-F18): production signed-out prompts say "Sign in" with a /sign-in link (lib/client/mode-copy.ts); the Inbox drops the company name and the "Viewing as <persona>" strip.
+- L18 (prodmode-F15): a JEEVES_DEMO_ENABLED=0 build serves no persona roster and no "Meridian" in .next/static; scripts/check-demo-free-bundle.cjs (npm run check:demo-free-bundle) proves it and fails on a demo build.
+### Verified: each item's tests were written before the change (see the lane report); typecheck and lint clean; full unit suite 290 files / 3497 tests passed; a locked build passes the bundle check and a demo build fails it.
+### Recommendations / Next steps:
+- Codex: client code that needs a demo-only string must take it from lib/client/demo-copy.ts or lib/client/personas.ts, never a literal, or a locked build's bundle check fails.
+- Owner: add `npm run check:demo-free-bundle` to ci.yml after the "Build with demo mode compiled out" step (not done here: CI files need your OK); the Inbox "my initiatives" filter still matches the persona name, so production needs the server viewer's identity before sign-in ships.

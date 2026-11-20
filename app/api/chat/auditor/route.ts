@@ -32,6 +32,7 @@ import type { AgentPort, PortFailure } from "@/lib/agents/ports";
 import { agentInitializationResponse, llmNotConfigured, llmNotConfiguredResponse } from "@/lib/services/agent-error-response";
 import { getProvider } from "@/lib/data";
 import type { AuditQueryRow, CannedAuditQueryId } from "@/lib/data/dto";
+import { availableCannedAuditQueryIds } from "@/lib/data/available-audit-queries";
 import { guardFailureResponse, reserveDailyBudget, runMutationGuard } from "@/lib/services/route-guard";
 import { databaseNotReady } from "@/lib/http/database-gate";
 
@@ -122,7 +123,9 @@ function slugCandidates(question: string): string[] {
 function pickCannedQuery(question: string): CannedAuditQueryId {
   let bestId: CannedAuditQueryId | null = null;
   let bestScore = 0;
+  const offered = availableCannedAuditQueryIds();
   for (const candidate of QUERY_KEYWORDS) {
+    if (!offered.includes(candidate.id)) continue;
     const score = scoreQuery(question, candidate.keywords);
     if (score > bestScore) {
       bestScore = score;

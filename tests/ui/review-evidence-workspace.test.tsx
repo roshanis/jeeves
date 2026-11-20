@@ -15,6 +15,7 @@ vi.mock("@/lib/client/review-actions", async (original) => ({
 import { ReviewEvidenceWorkspace } from "@/components/jeeves/review-evidence-workspace";
 import { ReviewWorkbench, type ReviewQueueRow } from "@/components/jeeves/review-workbench";
 import { renderWithProviders } from "./helpers";
+import { DeploymentModeProvider } from "@/lib/client/deployment-mode-context";
 
 const session = { token: "reviewer-token", workspaceId: "workspace", personaKey: "marcus-webb", personaLabel: "Marcus Webb", role: "reviewer", expiresAt: Date.now() + 60_000 };
 const entry = { controlId: "H-01", documentId: "document-v2", pageReference: "4–5", note: "Retention is described on these pages." };
@@ -27,9 +28,10 @@ function fixture(): EvidenceState {
   };
 }
 function workspace(slug = "case-one") {
-  return <ReviewEvidenceWorkspace slug={slug} domain="privacy-hipaa" citations={["MP-H v3 §MP-H-2"]} reviewStatus="drafted">
+  // The demo's wording is what these cases pin; production has its own (tests/ui/production-mode-signed-out.test.tsx).
+  return <DeploymentModeProvider mode="demo"><ReviewEvidenceWorkspace slug={slug} domain="privacy-hipaa" citations={["MP-H v3 §MP-H-2"]} reviewStatus="drafted">
     {({ signingBlock, cycleId }) => <aside aria-label="Test review action"><span>{signingBlock ?? "No evidence signature block"}</span><span>{cycleId}</span></aside>}
-  </ReviewEvidenceWorkspace>;
+  </ReviewEvidenceWorkspace></DeploymentModeProvider>;
 }
 beforeEach(() => {
   window.sessionStorage.clear();

@@ -9,7 +9,8 @@ import { apiErrorToMessage, isApiError, rollbackDeployment } from "@/lib/client/
 import { useLiveSessionOptional, type LiveSession } from "@/lib/client/session-context";
 import { Button } from "@/components/ui/button";
 import { DeploymentsTab } from "./deployments-tab";
-import { DEMO_SESSION_TOOLTIP } from "./role-gate";
+import { useDeploymentMode } from "@/lib/client/deployment-mode-context";
+import { sessionTooltip } from "./role-gate";
 import { RollbackDialog, type RollbackTargetOption } from "./rollback-dialog";
 
 /** Recovery belongs to the initiative, independently of its promotion queue. */
@@ -66,6 +67,7 @@ function RollbackControls({
   onExpired: () => void;
 }) {
   const router = useRouter();
+  const mode = useDeploymentMode();
   const [open, setOpen] = React.useState(false);
   const [pending, setPending] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -77,9 +79,9 @@ function RollbackControls({
   }, []);
 
   const roleOk = session?.role === "approver" || session?.role === "admin";
-  const disabledReason = !session?.workspaceId ? DEMO_SESSION_TOOLTIP
+  const disabledReason = !session?.workspaceId ? sessionTooltip(mode)
     : isSeeded ? "This shared example is read-only. Create your own initiative to try rollback."
-    : !roleOk ? "Requires the approver or admin role — choose a persona in the header"
+    : !roleOk ? `Requires the approver or admin role${mode === "demo" ? " — choose a persona in the header" : ""}`
     : !initiativeId || !current?.id ? "No identified deployed version is available to roll back."
     : targets.length === 0 ? "No prior (retired/paused) version to roll back to"
     : null;

@@ -3,11 +3,13 @@
 import * as React from "react";
 import { useLiveSession } from "@/lib/client/session-context";
 import { getIntakeDraft, isApiError, apiErrorToMessage, type IntakeDraftResult } from "@/lib/client/api";
+import { useDeploymentMode } from "@/lib/client/deployment-mode-context";
 import { IntakeModeToggle } from "./intake-mode-toggle";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 export function IntakeDraftEditor({ initiativeId }: { initiativeId: string }) {
   const { session, logout } = useLiveSession();
+  const demo = useDeploymentMode() === "demo";
   const [loaded, setLoaded] = React.useState<{ token: string; initiativeId: string; draft: IntakeDraftResult } | null>(null);
   const [failure, setFailure] = React.useState<{ token: string; initiativeId: string; message: string } | null>(null);
 
@@ -26,7 +28,7 @@ export function IntakeDraftEditor({ initiativeId }: { initiativeId: string }) {
     return () => { active = false; };
   }, [initiativeId, session, logout]);
 
-  if (!session) return <Alert><AlertTitle>Live session required</AlertTitle><AlertDescription>Start the demo as the requester who owns this draft.</AlertDescription></Alert>;
+  if (!session) return <Alert><AlertTitle>Live session required</AlertTitle><AlertDescription>{demo ? "Start the demo as the requester who owns this draft." : "Sign in as the requester who owns this draft."}</AlertDescription></Alert>;
   const error = failure?.token === session.token && failure.initiativeId === initiativeId ? failure.message : null;
   const draft = loaded?.token === session.token && loaded.initiativeId === initiativeId ? loaded.draft : null;
   if (error) return <Alert variant="destructive"><AlertTitle>Draft unavailable</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>;

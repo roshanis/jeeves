@@ -118,6 +118,27 @@ describe("lib/services/initiative-service", () => {
     });
   });
 
+  describe("legacy 'Self-hosted (Meridian infra)' hosting value", () => {
+    it("reads, validates and submits a row that still holds the old value, and returns the new one", async () => {
+      const payload = {
+        ...lowTierPayload(),
+        overlay: { ...lowTierPayload().overlay, vendorHosted: false },
+        modelVendor: { ...lowTierPayload().modelVendor, buildOrBuy: "Build (internal)" as const, vendorName: null, hosting: "Self-hosted" as const },
+      };
+      const draft = await svc.createDraft(db, { payload, requesterActor: REQUESTER, requesterName: "Priya Raman" });
+      await db.update(intakeVersions)
+        .set({ fields: { ...payload, modelVendor: { ...payload.modelVendor, hosting: "Self-hosted (Meridian infra)" } } as never })
+        .where(eq(intakeVersions.initiativeId, draft.initiativeId));
+
+      const loaded = await svc.getIntakeDraft(db, draft.initiativeId, REQUESTER, null);
+      expect(loaded.payload.modelVendor.hosting).toBe("Self-hosted");
+      const detail = await new DbDataProvider(db).getInitiativeDetail(draft.slug);
+      expect((detail?.intake?.fields as unknown as IntakePayload).modelVendor.hosting).toBe("Self-hosted");
+      const result = await svc.submitIntake(db, draft.initiativeId, REQUESTER);
+      expect(result).toMatchObject({ submitted: true });
+    });
+  });
+
   describe("review integrity regression", () => {
     async function reviewFixture(workspaceId?: string) {
       const draft = await svc.createDraft(db, {

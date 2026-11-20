@@ -26,6 +26,9 @@
 import * as React from "react";
 import { useRole } from "./role-context";
 import { useLiveSessionOptional } from "@/lib/client/session-context";
+import { useDeploymentMode } from "@/lib/client/deployment-mode-context";
+import type { DeploymentMode } from "@/lib/config/deployment-mode";
+import { signInPrompt } from "@/lib/client/mode-copy";
 import type { LivePersona } from "@/lib/client/personas";
 import { Button } from "@/components/ui/button";
 import {
@@ -36,6 +39,11 @@ import {
 import { cn } from "@/lib/utils";
 
 export const DEMO_SESSION_TOOLTIP = "Start the demo to try this action";
+
+/** The same prompt for the mode the page runs in. */
+export function sessionTooltip(mode: DeploymentMode): string {
+  return signInPrompt(mode, mode === "demo" ? "try this action" : "use this action");
+}
 
 /**
  * Mechanism 1: hides children entirely when the active role is Admin.
@@ -86,6 +94,7 @@ export function DisableWithTooltip({
 }: GatedActionProps) {
   const live = useLiveSessionOptional();
   const session = live?.session ?? null;
+  const mode = useDeploymentMode();
   const reasonId = React.useId();
 
   // A public (real request) session satisfies no live action.
@@ -113,10 +122,10 @@ export function DisableWithTooltip({
     session?.role === "public"
       ? "Not available for a real request"
       : session && allowedRoles.length > 0 && !roleSatisfied
-      ? `Requires the ${allowedRoles.join(" or ")} role — choose a persona in the header`
+      ? `Requires the ${allowedRoles.join(" or ")} role${mode === "production" ? "" : " — choose a persona in the header"}`
       : session && disabledReason
       ? disabledReason
-      : DEMO_SESSION_TOOLTIP;
+      : sessionTooltip(mode);
 
   return (
     <DisabledAction

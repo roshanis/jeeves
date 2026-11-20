@@ -193,6 +193,11 @@ jobs:
           DATA_PROVIDER: mock
           JEEVES_DEMO_ENABLED: "0"
 
+      # The public JavaScript of that build must not name the fictional payer
+      # or any demo persona (L18). Reads .next/static; builds nothing.
+      - name: Check the demo-locked bundle for demo names
+        run: npm run check:demo-free-bundle
+
       # Starts the server WITH JEEVES_MODE=demo; every production check must
       # still pass.
       - name: Smoke test the demo-locked build

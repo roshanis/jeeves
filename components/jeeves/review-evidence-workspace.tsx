@@ -10,6 +10,10 @@ import type { ReviewRow } from "@/lib/data/dto";
 import type { Domain } from "@/lib/domain/types";
 import type { EvidenceRequirement, EvidenceState } from "@/lib/evidence/types";
 import { isApiError } from "@/lib/client/api";
+import { useDeploymentMode } from "@/lib/client/deployment-mode-context";
+import type { DeploymentMode } from "@/lib/config/deployment-mode";
+import { sessionExpiredMessage, signInPrompt } from "@/lib/client/mode-copy";
+import { SignInLink } from "./sign-in-link";
 import { downloadEvidenceFile, evidenceRequest } from "@/lib/client/evidence-api";
 import { domainForPersona } from "@/lib/client/personas";
 import { useLiveSessionOptional, type LiveSession } from "@/lib/client/session-context";
@@ -82,11 +86,11 @@ const SHARED_EXAMPLE_NOTE = "Shared examples do not have private evidence packet
 
 // The shared-example wording only fits the initial GET; a 404 from a download
 // or assessment is the server's own message.
-function errorMessage(error: unknown, initialLoad = false): string {
+function errorMessage(error: unknown, mode: DeploymentMode, initialLoad = false): string {
   if (initialLoad && isApiError(error) && error.status === 404) {
     return SHARED_EXAMPLE_NOTE;
   }
-  if (isApiError(error) && error.status === 401) return "Your session expired. Start the demo again.";
+  if (isApiError(error) && error.status === 401) return sessionExpiredMessage(mode);
   return error instanceof Error ? error.message : "Evidence could not be loaded.";
 }
 
@@ -96,6 +100,7 @@ function EvidenceWorkspace({ slug, domain, citations, citationProvenance, missin
   onUnlock: () => void;
 }) {
   const router = useRouter();
+  const mode = useDeploymentMode();
   const [state, setState] = React.useState<EvidenceState | null>(null);
   const [loading, setLoading] = React.useState(Boolean(session) && !isSeeded);
   const [error, setError] = React.useState("");
@@ -116,7 +121,7 @@ function EvidenceWorkspace({ slug, domain, citations, citationProvenance, missin
       .then((next) => { if (active) setState(next); })
       .catch((err: unknown) => {
         if (!active) return;
-        setError(errorMessage(err, true));
+        setError(errorMessage(err, mode, true));
         if (isApiError(err) && err.status === 401) onExpired();
       })
       .finally(() => { if (active) setLoading(false); });
@@ -169,7 +174,7 @@ function EvidenceWorkspace({ slug, domain, citations, citationProvenance, missin
       }
       router.refresh();
     } catch (err) {
-      setError(errorMessage(err));
+      setError(errorMessage(err, mode));
       if (isApiError(err) && err.status === 401) onExpired();
     } finally {
       setPending(false);
@@ -183,7 +188,7 @@ function EvidenceWorkspace({ slug, domain, citations, citationProvenance, missin
     try {
       await downloadEvidenceFile(slug, session.token, documentId, fileName);
     } catch (err) {
-      setDownloadError(errorMessage(err));
+      setDownloadError(errorMessage(err, mode));
       if (isApiError(err) && err.status === 401) onExpired();
     } finally {
       setPending(false);
@@ -203,8 +208,8 @@ function EvidenceWorkspace({ slug, domain, citations, citationProvenance, missin
       </div>
     </div>
     {!session ? <div className="flex flex-wrap items-center gap-3 rounded-lg border bg-muted/30 px-4 py-3 text-sm">
-      <p>Start the demo to view private submitted evidence. Draft references remain read-only.</p>
-      <Button variant="outline" size="sm" onClick={onUnlock}>Start demo</Button>
+      <p>{signInPrompt(mode, "view private submitted evidence")}. Draft references remain read-only.</p>
+      {mode === "demo" ? <Button variant="outline" size="sm" onClick={onUnlock}>Start demo</Button> : <SignInLink />}
     </div> : null}
     {isSeeded ? <p role="status" className="rounded-lg border bg-muted/30 px-4 py-3 text-sm text-muted-foreground">{SHARED_EXAMPLE_NOTE}</p> : null}
     {downloadError ? <p role="alert" className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">{downloadError}</p> : null}

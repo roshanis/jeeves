@@ -23,7 +23,8 @@ import { askAuditor, isApiError, apiErrorToMessage } from "@/lib/client/api";
 import { useLiveSession } from "@/lib/client/session-context";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { DEMO_SESSION_TOOLTIP } from "./role-gate";
+import { useDeploymentMode } from "@/lib/client/deployment-mode-context";
+import { sessionTooltip } from "./role-gate";
 
 interface ChatTurn {
   role: "user" | "assistant";
@@ -34,6 +35,7 @@ interface ChatTurn {
 
 export function AuditorChat() {
   const { session, logout } = useLiveSession();
+  const mode = useDeploymentMode();
   const [question, setQuestion] = React.useState("");
   const [transcript, setTranscript] = React.useState<ChatTurn[]>([]);
   const [pending, setPending] = React.useState(false);
@@ -142,7 +144,7 @@ export function AuditorChat() {
               </Button>
             </div>
             <p id={reasonId} data-slot="auditor-disabled-reason" className="text-xs text-muted-foreground">
-              {DEMO_SESSION_TOOLTIP}
+              {sessionTooltip(mode)}
             </p>
           </div>
         ) : (

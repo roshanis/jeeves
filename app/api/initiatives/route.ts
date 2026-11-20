@@ -14,6 +14,7 @@
 import { getDb } from "@/lib/db/client";
 import { ConflictError, createDraft } from "@/lib/services/initiative-service";
 import { intakePayloadSchema } from "@/lib/services/intake-payload-schema";
+import { withCurrentHosting } from "@/lib/intake/hosting-alias";
 import { guardFailureResponse, runMutationGuard } from "@/lib/services/route-guard";
 import { BodyReadError, hasNul, readBodyText } from "@/lib/http/read-json-body";
 import { ACTOR_DIRECTORY, isPersonaKey } from "@/lib/services/actors";
@@ -47,7 +48,7 @@ export async function POST(req: Request): Promise<Response> {
   if (typeof body.requestId !== "string" || !/^[A-Za-z0-9_-]{16,100}$/.test(body.requestId)) {
     return Response.json({ error: "requestId must be 16-100 URL-safe characters" }, { status: 400 });
   }
-  const parsed = intakePayloadSchema.safeParse(body.payload);
+  const parsed = intakePayloadSchema.safeParse(withCurrentHosting(body.payload));
   if (!parsed.success) {
     return Response.json({ error: "invalid intake payload", issues: parsed.error.issues }, { status: 400 });
   }

@@ -48,7 +48,7 @@ gate submit only.
 |---|---|---|---|
 | `buildOrBuy` | Build or buy | `enum` | required — one of `Build (internal)`, `Buy (vendor)`, `Hybrid` |
 | `vendorName` | Vendor name | `string` | required if `buildOrBuy ∈ {Buy, Hybrid}` OR `vendorHosted = Y` (see §7 Q4); 2–120 chars |
-| `hosting` | Hosting | `enum` | required — one of `Vendor-hosted`, `Self-hosted (Meridian infra)`; must be consistent with overlay Q4 (`vendorHosted`) |
+| `hosting` | Hosting | `enum` | required — one of `Vendor-hosted`, `Self-hosted`; must be consistent with overlay Q4 (`vendorHosted`) | (rows written before the rename may hold `Self-hosted (Meridian infra)`; reads treat it as `Self-hosted`)
 | `modelType` | Model type | `enum` | required — one of `LLM (generative)`, `Classical ML / classifier`, `OCR/extraction`, `Rules engine`, `Other` |
 
 ### (e) Population & impact
@@ -181,7 +181,7 @@ the completeness meter flag the gap, and the requester can submit with it open).
 | `RFT-02` | `overlay.touchesPHI = true` | `retentionIntent` | enum value set (not null) |
 | `RFT-03` | `overlay.vendorHosted = true` OR `buildOrBuy ∈ {Buy, Hybrid}` | `vendorName` | non-empty, 2–120 chars |
 | `RFT-04` | `overlay.vendorHosted = true` | `hosting` | must equal `Vendor-hosted` (consistency check) |
-| `RFT-05` | `overlay.vendorHosted = false` | `hosting` | must equal `Self-hosted (Meridian infra)` (consistency check) |
+| `RFT-05` | `overlay.vendorHosted = false` | `hosting` | must equal `Self-hosted` (consistency check) |
 | `RFT-06` | `overlay.careCoverageInfluence = true` | `decisionInformed` | non-empty, ≥10 chars (care/coverage cases must clearly name the decision) |
 | `RFT-07` | tier ∈ {High, Critical} | `expectedHarms` | non-empty, ≥10 chars, distinct from `expectedBenefits` |
 | `RFT-08` | `trainingVsInference ∈ {Fine-tuning/training, Both}` | `retentionIntent` | must not be `Session-only (no persistence)` when PHI=Y (training/fine-tuning needs persisted data; the gap is anchored on the retention field) |
@@ -247,7 +247,7 @@ audit (seed-spec §5 — every state must be reachable through `AuditEvent`s, in
     "modelVendor": {
       "buildOrBuy": "Build (internal)" | "Buy (vendor)" | "Hybrid" | null,
       "vendorName": "string" | null,
-      "hosting": "Vendor-hosted" | "Self-hosted (Meridian infra)" | null,
+      "hosting": "Vendor-hosted" | "Self-hosted" | null,
       "modelType": "LLM (generative)" | "Classical ML / classifier" | "OCR/extraction" | "Rules engine" | "Other" | null
     },
     "populationImpact": {
