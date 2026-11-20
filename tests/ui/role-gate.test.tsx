@@ -5,6 +5,7 @@ import {
   GatedActionButton,
 } from "@/components/jeeves/role-gate";
 import { RoleProvider, useRole } from "@/components/jeeves/role-context";
+import { DeploymentModeProvider } from "@/lib/client/deployment-mode-context";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { LiveSessionProvider, resetLiveSessionForTests } from "@/lib/client/session-context";
 
@@ -87,7 +88,7 @@ describe("RoleGate mechanisms", () => {
   });
 
   it("exposes the disabled reason to assistive tech instead of a hover-only tooltip", () => {
-    render(<RoleProvider><TooltipProvider><GatedActionButton label="Promote" /></TooltipProvider></RoleProvider>);
+    render(<DeploymentModeProvider mode="demo"><RoleProvider><TooltipProvider><GatedActionButton label="Promote" /></TooltipProvider></RoleProvider></DeploymentModeProvider>);
     const button = screen.getByRole("button", { name: "Promote" });
     expect(button.getAttribute("aria-disabled")).toBe("true");
     expect(describedBy(button)).toBe(DEMO_SESSION_TOOLTIP);
@@ -95,7 +96,7 @@ describe("RoleGate mechanisms", () => {
   });
 
   it("reveals the reason visibly (not only sr-only) when the disabled button is tapped", async () => {
-    render(<RoleProvider><TooltipProvider><GatedActionButton label="Promote" /></TooltipProvider></RoleProvider>);
+    render(<DeploymentModeProvider mode="demo"><RoleProvider><TooltipProvider><GatedActionButton label="Promote" /></TooltipProvider></RoleProvider></DeploymentModeProvider>);
     expect(document.querySelector('[data-slot="tooltip-content"]')).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Promote" }));
     const popup = await waitFor(() => {
@@ -113,7 +114,7 @@ describe("RoleGate mechanisms", () => {
   it("opens the reason on a press when focus does not show it", async () => {
     const focus = vi.spyOn(HTMLElement.prototype, "focus").mockImplementation(() => {});
     try {
-      render(<RoleProvider><TooltipProvider><GatedActionButton label="Promote" /></TooltipProvider></RoleProvider>);
+      render(<DeploymentModeProvider mode="demo"><RoleProvider><TooltipProvider><GatedActionButton label="Promote" /></TooltipProvider></RoleProvider></DeploymentModeProvider>);
       fireEvent.click(screen.getByRole("button", { name: "Promote" }));
       await waitFor(() => expect(popupOpen()).toBe(true));
     } finally {
@@ -122,7 +123,7 @@ describe("RoleGate mechanisms", () => {
   });
 
   async function openByTap() {
-    render(<RoleProvider><TooltipProvider><GatedActionButton label="Promote" /></TooltipProvider></RoleProvider>);
+    render(<DeploymentModeProvider mode="demo"><RoleProvider><TooltipProvider><GatedActionButton label="Promote" /></TooltipProvider></RoleProvider></DeploymentModeProvider>);
     const button = screen.getByRole("button", { name: "Promote" });
     fireEvent.click(button);
     await waitFor(() => { if (!document.querySelector('[data-slot="tooltip-content"]')) throw new Error("no popup"); });
@@ -153,7 +154,7 @@ describe("RoleGate mechanisms", () => {
   });
 
   it("hides a hovered reason when the mouse leaves", async () => {
-    render(<RoleProvider><TooltipProvider><GatedActionButton label="Promote" /></TooltipProvider></RoleProvider>);
+    render(<DeploymentModeProvider mode="demo"><RoleProvider><TooltipProvider><GatedActionButton label="Promote" /></TooltipProvider></RoleProvider></DeploymentModeProvider>);
     const button = screen.getByRole("button", { name: "Promote" });
     hover(button);
     await waitFor(() => expect(popupOpen()).toBe(true));

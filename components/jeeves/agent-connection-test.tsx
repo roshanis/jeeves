@@ -9,9 +9,11 @@ import * as React from "react";
 import { CircleCheck, CircleX, Loader2, PlugZap } from "lucide-react";
 import { testAgentConnection, isApiError, apiErrorToMessage, type ConnectorHealth } from "@/lib/client/api";
 import { useLiveSessionOptional } from "@/lib/client/session-context";
+import { useDeploymentMode } from "@/lib/client/deployment-mode-context";
 
 export function AgentConnectionTest() {
   const live = useLiveSessionOptional();
+  const mode = useDeploymentMode();
   const session = live?.session ?? null;
   const [pending, setPending] = React.useState(false);
   const [result, setResult] = React.useState<ConnectorHealth | null>(null);
@@ -51,7 +53,7 @@ export function AgentConnectionTest() {
         </button>
         {!session ? (
           <span className="text-xs text-muted-foreground">
-            Start the demo in the top bar to run a live connection test.
+            {mode === "demo" ? "Start the demo in the top bar to run a live connection test." : "Sign in to run a live connection test."}
           </span>
         ) : null}
       </div>

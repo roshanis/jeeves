@@ -14,6 +14,7 @@
 // cards) so the read-only e2e golden path — which loads `/` with no role
 // switch — keeps passing.
 import * as React from "react";
+import { useDeploymentMode } from "@/lib/client/deployment-mode-context";
 import Link from "next/link";
 import {
   ClipboardList,
@@ -398,6 +399,7 @@ function PageHeader({
   subheading: React.ReactNode;
 }) {
   const { persona } = useRole();
+  const mode = useDeploymentMode();
   return (
     <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
       <div>
@@ -405,7 +407,8 @@ function PageHeader({
         <h1 className="mt-1 text-2xl font-semibold tracking-tight">{heading}</h1>
         <p className="mt-1 text-sm text-muted-foreground">{subheading}</p>
       </div>
-      <RoleContextStrip label={persona.label} actorName={persona.actorName} />
+      {/* The strip names a demo persona; production has no persona picker. */}
+      {mode === "demo" ? <RoleContextStrip label={persona.label} actorName={persona.actorName} /> : null}
     </div>
   );
 }
@@ -554,6 +557,7 @@ function ProgramView({
   incidentCount: number | null;
   counts: { inReview: number; slaBreaches: number; reassessing: number; deployed: number };
 }) {
+  const mode = useDeploymentMode();
   const attention = initiatives.filter(
     (i) => ATTENTION_STATES.has(i.state) || i.overdue,
   );
@@ -572,7 +576,7 @@ function ProgramView({
         heading="What needs attention"
         subheading={
           <>
-            Meridian Health AI governance — {attention.length} of {initiatives.length}{" "}
+            {mode === "demo" ? "Meridian Health AI governance" : "AI governance"} — {attention.length} of {initiatives.length}{" "}
             initiatives are waiting on someone right now.
           </>
         }

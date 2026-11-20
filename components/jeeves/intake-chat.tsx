@@ -142,9 +142,9 @@ export function IntakeChat({ payload, payloadRevision, onPayloadChange, onReview
       <Alert data-slot="intake-chat">
         <AlertTitle>Read-only mode</AlertTitle>
         <AlertDescription>
-          Start demo to chat with the intake assistant — this mode is
-          only available with a live demo session active (use the chip in the
-          header).
+          {demo
+            ? "Start demo to chat with the intake assistant — this mode is only available with a live demo session active (use the chip in the header)."
+            : "Sign in to chat with the intake assistant."}
         </AlertDescription>
       </Alert>
     );
