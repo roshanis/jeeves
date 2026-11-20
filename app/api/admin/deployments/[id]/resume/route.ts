@@ -31,6 +31,7 @@ import {
   ConflictError,
 } from "@/lib/services/admin-service";
 import { runMutationGuard } from "@/lib/services/route-guard";
+import { isRouteId, notFoundResponse } from "@/lib/http/route-id";
 
 const bodySchema = z.object({
   reason: z.string().min(1).max(2000),
@@ -40,24 +41,19 @@ export async function POST(
   req: Request,
   context: { params: Promise<{ id: string }> },
 ): Promise<Response> {
-  let json: unknown;
-  try {
-    json = await req.json();
-  } catch {
-    return Response.json({ error: "invalid JSON body" }, { status: 400 });
-  }
-
-  const bodyText: Record<string, string> = {
-    reason: typeof (json as { reason?: unknown })?.reason === "string" ? (json as { reason: string }).reason : "",
-  };
-
-  const guard = await runMutationGuard(req, bodyText, {
+  const guard = await runMutationGuard(req, (json) => {
+    const bodyText: Record<string, string> = {
+      reason: typeof (json as { reason?: unknown })?.reason === "string" ? (json as { reason: string }).reason : "",
+    };
+    return bodyText;
+  }, {
     inputLimits: [{ field: "reason", maxChars: 2000 }],
     inputTotalCap: 2000,
   });
   if (!guard.ok) {
     return Response.json({ error: guard.failure.message }, { status: guard.failure.status });
   }
+  const json = guard.json;
 
   const parsed = bodySchema.safeParse(json);
   if (!parsed.success) {
@@ -65,6 +61,7 @@ export async function POST(
   }
 
   const { id } = await context.params;
+  if (!isRouteId(id)) return notFoundResponse();
   const db = getDb();
 
   try {

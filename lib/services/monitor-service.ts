@@ -32,7 +32,7 @@
  * demo/test can replay history deterministically and idempotently.
  */
 import { randomUUID } from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import type { Db } from "../db/client";
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import type * as schema from "../db/schema";
@@ -51,9 +51,9 @@ import {
 import type { Actor, LifecycleState, Observation, Tier } from "../domain/types";
 import { evaluateControl, resolveThreshold, type EffectiveControl } from "../controls/evaluate";
 import { transition, IllegalTransitionError, type AuditEventPayload } from "../lifecycle/transitions";
+import { redactDbError } from "../db/redact-error";
 import { currentControlRevisions } from "../controls/current-revisions";
 import { SYSTEM_ACTOR } from "./actors";
-import { mutationWorkspaceMismatch } from "./workspace-guard";
 import { ConflictError } from "./initiative-service";
 
 /**
@@ -196,34 +196,26 @@ async function loadDeployedCandidates(
     tier: Tier;
   }>
 > {
-  const deployments = await tx
-    .select()
+  // One joined query with the workspace predicate in SQL. For a scoped run it
+  // mirrors mutationWorkspaceMismatch: only rows whose workspace equals the
+  // scope (null scope -> null rows), never other workspaces' deployments.
+  const workspacePredicate =
+    workspaceScope === UNSCOPED_WORKSPACE
+      ? undefined
+      : workspaceScope === null
+        ? isNull(initiatives.workspaceId)
+        : eq(initiatives.workspaceId, workspaceScope);
+  const rows = await tx
+    .select({ deployment: deploymentVersions, initiative: initiatives })
     .from(deploymentVersions)
-    .where(eq(deploymentVersions.status, "deployed"));
+    .innerJoin(initiatives, eq(initiatives.id, deploymentVersions.initiativeId))
+    .where(and(eq(deploymentVersions.status, "deployed"), isNotNull(initiatives.tier), workspacePredicate));
 
-  const result: Array<{
-    deployment: typeof deploymentVersions.$inferSelect;
-    initiative: typeof initiatives.$inferSelect;
-    tier: Tier;
-  }> = [];
-
-  for (const deployment of deployments) {
-    const initRows = await tx
-      .select()
-      .from(initiatives)
-      .where(eq(initiatives.id, deployment.initiativeId));
-    const initiative = initRows[0];
-    if (!initiative || !initiative.tier) continue;
-    if (
-      workspaceScope !== UNSCOPED_WORKSPACE &&
-      mutationWorkspaceMismatch(initiative.workspaceId, workspaceScope)
-    ) {
-      continue;
-    }
-    result.push({ deployment, initiative, tier: initiative.tier as Tier });
-  }
-
-  return result;
+  return rows.map(({ deployment, initiative }) => ({
+    deployment,
+    initiative,
+    tier: initiative.tier as Tier,
+  }));
 }
 
 /** Narration is a deterministic rendering of an already detected breach. */
@@ -256,26 +248,38 @@ export async function runMonitor(
   let incidentsCreated = 0;
   let alreadyKnown = 0;
 
-  for (const { deployment, initiative, tier } of candidates) {
-    // Load Q-01 effective control (may not exist for initiatives without an
-    // eval_hallucination series, e.g. seed #10/#5/#6/#12 profiles).
-    const ecRows = await db
+  // Read once, outside the loop: the Q-01 definition and every candidate's
+  // Q-01 effective-control revisions.
+  const defRows = await db
+    .select()
+    .from(controlDefinitions)
+    .where(eq(controlDefinitions.id, RUNTIME_CONTROL_ID));
+  const def = defRows[0];
+  const ecByDeployment = new Map<string, Array<typeof effectiveControls.$inferSelect>>();
+  if (candidates.length > 0) {
+    const allEcRows = await db
       .select()
       .from(effectiveControls)
       .where(
         and(
-          eq(effectiveControls.deploymentId, deployment.id),
+          inArray(effectiveControls.deploymentId, candidates.map((c) => c.deployment.id)),
           eq(effectiveControls.controlId, RUNTIME_CONTROL_ID),
         ),
       );
+    for (const row of allEcRows) {
+      const list = ecByDeployment.get(row.deploymentId) ?? [];
+      list.push(row);
+      ecByDeployment.set(row.deploymentId, list);
+    }
+  }
+
+  for (const { deployment, initiative, tier } of candidates) {
+    // Q-01 effective control (may not exist for initiatives without an
+    // eval_hallucination series, e.g. seed #10/#5/#6/#12 profiles).
+    const ecRows = ecByDeployment.get(deployment.id) ?? [];
     if (ecRows.length === 0) continue;
     const ec = currentControlRevisions(ecRows)[0]!;
 
-    const defRows = await db
-      .select()
-      .from(controlDefinitions)
-      .where(eq(controlDefinitions.id, RUNTIME_CONTROL_ID));
-    const def = defRows[0];
     if (!def || !def.tierDefaultThresholds || def.sustainedWindow === null) continue;
 
     evaluated += 1;
@@ -304,7 +308,26 @@ export async function runMonitor(
       sustainedWindow: def.sustainedWindow,
     };
 
-    const evalResult = evaluateControl(control, series, nowTs);
+    // The first sustained run is reported (and stays alreadyKnown) until it is
+    // a recorded incident; then look past the end of that run so a LATER breach
+    // (e.g. after a resume) is detected instead of the old one found again.
+    let evalResult = evaluateControl(control, series, nowTs);
+    if (evalResult.identityKey) {
+      const known = await db.select().from(incidents).where(eq(incidents.deploymentId, deployment.id));
+      const sorted = series.slice().sort((a, b) => a.ts - b.ts);
+      let since: number | undefined;
+      for (const inc of known) {
+        const startIdx = sorted.findIndex((o) => o.ts >= inc.windowStart.getTime());
+        if (startIdx === -1) continue;
+        let end = startIdx;
+        while (end + 1 < sorted.length && sorted[end + 1]!.value > threshold) end += 1;
+        if (since === undefined || sorted[end]!.ts > since) since = sorted[end]!.ts;
+      }
+      if (since !== undefined && known.some((k) => k.identityKey === evalResult.identityKey)) {
+        const later = evaluateControl(control, series, nowTs, since);
+        if (later.breached) evalResult = later;
+      }
+    }
     if (!evalResult.breached || !evalResult.identityKey || evalResult.windowStartTs === null) {
       continue;
     }
@@ -353,7 +376,10 @@ export async function runMonitor(
           );
         }
 
-        const detectedAt = new Date(nowTs);
+        // Wall clock for stored timestamps; nowTs is only the observation cut-off.
+        const wallTs = Date.now();
+        const evaluatedAt = new Date(nowTs).toISOString();
+        const detectedAt = new Date(wallTs);
         const windowStart = new Date(evalResult.windowStartTs!);
 
         // 1. Pause the deployment + initiative. `transition()` only permits
@@ -372,7 +398,7 @@ export async function runMonitor(
           initiative.state as LifecycleState,
           "pause",
           SYSTEM_ACTOR,
-          { ts: nowTs, reason },
+          { ts: wallTs, reason },
         );
         // Compare-and-set (external-review finding P2-5b): only advance the
         // initiative's state if it is STILL the state this candidate's scan
@@ -383,7 +409,7 @@ export async function runMonitor(
         // recorded in `errors`) rather than corrupting/aborting the run.
         const pausedInitiative = await tx
           .update(initiatives)
-          .set({ state: depPauseResult.after, updatedAt: new Date(nowTs) })
+          .set({ state: depPauseResult.after, updatedAt: new Date(wallTs) })
           .where(and(eq(initiatives.id, initiative.id), eq(initiatives.state, initiative.state)))
           .returning();
         if (pausedInitiative.length === 0) {
@@ -400,24 +426,35 @@ export async function runMonitor(
             deploymentId: deployment.id,
             controlId: RUNTIME_CONTROL_ID,
             identityKey: evalResult.identityKey,
+            evaluatedAt,
             triggeredBy: { id: actor.id, role: actor.role },
           },
         );
-        await tx
+        // Compare-and-set on the scanned status (as admin-service's
+        // pauseDeployment does): a promotion or rollback that retired this
+        // version since the scan must not leave it 'paused' while the live
+        // version stays deployed. 0 rows rolls the whole transaction back.
+        const pausedDeployment = await tx
           .update(deploymentVersions)
-          .set({ status: "paused", pausedAt: new Date(nowTs) })
-          .where(eq(deploymentVersions.id, deployment.id));
+          .set({ status: "paused", pausedAt: new Date(wallTs) })
+          .where(and(eq(deploymentVersions.id, deployment.id), eq(deploymentVersions.status, "deployed")))
+          .returning();
+        if (pausedDeployment.length === 0) {
+          throw new ConflictError(
+            `deployment ${deployment.id} changed concurrently (expected status 'deployed')`,
+          );
+        }
 
         // 2. Open reassessment review cycle (paused -> re_review).
         const reassessResult = transition(
           depPauseResult.after,
           "open_reassessment",
           SYSTEM_ACTOR,
-          { ts: nowTs },
+          { ts: wallTs },
         );
         await tx
           .update(initiatives)
-          .set({ state: reassessResult.after, updatedAt: new Date(nowTs) })
+          .set({ state: reassessResult.after, updatedAt: new Date(wallTs) })
           .where(eq(initiatives.id, initiative.id));
 
         const raRows = await tx
@@ -445,7 +482,7 @@ export async function runMonitor(
           initiativeId: initiative.id,
           kind: "reassessment",
           riskAssessmentId: latestRa.id,
-          openedAt: new Date(nowTs),
+          openedAt: new Date(wallTs),
           closedAt: null,
           incidentId: null, // set below once the incident id is known
         });
@@ -458,7 +495,7 @@ export async function runMonitor(
             cycleId: reviewCycleId,
             domain,
             status: "pending",
-            createdAt: new Date(nowTs),
+            createdAt: new Date(wallTs),
           })));
         }
         await insertAuditEvent(
@@ -466,7 +503,7 @@ export async function runMonitor(
           initiative.id,
           reassessResult.auditEvent,
           `Reassessment review cycle ${reviewCycleId} opened for control ${RUNTIME_CONTROL_ID} breach.`,
-          { reviewCycleId, controlId: RUNTIME_CONTROL_ID },
+          { reviewCycleId, controlId: RUNTIME_CONTROL_ID, evaluatedAt },
         );
 
         // 3. Narrate the already-detected breach without initializing an AI runtime.
@@ -534,7 +571,7 @@ export async function runMonitor(
         reviewCycleId: outcome.reviewCycleId,
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = redactDbError(err).message;
       // P1 fix (external-review — a failed detection pass rendered
       // identically to a clean run): a real deployment must leave a trace
       // in the server logs even when nothing else observes this run.

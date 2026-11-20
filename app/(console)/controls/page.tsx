@@ -4,6 +4,7 @@ import { getDb } from "@/lib/db/client";
 import { listExceptions, type ExceptionRow } from "@/lib/services/exception-service";
 import { ControlCatalog } from "@/components/jeeves/control-catalog";
 import { ExceptionsPanel } from "@/components/jeeves/exceptions-panel";
+import { BASE_DATE_MS } from "@/lib/demo/reference-data";
 import type { Metadata } from "next";
 
 
@@ -12,6 +13,10 @@ export const metadata: Metadata = {
   description:
     "Every governance control Meridian Health enforces, across all eight domains — policy source, status and evidence, read-only.",
 };
+
+// The demo timeline is frozen at 2026-07-01 and the monitor evaluates at base+14d
+// (same constant as app/api/monitor/run/route.ts); evidence freshness uses that clock.
+const DEMO_AS_OF_MS = BASE_DATE_MS + 14 * 24 * 60 * 60 * 1000;
 
 // Control catalog (plan §6): the full ControlDefinition catalog across all 8
 // governance domains plus the one live-enforced runtime control (Q-01),
@@ -52,7 +57,7 @@ export default async function ControlsPage() {
           Framework mappings (NIST AI RMF · EU AI Act) →
         </Link>
       </div>
-      <ControlCatalog controls={controls} />
+      <ControlCatalog controls={controls} asOfMs={DEMO_AS_OF_MS} />
       <ExceptionsPanel exceptions={exceptions} />
     </div>
   );

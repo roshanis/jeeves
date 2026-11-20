@@ -176,6 +176,21 @@ describe("lib/workflow/review-run", () => {
     }
   });
 
+  it("never creates a review row (or reserves budget) for a domain triage did not require", async () => {
+    const { initiativeId, cycleId } = await setUpChampionInReview(db);
+    // Triage creates one pending row per required domain; make "procurement" a domain it did not require.
+    const extra = "procurement" as const;
+    await db.delete(reviewDecisions).where(and(eq(reviewDecisions.cycleId, cycleId), eq(reviewDecisions.domain, extra)));
+    const before = await db.select().from(reviewDecisions).where(eq(reviewDecisions.cycleId, cycleId));
+
+    const result = await startDraftRun(db, initiativeId, [extra], undefined, { budget: { day: "2026-01-01", tokensPerAttempt: 1500, dailyCap: 100_000 } });
+
+    expect(result.outcomes).toEqual([{ domain: extra, status: "skipped", reason: "not required" }]);
+    const after = await db.select().from(reviewDecisions).where(eq(reviewDecisions.cycleId, cycleId));
+    expect(after).toHaveLength(before.length);
+    expect(after.some((r) => r.domain === extra)).toBe(false);
+  });
+
   it("is idempotent per (cycle, domain): re-running never duplicates rows", async () => {
     const { initiativeId, cycleId } = await setUpChampionInReview(db);
     const domains = ["legal", "security"] as const;

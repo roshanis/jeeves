@@ -5,7 +5,7 @@ import { ReviewWorkbenchRoute } from "./review-workbench-route";
 import { ReviewRequestQueue } from "@/components/jeeves/review-request-queue";
 import {
   deliveryTransportStatus,
-  undeliveredNotifications,
+  undeliveredNotificationsForViewer,
   type ReviewNotificationRow,
 } from "@/lib/services/notification-service";
 import { getDb } from "@/lib/db/client";
@@ -25,12 +25,14 @@ export default async function ReviewsPage() {
   // The outbound request queue. Only meaningful against a real database — the
   // mock provider has no notifications table — so this degrades to an empty
   // queue rather than failing the page, same pattern as the inbox's incident
-  // load.
+  // load. Scoped to the viewer's workspace like everything else on this page:
+  // each ask names its initiative, so an unscoped queue would show every
+  // playground visitor everyone else's titles.
   let requests: ReviewNotificationRow[] = [];
   const dbMode = process.env.DATA_PROVIDER === "db" || !!process.env.DATABASE_URL;
   if (dbMode) {
     try {
-      requests = await undeliveredNotifications(getDb());
+      requests = await undeliveredNotificationsForViewer(getDb(), viewerWorkspaceId);
     } catch {
       requests = [];
     }

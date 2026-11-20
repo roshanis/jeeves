@@ -1,7 +1,7 @@
 import { runtimeDatabaseUrl } from "../db/runtime-config";
 import type { DataProvider } from "./provider";
 import { MockDataProvider } from "./mock-provider";
-import { DbDataProvider } from "./db-provider";
+import { DbDataProvider, type SnapshotHolder } from "./db-provider";
 import { resolveDataProviderMode } from "./provider-mode";
 
 /**
@@ -11,7 +11,7 @@ import { resolveDataProviderMode } from "./provider-mode";
  * explicitly selects fixtures. Otherwise a configured URL selects the DB.
  * Facades are short-lived; getDb owns the shared underlying connection.
  */
-export function getProvider(): DataProvider {
+export function getProvider(options?: { snapshotHolder?: SnapshotHolder }): DataProvider {
   const mode = resolveDataProviderMode(process.env.DATA_PROVIDER, !!runtimeDatabaseUrl());
-  return mode === "db" ? new DbDataProvider() : new MockDataProvider();
+  return mode === "db" ? new DbDataProvider(undefined, options) : new MockDataProvider();
 }

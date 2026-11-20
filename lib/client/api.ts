@@ -67,6 +67,8 @@ export function apiErrorToMessage(err: ApiError): string {
       return "Rate limit or demo budget reached — try again shortly.";
     case 403:
       return "Not permitted for your current role.";
+    case 404:
+      return "This record is no longer available. Refresh and review the latest information.";
     case 409:
       return "This record changed. Refresh and review the latest information before trying again.";
     case 400:
@@ -127,7 +129,7 @@ export interface DraftRunDomainOutcome {
   domain: Domain;
   status: "drafted" | "failed" | "skipped";
   error?: unknown;
-  reason?: "already signed" | "already running" | "superseded" | "reviewer abstained";
+  reason?: "already signed" | "already running" | "superseded" | "reviewer abstained" | "not required";
 }
 
 export interface StartDraftRunResult {
@@ -159,7 +161,7 @@ export interface RunReviewAgentResult {
   /** Human-readable failure reason — present only when status === "failed". */
   error?: string;
   /** Present when a concurrent human signature wins the persistence race. */
-  reason?: "already signed" | "already running" | "superseded" | "reviewer abstained";
+  reason?: "already signed" | "already running" | "superseded" | "reviewer abstained" | "not required";
 }
 
 export interface SignReviewResult {
@@ -180,6 +182,9 @@ export interface DecideInput {
   decision: DecisionType;
   conditions?: { text: string; controlId: string }[];
   citations?: string[];
+  /** The cycle and review revisions the approver was looking at (server answers 409 when they moved). */
+  expectedCycleId?: string;
+  expectedReviewRevisions?: Record<string, number>;
 }
 
 export interface DecideResult {
@@ -301,6 +306,8 @@ export interface PromotionListItem {
   feedbackProvenanceSignedOff: boolean;
   deployedAt: string;
   supersedesVersion: string | null;
+  /** True when this viewer cannot act on the row (shared sample data), so it is shown read-only. */
+  isShared?: boolean;
 }
 
 /** Result shape of POST /api/deployments/promotions/[id]/promote (mirrors promotion-service.ts#PromoteCheckpointResult). */
@@ -759,6 +766,8 @@ export interface ExceptionRow {
   decisionReason: string | null;
   expiresAt: number | null;
   supersedesId: string | null;
+  /** True when this viewer cannot act on the row (the viewer has no workspace, or it differs from the row's). */
+  isShared?: boolean;
 }
 
 export interface ExceptionActionResult {

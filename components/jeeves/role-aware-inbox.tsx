@@ -85,7 +85,7 @@ type DecisionEntry = { dec: DecisionRow; title: string; slug: string };
 export interface DomainReviewRow {
   slug: string;
   title: string;
-  tier: Tier;
+  tier: Tier | null;
   state: LifecycleState;
   reviews: { domain: Domain; status: ReviewRow["status"]; createdAt: string }[];
 }

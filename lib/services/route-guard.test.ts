@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq, sql } from "drizzle-orm";
 import { closeTestDb, createTestDb, type TestDb } from "../db/test-client";
-import { runBudget, sessions } from "../db/schema";
+import { rateLimitBuckets, runBudget, sessions } from "../db/schema";
 import { reserve } from "../security/budget";
 import { DbTokenBucketRateLimiter } from "../security/db-rate-limit";
 import {
@@ -10,6 +10,10 @@ import {
   extractSessionToken,
   getBudgetStoreForTests,
   issueDemoSession,
+  issuePublicSession,
+  pruneStaleState,
+  resetHousekeepingCounterForTests,
+  resolveSession,
   resolveSessionActor,
   runMutationGuard,
 } from "./route-guard";
@@ -69,7 +73,8 @@ describe("lib/services/route-guard", () => {
       const result = await issueDemoSession("priya-raman");
       expect(result).not.toBeNull();
       expect(result!.token).toHaveLength(64); // 32 bytes hex
-      expect(result!.workspaceId).toBe(`ws_${result!.token}`);
+      expect(result!.workspaceId).toMatch(/^ws_[0-9a-f]{64}$/);
+      expect(result!.workspaceId).not.toContain(result!.token);
 
       const [persisted] = await testDb.select().from(sessions).where(eq(sessions.token, result!.token));
       expect(persisted).toMatchObject({
@@ -143,6 +148,64 @@ describe("lib/services/route-guard", () => {
     it("returns null when neither is present", () => {
       const req = new Request("http://localhost/api/x");
       expect(extractSessionToken(req)).toBeNull();
+    });
+
+    it("treats a malformed percent-encoded session cookie as no session", () => {
+      const req = new Request("http://localhost/api/x", {
+        headers: { cookie: "jeeves_session=%E0%A4%A" },
+      });
+      expect(extractSessionToken(req)).toBeNull();
+    });
+
+    it("matches the Bearer scheme case-insensitively", () => {
+      const req = new Request("http://localhost/api/x", {
+        headers: { authorization: "bearer tok" },
+      });
+      expect(extractSessionToken(req)).toBe("tok");
+    });
+  });
+
+  describe("resolveSession database failure", () => {
+    it("rethrows an error that does not carry the presented token or bound parameters", async () => {
+      await testDb.execute(sql`drop table sessions cascade`);
+      const token = "SECRET-TOKEN-abc123";
+      const err = await resolveSession(token).then(
+        () => null,
+        (e: unknown) => e as Error & { code?: string },
+      );
+      expect(err).toBeInstanceOf(Error);
+      expect(err!.message).not.toContain(token);
+      expect(JSON.stringify(err, Object.getOwnPropertyNames(err))).not.toContain(token);
+      expect(err!.code).toBe("42P01");
+    });
+  });
+
+  describe("session insert database failure", () => {
+    async function failureOf(issue: () => Promise<unknown>): Promise<Error & { code?: string }> {
+      await testDb.execute(sql`drop table sessions cascade`);
+      const err = await issue().then(
+        () => null,
+        (e: unknown) => e as Error & { code?: string },
+      );
+      expect(err).toBeInstanceOf(Error);
+      return err!;
+    }
+
+    // The insert binds the new session token as a parameter; a raw driver
+    // error would quote it. A redacted error carries no statement or params.
+    function expectRedacted(err: Error & { code?: string }): void {
+      expect(err.message).toBe("Database query failed (SQLSTATE 42P01)");
+      expect("params" in err).toBe(false);
+      expect(JSON.stringify(err, Object.getOwnPropertyNames(err))).not.toMatch(/[0-9a-f]{32}/i);
+      expect(err.code).toBe("42P01");
+    }
+
+    it("redacts a failed demo session insert", async () => {
+      expectRedacted(await failureOf(() => issueDemoSession("elena-vasquez")));
+    });
+
+    it("redacts a failed public session insert", async () => {
+      expectRedacted(await failureOf(() => issuePublicSession("7.7.7.7")));
     });
   });
 
@@ -254,5 +317,118 @@ describe("lib/services/route-guard", () => {
       expect(results.filter((result) => result.granted)).toHaveLength(10);
       expect(await store.getUsed("2099-01-03")).toBe(1_000);
     });
+  });
+});
+
+describe("client addresses in rate-limit buckets", () => {
+  beforeEach(async () => {
+    testDb = await createTestDb();
+    vi.stubEnv("JEEVES_COOKIE_SECRET", "rate-limit-key-test-secret");
+  });
+
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+    await closeTestDb(testDb);
+  });
+
+  it("does not store the client address in clear in any bucket key", async () => {
+    await issuePublicSession("10.0.0.1");
+    await checkSessionAttempt("10.0.0.1");
+    await checkSessionAttempt("10.0.0.1", true);
+    const session = (await issueDemoSession("priya-raman"))!;
+    await runMutationGuard(reqWithBearer(session.token, "10.0.0.1"), undefined);
+    const keys = (await testDb.select().from(rateLimitBuckets)).map((row) => row.key);
+    expect(keys.length).toBeGreaterThanOrEqual(4);
+    for (const key of keys) expect(key).not.toContain("10.0.0.1");
+    expect(keys.some((key) => key.startsWith("public-session:"))).toBe(true);
+    expect(keys.some((key) => key.startsWith("mutation:"))).toBe(true);
+  });
+
+  it("keys the same client to the same bucket, so limits still apply", async () => {
+    const first = await checkSessionAttempt("10.0.0.2");
+    for (let i = 0; i < 5; i++) await checkSessionAttempt("10.0.0.2");
+    expect(first.allowed).toBe(true);
+    expect((await checkSessionAttempt("10.0.0.2")).allowed).toBe(false);
+    expect((await checkSessionAttempt("10.0.0.3")).allowed).toBe(true);
+  });
+
+  it("prunes stale clear-text buckets left by earlier versions, and expired sessions, but not fresh rows", async () => {
+    const now = Date.now();
+    const day = 24 * 60 * 60 * 1000;
+    await testDb.insert(rateLimitBuckets).values([
+      { key: "session:10.0.0.9", tokens: 4, lastRefillMs: now - day, lastTouchedMs: now - day },
+      { key: "session:10.0.0.10", tokens: 0, lastRefillMs: now, lastTouchedMs: now },
+    ]);
+    await testDb.insert(sessions).values([
+      { token: "expired-token", personaKey: "priya-raman", workspaceId: "w1", expiresAt: now - 1000 },
+      { token: "live-token", personaKey: "priya-raman", workspaceId: "w2", expiresAt: now + 60_000 },
+    ]);
+    await pruneStaleState();
+    expect((await testDb.select().from(rateLimitBuckets)).map((row) => row.key)).toEqual(["session:10.0.0.10"]);
+    expect((await testDb.select().from(sessions)).map((row) => row.token)).toEqual(["live-token"]);
+  });
+
+  it("prunes on the first guarded call of a process and then on every 100th", async () => {
+    resetHousekeepingCounterForTests();
+    const now = Date.now();
+    const insertStale = (key: string) =>
+      testDb.insert(rateLimitBuckets).values({ key, tokens: 5, lastRefillMs: now - 86_400_000, lastTouchedMs: now - 86_400_000 });
+    const has = async (key: string) => (await testDb.select().from(rateLimitBuckets)).map((row) => row.key).includes(key);
+    await insertStale("session:10.0.0.11");
+    await checkSessionAttempt("10.2.2.2");
+    expect(await has("session:10.0.0.11")).toBe(false);
+    await insertStale("session:10.0.0.12");
+    for (let i = 0; i < 99; i++) await checkSessionAttempt(`10.2.0.${i}`);
+    expect(await has("session:10.0.0.12")).toBe(true);
+    await checkSessionAttempt("10.2.1.1");
+    expect(await has("session:10.0.0.12")).toBe(false);
+  });
+
+  it("does not fail the request when housekeeping fails, and logs once", async () => {
+    resetHousekeepingCounterForTests();
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(testDb, "execute").mockRejectedValueOnce(new Error("boom"));
+    await expect(checkSessionAttempt("10.3.1.1")).resolves.toMatchObject({ allowed: true });
+    expect(log.mock.calls.filter((call) => call[0] === "Housekeeping failed")).toHaveLength(1);
+  });
+
+  it("a test can park the counter mid-cycle", async () => {
+    resetHousekeepingCounterForTests(1);
+    const now = Date.now();
+    await testDb.insert(rateLimitBuckets).values({ key: "session:10.0.0.13", tokens: 5, lastRefillMs: now - 86_400_000, lastTouchedMs: now - 86_400_000 });
+    await checkSessionAttempt("10.5.0.1");
+    expect((await testDb.select().from(rateLimitBuckets)).map((row) => row.key)).toContain("session:10.0.0.13");
+  });
+
+  it("never calls Math.random on the request path", async () => {
+    const random = vi.spyOn(Math, "random");
+    const session = (await issueDemoSession("priya-raman"))!;
+    random.mockClear();
+    await runMutationGuard(reqWithBearer(session.token, "10.4.0.1"), undefined);
+    await checkSessionAttempt("10.4.0.2");
+    await issuePublicSession("10.4.0.3");
+    expect(random).not.toHaveBeenCalled();
+  });
+});
+
+describe("public role is denied by default", () => {
+  beforeEach(async () => {
+    testDb = await createTestDb();
+  });
+
+  afterEach(async () => {
+    await closeTestDb(testDb);
+  });
+
+  it("answers 403 to a public session without allowPublic and passes with it", async () => {
+    const issued = await issuePublicSession("10.1.0.1");
+    if (!("token" in issued)) throw new Error("expected a public session");
+    const denied = await runMutationGuard(reqWithBearer(issued.token, "10.1.0.2"), undefined);
+    expect(denied.ok).toBe(false);
+    if (denied.ok) throw new Error("unreachable");
+    expect(denied.failure.status).toBe(403);
+    const allowed = await runMutationGuard(reqWithBearer(issued.token, "10.1.0.3"), undefined, { allowPublic: true });
+    expect(allowed).toMatchObject({ ok: true, actor: { role: "public" } });
   });
 });

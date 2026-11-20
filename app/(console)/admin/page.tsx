@@ -23,7 +23,7 @@ import type { Metadata } from "next";
 export const metadata: Metadata = {
   title: "Administration",
   description:
-    "Threshold edits and deployment pause/resume for Meridian Health's AI governance demo — both logged, and deliberately narrow: Admin never approves, signs, or returns.",
+    "Threshold edits and deployment pause/resume for Meridian Health's AI governance demo — both logged, and deliberately narrow: Admin never approves or rejects, and never signs or returns a review.",
 };
 
 // The Admin console (ui-spec §7) is the narrowest screen by design: exactly
@@ -44,15 +44,19 @@ export default async function AdminPage() {
   ]);
 
   const q01 = catalog.find((c) => c.id === "Q-01");
-  const initiatives = details.map((detail) => detail.summary);
   const incidents = incidentResult.incidents ?? [];
 
   // Project-override options for the threshold dialog: only initiatives whose
   // DB id is resolvable and whose records belong to this visitor. Shared
   // defaults remain viewable; only workspace overrides can be edited.
-  const initiativeOptions: ThresholdInitiativeOption[] = initiatives
-    .filter((i) => !!i.initiativeId && !i.isSeeded)
-    .map((i) => ({ initiativeId: i.initiativeId as string, title: i.title, slug: i.slug }));
+  const initiativeOptions: ThresholdInitiativeOption[] = details
+    .filter((d) => !!d.summary.initiativeId && !d.summary.isSeeded)
+    .map((d) => ({
+      initiativeId: d.summary.initiativeId as string,
+      title: d.summary.title,
+      slug: d.summary.slug,
+      currentThreshold: d.controls.find((c) => c.id === "Q-01")?.threshold ?? null,
+    }));
 
   const deploymentRows = details.flatMap((detail) =>
     detail
@@ -73,8 +77,7 @@ export default async function AdminPage() {
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Admin console</h1>
         <p className="text-sm text-muted-foreground">
-          Narrow by design: threshold edits and pause/resume, both logged.
-          Admin never approves, signs, or returns — anywhere.
+          Narrow by design: threshold edits, pause/resume, rollback and exception revoke, all logged. Admin can also run the intake quality check and file exception requests, as the other roles that hold those rights can. Admin never approves or rejects, and never signs or returns a review.
         </p>
       </div>
 
@@ -139,7 +142,6 @@ export default async function AdminPage() {
                 Every edit requires a reason. Recorded changes appear in the control-change audit log below.
               </p>
               <ThresholdEditAction
-                currentThreshold={q01?.threshold ?? null}
                 initiativeOptions={initiativeOptions}
               />
             </div>

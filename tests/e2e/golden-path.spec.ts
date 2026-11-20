@@ -366,14 +366,12 @@ test.describe("live demo loop: create → QC → triage → draft run → sign �
     // table, so this step is mandatory, not decorative.
     //
     // QC is Program Office or Admin, so switch to Nia in place — the picker
-    // keeps the same workspace — then back to the requester, who runs
-    // triage and the draft run exactly as before (draft-run is requester or
-    // admin only; leaving Nia in the seat would 403 the next step).
+    // keeps the same workspace. Nia also passes QC (runs triage); then we
+    // switch back to the requester for the draft run (draft-run is requester
+    // or admin only; leaving Nia in the seat would 403 the next step).
     await expect(page.locator('[data-slot="start-qc"]')).toBeVisible();
     await loginAs(page, "nia-okafor");
     await page.locator('[data-slot="start-qc"]').click();
-    await expect(page.locator('[data-slot="run-triage"]')).toBeVisible({ timeout: 30_000 });
-    await loginAs(page, "priya-raman");
     await expect(page.locator('[data-slot="run-triage"]')).toBeVisible({ timeout: 30_000 });
 
     // --- Triage: Critical, 8 required domains, review branch -------------
@@ -397,6 +395,7 @@ test.describe("live demo loop: create → QC → triage → draft run → sign �
     await expect(triageResult).toContainText("Critical");
     await expect(triageResult).toContainText("8 required domains");
     await expect(triageResult).toContainText("Review");
+    await loginAs(page, "priya-raman");
 
     // --- Draft run: ALL 8 domains live -----------------------------------
     await page.getByRole("tab", { name: "Reviews" }).click();
@@ -557,7 +556,10 @@ test.describe("live demo loop: create → QC → triage → draft run → sign �
 // A real browser -> authenticated API -> private DB document loop; no LLM calls.
 test('requester evidence: upload, return, revision, acceptance and download history', async ({page}) => {
   test.setTimeout(120_000);
-  await page.setExtraHTTPHeaders({'x-forwarded-for':'evidence-browser-test'});
+  // Own rate-limit bucket, and a fresh one per attempt: a run that gets most of
+  // the way through spends the bucket, so a retry (or --repeat-each) from the
+  // same address stops at "rate limit exceeded" instead of testing anything.
+  await page.setExtraHTTPHeaders({'x-forwarded-for':`evidence-browser-test-${test.info().repeatEachIndex}-${test.info().retry}`});
   async function login(persona: string) {
     const start = page.getByRole("button", { name: "Start demo", exact: true });
     if (await start.isVisible()) {
@@ -576,16 +578,19 @@ test('requester evidence: upload, return, revision, acceptance and download hist
   await page.locator('[data-slot="submit-intake"]').click();
   await expect(page).toHaveURL(/\/initiatives\/evidence-browser-journey-/,{timeout:30000});
   const caseUrl = page.url();
-  // QC gate before the fan-out: the Program Office opens QC, then the
-  // requester runs triage as before.
+  // QC gate before the fan-out: the Program Office opens QC and passes it
+  // (runs triage); the requester takes over afterwards.
   await switchPersona('nia-okafor');
   await page.locator('[data-slot="start-qc"]').click();
   await expect(page.locator('[data-slot="run-triage"]')).toBeVisible({timeout:30000});
-  await switchPersona('priya-raman');
   await page.locator('[data-slot="run-triage"]').click();
   await expect(page.locator('[data-slot="triage-result"]')).toBeVisible({timeout:30000});
+  await switchPersona('priya-raman');
   await page.getByRole('tab',{name:'Evidence',exact:true}).click();
-  const panel=page.locator('[data-slot="evidence-tab"]');
+  // Visible only: for a signed-in visitor a full load renders the case page in
+  // the browser while React still holds the server-rendered copy in a hidden
+  // container (up to about 300 ms), so both are in the document for a moment.
+  const panel=page.locator('[data-slot="evidence-tab"]').filter({visible:true});
   const pdf=Buffer.from('%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF\n');
   async function upload(name:string) {
     await panel.getByLabel('Choose document',{exact:true}).setInputFiles({name,mimeType:'application/pdf',buffer:pdf});

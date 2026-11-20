@@ -15,6 +15,16 @@ const TIERS: { tier: Tier; label: string; bgClass: string; fgClass: string }[] =
   },
 ];
 
+describe("TierBadge untriaged", () => {
+  it("renders a neutral 'Not triaged' badge for a null tier", () => {
+    const { container } = renderWithProviders(<TierBadge tier={null} />);
+    const badge = container.querySelector('[data-slot="tier-badge"]');
+    expect(badge?.textContent).toBe("Not triaged");
+    expect(badge?.getAttribute("data-tier")).toBe("untriaged");
+    expect(badge?.className).toContain("bg-tier-low-bg");
+  });
+});
+
 describe("TierBadge token mapping", () => {
   it.each(TIERS)(
     "renders $tier onto its tier token family with the exact visible text",

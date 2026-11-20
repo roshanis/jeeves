@@ -80,6 +80,13 @@ import { ConflictError } from "./initiative-service";
 // across every CAS-guarded mutation in the codebase.
 export { ConflictError };
 
+/** A paused or re_review initiative is out of service: only an admin resume brings it back. */
+function requireInServiceLifecycle(initiative: { id: string; state: string }, what: string): void {
+  if (initiative.state === "paused" || initiative.state === "re_review") {
+    throw new ConflictError(`cannot ${what}: initiative ${initiative.id} is ${initiative.state}; an admin resume is required first`);
+  }
+}
+
 /**
  * requireApproverOrAdminWithReason — SoD guard for `rollbackDeployment` (M3
  * promotion-view extension). Deliberately DISTINCT from
@@ -222,7 +229,12 @@ export async function listPromotions(db: Db): Promise<PromotionListItem[]> {
 
   const initiativeById = new Map(allInitiatives.map((i) => [i.id, i]));
 
-  const awaiting = allDeployments.filter((d) => d.status === "awaiting_promotion_signoff");
+  // First-approval placeholders belong to initiatives that are not deployed
+  // yet; they are not RL checkpoints and must not be offered for promotion.
+  const awaiting = allDeployments.filter(
+    (d) =>
+      d.status === "awaiting_promotion_signoff" && initiativeById.get(d.initiativeId)?.state === "deployed",
+  );
 
   return awaiting.map((d) => {
     const initiative = initiativeById.get(d.initiativeId);
@@ -343,13 +355,25 @@ export async function promoteCheckpoint(
     // mismatch (never leaks that the checkpoint exists in a different
     // workspace). Uses deploymentVersionId (not initiativeId) since that's
     // the id the caller passed in.
+    //
+    // The initiative row is locked FOR UPDATE so a concurrent admin pause or
+    // resume cannot interleave with this promotion. Every path that changes
+    // deployments takes the initiative row first and deployment rows second.
     const initiativeRows = await tx
       .select()
       .from(initiatives)
-      .where(eq(initiatives.id, target.initiativeId));
+      .where(eq(initiatives.id, target.initiativeId))
+      .for("update");
     const owningInitiative = initiativeRows[0];
     if (!owningInitiative || mutationWorkspaceMismatch(owningInitiative.workspaceId, sessionWorkspaceId)) {
       throw new NotFoundError("deploymentVersion", deploymentVersionId);
+    }
+
+    requireInServiceLifecycle(owningInitiative, "promote a checkpoint");
+    if (owningInitiative.state !== "deployed") {
+      throw new ValidationError(
+        `initiative ${owningInitiative.id} is '${owningInitiative.state}', not deployed; only a deployed initiative's RL checkpoint can be promoted`,
+      );
     }
 
     if (target.status !== "awaiting_promotion_signoff") {
@@ -367,33 +391,36 @@ export async function promoteCheckpoint(
     const currentDeployed = siblingRows
       .filter((d) => d.status === "deployed")
       .sort((a, b) => b.deployedAt.getTime() - a.deployedAt.getTime())[0];
-
-    if (currentDeployed) {
-      // Compare-and-set (external-review finding above): only retire if the
-      // row's status is still what THIS transaction observed it to be.
-      const retired = await tx
-        .update(deploymentVersions)
-        .set({ status: "retired", retiredAt: new Date(ts) })
-        .where(and(eq(deploymentVersions.id, currentDeployed.id), eq(deploymentVersions.status, "deployed")))
-        .returning();
-      if (retired.length === 0) {
-        throw new ConflictError(
-          `deployment version ${currentDeployed.id} changed concurrently (expected status 'deployed')`,
-        );
-      }
-
-      await insertAuditEvent(
-        tx,
-        target.initiativeId,
-        actor,
-        "deployment_version_retired",
-        currentDeployed.status,
-        "retired",
-        `${actor.id} retired deployment ${currentDeployed.id} (${currentDeployed.version}), superseded by promoted checkpoint ${target.version}.`,
-        ts,
-        { deploymentId: currentDeployed.id, version: currentDeployed.version, supersededBy: target.version },
+    if (!currentDeployed) {
+      throw new ValidationError(
+        `initiative ${target.initiativeId} has no operational deployed version; checkpoint ${deploymentVersionId} is not an RL promotion candidate`,
       );
     }
+
+    // Compare-and-set (external-review finding above): only retire if the
+    // row's status is still what THIS transaction observed it to be.
+    const retired = await tx
+      .update(deploymentVersions)
+      .set({ status: "retired", retiredAt: new Date(ts) })
+      .where(and(eq(deploymentVersions.id, currentDeployed.id), eq(deploymentVersions.status, "deployed")))
+      .returning();
+    if (retired.length === 0) {
+      throw new ConflictError(
+        `deployment version ${currentDeployed.id} changed concurrently (expected status 'deployed')`,
+      );
+    }
+
+    await insertAuditEvent(
+      tx,
+      target.initiativeId,
+      actor,
+      "deployment_version_retired",
+      currentDeployed.status,
+      "retired",
+      `${actor.id} retired deployment ${currentDeployed.id} (${currentDeployed.version}), superseded by promoted checkpoint ${target.version}.`,
+      ts,
+      { deploymentId: currentDeployed.id, version: currentDeployed.version, supersededBy: target.version },
+    );
 
     // Compare-and-set (external-review finding above): only promote if the
     // row's status is still what THIS transaction observed it to be.
@@ -546,10 +573,13 @@ export async function rollbackDeployment(
   requireApproverOrAdminWithReason(actor, reason);
 
   return db.transaction(async (tx) => {
+    // Lock the initiative row first (same order as every other deployment
+    // mutation) so a concurrent admin pause or resume cannot interleave.
     const initiativeRows = await tx
       .select()
       .from(initiatives)
-      .where(eq(initiatives.id, initiativeId));
+      .where(eq(initiatives.id, initiativeId))
+      .for("update");
     if (!initiativeRows[0]) throw new NotFoundError("initiative", initiativeId);
     // Workspace authorization (external-review finding #1): same NotFoundError
     // shape as an unknown id on mismatch — never leaks that the initiative
@@ -557,6 +587,7 @@ export async function rollbackDeployment(
     if (mutationWorkspaceMismatch(initiativeRows[0].workspaceId, sessionWorkspaceId)) {
       throw new NotFoundError("initiative", initiativeId);
     }
+    requireInServiceLifecycle(initiativeRows[0], "roll back a deployment");
 
     const siblingRows = await tx
       .select()

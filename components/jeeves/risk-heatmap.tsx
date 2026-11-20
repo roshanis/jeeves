@@ -69,6 +69,7 @@ export function RiskHeatmap({ initiatives }: { initiatives: InitiativeSummary[] 
   }
   for (const init of initiatives) {
     const status = classify(init);
+    if (!init.tier) continue; // untriaged: no tier row to count in
     grid.get(init.tier)!.set(status, (grid.get(init.tier)!.get(status) ?? 0) + 1);
   }
 

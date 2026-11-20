@@ -26,6 +26,7 @@ import {
 } from "@/lib/services/initiative-service";
 import { IllegalTransitionError } from "@/lib/lifecycle/transitions";
 import { runMutationGuard } from "@/lib/services/route-guard";
+import { isRouteId, notFoundResponse } from "@/lib/http/route-id";
 
 export async function POST(
   req: Request,
@@ -37,6 +38,7 @@ export async function POST(
   }
 
   const { id } = await context.params;
+  if (!isRouteId(id)) return notFoundResponse();
 
   try {
     const result = await startQc(getDb(), id, guard.actor, guard.workspaceId);

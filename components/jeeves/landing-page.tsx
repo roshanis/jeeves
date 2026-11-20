@@ -58,7 +58,7 @@ export function LandingPage() {
           own nav rail in either theme. The demo strip and site header/nav
           live in app/(marketing)/layout.tsx, shared by every marketing
           route. */}
-      <div className="relative overflow-hidden bg-sidebar text-sidebar-foreground">
+      <div data-surface="dark" className="relative overflow-hidden bg-sidebar text-sidebar-foreground">
         {/* Subtle decorative dot grid — quiet, no color, purely textural. */}
         <div
           aria-hidden
@@ -291,7 +291,7 @@ export function LandingPage() {
       </section>
 
       {/* g) Final CTA band — dark again. */}
-      <section className="bg-sidebar py-16 text-center text-sidebar-foreground">
+      <section data-surface="dark" className="bg-sidebar py-16 text-center text-sidebar-foreground">
         <div className="mx-auto max-w-[40rem] px-6">
           <h2 className="text-2xl font-semibold tracking-tight md:text-3xl">
             See it live

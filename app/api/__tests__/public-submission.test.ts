@@ -19,7 +19,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { createTestDb, closeTestDb, type TestDb } from "@/lib/db/test-client";
-import { initiatives } from "@/lib/db/schema";
+import { initiatives, sessions as sessionsTable } from "@/lib/db/schema";
 
 let testDb: TestDb;
 vi.mock("@/lib/db/client", () => ({ getDb: () => testDb }));
@@ -29,12 +29,15 @@ const PASSCODE = "demo-passcode-for-tests";
 beforeEach(async () => {
   process.env.DEMO_PASSCODE = PASSCODE;
   process.env.JEEVES_COOKIE_SECRET = "public-submission-test-secret";
+  // The real-request door is open only while the operator queue is configured.
+  process.env.OPERATOR_TOKEN = "op-test-token-0123456789abcdefghijklmnop";
   testDb = await createTestDb();
 });
 
 afterEach(async () => {
   await closeTestDb(testDb);
   delete process.env.JEEVES_COOKIE_SECRET;
+  delete process.env.OPERATOR_TOKEN;
 });
 
 function headers(token: string, ip: string): HeadersInit {
@@ -343,6 +346,33 @@ describe("a visitor with no passcode can submit a request", () => {
       }),
     );
     expect(malformed.status).toBe(400);
+  });
+});
+
+describe("the real-request door follows the operator queue", () => {
+  async function mint(): Promise<Response> {
+    const { POST } = await import("../public-session/route");
+    return POST(
+      new Request("http://localhost/api/public-session", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-forwarded-for": "80.9.0.1" },
+      }),
+    );
+  }
+
+  it.each([["unset", undefined], ["empty", ""], ["shorter than 32 characters", "too-short"]])(
+    "answers 404 and mints no session while OPERATOR_TOKEN is %s",
+    async (_label, value) => {
+      if (value === undefined) delete process.env.OPERATOR_TOKEN;
+      else process.env.OPERATOR_TOKEN = value;
+      const res = await mint();
+      expect(res.status).toBe(404);
+      expect(await testDb.select().from(sessionsTable)).toHaveLength(0);
+    },
+  );
+
+  it("mints a public session when the queue is configured", async () => {
+    expect((await mint()).status).toBe(200);
   });
 });
 

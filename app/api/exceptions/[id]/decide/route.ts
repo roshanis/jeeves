@@ -1,12 +1,13 @@
 /**
  * POST /api/exceptions/[id]/decide — approve or reject a requested exception.
- * Approver/admin only, and never the requester (SoD) — `decideException`
+ * Approver only (admin never approves), and never the requester (SoD) — `decideException`
  * enforces both (IllegalTransitionError -> 403).
  *   Body: { approve: boolean, reason: string, expiresAt?: number }
  */
 import { z } from "zod";
 import { getDb } from "@/lib/db/client";
 import { runMutationGuard } from "@/lib/services/route-guard";
+import { isRouteId, notFoundResponse } from "@/lib/http/route-id";
 import { decideException } from "@/lib/services/exception-service";
 import { ConflictError, NotFoundError, ValidationError, IllegalTransitionError } from "@/lib/services/initiative-service";
 
@@ -21,24 +22,21 @@ export async function POST(
   req: Request,
   context: { params: Promise<{ id: string }> },
 ): Promise<Response> {
-  let json: unknown;
-  try {
-    json = await req.json();
-  } catch {
-    json = {};
-  }
-  const bodyText: Record<string, string> =
-    typeof (json as { reason?: unknown })?.reason === "string"
-      ? { reason: (json as { reason: string }).reason }
-      : {};
-
-  const guard = await runMutationGuard(req, bodyText, {
+  const guard = await runMutationGuard(req, (json) => {
+    const bodyText: Record<string, string> =
+      typeof (json as { reason?: unknown })?.reason === "string"
+        ? { reason: (json as { reason: string }).reason }
+        : {};
+    return bodyText;
+  }, {
+    bodyOptional: true,
     inputLimits: [{ field: "reason", maxChars: REASON_MAX }],
     inputTotalCap: REASON_MAX,
   });
   if (!guard.ok) {
     return Response.json({ error: guard.failure.message }, { status: guard.failure.status });
   }
+  const json = guard.json;
 
   const parsed = bodySchema.safeParse(json);
   if (!parsed.success) {
@@ -46,6 +44,7 @@ export async function POST(
   }
 
   const { id } = await context.params;
+  if (!isRouteId(id)) return notFoundResponse();
   try {
     const result = await decideException(
       getDb(),

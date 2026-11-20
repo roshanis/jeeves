@@ -1,11 +1,12 @@
 /**
  * POST /api/exceptions/[id]/revoke — revoke an approved exception early.
- * Approver/admin only (`revokeException` -> IllegalTransitionError -> 403).
+ * Approver/admin only, as a safety action (`revokeException` -> IllegalTransitionError -> 403).
  *   Body: { reason: string }
  */
 import { z } from "zod";
 import { getDb } from "@/lib/db/client";
 import { runMutationGuard } from "@/lib/services/route-guard";
+import { isRouteId, notFoundResponse } from "@/lib/http/route-id";
 import { revokeException } from "@/lib/services/exception-service";
 import { ConflictError, NotFoundError, ValidationError, IllegalTransitionError } from "@/lib/services/initiative-service";
 
@@ -16,24 +17,21 @@ export async function POST(
   req: Request,
   context: { params: Promise<{ id: string }> },
 ): Promise<Response> {
-  let json: unknown;
-  try {
-    json = await req.json();
-  } catch {
-    json = {};
-  }
-  const bodyText: Record<string, string> =
-    typeof (json as { reason?: unknown })?.reason === "string"
-      ? { reason: (json as { reason: string }).reason }
-      : {};
-
-  const guard = await runMutationGuard(req, bodyText, {
+  const guard = await runMutationGuard(req, (json) => {
+    const bodyText: Record<string, string> =
+      typeof (json as { reason?: unknown })?.reason === "string"
+        ? { reason: (json as { reason: string }).reason }
+        : {};
+    return bodyText;
+  }, {
+    bodyOptional: true,
     inputLimits: [{ field: "reason", maxChars: REASON_MAX }],
     inputTotalCap: REASON_MAX,
   });
   if (!guard.ok) {
     return Response.json({ error: guard.failure.message }, { status: guard.failure.status });
   }
+  const json = guard.json;
 
   const parsed = bodySchema.safeParse(json);
   if (!parsed.success) {
@@ -41,6 +39,7 @@ export async function POST(
   }
 
   const { id } = await context.params;
+  if (!isRouteId(id)) return notFoundResponse();
   try {
     const result = await revokeException(getDb(), id, guard.actor, guard.workspaceId, parsed.data.reason);
     return Response.json(result, { status: 200 });

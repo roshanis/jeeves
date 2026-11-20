@@ -16,7 +16,7 @@ import { createHash, createHmac, timingSafeEqual } from "node:crypto";
  */
 
 /** Safe shape for a workspace id. Real ids are `ws_` + 64 hex chars (67
- * chars total, see lib/security/session.ts#deriveWorkspaceId) — bounded
+ * chars total, see lib/security/session.ts#generateWorkspaceId) — bounded
  * generously above that so a format change doesn't require touching this
  * file. */
 const WORKSPACE_ID_FORMAT = /^[A-Za-z0-9_-]{8,80}$/;

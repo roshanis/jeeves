@@ -159,6 +159,10 @@ export async function setEvalThreshold(
   input: SetEvalThresholdInput,
 ): Promise<SetEvalThresholdResult> {
   requireAdminWithReason(actor, input.reason);
+  // Eval thresholds are rates; an out-of-range value would disable or always trip the control.
+  if (!Number.isFinite(input.newValue) || input.newValue < 0 || input.newValue > 1) {
+    throw new ValidationError("setEvalThreshold: newValue must be between 0 and 1");
+  }
 
   return db.transaction(async (tx) => {
     const defRows = await tx.select().from(controlDefinitions).where(eq(controlDefinitions.id, input.controlId));

@@ -1,4 +1,5 @@
 /** Prompt loading/building, input checks, and provider-neutral error mapping. */
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
@@ -42,8 +43,30 @@ export function repoAgentsDir(): string {
   return path.join(process.cwd(), "agents");
 }
 
-export function readAgentFile(...segments: string[]): string {
-  return readFileSync(path.join(repoAgentsDir(), ...segments), "utf-8");
+/** The agent directories under `agents/`. */
+export const AGENT_DIRS = ["reviewer", "auditor", "intake", "ops-monitor"] as const;
+export type AgentDir = (typeof AGENT_DIRS)[number];
+
+/**
+ * Reads `agents/<dir>/<rest...>`. The directory is chosen by a branch that
+ * repeats a LITERAL path per directory on purpose. A dynamic segment directly
+ * after `"agents"` makes Turbopack's file tracer treat the path as the glob
+ * `agents*`, which ships `agents-build-log.md` (and any other `agents*` file
+ * at the repo root) into the deployable output. With the directory literal,
+ * only that directory's contents are traced. scripts/check-standalone-output.cjs
+ * guards the result. Keep these literal.
+ */
+export function readAgentFile(dir: AgentDir, ...rest: string[]): string {
+  switch (dir) {
+    case "reviewer":
+      return readFileSync(path.join(process.cwd(), "agents", "reviewer", ...rest), "utf-8");
+    case "auditor":
+      return readFileSync(path.join(process.cwd(), "agents", "auditor", ...rest), "utf-8");
+    case "intake":
+      return readFileSync(path.join(process.cwd(), "agents", "intake", ...rest), "utf-8");
+    case "ops-monitor":
+      return readFileSync(path.join(process.cwd(), "agents", "ops-monitor", ...rest), "utf-8");
+  }
 }
 
 export interface CachedInstructions {
@@ -138,6 +161,35 @@ export function providerFailure(
   return { kind: "provider", message, retryable };
 }
 
+/**
+ * Provider/SDK error text can carry organisation ids, key suffixes, model
+ * names or internal hosts, and PortFailure messages reach clients and are
+ * stored on review rows. Return a fixed message by status class and log the
+ * original server-side under a correlation id.
+ */
+export function sanitizedProviderFailure(
+  err: unknown,
+  status: number | undefined,
+  retryable: boolean,
+): PortFailure {
+  const ref = randomUUID().slice(0, 8);
+  // Log safe fields only: SDK errors carry requestBodyValues (the full prompt,
+  // including intake text and requester PII) and responseBody.
+  console.error(`[agent-provider-error ${ref}]`, {
+    name: err instanceof Error ? err.name : typeof err,
+    status,
+    message: err instanceof Error ? err.message : undefined,
+  });
+  const text =
+    status === 401 || status === 403 ? "The model provider rejected the credentials."
+    : status === 404 ? "The model provider could not find the configured model."
+    : status === 429 ? "The model provider is rate limiting requests."
+    : status !== undefined && status >= 500 ? "The model provider is temporarily unavailable."
+    : status !== undefined ? "The model provider rejected the request."
+    : "The model provider call failed.";
+  return providerFailure(`${text} (ref ${ref})`, retryable);
+}
+
 export function cancelledFailure(reason?: string): PortFailure {
   return reason === undefined
     ? { kind: "cancelled" }
@@ -192,7 +244,7 @@ export function buildDraftReviewPrompt(
   const prompt = JSON.stringify({
     reviewCycleId: input.reviewCycleId,
     domain: input.domain,
-    intake: input.intake,
+    untrustedRequesterInput: input.intake,
     policyContext: input.policyContext ?? [],
   });
 

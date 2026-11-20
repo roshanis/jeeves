@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { sql } from "drizzle-orm";
 import { createTestDb, closeTestDb, type TestDb } from "./test-client";
 import { applyMigrations, describeMigrationTarget } from "./migrate";
@@ -20,6 +21,9 @@ import { auditEvents, initiatives } from "./schema";
  *  3. the audit_events append-only trigger remains armed.
  * Applying pending migrations to existing data needs separate upgrade tests.
  */
+const journalTags = (JSON.parse(readFileSync("./drizzle/meta/_journal.json", "utf8")) as { entries: { tag: string }[] })
+  .entries.map((entry) => entry.tag);
+
 describe("lib/db/migrate — non-destructive migration runner", () => {
   let db: TestDb;
   const now = new Date("2026-07-01T00:00:00Z");
@@ -31,6 +35,39 @@ describe("lib/db/migrate — non-destructive migration runner", () => {
 
   afterEach(async () => {
     await closeTestDb(db);
+  });
+
+  it("fails loudly, naming every journal entry that is not applied, when a migration was skipped", async () => {
+    // Simulates migrations whose `when` was not newest: drizzle never ran them.
+    await db.execute(sql`delete from drizzle.__drizzle_migrations where id in (3, 5)`);
+    const failure = await applyMigrations(db).then(() => "", (error: Error) => error.message);
+    expect(failure).toMatch(/2 migrations? in the journal (is|are) not applied/);
+    expect(failure).toContain("0002_audit_events_append_only");
+    expect(failure).toContain(journalTags[4]);
+    expect(failure).not.toContain(journalTags[3]);
+  });
+
+  it("accepts a database that is ahead of this build's journal, and says so", async () => {
+    // A rollback: a newer build already migrated this database. Nothing in this
+    // build's journal was skipped, so its migrate step must not fail.
+    await db.execute(sql`insert into drizzle.__drizzle_migrations (hash, created_at) values ('from-a-newer-build', 9999999999999)`);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await expect(applyMigrations(db)).resolves.toBeUndefined();
+      expect(warn).toHaveBeenCalledWith(expect.stringMatching(/1 applied migration.*newer build/));
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("says nothing about a database that matches the journal", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await expect(applyMigrations(db)).resolves.toBeUndefined();
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("is idempotent — re-running against an up-to-date database is a no-op", async () => {

@@ -1,5 +1,6 @@
+import { createRequire } from "node:module";
 import { describe, expect, it } from "vitest";
-import { migrationDatabaseUrl, postgresPoolConfig } from "./connection-config";
+import { migrationDatabaseUrl, migrationPoolConfig, postgresPoolConfig } from "./connection-config";
 
 const pooled = "postgresql://user:example@aws-0-example.pooler.supabase.com:6543/postgres";
 const direct = "postgresql://user:example@db.example.supabase.co:5432/postgres";
@@ -38,5 +39,146 @@ describe("PostgreSQL connection configuration", () => {
     const neon = "postgres://u:p@ep-x.us-east-1.aws.neon.tech/db";
     expect(migrationDatabaseUrl(neon)).toBe(neon);
     expect(migrationDatabaseUrl(undefined)).toBeUndefined();
+  });
+});
+
+describe("DATABASE_SSL_CA on non-Supabase hosts", () => {
+  const rds = "postgresql://user:example@jeeves.cluster-abc.us-east-1.rds.amazonaws.com:5432/jeeves";
+  const ca = "test-ca";
+  const verified = { rejectUnauthorized: true, ca };
+
+  it("applies the CA when the URL has no sslmode", () => {
+    const config = postgresPoolConfig(rds, ca);
+    expect(config.ssl).toEqual(verified);
+    expect(config.connectionString).toBe(rds);
+    expect(config.max).toBeUndefined();
+  });
+
+  it.each(["prefer", "require", "verify-ca", "verify-full"])("applies the CA and strips sslmode=%s", (mode) => {
+    const config = postgresPoolConfig(`${rds}?sslmode=${mode}&application_name=jeeves`, ca);
+    expect(config.ssl).toEqual(verified);
+    expect(config.connectionString).toBe(`${rds}?application_name=jeeves`);
+    expect(config.max).toBeUndefined();
+  });
+
+  it.each(["sslmode=disable", "sslmode=no-verify", "ssl=false", "ssl=0", "ssl=no-verify"])
+  ("rejects a CA combined with TLS-off URL option: %s", (query) => {
+    let message = "";
+    try { postgresPoolConfig(`${rds}?${query}`, ca); } catch (error) { message = (error as Error).message; }
+    expect(message).toMatch(/DATABASE_SSL_CA/);
+    expect(message).not.toContain("example");
+    expect(message).not.toContain("rds.amazonaws.com");
+  });
+
+  it.each(["sslrootcert=/x.pem", "sslcert=/c.pem", "sslkey=/k.pem", "sslnegotiation=direct", "uselibpqcompat=true"])
+  ("rejects a CA combined with URL TLS source: %s", (query) => {
+    let message = "";
+    try { postgresPoolConfig(`${rds}?${query}`, ca); } catch (error) { message = (error as Error).message; }
+    expect(message).toMatch(/DATABASE_SSL_CA/);
+    expect(message).not.toContain("example");
+    expect(message).not.toContain("rds.amazonaws.com");
+  });
+
+  it("treats a whitespace-only CA as unset", () => {
+    const config = postgresPoolConfig(rds, "  \n");
+    expect(config).not.toHaveProperty("ssl");
+    expect(config.connectionString).toBe(rds);
+  });
+
+  it("passes the URL through untouched without a CA", () => {
+    const url = `${rds}?sslmode=require`;
+    const config = postgresPoolConfig(url);
+    expect(config.connectionString).toBe(url);
+    expect(config.ssl).toBeUndefined();
+  });
+
+  it("keeps the explicit CA through node-postgres's own option merge", () => {
+    const ConnectionParameters = createRequire(import.meta.url)("pg/lib/connection-parameters");
+    const params = new ConnectionParameters(postgresPoolConfig(`${rds}?sslmode=require`, ca));
+    expect(params.ssl.ca).toBe(ca);
+    expect(params.ssl.rejectUnauthorized).toBe(true);
+  });
+});
+
+describe("runtime and migration pool limits", () => {
+  const generic = "postgresql://user:example@db.internal.example:5432/jeeves";
+
+  it("sets statement and idle-in-transaction timeouts and an application name", () => {
+    const config = postgresPoolConfig(generic, undefined, {});
+    expect(config.statement_timeout).toBe(60_000);
+    expect(config.idle_in_transaction_session_timeout).toBe(60_000);
+    expect(config.application_name).toBeTruthy();
+    expect(config.keepAlive).toBe(true);
+    expect(config.max).toBeUndefined();
+  });
+
+  it("takes a valid DATABASE_POOL_MAX and ignores an invalid one", () => {
+    expect(postgresPoolConfig(generic, undefined, { DATABASE_POOL_MAX: "4" }).max).toBe(4);
+    expect(postgresPoolConfig(generic, undefined, { DATABASE_POOL_MAX: "0" }).max).toBeUndefined();
+    expect(postgresPoolConfig(generic, undefined, { DATABASE_POOL_MAX: "abc" }).max).toBeUndefined();
+  });
+
+  it("keeps the Supabase pool at one connection whatever DATABASE_POOL_MAX says", () => {
+    expect(postgresPoolConfig(pooled, undefined, { DATABASE_POOL_MAX: "8" }).max).toBe(1);
+  });
+
+  it("gives the migration connection a lock_timeout and no statement_timeout", () => {
+    const config = migrationPoolConfig(generic, undefined, {});
+    expect(config.lock_timeout).toBe(10_000);
+    // Its own key, not `options`: a URL may carry its own options, and the URL's value wins in node-postgres.
+    expect(config).not.toHaveProperty("options");
+    expect(config).not.toHaveProperty("statement_timeout");
+    expect(config).not.toHaveProperty("idle_in_transaction_session_timeout");
+    expect(config.max).toBe(1);
+    expect(migrationPoolConfig(generic, undefined, { DATABASE_MIGRATION_LOCK_TIMEOUT_MS: "2500" }).lock_timeout)
+      .toBe(2500);
+  });
+
+  it("turns a timeout off with an explicit 0, so the parameter is not sent at all", () => {
+    // A pooler such as PgBouncer refuses a connection that carries a startup
+    // parameter it does not track; without an off switch such an install could not connect.
+    const off = postgresPoolConfig(generic, undefined, {
+      DATABASE_STATEMENT_TIMEOUT_MS: "0", DATABASE_IDLE_IN_TRANSACTION_TIMEOUT_MS: " 0 " });
+    expect(off).not.toHaveProperty("statement_timeout");
+    expect(off).not.toHaveProperty("idle_in_transaction_session_timeout");
+
+    const one = postgresPoolConfig(generic, undefined, { DATABASE_STATEMENT_TIMEOUT_MS: "0" });
+    expect(one).not.toHaveProperty("statement_timeout");
+    expect(one.idle_in_transaction_session_timeout).toBe(60_000);
+
+    expect(migrationPoolConfig(generic, undefined, { DATABASE_MIGRATION_LOCK_TIMEOUT_MS: "0" }))
+      .not.toHaveProperty("lock_timeout");
+  });
+
+  it.each(["abc", "-5", "1.5", "0x10", " "])("keeps the default for a timeout that is not whole milliseconds: %j", (bad) => {
+    const config = postgresPoolConfig(generic, undefined, {
+      DATABASE_STATEMENT_TIMEOUT_MS: bad, DATABASE_IDLE_IN_TRANSACTION_TIMEOUT_MS: bad });
+    expect(config.statement_timeout).toBe(60_000);
+    expect(config.idle_in_transaction_session_timeout).toBe(60_000);
+    expect(migrationPoolConfig(generic, undefined, { DATABASE_MIGRATION_LOCK_TIMEOUT_MS: bad }).lock_timeout).toBe(10_000);
+  });
+
+  it("sends no new startup parameter to Supabase, for migrations either", () => {
+    const config = migrationPoolConfig(direct, undefined, { DATABASE_MIGRATION_LOCK_TIMEOUT_MS: "2500" });
+    expect(config).not.toHaveProperty("lock_timeout");
+    expect(config).not.toHaveProperty("options");
+    expect(config).not.toHaveProperty("statement_timeout");
+    expect(config).toMatchObject({ max: 1, ssl: { rejectUnauthorized: true } });
+  });
+
+  it("puts exactly these parameters in the startup packet node-postgres sends", () => {
+    const { Client } = createRequire(import.meta.url)("pg");
+    const startup = (config: object): Record<string, string> => new Client(config).getStartupConf();
+
+    expect(startup(postgresPoolConfig(generic, undefined, {}))).toEqual({
+      user: "user", database: "jeeves", application_name: "jeeves",
+      statement_timeout: "60000", idle_in_transaction_session_timeout: "60000",
+    });
+    expect(startup(postgresPoolConfig(generic, undefined, {
+      DATABASE_STATEMENT_TIMEOUT_MS: "0", DATABASE_IDLE_IN_TRANSACTION_TIMEOUT_MS: "0" })))
+      .toEqual({ user: "user", database: "jeeves", application_name: "jeeves" });
+    expect(startup(migrationPoolConfig(generic, undefined, {})))
+      .toEqual({ user: "user", database: "jeeves", application_name: "jeeves", lock_timeout: "10000" });
+    expect(startup(migrationPoolConfig(direct, undefined, {}))).toEqual({ user: "user", database: "postgres" });
   });
 });

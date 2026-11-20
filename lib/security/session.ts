@@ -5,7 +5,7 @@ import { randomBytes } from "node:crypto";
  * workspace (session-scoped data namespace, resettable)"). Pure logic —
  * no cookie/header wiring here; a Next.js route handler issues/reads the
  * token via whatever transport it chooses and calls into this module for
- * generation/validation/expiry and workspace-id derivation.
+ * generation/validation/expiry and workspace-id generation.
  */
 
 export interface SessionConfig {
@@ -14,7 +14,7 @@ export interface SessionConfig {
 }
 
 export interface Session {
-  /** Opaque random session token (also used to derive the workspace id). */
+  /** Opaque random session token (the workspace id is independent of it). */
   token: string;
   /** Epoch ms when this session was issued. */
   issuedAt: number;
@@ -42,8 +42,17 @@ export function issueSession(config: SessionConfig, now: () => number): Session 
     token,
     issuedAt,
     expiresAt: issuedAt + config.ttlMs,
-    workspaceId: deriveWorkspaceId(token),
+    workspaceId: generateWorkspaceId(),
   };
+}
+
+/**
+ * Workspace id (data-namespacing key). Generated independently of the bearer
+ * token on purpose: the id is copied into business tables, the signed
+ * workspace cookie and database error text, so it must never be a credential.
+ */
+function generateWorkspaceId(): string {
+  return `${WORKSPACE_PREFIX}${randomBytes(TOKEN_BYTES).toString("hex")}`;
 }
 
 /**
@@ -57,17 +66,4 @@ export function validateSession(session: Session, now: () => number): SessionVal
     return { valid: false, reason: "expired" };
   }
   return { valid: true };
-}
-
-/**
- * Deterministically derive a workspace id (data-namespacing key) from a
- * session token. The token itself already carries enough entropy, so the
- * "derivation" here is a stable, URL/DB-key-safe transform (prefix + the
- * token verbatim) rather than a separate hash — this keeps
- * `deriveWorkspaceId(session.token) === session.workspaceId` true by
- * construction, which callers (e.g. a route handler re-deriving the
- * workspace id from a cookie-stored token) rely on.
- */
-export function deriveWorkspaceId(token: string): string {
-  return `${WORKSPACE_PREFIX}${token}`;
 }

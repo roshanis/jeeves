@@ -29,7 +29,7 @@ import { agentInitializationResponse } from "@/lib/services/agent-error-response
 import { evaluateCompleteness } from "@/lib/intake/completeness";
 import type { IntakePayload } from "@/lib/intake/types";
 import { EMPTY_INTAKE_PAYLOAD } from "@/lib/intake/defaults";
-import { runMutationGuard } from "@/lib/services/route-guard";
+import { reserveDailyBudget, runMutationGuard } from "@/lib/services/route-guard";
 
 const MAX_MESSAGES = 50;
 const MAX_MESSAGE_CHARS = 4000;
@@ -105,41 +105,45 @@ function coerceToIntakePayload(portPayload: Readonly<Record<string, unknown>>): 
 }
 
 export async function POST(req: Request): Promise<Response> {
-  let json: unknown;
-  try {
-    json = await req.json();
-  } catch {
-    return Response.json({ error: "invalid JSON body" }, { status: 400 });
+  let flattenedConversation = "";
+  let serializedPartialPayload = "";
+  const guard = await runMutationGuard(req, (json) => {
+    // Flatten the conversation's message contents into one string field so
+    // runMutationGuard's input-size validation (which only checks flat string
+    // fields, per lib/security/input-limits.ts) can cap total conversation
+    // size — mirrors app/api/admin/threshold/route.ts's bodyText composition
+    // pattern for a route whose real body isn't itself a flat string map.
+    const conversationRaw = (json as { conversation?: unknown })?.conversation;
+    flattenedConversation = Array.isArray(conversationRaw)
+      ? conversationRaw
+          .map((m) => (typeof (m as { content?: unknown })?.content === "string" ? (m as { content: string }).content : ""))
+          .join("\n")
+      : "";
+
+    // `partialPayload` (a `z.record` — see bodySchema below) is otherwise
+    // unbounded and gets JSON.stringify'd straight into the LLM prompt by the
+    // agent adapter, so it's flattened into the guard's bodyText map alongside
+    // `conversation` the same way — mirrors this route's existing
+    // flatten-for-the-guard pattern (see comment above) so an oversized
+    // partialPayload fails the same 400 input-cap check as an oversized
+    // conversation.
+    const partialPayloadRaw = (json as { partialPayload?: unknown })?.partialPayload;
+    serializedPartialPayload = JSON.stringify(
+      partialPayloadRaw && typeof partialPayloadRaw === "object" ? partialPayloadRaw : {},
+    );
+
+    return { conversation: flattenedConversation, partialPayload: serializedPartialPayload };
+  }, {
+    inputLimits: [
+      { field: "conversation", maxChars: MAX_MESSAGES * MAX_MESSAGE_CHARS },
+      { field: "partialPayload", maxChars: MAX_PARTIAL_PAYLOAD_CHARS },
+    ],
+    inputTotalCap: MAX_MESSAGES * MAX_MESSAGE_CHARS + MAX_PARTIAL_PAYLOAD_CHARS,
+  });
+  if (!guard.ok) {
+    return Response.json({ error: guard.failure.message }, { status: guard.failure.status });
   }
-
-  // Flatten the conversation's message contents into one string field so
-  // runMutationGuard's input-size validation (which only checks flat string
-  // fields, per lib/security/input-limits.ts) can cap total conversation
-  // size — mirrors app/api/admin/threshold/route.ts's bodyText composition
-  // pattern for a route whose real body isn't itself a flat string map.
-  const conversationRaw = (json as { conversation?: unknown })?.conversation;
-  const flattenedConversation = Array.isArray(conversationRaw)
-    ? conversationRaw
-        .map((m) => (typeof (m as { content?: unknown })?.content === "string" ? (m as { content: string }).content : ""))
-        .join("\n")
-    : "";
-
-  // `partialPayload` (a `z.record` — see bodySchema below) is otherwise
-  // unbounded and gets JSON.stringify'd straight into the LLM prompt by the
-  // agent adapter, so it's flattened into the guard's bodyText map alongside
-  // `conversation` the same way — mirrors this route's existing
-  // flatten-for-the-guard pattern (see comment above) so an oversized
-  // partialPayload fails the same 400 input-cap check as an oversized
-  // conversation.
-  const partialPayloadRaw = (json as { partialPayload?: unknown })?.partialPayload;
-  const serializedPartialPayload = JSON.stringify(
-    partialPayloadRaw && typeof partialPayloadRaw === "object" ? partialPayloadRaw : {},
-  );
-
-  const bodyText: Record<string, string> = {
-    conversation: flattenedConversation,
-    partialPayload: serializedPartialPayload,
-  };
+  const json = guard.json;
 
   // Budget reservation must scale with what we actually send to the
   // provider: system prompt + completion overhead (600 tokens of headroom)
@@ -149,19 +153,6 @@ export async function POST(req: Request): Promise<Response> {
   // budget's intended bound on real LLM spend.
   const estimatedTokens =
     600 + Math.ceil((flattenedConversation.length + serializedPartialPayload.length) / 4);
-
-  const guard = await runMutationGuard(req, bodyText, {
-    inputLimits: [
-      { field: "conversation", maxChars: MAX_MESSAGES * MAX_MESSAGE_CHARS },
-      { field: "partialPayload", maxChars: MAX_PARTIAL_PAYLOAD_CHARS },
-    ],
-    inputTotalCap: MAX_MESSAGES * MAX_MESSAGE_CHARS + MAX_PARTIAL_PAYLOAD_CHARS,
-    requiresBudget: true,
-    estimatedTokens,
-  });
-  if (!guard.ok) {
-    return Response.json({ error: guard.failure.message }, { status: guard.failure.status });
-  }
 
   // Guard-first, then role-check (app/api/admin/threshold/route.ts's
   // underlying admin-service.ts precedent) — role always comes from the
@@ -174,6 +165,11 @@ export async function POST(req: Request): Promise<Response> {
   if (!parsed.success) {
     return Response.json({ error: "invalid request body" }, { status: 400 });
   }
+
+  // Reserve only now that the caller is authenticated, is a requester and
+  // sent a valid body: a refused call never spends the shared daily cap.
+  const budget = await reserveDailyBudget(estimatedTokens);
+  if (budget) return Response.json({ error: budget.message }, { status: budget.status });
 
   let port: AgentPort;
   try {

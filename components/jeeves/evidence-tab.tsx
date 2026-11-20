@@ -74,7 +74,7 @@ function EvidenceWorkspace({slug,token}:{slug:string;token:string}) {
   async function upload() {
     if(!file)return;
     const doc=await evidenceRequest<EvidenceDocument>(slug,token,{action:'upload',requestId:uploadRequestId,fileName:file.name,mediaType:file.type||(file.name.toLowerCase().endsWith('.pdf')?'application/pdf':'application/vnd.openxmlformats-officedocument.wordprocessingml.document'),contentBase64:await fileBase64(file),...(supersedesId?{supersedesId}:{})});
-    if(supersedesId)setEntries(previous=>previous.map(e=>e.documentId===supersedesId?{...e,documentId:doc.id}:e));
+    if(supersedesId){const signedIds=new Set(state?.requirements.filter(r=>r.signed).map(r=>r.id));setEntries(previous=>previous.map(e=>e.documentId===supersedesId&&!signedIds.has(e.controlId)?{...e,documentId:doc.id}:e));}
     await refresh(true);setFile(null);setUploadRequestId('');setSupersedesId('');setFictional(false);setNotice('Document saved privately. Link it to a requirement and submit it for review.');
   }
   return <div className="space-y-5">

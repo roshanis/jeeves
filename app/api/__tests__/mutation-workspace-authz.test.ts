@@ -116,13 +116,14 @@ async function expectSameNotFoundShape(
  * The QC gate now sits between submit and triage, and it is not the
  * requester's to open (a gate its own applicant can open is not a gate) — so
  * this issues a second session for the Program Office on the same workspace
- * cookie rather than reusing the one that submitted.
+ * cookie rather than reusing the one that submitted. Returns that Program
+ * Office token: passing QC (POST /triage) is the same persona's call.
  */
 async function passQc(
   session: { workspaceCookie: string },
   initiativeId: string,
   ip: string,
-): Promise<void> {
+): Promise<string> {
   const program = await issueSession("nia-okafor", ip, session.workspaceCookie);
   const { POST } = await import("../initiatives/[id]/qc/route");
   const response = await POST(
@@ -133,6 +134,7 @@ async function passQc(
     { params: Promise.resolve({ id: initiativeId }) },
   );
   expect(response.status).toBe(200);
+  return program.token;
 }
 
 async function createWorkspacePair(personaKey: string, ipBase: string) {
@@ -202,11 +204,14 @@ describe("remaining mutation routes enforce session workspace authorization", ()
     const { owner, foreign } = await createWorkspacePair("priya-raman", "70.0.1");
     const initiativeId = await createLiveInitiative(owner.token, "70.0.1.3");
     const { POST } = await import("../initiatives/[id]/triage/route");
+    // The role gate (program/admin) runs before the workspace check, so the
+    // stranger is a Program Office session from a different workspace.
+    const foreignProgram = await issueSession("nia-okafor", "70.0.1.12");
 
     const foreignResponse = await POST(
       new Request(`http://localhost/api/initiatives/${initiativeId}/triage`, {
         method: "POST",
-        headers: bearer(foreign.token, "70.0.1.4"),
+        headers: bearer(foreignProgram.token, "70.0.1.4"),
       }),
       { params: Promise.resolve({ id: initiativeId }) },
     );
@@ -214,7 +219,7 @@ describe("remaining mutation routes enforce session workspace authorization", ()
     const unknownResponse = await POST(
       new Request(`http://localhost/api/initiatives/${unknownId}/triage`, {
         method: "POST",
-        headers: bearer(foreign.token, "70.0.1.5"),
+        headers: bearer(foreignProgram.token, "70.0.1.5"),
       }),
       { params: Promise.resolve({ id: unknownId }) },
     );
@@ -229,11 +234,11 @@ describe("remaining mutation routes enforce session workspace authorization", ()
       { params: Promise.resolve({ id: initiativeId }) },
     );
     expect(ownerSubmit.status).toBe(200);
-    await passQc(owner, initiativeId, "70.0.1.11");
+    const programToken = await passQc(owner, initiativeId, "70.0.1.11");
     const ownerTriage = await POST(
       new Request(`http://localhost/api/initiatives/${initiativeId}/triage`, {
         method: "POST",
-        headers: bearer(owner.token, "70.0.1.7"),
+        headers: bearer(programToken, "70.0.1.7"),
       }),
       { params: Promise.resolve({ id: initiativeId }) },
     );
@@ -255,7 +260,7 @@ describe("remaining mutation routes enforce session workspace authorization", ()
     const sharedTriage = await POST(
       new Request(`http://localhost/api/initiatives/${sharedId}/triage`, {
         method: "POST",
-        headers: bearer(foreign.token, "70.0.1.9"),
+        headers: bearer(foreignProgram.token, "70.0.1.9"),
       }),
       { params: Promise.resolve({ id: sharedId }) },
     );
@@ -270,6 +275,14 @@ describe("remaining mutation routes enforce session workspace authorization", ()
     const owner = await issueSession("angela-torres", "70.0.2.3", requester.workspaceCookie);
     const foreign = await issueSession("angela-torres", "70.0.2.4");
     const deploymentId = "dep-private-promotion";
+    await testDb.update(initiatives).set({ state: "deployed" }).where(eq(initiatives.id, initiativeId));
+    await testDb.insert(deploymentVersions).values({
+      id: "dep-private-current",
+      initiativeId,
+      version: "v-private-0",
+      status: "deployed",
+      deployedAt: new Date("2026-07-25T00:00:00.000Z"),
+    });
     await testDb.insert(deploymentVersions).values({
       id: deploymentId,
       initiativeId,

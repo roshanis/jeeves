@@ -88,6 +88,19 @@ describe("lib/data/db-provider", () => {
     });
   });
 
+  describe("untriaged initiatives", () => {
+    it("reports tier null (not 'low') for an initiative that has not been triaged", async () => {
+      await db.update(initiatives).set({ tier: null }).where(eq(initiatives.slug, "prior-auth-summarizer"));
+      try {
+        const row = (await provider.listInitiatives()).find((r) => r.slug === "prior-auth-summarizer");
+        expect(row!.tier).toBeNull();
+        expect((await provider.getInitiativeDetail("prior-auth-summarizer"))!.summary.tier).toBeNull();
+      } finally {
+        await db.update(initiatives).set({ tier: "critical" }).where(eq(initiatives.slug, "prior-auth-summarizer"));
+      }
+    });
+  });
+
   describe("listInitiativeDetails", () => {
     it("loads every visible detail with one fixed-size aggregate snapshot", async () => {
       const select = vi.spyOn(db, "select");
@@ -490,6 +503,22 @@ describe("lib/data/db-provider", () => {
       expect(rows.map((r) => r.slug)).not.toContain("ws-beta-initiative");
     });
 
+    it("listInitiativeIndex reads slug/title only, in one query, scoped like listInitiatives", async () => {
+      const spy = vi.spyOn(db, "select");
+      try {
+        const rows = await provider.listInitiativeIndex({ viewerWorkspaceId: WS_A });
+        expect(spy).toHaveBeenCalledTimes(1);
+        expect(rows).toHaveLength(13);
+        expect(Object.keys(rows[0]).sort()).toEqual(["slug", "title"]);
+        expect(rows.map((r) => r.slug)).toContain("ws-alpha-initiative");
+        expect(rows.map((r) => r.slug)).not.toContain("ws-beta-initiative");
+      } finally {
+        spy.mockRestore();
+      }
+      const anon = await provider.listInitiativeIndex({ viewerWorkspaceId: null });
+      expect(anon).toHaveLength(12);
+    });
+
     it("getInitiativeDetail returns the row when omitted/matching workspace, and null for a foreign workspace", async () => {
       expect(await provider.getInitiativeDetail("ws-alpha-initiative")).not.toBeNull();
       expect(
@@ -660,6 +689,88 @@ describe("lib/data/db-provider", () => {
         expect(wsA).toContainEqual(seededGlobal);
         expect(wsB).toContainEqual(seededGlobal);
       });
+    });
+  });
+
+  describe("per-render snapshot sharing", () => {
+    const SNAPSHOT_TABLES = 11;
+    const countSelects = async (run: () => Promise<unknown>) => {
+      const spy = vi.spyOn(db, "select");
+      try {
+        await run();
+        return spy.mock.calls.length;
+      } finally {
+        spy.mockRestore();
+      }
+    };
+
+    it("reads the snapshot once for providers that share one holder", async () => {
+      const holder = {};
+      const a = new DbDataProvider(db, { snapshotHolder: () => holder });
+      const b = new DbDataProvider(db, { snapshotHolder: () => holder });
+      const n = await countSelects(async () => {
+        await a.controlCatalog();
+        await b.getInitiativeDetail("prior-auth-summarizer");
+        await a.listInitiatives();
+      });
+      expect(n).toBe(SNAPSHOT_TABLES);
+    });
+
+    it("reads again without a holder, or when the holder is fresh per call", async () => {
+      const none = new DbDataProvider(db);
+      expect(await countSelects(async () => { await none.controlCatalog(); await none.controlCatalog(); })).toBe(2 * SNAPSHOT_TABLES);
+      const fresh = new DbDataProvider(db, { snapshotHolder: () => ({}) });
+      expect(await countSelects(async () => { await fresh.controlCatalog(); await fresh.controlCatalog(); })).toBe(2 * SNAPSHOT_TABLES);
+    });
+
+    const insertWsInitiative = (id: string, workspaceId: string) =>
+      db.insert(initiatives).values({
+        id,
+        slug: id,
+        title: `Snapshot ${id}`,
+        requester: "Priya Raman",
+        state: "intake_draft",
+        tier: null,
+        accountableApprover: null,
+        createdAt: new Date("2026-07-10T00:00:00.000Z"),
+        updatedAt: new Date("2026-07-10T00:00:00.000Z"),
+        workspaceId,
+      });
+
+    it("still applies each viewer's workspace visibility to a shared snapshot", async () => {
+      await insertWsInitiative("snap-iso-a", "ws-a");
+      const holder = {};
+      const p = new DbDataProvider(db, { snapshotHolder: () => holder });
+      const sees = async (viewerWorkspaceId: string | null) => {
+        const opts = { viewerWorkspaceId };
+        const byDetail = (await p.getInitiativeDetail("snap-iso-a", opts)) !== null;
+        const byList = (await p.listInitiativeDetails(opts)).some((d) => d.summary.slug === "snap-iso-a");
+        expect(byList).toBe(byDetail);
+        return byDetail;
+      };
+      const n = await countSelects(async () => {
+        expect(await sees("ws-a")).toBe(true);
+        expect(await sees("ws-b")).toBe(false);
+        expect(await sees(null)).toBe(false);
+        expect(await sees("ws-a")).toBe(true);
+      });
+      expect(n).toBe(SNAPSHOT_TABLES);
+    });
+
+    it("a provider without a holder reads its own write; a shared holder keeps one snapshot", async () => {
+      const slugs = async (p: DbDataProvider) => (await p.listInitiativeDetails()).map((d) => d.summary.slug);
+      const plain = new DbDataProvider(db);
+      expect(await slugs(plain)).not.toContain("snap-own-1");
+      await insertWsInitiative("snap-own-1", "ws-a");
+      expect(await slugs(plain)).toContain("snap-own-1");
+
+      const holder = {};
+      const shared = new DbDataProvider(db, { snapshotHolder: () => holder });
+      expect(await slugs(shared)).not.toContain("snap-own-2");
+      await insertWsInitiative("snap-own-2", "ws-a");
+      expect(await slugs(shared)).not.toContain("snap-own-2");
+      const fresh = new DbDataProvider(db, { snapshotHolder: () => ({}) });
+      expect(await slugs(fresh)).toContain("snap-own-2");
     });
   });
 });
