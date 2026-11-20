@@ -1,9 +1,10 @@
 # Jeeves — Podman Compose stack (app + Postgres).
 #
 #   cd deploy/podman
-#   cp env.example .env && edit .env        # set the two passwords
+#   cp env.example .env && edit .env        # set the three database passwords
 #   podman compose up -d --build
 #   podman compose run --rm migrate         # schema
+#   podman compose run --rm grants          # narrow the append-only tables (second pass)
 #   podman compose run --rm seed            # demo data — DESTRUCTIVE, see below
 #
 # Works with `podman compose` (Podman 4.7+, which shells out to a compose
@@ -24,8 +25,17 @@ services:
       # refuse to start rather than come up open, which is the behaviour we
       # want — but be explicit in .env rather than relying on that.
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      # The bootstrap superuser above is used only by the init script below,
+      # which creates the two roles Jeeves runs as (docs/deploy.md, "Database
+      # roles"): jeeves_owner owns the schema, jeeves_app owns nothing.
+      JEEVES_OWNER_PASSWORD: ${JEEVES_OWNER_PASSWORD:?set JEEVES_OWNER_PASSWORD in .env}
+      JEEVES_APP_PASSWORD: ${JEEVES_APP_PASSWORD:?set JEEVES_APP_PASSWORD in .env}
     volumes:
       - jeeves-pgdata:/var/lib/postgresql/data
+      # Runs once, on an empty data directory only. An existing volume needs
+      # the roles created by hand (docs/deploy-podman.md).
+      - ./initdb/10-jeeves-roles.sh:/docker-entrypoint-initdb.d/10-jeeves-roles.sh:ro
+      - ../sql/jeeves-runtime-grants.sql:/opt/jeeves/jeeves-runtime-grants.sql:ro
     healthcheck:
       # `pg_isready` returns 0 only once the server accepts connections, so
       # the app's `service_healthy` dependency waits for a usable database
@@ -46,7 +56,8 @@ services:
       # host `db` resolves on the compose network. lib/db/driver-select.ts
       # sends any non-*.neon.tech host to node-postgres; the Neon serverless
       # driver would try to open a WebSocket to :443 here and fail.
-      DATABASE_URL: postgres://${POSTGRES_USER:-jeeves}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-jeeves}
+      # jeeves_app owns nothing, so it cannot switch off the audit triggers.
+      DATABASE_URL: postgres://jeeves_app:${JEEVES_APP_PASSWORD}@db:5432/${POSTGRES_DB:-jeeves}
       # Production mode refuses a database on another host without verified
       # TLS. `db` is this stack's own container, reached without TLS on this
       # host's private network, so the stack opts out. Demo mode ignores it.
@@ -108,7 +119,9 @@ services:
     profiles: ["tools"]
     command: ["npm", "run", "db:migrate"]
     environment:
-      DATABASE_URL: postgres://${POSTGRES_USER:-jeeves}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-jeeves}
+      # The owner role runs migrations; it is not the app's role.
+      DATABASE_MIGRATION_URL: postgres://jeeves_owner:${JEEVES_OWNER_PASSWORD}@db:5432/${POSTGRES_DB:-jeeves}
+      DATABASE_URL: postgres://jeeves_owner:${JEEVES_OWNER_PASSWORD}@db:5432/${POSTGRES_DB:-jeeves}
     depends_on:
       db:
         condition: service_healthy
@@ -131,7 +144,31 @@ services:
     profiles: ["tools"]
     command: ["npm", "run", "db:seed"]
     environment:
-      DATABASE_URL: postgres://${POSTGRES_USER:-jeeves}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-jeeves}
+      # Owner, not jeeves_app: the wipe disables the audit triggers, which only
+      # the table owner can do.
+      DATABASE_URL: postgres://jeeves_owner:${JEEVES_OWNER_PASSWORD}@db:5432/${POSTGRES_DB:-jeeves}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  # One-shot: the second pass of the grants file, after the schema exists. The
+  # init script ran it before any table did; this narrows the append-only
+  # tables to read and insert for jeeves_app. Idempotent; run it after every
+  # migrate that adds a table. Connects as the bootstrap superuser, the only
+  # other use of it.
+  #
+  #   podman compose run --rm grants
+  grants:
+    image: docker.io/library/postgres:16-alpine
+    profiles: ["tools"]
+    command: ["sh", "-c", "psql -v ON_ERROR_STOP=1 -h db -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\" -f /opt/jeeves/jeeves-runtime-grants.sql"]
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-jeeves}
+      POSTGRES_DB: ${POSTGRES_DB:-jeeves}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - ../sql/jeeves-runtime-grants.sql:/opt/jeeves/jeeves-runtime-grants.sql:ro
     depends_on:
       db:
         condition: service_healthy
