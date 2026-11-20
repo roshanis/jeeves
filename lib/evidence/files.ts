@@ -5,6 +5,10 @@ export class EvidenceError extends Error {
   constructor(public status: number, message: string, public retryAfter?: number) { super(message); this.name = 'EvidenceError'; }
 }
 const DOCX = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+/** Parts that carry embedded objects: the workbook behind a native chart, OLE objects, macros. */
+const ACTIVE_CONTENT_PART=/(vbaProject|embeddings\/|\.bin$)/i;
+// Why: a workbook or OLE object inside a document is a second file format we neither parse nor scan.
+const ACTIVE_CONTENT_MESSAGE='Embedded objects and charts are not accepted because they can carry active content. Export the document to PDF and upload that instead.';
 /** Format validation only. No parser, execution, extraction or malware verdict. */
 export function validateDocument(rawFileName: string, mediaType: string, bytes: Buffer) {
   const fileName = rawFileName.toWellFormed().normalize('NFC');
@@ -28,7 +32,8 @@ export function validateDocument(rawFileName: string, mediaType: string, bytes: 
       if(next>end || local+30>start || bytes.readUInt32LE(local)!==0x04034b50 || (flags&1) || ![0,8].includes(method)) throw new EvidenceError(400,'Encrypted or unsupported DOCX content.');
       const name=bytes.subarray(offset+46,offset+46+nameLength).toString('utf8');
       const localName=bytes.readUInt16LE(local+26),localExtra=bytes.readUInt16LE(local+28);
-      if(local+30+localName+localExtra+compressed>start || name!==bytes.subarray(local+30,local+30+localName).toString('utf8') || names.has(name) || /(^\/|\.\.|\\|\x00|vbaProject|embeddings\/|\.exe$|\.bin$)/i.test(name)) throw new EvidenceError(400,'Unsupported DOCX entry.');
+      if(local+30+localName+localExtra+compressed>start || name!==bytes.subarray(local+30,local+30+localName).toString('utf8') || names.has(name) || /(^\/|\.\.|\\|\x00|\.exe$)/i.test(name)) throw new EvidenceError(400,'Unsupported DOCX entry.');
+      if(ACTIVE_CONTENT_PART.test(name)) throw new EvidenceError(400,ACTIVE_CONTENT_MESSAGE);
       names.add(name);total+=expanded;offset=next;
     }
     if(offset!==end || total>20*1024*1024 || !names.has('[Content_Types].xml') || !names.has('word/document.xml')) throw new EvidenceError(400,'The archive is not a supported DOCX document.');

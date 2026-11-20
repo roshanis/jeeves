@@ -31,15 +31,16 @@ describe('evidence filename characters', () => {
     expect(validateDocument('cafe\u0301.pdf', 'application/pdf', pdf).fileName).toBe('caf\u00e9.pdf');
   });
 });
-function docxZip() {
+function docxZip(extra:string[]=[]) {
+  const entries=['[Content_Types].xml','word/document.xml',...extra];
   const local:Buffer[]=[],central:Buffer[]=[];let position=0;
-  for(const name of ['[Content_Types].xml','word/document.xml']) {
+  for(const name of entries) {
     const filename=Buffer.from(name),content=Buffer.from('<document/>'),header=Buffer.alloc(30),directory=Buffer.alloc(46);
     header.writeUInt32LE(0x04034b50);header.writeUInt32LE(content.length,18);header.writeUInt32LE(content.length,22);header.writeUInt16LE(filename.length,26);
     directory.writeUInt32LE(0x02014b50);directory.writeUInt32LE(content.length,20);directory.writeUInt32LE(content.length,24);directory.writeUInt16LE(filename.length,28);directory.writeUInt32LE(position,42);
     local.push(header,filename,content);central.push(directory,filename);position+=header.length+filename.length+content.length;
   }
-  const end=Buffer.alloc(22);end.writeUInt32LE(0x06054b50);end.writeUInt16LE(2,8);end.writeUInt16LE(2,10);end.writeUInt32LE(Buffer.concat(central).length,12);end.writeUInt32LE(position,16);
+  const end=Buffer.alloc(22);end.writeUInt32LE(0x06054b50);end.writeUInt16LE(entries.length,8);end.writeUInt16LE(entries.length,10);end.writeUInt32LE(Buffer.concat(central).length,12);end.writeUInt32LE(position,16);
   return Buffer.concat([...local,...central,end]);
 }
 it('accepts a DOCX directory and rejects an inflated-size bomb declaration',()=>{
@@ -47,4 +48,13 @@ it('accepts a DOCX directory and rejects an inflated-size bomb declaration',()=>
  expect(validateDocument('policy.docx',mime,zip).mediaType).toBe(mime);
  const end=zip.length-22,start=zip.readUInt32LE(end+16);zip.writeUInt32LE(30*1024*1024,start+24);
  expect(()=>validateDocument('policy.docx',mime,zip)).toThrow(/supported DOCX/);
+});
+it('explains why a DOCX with an embedded chart workbook or OLE object is refused',()=>{
+ const mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+ for(const part of ['word/embeddings/Microsoft_Excel_Worksheet1.xlsx','word/embeddings/oleObject1.bin','word/vbaProject.bin'])
+  expect(()=>validateDocument('policy.docx',mime,docxZip([part])),part).toThrow(/embedded objects and charts are not accepted.*export the document to PDF/i);
+});
+it('keeps the generic message for other unsupported DOCX entries',()=>{
+ const mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+ expect(()=>validateDocument('policy.docx',mime,docxZip(['word/../evil.xml']))).toThrow('Unsupported DOCX entry.');
 });
