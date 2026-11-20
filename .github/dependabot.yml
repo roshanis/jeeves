@@ -1,0 +1,22 @@
+# Dependabot proposes bumps for the digest-pinned base images under
+# deploy/podman (node in the Containerfile, postgres in compose.yaml). Pins are
+# `tag@sha256:...`; without this they would go stale silently.
+#
+# Only the image ecosystems are listed: npm and GitHub Actions updates are not
+# managed here.
+#
+# Dependabot's docker ecosystem reads files named Dockerfile or Dockerfile.*;
+# this repository's file is Containerfile, so it may not be picked up. Check the
+# first run and, if it is skipped, bump the node digest by hand when the
+# Containerfile's tag moves.
+version: 2
+updates:
+  - package-ecosystem: "docker"
+    directory: "/deploy/podman"
+    schedule:
+      interval: "weekly"
+  # compose.yaml is read by the docker-compose ecosystem, not docker.
+  - package-ecosystem: "docker-compose"
+    directory: "/deploy/podman"
+    schedule:
+      interval: "weekly"

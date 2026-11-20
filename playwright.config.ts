@@ -42,6 +42,20 @@ import { E2E_COOKIE_SECRET } from "./tests/e2e/constants";
 // exact seeded counts. Serial in-file order keeps the mutating test last,
 // deterministically.
 const PORT = 3117;
+
+// Two ways to serve the suite:
+// - default: a webpack build behind `next start` (what local runs have used).
+// - PLAYWRIGHT_SERVER=standalone: the Turbopack build the container image and
+//   Vercel ship, served by .next/standalone/server.js exactly as the
+//   Containerfile does (it copies .next/static next to the traced server;
+//   there is no public/ directory). `next start` refuses output: standalone
+//   for this build, so it cannot be used here. CI uses this mode.
+const SEED = "npm run db:seed";
+const BUILD_ENV = "DATA_PROVIDER=mock JEEVES_MODE=demo";
+const WEBPACK_COMMAND = `${SEED} && ${BUILD_ENV} npm run build -- --webpack && npm run start`;
+const STANDALONE_COMMAND =
+  `${SEED} && ${BUILD_ENV} npm run build && rm -rf .next/standalone/.next/static && ` +
+  "cp -r .next/static .next/standalone/.next/static && node .next/standalone/server.js";
 const disposablePgliteDir = mkdtempSync(join(tmpdir(), "jeeves-playwright-"));
 
 export default defineConfig({
@@ -62,7 +76,7 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: "npm run db:seed && DATA_PROVIDER=mock JEEVES_MODE=demo npm run build -- --webpack && npm run start",
+    command: process.env.PLAYWRIGHT_SERVER === "standalone" ? STANDALONE_COMMAND : WEBPACK_COMMAND,
     url: `http://localhost:${PORT}`,
     reuseExistingServer: false,
     timeout: 240_000,

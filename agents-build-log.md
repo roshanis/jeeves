@@ -1843,3 +1843,15 @@ Hard rules: no violations found.
 ### Recommendations / Next steps:
 - Codex: a new browser storage key needs a line on the privacy page and an entry in the storage-key test in tests/ui/site-essentials.test.tsx.
 - Owner: bump LEGAL_LAST_UPDATED when you have read the new bullet; the operator queue's own sessionStorage token (`jeeves_operator_token`) is not listed, since only the operator holds it.
+
+## [AGENT: Claude] [2026-11-20T16:40Z]
+### Action: implementer: CI lane of the accepted peer-review decisions (d14, d15, L40, L41; human "go", 2026-11-20)
+### Files changed: .github/workflows/ci.yml, .github/dependabot.yml, playwright.config.ts, vitest.config.ts, deploy/podman/Containerfile, deploy/podman/compose.yaml, deploy/podman/quadlet/jeeves-db.container, app/_lib/data-provider.test.ts, app/_lib/portfolio-data.test.ts, tests/deploy/ci-integration-jobs.test.ts, tests/deploy/e2e-standalone-ci.test.ts, tests/deploy/image-digests.test.ts, tests/deploy/demo-mode-env.test.ts
+### Diff summary:
+- d14 (deploy-F6): the container job also builds the migrator stage, runs it against postgres:16-alpine, then runs the image read-only in production mode and waits for GET /api/health to answer 200 (container logs on failure). New postgres-integrity job starts a socket-only PostgreSQL cluster and runs npm run test:postgres. JEEVES_DB_ALLOW_OWNER_ROLE=1 is set on the app container (single owning CI role).
+- d15 (deploy-F7): PLAYWRIGHT_SERVER=standalone makes playwright.config.ts build with Turbopack and serve .next/standalone/server.js; the e2e job sets it. The webpack-only packaged-agent check moved to its own agent-bundle-webpack job. Local default is unchanged.
+- L40 (deploy-F15): node and postgres base images pinned by digest in the Containerfile, compose.yaml, the Quadlet db unit and the CI container job; .github/dependabot.yml (docker and docker-compose, /deploy/podman, weekly); a test fails on any unpinned image.
+- L41 (tests-F12): proxy.ts, instrumentation.ts and app/_lib/** are counted in coverage; tests added for data-provider.ts and portfolio-data.ts; thresholds unchanged.
+### Verified: each new test failed before its change. Typecheck and lint clean. Full unit suite 284 files, 3,414 tests, all passed. Real-PostgreSQL suite 11 of 11 on a socket-only cluster started with the workflow's own shell steps. Playwright 33 of 33 on the Turbopack standalone server. The container, migrator, health check and GitHub-hosted runs were not run here (no container engine or Actions).
+### Recommendations / Next steps:
+- Owner: the first CI run proves the container job and postgres-integrity job; Dependabot may skip a file named Containerfile (docker ecosystem reads Dockerfile names), in which case bump the node digest by hand. The postgres:16 service image in production-smoke is not pinned (no digest supplied).

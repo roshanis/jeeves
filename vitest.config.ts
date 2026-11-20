@@ -47,15 +47,26 @@ export default defineConfig({
     coverage: {
       provider: "v8",
       reporter: ["text", "html"],
-      include: ["lib/**/*.ts", "lib/**/*.tsx", "scripts/**/*.ts", "app/api/**/*.ts"],
+      include: [
+        "lib/**/*.ts",
+        "lib/**/*.tsx",
+        "scripts/**/*.ts",
+        "app/api/**/*.ts",
+        // The production redirect/404 gate, boot-check wiring and the
+        // viewer-scoped data provider: security-relevant, so counted.
+        "proxy.ts",
+        "instrumentation.ts",
+        "app/_lib/**/*.ts",
+      ],
       exclude: ["lib/db/schema.ts"],
-      // Baseline measured 2026-07-25 via `pnpm test -- --coverage
-      // --no-file-parallelism` (722 tests, 67 files, all passing):
-      //   statements 85.74% | branches 75.01% | functions 88.81% | lines 86.96%
-      // Thresholds are set a margin below that baseline (plan.md §8 target of
-      // 80% applies to lines/statements, which were already >=85%) to catch
-      // real regressions while leaving room for another agent's in-flight
-      // test additions to land without tripping CI on drift alone.
+      // Baseline measured 2026-11-20 with proxy.ts, instrumentation.ts and
+      // app/_lib counted (282 test files, 3402 tests, 6843 statements):
+      //   statements 90.19% | branches 84.63% | functions 92.40% | lines 92.43%
+      // The thresholds below date from the 2026-07-25 baseline (67 files:
+      // 85.74 / 75.01 / 88.81 / 86.96) and were deliberately not raised or
+      // lowered; plan.md §8's 80% target applies to lines/statements. They stay
+      // a margin below the baseline so another agent's in-flight test additions
+      // can land without tripping CI on drift alone.
       thresholds: {
         statements: 80,
         lines: 80,
