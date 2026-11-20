@@ -37,6 +37,18 @@ describe("Podman stack configuration", () => {
     expect(quadlet).toContain("same password into DATABASE_URL");
   });
 
+  it("lets a production-mode install reach the stack's own database without TLS", () => {
+    // Production refuses a database on another host without verified TLS
+    // (lib/config/deployment-mode.ts). The db / jeeves-db container is on this
+    // host's private network without TLS, so both install paths carry the
+    // same-host opt-out the guide promises, beside the URL it vouches for.
+    const app = compose.slice(compose.search(/^ {2}app:\s*$/m), compose.search(/^ {2}migrate:\s*$/m));
+    expect(app).toMatch(/^\s+DATABASE_URL: postgres:\/\/[^\n]*@db:5432\/[^\n]*\n(?:\s+#[^\n]*\n)*\s+JEEVES_DB_ALLOW_UNVERIFIED: same-host\s*$/m);
+    expect(envExample).toMatch(/^DATABASE_URL=[^\n]*@jeeves-db:5432\/jeeves\n(?:#[^\n]*\n)*JEEVES_DB_ALLOW_UNVERIFIED=same-host$/m);
+    expect(read("deploy", "podman", "quadlet", "jeeves-app.container")).toMatch(/^#[^\n]*JEEVES_DB_ALLOW_UNVERIFIED/m);
+    expect(guide).toContain("`JEEVES_DB_ALLOW_UNVERIFIED=same-host`");
+  });
+
   it("documents a stop timeout that outlasts the longest draft run", () => {
     const longestRunSeconds = reviewInvocationLimits({ deepReviewEnabled: true } as AgentRuntimeConfig).timeoutMs / 1000;
     const composeStop = Number(/podman compose stop -t (\d+)/.exec(guide)?.[1]);

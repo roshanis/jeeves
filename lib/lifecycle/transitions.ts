@@ -9,7 +9,8 @@ import type { Actor, ActorRole, LifecycleState } from "../domain/types";
  *   in_review -> (approved | conditionally_approved | rejected)
  *   (approved | conditionally_approved | fast_lane_approved) -> deployed
  *   deployed <-> paused ; paused -> re_review
- *   re_review -> (approved | deployed via resume | retired)
+ *   re_review -> (approved by the approver, then deployed by admin via deploy | retired)
+ *   resume is legal only from paused
  *   retired reachable from every operating state (deployed, paused, re_review)
  *
  * Authority rules (encoded declaratively below, enforced in `transition`):
@@ -183,11 +184,6 @@ const TRANSITIONS: TransitionTable = {
   },
   re_review: {
     approve: { to: "approved", allowedRoles: ["approver"] },
-    resume: {
-      to: "deployed",
-      allowedRoles: ["admin", "system"],
-      requiresReason: true,
-    },
     retire: { to: "retired", allowedRoles: ["admin"] },
   },
 };

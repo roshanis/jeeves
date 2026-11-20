@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { sql } from "drizzle-orm";
 import { createTestDb, closeTestDb, type TestDb } from "../lib/db/test-client";
 import { auditEvents, initiatives, reviewCycles, reviewDecisions, reviewNotifications } from "../lib/db/schema";
-import { CHAMPION_PREFILL_PAYLOAD } from "../lib/intake/champion-prefill";
+import { TRIAGE_READY_CHAMPION_PAYLOAD } from "../tests/fixtures/triage-ready-intake";
 import type { Actor } from "../lib/domain/types";
 import { seedDatabase } from "./seed";
 
@@ -36,7 +36,7 @@ describe("scripts/seed.ts — reseed over live state", () => {
 
   async function liveTriage(): Promise<string> {
     const draft = await svc.createDraft(testDb, {
-      payload: CHAMPION_PREFILL_PAYLOAD,
+      payload: TRIAGE_READY_CHAMPION_PAYLOAD,
       requesterActor: REQUESTER,
       requesterName: "Priya Raman",
       workspaceId: null,

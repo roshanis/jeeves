@@ -1,7 +1,7 @@
 import type { PoolConfig } from "pg";
 import { normalizeHost } from "./driver-select";
 
-function parsePostgresUrl(value: string): URL {
+export function parsePostgresUrl(value: string): URL {
   try {
     const url = new URL(value);
     if (!["postgres:", "postgresql:"].includes(url.protocol) || !url.hostname) throw new Error();

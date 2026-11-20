@@ -12,6 +12,7 @@ import {
   signWorkspaceId,
   verifyWorkspaceCookie,
 } from "@/lib/security/workspace-cookie";
+import { databaseNotReady } from "@/lib/http/database-gate";
 
 // Per-browser workspace cookie (M2.5 inc.2b). Read-scoping ONLY — it is not
 // an auth credential (mutations still require the Bearer token, which a
@@ -88,6 +89,9 @@ export async function POST(req: Request): Promise<Response> {
   if (!req.headers.get("content-type")?.toLowerCase().startsWith("application/json")) {
     return Response.json({ error: "content-type must be application/json" }, { status: 415 });
   }
+
+  const unavailable = databaseNotReady();
+  if (unavailable) return unavailable;
 
   const readOnlyFailure = checkReadOnlyMode();
   if (readOnlyFailure) {
@@ -177,6 +181,8 @@ export async function DELETE(req: Request): Promise<Response> {
   const closed = demoDoorClosed();
   if (closed) return closed;
   if (!isSameOriginRequest(req)) return Response.json({ error: "cross-origin requests are not permitted" }, { status: 403 });
+  const unavailable = databaseNotReady();
+  if (unavailable) return unavailable;
   const guard = await runMutationGuard(req, undefined);
   if (!guard.ok) return guardFailureResponse(guard.failure);
   const token = extractSessionToken(req);

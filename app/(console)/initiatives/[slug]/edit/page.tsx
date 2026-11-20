@@ -9,7 +9,7 @@ import type { Metadata } from "next";
 export const metadata: Metadata = {
   title: "Continue intake",
   description:
-    "Resume an in-progress AI initiative intake. Changes are saved as a new draft version on submit.",
+    "Resume an in-progress AI initiative intake. Save draft keeps your changes as a new draft version. Submit intake sends it for review.",
 };
 
 export default async function EditInitiativeDraftPage({ params }: { params: Promise<{ slug: string }> }) {
@@ -19,7 +19,7 @@ export default async function EditInitiativeDraftPage({ params }: { params: Prom
   const returned = latestQcReturn(detail.events);
   return (
     <div className="flex flex-col gap-6">
-      <div><h1 className="text-2xl font-semibold tracking-tight">Continue intake</h1><p className="text-sm text-muted-foreground">Changes are saved as a new draft version when you submit.</p></div>
+      <div><h1 className="text-2xl font-semibold tracking-tight">Continue intake</h1><p className="text-sm text-muted-foreground">Save draft keeps your changes as a new draft version. Submit intake sends it for review.</p></div>
       {returned ? (
         <Alert><AlertTitle>Returned from QC</AlertTitle><AlertDescription>Returned by {returned.actor}: {returned.reason}</AlertDescription></Alert>
       ) : null}

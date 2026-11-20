@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
 import { createTestDb, closeTestDb, type TestDb } from "../db/test-client";
 import { auditEvents, reviewDecisions } from "../db/schema";
-import { CHAMPION_PREFILL_PAYLOAD } from "../intake/champion-prefill";
+import { TRIAGE_READY_CHAMPION_PAYLOAD } from "../../tests/fixtures/triage-ready-intake";
 import { createMockAgentPort } from "../agents/mock-adapter";
 import type { AgentPort } from "../agents/ports";
 import * as service from "../services/initiative-service";
@@ -23,7 +23,7 @@ describe("review reliability contracts", () => {
   afterEach(async () => { await closeTestDb(db); });
 
   async function setup() {
-    const draft = await service.createDraft(db, { payload: CHAMPION_PREFILL_PAYLOAD, requesterActor: requester, requesterName: "Priya Raman" });
+    const draft = await service.createDraft(db, { payload: TRIAGE_READY_CHAMPION_PAYLOAD, requesterActor: requester, requesterName: "Priya Raman" });
     await service.submitIntake(db, draft.initiativeId, requester);
     // QC gate: `submitted --triage-->` no longer exists — the fan-out is
     // reachable only through `in_qc`, which the Program Office opens.

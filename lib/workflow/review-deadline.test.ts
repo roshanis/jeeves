@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { and, eq } from "drizzle-orm";
 import { createTestDb, closeTestDb, type TestDb } from "../db/test-client";
 import { reviewDecisions, runBudget } from "../db/schema";
-import { CHAMPION_PREFILL_PAYLOAD } from "../intake/champion-prefill";
+import { TRIAGE_READY_CHAMPION_PAYLOAD } from "../../tests/fixtures/triage-ready-intake";
 import { createMockAgentPort } from "../agents/mock-adapter";
 import * as service from "../services/initiative-service";
 import { runSingleDomainDraft, startDraftRun } from "./review-run";
@@ -44,7 +44,7 @@ describe("draft deadline across database waits", () => {
   async function fixture() {
     const requester = { id: "priya-raman", role: "requester" as const };
     const created = await service.createDraft(db, {
-      payload: CHAMPION_PREFILL_PAYLOAD, requesterActor: requester, requesterName: "Priya Raman",
+      payload: TRIAGE_READY_CHAMPION_PAYLOAD, requesterActor: requester, requesterName: "Priya Raman",
     });
     await service.submitIntake(db, created.initiativeId, requester);
     // QC gate: `submitted --triage-->` no longer exists — the fan-out is

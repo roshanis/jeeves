@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq, sql } from "drizzle-orm";
 import { createTestDb, closeTestDb, type TestDb } from "@/lib/db/test-client";
 import { initiatives, reviewDecisions, reviewNotifications } from "@/lib/db/schema";
-import { CHAMPION_PREFILL_PAYLOAD } from "@/lib/intake/champion-prefill";
+import { TRIAGE_READY_CHAMPION_PAYLOAD } from "../../tests/fixtures/triage-ready-intake";
 import type { Actor } from "@/lib/domain/types";
 
 let testDb: TestDb;
@@ -48,8 +48,8 @@ describe("review-request notifications", () => {
   async function championReadyToTriage(workspaceId: string | null = null, title?: string): Promise<string> {
     const draft = await svc.createDraft(testDb, {
       payload: title
-        ? { ...CHAMPION_PREFILL_PAYLOAD, basics: { ...CHAMPION_PREFILL_PAYLOAD.basics, title } }
-        : CHAMPION_PREFILL_PAYLOAD,
+        ? { ...TRIAGE_READY_CHAMPION_PAYLOAD, basics: { ...TRIAGE_READY_CHAMPION_PAYLOAD.basics, title } }
+        : TRIAGE_READY_CHAMPION_PAYLOAD,
       requesterActor: REQUESTER,
       requesterName: "Priya Raman",
       workspaceId,

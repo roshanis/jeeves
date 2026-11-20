@@ -19,8 +19,11 @@ import { BodyReadError, hasNul, readBodyText } from "@/lib/http/read-json-body";
 import { ACTOR_DIRECTORY, isPersonaKey } from "@/lib/services/actors";
 import { INTAKE_AUTHOR_ROLES } from "@/lib/services/intake-author-roles";
 import type { PersonaKey } from "@/lib/services/actors";
+import { databaseNotReady } from "@/lib/http/database-gate";
 
 export async function POST(req: Request): Promise<Response> {
+  const unavailable = databaseNotReady();
+  if (unavailable) return unavailable;
   const guard = await runMutationGuard(req, undefined, { allowPublic: true });
   if (!guard.ok) {
     return guardFailureResponse(guard.failure);

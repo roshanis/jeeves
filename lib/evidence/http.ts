@@ -14,7 +14,7 @@ export async function readEvidenceJson(req:Request):Promise<unknown> {
   return parsed;
 }
 export function evidenceResponseError(error:unknown):Response {
-  if(error instanceof EvidenceError)return Response.json({error:error.message},{status:error.status,headers:privateHeaders});
+  if(error instanceof EvidenceError)return Response.json({error:error.message},{status:error.status,headers:error.retryAfter?{...privateHeaders,'Retry-After':String(error.retryAfter)}:privateHeaders});
   // Do not expose database content, parameters or private file data in errors.
   return Response.json({error:'Evidence is temporarily unavailable. Please try again.',requestId:logUnexpectedError('Evidence request failed',error)},{status:503,headers:privateHeaders});
 }

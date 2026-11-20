@@ -268,6 +268,9 @@ Containerfile does. Then:
 
     SMOKE_DATABASE_URL=postgres://user:pass@127.0.0.1:5432/jeeves_smoke_local npm run smoke:production
 
+`SMOKE_DATABASE_URL` must be loopback or carry `sslmode=verify-full`, because the
+smoke server runs in production mode and gets no `JEEVES_DB_ALLOW_UNVERIFIED`.
+
 `SMOKE_PORT` changes the port (default 3217) and `SMOKE_SERVER=standalone` or
 `next-start` forces the server command. The run is repeatable on the same
 database and exits 1 if any check fails.
@@ -357,6 +360,7 @@ weigh against it.
 | Driver + transactions | Ready — driver chosen in `lib/db/driver-select.ts`, real interactive transactions |
 | Append-only audit enforcement | Ready — DB-level triggers, tested |
 | Non-destructive migration path | **Added 2026-09-11** — see below |
+| Database TLS | **Enforced in production** — a database on another host needs verified TLS; loopback exempt; opt-out `JEEVES_DB_ALLOW_UNVERIFIED=same-host` |
 | Shared rate limiting | **Added 2026-09-12** — §1.2 |
 | Provider-parity tests | **Added 2026-09-12** — §2.2 |
 | Backup / restore | **Documented** (deploy.md §4) — never exercised |
@@ -380,6 +384,26 @@ supported path: non-destructive, idempotent, and driver-matched to whatever
 (audit events included) and leaves the append-only triggers armed. Verified
 end-to-end against a populated store: 122 audit events, 12 initiatives and 23
 effective controls, identical before and after.
+
+### Database TLS (production boot check)
+
+A production boot is refused when the database is on another host and the
+connection would not be TLS with certificate verification. A plaintext RDS URL
+used to boot silently, and `sslmode=no-verify` and `uselibpqcompat=true` used to
+be accepted. The check follows what node-postgres or the Neon driver will do
+with the URL, `DATABASE_SSL_CA`, `PGSSLMODE` and `NODE_TLS_REJECT_UNAUTHORIZED`.
+Loopback databases are exempt.
+
+Two ways out: add `sslmode=verify-full` to `DATABASE_URL` (or set
+`DATABASE_SSL_CA` to the server's CA; for Amazon RDS, the RDS bundle), or, only for
+a database on this machine or a private container network of this host, set
+`JEEVES_DB_ALLOW_UNVERIFIED=same-host`. Any other value of that variable fails
+the boot. `npm run db:migrate`, `npm run db:seed` and `DATABASE_MIGRATION_URL` are
+not checked and must use the same verified settings.
+
+node-postgres 9 will give `sslmode=require` libpq semantics (no verification).
+`lib/db/tls-posture.test.ts` pins today's behaviour and will fail on that
+upgrade, so use `sslmode=verify-full`. See docs/environment-reference.md, "Database TLS in production".
 
 ---
 

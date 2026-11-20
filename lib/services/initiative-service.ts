@@ -50,7 +50,7 @@ import type { Actor, Domain, LifecycleState, OverlayFlags, Tier } from "../domai
 import { transition, IllegalTransitionError, type AuditEventPayload } from "../lifecycle/transitions";
 import { runSingleDomainDraft, type RunSingleDomainOptions } from "../workflow/review-run";
 import type { AgentPort } from "../agents/ports";
-import { evaluateCompleteness } from "../intake/completeness";
+import { evaluateCompleteness, type CompletenessGap } from "../intake/completeness";
 import type { IntakePayload } from "../intake/types";
 import { intakePayloadSchema } from "../intake/schema";
 import { normalizeAdditionalAnswers } from "../intake/additional-questions";
@@ -91,6 +91,25 @@ function storedPayloadOrThrow(fields: unknown): IntakePayload {
     throw new ValidationError("stored intake is not in the current format");
   }
   return fields as IntakePayload;
+}
+
+/**
+ * Thrown by `triage()` (the QC pass) when the intake still has a
+ * REQUIRED_FOR_TIER gap open for its derived tier. Nothing is written; the
+ * Program Office returns the intake to the requester instead. A
+ * ValidationError, so any caller that only knows that class still maps it to 400.
+ */
+export class IntakeTierGapsError extends ValidationError {
+  readonly code = "INTAKE_TIER_GAPS";
+  readonly gaps: readonly CompletenessGap[];
+  constructor(gaps: readonly CompletenessGap[]) {
+    super(
+      `cannot pass QC: ${gaps.length} required-for-tier intake gap(s) open (${gaps.map((g) => g.ruleId).join(", ")}); return the intake to the requester`,
+      gaps.map((g) => `${g.ruleId}: ${g.message}`),
+    );
+    this.name = "IntakeTierGapsError";
+    this.gaps = gaps;
+  }
 }
 
 /**
@@ -622,6 +641,10 @@ export interface TriageReviewResult {
  * policy FL-2026-01) instead of leaving the initiative in `triaged`/
  * `in_review`.
  *
+ * Refuses with `IntakeTierGapsError` (nothing written) while a
+ * REQUIRED_FOR_TIER rule fails for the derived tier; the Program Office
+ * returns the intake to the requester.
+ *
  * `sessionWorkspaceId` (external-review finding P2-4): workspace
  * authorization, same pattern as `submitIntake()`/`decide()` — enforced
  * before any other read/write. Default `null` so pre-existing internal/
@@ -768,6 +791,10 @@ export async function triage(
     const triageResult = transition(initiative.state as LifecycleState, "triage", actor, {
       ts: passedBy ? Math.max(nowTs(), passTs + 1) : passTs,
     });
+    // A REQUIRED_FOR_TIER gap blocks the pass (checked after the state, before
+    // any write): the initiative stays in_qc and the Program Office returns it.
+    const tierGaps = completeness.gaps.filter((g) => g.level === "REQUIRED_FOR_TIER");
+    if (tierGaps.length > 0) throw new IntakeTierGapsError(tierGaps);
     // The human who chose to pass QC (the route gates this to program/admin)
     // is the accountable actor and comes first on the trail, recorded in the
     // state the pass was made in; the triage transition itself stays `system`.
@@ -820,6 +847,8 @@ export async function triage(
     // FL-2.1(2): an incomplete intake is never fast-lane eligible. `canSubmit`
     // is BLOCKING-only, so also require no REQUIRED_FOR_TIER gap for this tier
     // and an answered data-retention question. Anything else takes full review.
+    // Since d01 a REQUIRED_FOR_TIER gap is refused at the QC pass above, so that
+    // clause is unreachable here; it stays as defence in depth.
     const intakeComplete =
       completeness.gaps.every((g) => g.level === "ADVISORY") &&
       payload.data.retentionIntent !== null &&

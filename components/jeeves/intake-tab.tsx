@@ -84,7 +84,7 @@ export function IntakeTab({ intake, summary, events }: {
     return <p className="text-sm text-muted-foreground">No intake record.</p>;
   }
 
-  const { blocking, optional } = splitMissing(intake);
+  const { blocking, requiredForTier, optional } = splitMissing(intake);
   const returned = intake.submitted ? undefined : latestQcReturn(events);
   return (
     <div className="space-y-4" data-slot="intake-tab">
@@ -111,10 +111,24 @@ export function IntakeTab({ intake, summary, events }: {
                 intake cannot be submitted until complete.
               </>
             ) : null}
+            {requiredForTier.length > 0 ? (
+              <>
+                {" "}
+                Needed before QC can pass ({labelList(requiredForTier)}).
+              </>
+            ) : null}
             {optional.length > 0 ? (
               <>
                 {" "}
-                Optional improvements ({labelList(optional)}) — this does not block submitting.
+                Optional improvements ({labelList(optional)}).
+              </>
+            ) : null}
+            {requiredForTier.length > 0 || optional.length > 0 ? (
+              <>
+                {" "}
+                {requiredForTier.length > 0 && optional.length > 0
+                  ? "Neither blocks submitting."
+                  : "This does not block submitting."}
               </>
             ) : null}
           </AlertDescription>

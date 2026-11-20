@@ -14,6 +14,7 @@ import { workspaceMismatch, mutationWorkspaceMismatch } from "@/lib/services/wor
 import { requireViewerForRequest } from "@/lib/services/require-viewer";
 import type { Domain } from "@/lib/domain/types";
 import { agentInitializationResponse } from "@/lib/services/agent-error-response";
+import { databaseNotReady } from "@/lib/http/database-gate";
 
 /** See file-level comment: only these roles trigger draft-run in any real flow. */
 const DRAFT_RUN_ALLOWED_ROLES = new Set(["requester", "admin"]);
@@ -37,6 +38,8 @@ export async function POST(
   req: Request,
   context: { params: Promise<{ id: string }> },
 ): Promise<Response> {
+  const unavailable = databaseNotReady();
+  if (unavailable) return unavailable;
   const guard = await runMutationGuard(req, () => undefined, { bodyOptional: true });
   if (!guard.ok) {
     return guardFailureResponse(guard.failure);
@@ -89,6 +92,8 @@ export async function POST(
 }
 
 export async function GET(req: Request): Promise<Response> {
+  const unavailable = databaseNotReady();
+  if (unavailable) return unavailable;
   // Progress polling is a read: demo leaves it open to anonymous visitors
   // (scoped below), production requires a session (lib/services/require-viewer.ts).
   const gate = await requireViewerForRequest(req);

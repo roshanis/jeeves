@@ -47,6 +47,11 @@ services:
       # sends any non-*.neon.tech host to node-postgres; the Neon serverless
       # driver would try to open a WebSocket to :443 here and fail.
       DATABASE_URL: postgres://${POSTGRES_USER:-jeeves}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-jeeves}
+      # Production mode refuses a database on another host without verified
+      # TLS. `db` is this stack's own container, reached without TLS on this
+      # host's private network, so the stack opts out. Demo mode ignores it.
+      # Remove it if DATABASE_URL ever points at another machine.
+      JEEVES_DB_ALLOW_UNVERIFIED: same-host
       DATA_PROVIDER: db
       # How many reverse proxies in front of the app append to X-Forwarded-For;
       # rate limits key on the client address that implies. `none` means

@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
-import { bootFailure, resetBootStateForTests } from "@/lib/config/boot-state";
+import { bootFailure, installationGateClosed, resetBootStateForTests } from "@/lib/config/boot-state";
 import { clearInstallationFixtures, closeTestDb, createTestDb, type TestDb } from "@/lib/db/test-client";
 import { installation } from "@/lib/db/schema";
 import { register } from "@/instrumentation";
@@ -26,6 +26,7 @@ function stubProductionBootEnv(): void {
   vi.stubEnv("APP_BASE_URL", "");
   vi.stubEnv("JEEVES_TENANT_ID", "");
   vi.stubEnv("DATA_PROVIDER", "mock");
+  for (const key of ["JEEVES_DB_ALLOW_UNVERIFIED", "PGSSLMODE", "PGSSLNEGOTIATION", "NODE_TLS_REJECT_UNAUTHORIZED"]) vi.stubEnv(key, "");
 }
 
 let exit: Mock<(code: number) => void>;
@@ -80,7 +81,7 @@ describe("instrumentation register()", () => {
 
   it("lets a valid production configuration start on a production-stamped database", async () => {
     stubProductionBootEnv();
-    vi.stubEnv("DATABASE_URL", "postgres://jeeves_app:pw@db.internal:5432/jeeves");
+    vi.stubEnv("DATABASE_URL", "postgres://jeeves_app:pw@db.internal:5432/jeeves?sslmode=verify-full");
     vi.stubEnv("JEEVES_COOKIE_SECRET", "0123456789abcdef0123456789abcdef");
     vi.stubEnv("APP_BASE_URL", "https://jeeves.example.com");
     vi.stubEnv("JEEVES_TENANT_ID", "tenant-acme");
@@ -94,7 +95,7 @@ describe("instrumentation register()", () => {
 
   it("marks the boot failed and exits when a valid production configuration meets an unstamped database", async () => {
     stubProductionBootEnv();
-    vi.stubEnv("DATABASE_URL", "postgres://jeeves_app:pw@db.internal:5432/jeeves");
+    vi.stubEnv("DATABASE_URL", "postgres://jeeves_app:pw@db.internal:5432/jeeves?sslmode=verify-full");
     vi.stubEnv("JEEVES_COOKIE_SECRET", "0123456789abcdef0123456789abcdef");
     vi.stubEnv("APP_BASE_URL", "https://jeeves.example.com");
     vi.stubEnv("JEEVES_TENANT_ID", "tenant-acme");
@@ -104,6 +105,19 @@ describe("instrumentation register()", () => {
 
     expect(exit).toHaveBeenCalledWith(1);
     expect(bootFailure()).toMatch(/installation stamp/i);
+  });
+
+  it("demo boot with an unreachable database keeps the instance up, with the data gate closed", async () => {
+    vi.stubEnv("JEEVES_MODE", "demo");
+    vi.stubEnv("DATA_PROVIDER", "db");
+    vi.stubEnv("DATABASE_URL", "postgres://u:p@db.internal:5432/jeeves");
+    vi.stubEnv("JEEVES_TRUSTED_PROXY_HOPS", "0");
+    getDb.mockRejectedValue(Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" }));
+    await register({ exit, log, getDb, sleep: async () => {} });
+
+    expect(exit).not.toHaveBeenCalled();
+    expect(bootFailure()).toBeNull();
+    expect(installationGateClosed()).toBe(true);
   });
 
   it("does nothing during `next build`", async () => {

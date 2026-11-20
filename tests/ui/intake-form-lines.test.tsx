@@ -36,6 +36,7 @@ describe("IntakeForm one-per-line textareas", () => {
   });
 
   it("resyncs when a sample initiative replaces the payload", () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
     render(<DeploymentModeProvider mode="demo"><IntakeForm /></DeploymentModeProvider>);
     const field = screen.getByLabelText(/Data source\(s\)/) as HTMLTextAreaElement;
     type(field, "abc");

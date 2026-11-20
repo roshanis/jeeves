@@ -10,6 +10,7 @@ import { drizzle as drizzleNeon, type NeonDatabase } from "drizzle-orm/neon-serv
 import { drizzle as drizzleNodePg, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { drizzle as drizzlePglite, type PgliteDatabase } from "drizzle-orm/pglite";
 import { PGlite } from "@electric-sql/pglite";
+import { installationGateClosed } from "../config/boot-state";
 import { ProductionConfigError, isProductionMode } from "../config/deployment-mode";
 import { postgresPoolConfig } from "./connection-config";
 import { assertRuntimeDatabaseConfigured, runtimeDatabaseUrl } from "./runtime-config";
@@ -83,11 +84,40 @@ export function createNeonPool(connectionString: string): Pool {
 }
 
 /**
+ * Thrown by getDb() while a demo's installation check has not passed in this
+ * process (lib/config/boot-state.ts). The message is fixed: no host, no URL.
+ */
+export class DatabaseUnavailableError extends Error {
+  constructor() {
+    super("The database has not been verified yet; it is not available.");
+    this.name = "DatabaseUnavailableError";
+  }
+}
+
+/**
  * Returns the process-wide DB handle, creating it on first use. Safe to
  * call repeatedly (e.g. from multiple route handlers) — the underlying
  * connection/instance is memoized on globalThis (see above).
+ *
+ * This is the single choke point of the demo's installation gate: while the
+ * gate is closed (the demo booted without being able to verify the database)
+ * it throws, so no caller can read or write an unverified database.
  */
 export function getDb(): Db {
+  if (installationGateClosed()) throw new DatabaseUnavailableError();
+  return openDb();
+}
+
+/**
+ * The one bypass of the gate: the boot check and its recheck
+ * (lib/config/boot-checks.ts) must read the installation stamp BEFORE the gate
+ * can open. Nothing else may call it.
+ */
+export function getDbForInstallationCheck(): Db {
+  return openDb();
+}
+
+function openDb(): Db {
   const databaseUrl = runtimeDatabaseUrl();
   assertRuntimeDatabaseConfigured(databaseUrl, process.env.VERCEL);
   if (dbSlot.db) {

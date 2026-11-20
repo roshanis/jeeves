@@ -4,8 +4,11 @@ import { downloadEvidence } from '@/lib/services/evidence-service';
 import { evidenceResponseError, privateHeaders } from '@/lib/evidence/http';
 import { isRouteId } from '@/lib/http/route-id';
 import { EvidenceError } from '@/lib/evidence/files';
+import { databaseNotReady } from "@/lib/http/database-gate";
 export const runtime='nodejs';
 export async function GET(req:Request,context:{params:Promise<{id:string;documentId:string}>}):Promise<Response> {
+  const unavailable = databaseNotReady();
+  if (unavailable) return unavailable;
  try{
   const gate=await requireViewerForRequest(req);
   if(!gate.ok)return gate.response;

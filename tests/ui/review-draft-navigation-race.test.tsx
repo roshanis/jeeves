@@ -13,6 +13,7 @@ import { ApiError } from "@/lib/client/api";
 const session = { token: "test-reviewer", personaKey: "marcus-webb", role: "reviewer", workspaceId: "w", expiresAt: 9999999999999 };
 beforeEach(() => {
   vi.clearAllMocks();
+  window.sessionStorage.clear();
   mocks.session.mockReturnValue({ session, logout: mocks.logout });
 });
 const rows: ReviewQueueRow[] = ["one", "two"].map((slug) => ({ slug, title: `Case ${slug}`, tier: "high", isSeeded: false, review: {
@@ -48,9 +49,11 @@ it.each(["run", "sign", "return"])("ignores a stale %s 401 after a new session m
   }
   expect(action === "run" ? mocks.run : mocks.mutate).toHaveBeenCalledOnce();
   old.unmount();
+  const stored = JSON.stringify({ ...window.sessionStorage });
   mocks.session.mockReturnValue({ session: { ...session, token: "new-session" }, logout: mocks.logout });
   renderWithProviders(<Harness />);
   await act(async () => reject(new ApiError(401, "Old session expired")));
   expect(mocks.logout).not.toHaveBeenCalled();
   expect(mocks.refresh).not.toHaveBeenCalled();
+  expect(JSON.stringify({ ...window.sessionStorage })).toBe(stored);
 });

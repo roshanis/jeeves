@@ -38,6 +38,7 @@ import {
 import { expireDueExceptions } from "@/lib/services/exception-service";
 import { SYSTEM_ACTOR } from "@/lib/services/actors";
 import { checkOperatorAttempt, checkReadOnlyMode, clientKeyFor, operatorAttemptStatus } from "@/lib/services/route-guard";
+import { databaseNotReady } from "@/lib/http/database-gate";
 
 // Kept in sync with app/api/monitor/run/route.ts#DEFAULT_MONITOR_NOW_TS (a
 // literal here rather than a cross-route import — same rationale as that file).
@@ -65,6 +66,9 @@ export const { POST, PUT, PATCH, DELETE, OPTIONS } = demoDoorFallbacks("GET");
 export async function GET(req: Request): Promise<Response> {
   const closed = demoDoorClosed();
   if (closed) return closed;
+
+  const unavailable = databaseNotReady();
+  if (unavailable) return unavailable;
 
   if (process.env.CRON_SECRET) {
     // The read-only preview has nothing to run and may have no database for

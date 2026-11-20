@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTestDb, closeTestDb, type TestDb } from "@/lib/db/test-client";
-import { markBootFailed, resetBootStateForTests } from "@/lib/config/boot-state";
+import { closeInstallationGate, markBootFailed, resetBootStateForTests } from "@/lib/config/boot-state";
 
 let testDb: TestDb | null = null;
 let failNext = false;
@@ -98,6 +98,32 @@ describe("GET /api/health", () => {
       const res = await GET();
       expect(res.status).toBe(200);
       await expect(res.json()).resolves.toEqual({ status: "ok", database: "ok" });
+    });
+  });
+
+  // Demo whose database was unreachable at boot: the instance stays up for the
+  // static pages and reports itself degraded, without touching the database.
+  describe("while the installation gate is closed", () => {
+    it("returns 503 degraded with Retry-After, without consulting the database or logging", async () => {
+      const log = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        closeInstallationGate();
+        const res = await GET();
+        expect(res.status).toBe(503);
+        expect(res.headers.get("retry-after")).toBe("15");
+        expect(res.headers.get("cache-control")).toMatch(/no-store/);
+        await expect(res.json()).resolves.toEqual({ status: "degraded", database: "unreachable" });
+        expect(dbProbes).toBe(0);
+        expect(log).not.toHaveBeenCalled();
+      } finally {
+        log.mockRestore();
+      }
+    });
+
+    it("still reports boot_failed first", async () => {
+      closeInstallationGate();
+      markBootFailed("x");
+      await expect((await GET()).json()).resolves.toEqual({ status: "boot_failed" });
     });
   });
 });

@@ -1,11 +1,12 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { and, eq, sql } from "drizzle-orm";
 import type { Db } from "../../lib/db/client";
-import { auditEvents, initiatives, reviewCycles, reviewDecisions } from "../../lib/db/schema";
+import { auditEvents, evidenceDocuments, initiatives, reviewCycles, reviewDecisions } from "../../lib/db/schema";
 import { createMockAgentPort } from "../../lib/agents/mock-adapter";
 import type { AgentPort, DraftReviewOutput, PortResult } from "../../lib/agents/ports";
-import { CHAMPION_PREFILL_PAYLOAD } from "../../lib/intake/champion-prefill";
+import { TRIAGE_READY_CHAMPION_PAYLOAD } from "../fixtures/triage-ready-intake";
 import * as service from "../../lib/services/initiative-service";
+import { uploadEvidence } from "../../lib/services/evidence-service";
 import { runSingleDomainDraft } from "../../lib/workflow/review-run";
 import { deferred, openPrivatePostgres, waitForDatabaseBlock, withDeadline, type PrivatePostgres } from "./private-postgres";
 
@@ -52,7 +53,7 @@ postgres("real Postgres review integrity (independent connection pools)", () => 
 
   async function fixture(drafted = false) {
     const created = await service.createDraft(db.dbA, {
-      payload: CHAMPION_PREFILL_PAYLOAD,
+      payload: TRIAGE_READY_CHAMPION_PAYLOAD,
       requesterActor: requester,
       requesterName: "Priya Raman",
     });
@@ -279,5 +280,59 @@ postgres("real Postgres review integrity (independent connection pools)", () => 
     // A failed audit must not have disabled the append-only safeguard.
     const existingAudit = await db.dbB.select().from(auditEvents).where(eq(auditEvents.initiativeId, initiativeId)).limit(1);
     await expect(db.dbB.execute(sql`update audit_events set detail = 'must not change' where id = ${existingAudit[0]!.id}`)).rejects.toThrow();
+  });
+
+  // Evidence storage ceilings: the advisory lock, proven on two real backends.
+  async function evidenceFixture() {
+    const { initiativeId } = await fixture();
+    await db.dbA.update(initiatives).set({ workspaceId: "ceiling-workspace" }).where(eq(initiatives.id, initiativeId));
+    return { initiativeId, viewer: { actor: requester, workspaceId: "ceiling-workspace" } };
+  }
+  const pdf = (n: number) => Buffer.from("%PDF-1.4\n" + "x".repeat(n - 15) + "\n%%EOF");
+  const input = (id: string) => ({ requestId: id, fileName: `${id}.pdf`, mediaType: "application/pdf", contentBase64: pdf(2000).toString("base64") });
+  const limits = (lockTimeoutMs = 10000) => ({ workspaceBytes: 3000, totalBytes: null, demo: true, misconfigured: false, lockTimeoutMs });
+
+  it("lets exactly one of two concurrent uploads cross the workspace ceiling", async () => {
+    // Separate initiatives, so the second upload waits on the advisory lock, not an initiative row lock.
+    const { initiativeId, viewer } = await evidenceFixture();
+    const second = await evidenceFixture();
+    const { rows: [control] } = await db.control.query<{ pid: number }>("select pg_backend_pid() as pid");
+    // Pools reap idle connections, so read the live backend pids rather than the ones captured at open.
+    const { rows: [liveA] } = await db.poolA.query<{ pid: number }>("select pg_backend_pid() as pid");
+    const { rows: [liveB] } = await db.poolB.query<{ pid: number }>("select pg_backend_pid() as pid");
+    await db.control.query("select pg_advisory_lock(hashtextextended('jeeves:evidence-storage', 0))");
+    let results: unknown[];
+    let held = true;
+    try {
+      const a = uploadEvidence(db.dbA, initiativeId, viewer, input("ceiling-request-0001"), limits()).then(() => "ok", (e) => e.status);
+      const b = uploadEvidence(db.dbB, second.initiativeId, second.viewer, input("ceiling-request-0002"), limits()).then(() => "ok", (e) => e.status);
+      // pg_blocking_pids lists the advisory-lock holder for every waiter, so both uploads wait on the control backend.
+      await waitForDatabaseBlock(db, liveA!.pid, control!.pid);
+      await waitForDatabaseBlock(db, liveB!.pid, control!.pid);
+      await db.control.query("select pg_advisory_unlock(hashtextextended('jeeves:evidence-storage', 0))");
+      held = false;
+      results = await withDeadline(Promise.all([a, b]));
+    } finally {
+      if (held) await db.control.query("select pg_advisory_unlock(hashtextextended('jeeves:evidence-storage', 0))");
+    }
+    expect(results.filter((r) => r === "ok")).toHaveLength(1);
+    expect(results.filter((r) => r === 413)).toHaveLength(1);
+    const stored = [...await db.dbB.select().from(evidenceDocuments).where(eq(evidenceDocuments.initiativeId, initiativeId)),
+      ...await db.dbB.select().from(evidenceDocuments).where(eq(evidenceDocuments.initiativeId, second.initiativeId))];
+    expect(stored).toHaveLength(1);
+  });
+
+  it("answers 503 busy when the storage lock is held past the lock timeout", async () => {
+    const { initiativeId, viewer } = await evidenceFixture();
+    await db.control.query("select pg_advisory_lock(hashtextextended('jeeves:evidence-storage', 0))");
+    try {
+      const started = Date.now();
+      await expect(uploadEvidence(db.dbA, initiativeId, viewer, input("ceiling-request-0003"), limits(200))).rejects.toMatchObject({ status: 503, retryAfter: 5 });
+      // The 200 ms lock timeout, not the pool's 10 s one, must have ended the wait.
+      expect(Date.now() - started).toBeLessThan(5000);
+    } finally {
+      await db.control.query("select pg_advisory_unlock(hashtextextended('jeeves:evidence-storage', 0))");
+    }
+    expect(await db.dbB.select().from(evidenceDocuments).where(eq(evidenceDocuments.initiativeId, initiativeId))).toHaveLength(0);
   });
 });

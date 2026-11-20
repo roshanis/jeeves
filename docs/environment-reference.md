@@ -28,10 +28,10 @@ has no effect. Secrets are marked; never log or commit them.
 
 | Variable | Demo | Production | When | Secret | Default | Effect | Source |
 |---|---|---|---|---|---|---|---|
-| `DATABASE_URL` | recommended | **required** | runtime | yes | none | Postgres connection string. Wins over `POSTGRES_URL` when nonblank. With neither, the app opens the local PGlite store (demo/dev only: production refuses to boot). | `lib/db/runtime-config.ts`, `lib/db/client.ts` |
+| `DATABASE_URL` | recommended | **required** | runtime | yes | none | Postgres connection string. Wins over `POSTGRES_URL` when nonblank. With neither, the app opens the local PGlite store (demo/dev only: production refuses to boot). Production: a database on another host must be reached with verified TLS (see "Database TLS in production" below), or the boot is refused. | `lib/db/runtime-config.ts`, `lib/db/client.ts`, `lib/db/tls-posture.ts` |
 | `POSTGRES_URL` | alias | alias | runtime | yes | none | Vercel integration alias, used only when `DATABASE_URL` is blank. | `lib/db/runtime-config.ts` |
 | `DATABASE_MIGRATION_URL` | optional | optional | runtime | yes | the runtime URL | Direct connection for `npm run db:migrate`. Required for Supabase on port 6543 (transaction pooling cannot migrate). | `lib/db/migrate.ts`, `scripts/migrate.ts`, `lib/db/connection-config.ts` |
-| `DATABASE_SSL_CA` | optional | optional | runtime | no | none | PEM CA for node-postgres. Verification stays on. Refused if the URL disables TLS or sets `ssl`, `sslcert`, `sslkey`, `sslrootcert`, `sslnegotiation` or `uselibpqcompat`. Supabase hosts always use verified TLS. | `lib/db/connection-config.ts`, `lib/db/client.ts` |
+| `DATABASE_SSL_CA` | optional | optional | runtime | no | none | PEM CA for node-postgres. Verification stays on. Refused if the URL disables TLS or sets `ssl`, `sslcert`, `sslkey`, `sslrootcert`, `sslnegotiation` or `uselibpqcompat`. Supabase hosts always use verified TLS. Satisfies the production TLS rule for any node-postgres host. | `lib/db/connection-config.ts`, `lib/db/client.ts` |
 | `DATABASE_POOL_MAX` | optional | optional | runtime | no | the driver's 10 | Largest number of connections one app instance opens through node-postgres. Not used for Neon hosts (own driver) or Supabase hosts (always one connection). | `lib/db/connection-config.ts` |
 | `DATABASE_STATEMENT_TIMEOUT_MS` | optional | optional | runtime | no | `60000` | Server-side limit for one statement, in milliseconds. node-postgres sends it as a startup parameter. `0` turns it off and sends nothing: use that behind a pooler that refuses startup parameters it does not track (PgBouncer without `ignore_startup_parameters`) and set the limit on the database role instead. Not sent to Neon or Supabase hosts. | `lib/db/connection-config.ts` |
 | `DATABASE_IDLE_IN_TRANSACTION_TIMEOUT_MS` | optional | optional | runtime | no | `60000` | The same for a transaction left idle. `0` turns it off. Not sent to Neon or Supabase hosts. | `lib/db/connection-config.ts` |
@@ -41,6 +41,34 @@ has no effect. Secrets are marked; never log or commit them.
 | `DATA_PROVIDER` | optional | must not be `mock` | runtime | no | `db` if a URL is set, else `mock` | `mock` serves fixture data (read-only preview); `db` reads the database. Production refuses `mock`. | `lib/data/provider-mode.ts`, `lib/config/deployment-mode.ts` |
 | `ALLOW_SEED` | n/a | n/a | runtime | no | unset | `1` lets `npm run db:seed` / reset run with `NODE_ENV=production`. The seed is destructive. | `scripts/seed.ts`, `scripts/reset-demo.ts` |
 | `ALLOW_DISCARD_PUBLIC_REQUESTS` | n/a | n/a | runtime | no | unset | Must equal the number of initiatives in `public-` workspaces for `db:seed` or `reset:demo` to proceed; otherwise the run is refused. | `scripts/seed.ts` |
+| `JEEVES_DB_ALLOW_UNVERIFIED` | unused | optional: `same-host` only | runtime | no | unset | Production only. `same-host` allows a database on another host name without verified TLS (plaintext or unverified), for a database container on this host's private network (the Podman stacks). Blank or unset: no opt-out. Any other value fails boot. Ignored in demo. | `lib/config/deployment-mode.ts` |
+| `PGSSLMODE` | optional | optional | runtime | no | unset (plaintext) | Read by node-postgres when `DATABASE_URL` has no TLS option and `DATABASE_SSL_CA` is unset (not for Supabase hosts): `disable` means plaintext; `prefer`, `require`, `verify-ca` and `verify-full` mean verified TLS; `no-verify` means unverified. The production boot check reads it the same way. | `lib/db/tls-posture.ts` (read by `pg`) |
+| `PGSSLNEGOTIATION` | optional | optional | runtime | no | unset | Read by node-postgres when the URL has no `sslnegotiation`: `postgres` or `direct` (`direct` needs TLS). Any other value stops node-postgres from connecting, and the production boot check refuses it for a node-postgres database on another host. | `lib/db/tls-posture.ts` (read by `pg`) |
+| `NODE_TLS_REJECT_UNAUTHORIZED` | should not be `0` | must not be `0` | runtime | no | unset | Node.js setting. `0` turns certificate verification off for every TLS connection that does not set it explicitly, including the Neon driver and node-postgres without `DATABASE_SSL_CA`. Production refuses it for a database on another host unless the host is Supabase or `DATABASE_SSL_CA` is set, or `JEEVES_DB_ALLOW_UNVERIFIED=same-host`. | `lib/db/tls-posture.ts` |
+
+### Database TLS in production
+
+Production refuses to boot when the database is on another host and the
+connection would not be TLS with certificate verification, judged by what the
+driver will actually do, not by what the URL looks like.
+
+- Verified: the Neon driver (always `wss`); Supabase hosts; `DATABASE_SSL_CA`;
+  `sslmode=verify-full` (recommended), and `require`, `prefer`, `verify-ca` and
+  `allow`, which node-postgres 8 verifies exactly like `verify-full`; `ssl=true`
+  or `1`; `sslrootcert`; `PGSSLMODE=require` or `verify-full` with no URL option.
+- Not verified: no option at all, `sslmode=disable`, `ssl=0`, `sslmode=no-verify`
+  or `ssl=no-verify`, `uselibpqcompat=true` with `sslmode=disable`, `prefer`,
+  `require` or `verify-ca`, `PGSSLMODE=no-verify`, and
+  `NODE_TLS_REJECT_UNAUTHORIZED=0`.
+- Loopback (`localhost`, `127.0.0.0/8` written in full, `[::1]`, a unix socket)
+  is exempt.
+- For Amazon RDS: set `DATABASE_SSL_CA` to the RDS bundle, or `NODE_EXTRA_CA_CERTS`
+  to its path, together with `sslmode=verify-full`.
+- The refusal names the problem and both ways out (configure TLS, or set
+  `JEEVES_DB_ALLOW_UNVERIFIED=same-host`) and never prints the URL.
+- Only the server boot is checked. `npm run db:migrate`, `npm run db:seed` and
+  `DATABASE_MIGRATION_URL` are not, and must use the same verified settings
+  (`sslmode=verify-full` or `DATABASE_SSL_CA`).
 
 ## 3. Identity and sessions
 
@@ -104,11 +132,15 @@ Inlined by Next.js at build; set them in the build environment.
 
 `instrumentation.ts` runs them once per server start (not during `next build`).
 On failure the process logs, marks `/api/health` as 503 and exits with code 1.
+One exception, demo only: a database that cannot be reached at all (see the
+last paragraph of this section) does not exit the instance.
 
 Production reports every configuration problem at once
 (`production configuration is invalid: ...`), among them:
 
 - `DATABASE_URL (or POSTGRES_URL) is required`
+- `The database is on another host and the connection is not verified TLS` (see "Database TLS in production")
+- `JEEVES_DB_ALLOW_UNVERIFIED must be same-host or unset`
 - `DATA_PROVIDER=mock is not allowed in production`
 - `JEEVES_COOKIE_SECRET is required` / `is too short`
 - `APP_BASE_URL is required` / `must be an absolute https URL without embedded credentials`
@@ -121,3 +153,21 @@ Then, in both modes, the installation stamp is verified against the database
 (`npm run db:migrate`); demo stamps an unstamped database and refuses a
 `production` one, and retries a database read error with a short backoff. In
 demo a malformed `JEEVES_TRUSTED_PROXY_HOPS` also fails the boot.
+
+A demo that still cannot reach its database after the retries (each attempt is
+cut off after 3 seconds) does not exit: the marketing and legal pages need no
+data. It holds the database closed instead. Nothing reads or writes until the
+installation stamp has been verified in that process; database-backed routes
+answer `503` with `Retry-After: 15` and the console shows a notice;
+`/api/health` answers `503` `degraded`. The check is retried from requests, at
+most every 15 seconds. A stamp mismatch still exits at once; a credentials or TLS
+error exits after the retries; production never holds: it exits.
+
+## 9. Evidence storage
+
+| Variable | Demo | Production | When | Secret | Default | Effect | Source |
+|---|---|---|---|---|---|---|---|
+| `JEEVES_EVIDENCE_WORKSPACE_MAX_MIB` | optional | optional | runtime | no | demo `100`, production off | Most evidence one workspace may hold, in whole MiB; `none` lifts the ceiling. An upload past it is refused with 413. Malformed (`0`, `100MB`, `1.5`): demo uses `100`; production pauses evidence uploads (503) and logs the variable name. In production it is off unless set. Customer sign-in is not built yet; if an install keeps all initiatives in one workspace, this value caps the whole install. | `lib/evidence/storage-limits.ts` |
+| `JEEVES_EVIDENCE_TOTAL_MAX_MIB` | optional | ignored | runtime | no | demo `2048` | Most evidence the whole database may hold, in whole MiB; `none` lifts it. An upload past it is refused with 413. Malformed (`0`, `100MB`, `1.5`): demo uses `2048` and logs the variable name. Ignored in production. | `lib/evidence/storage-limits.ts` |
+
+Both are read per upload, not by the boot checks (section 8).

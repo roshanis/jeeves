@@ -12,6 +12,7 @@
 // not be something the browser bundle can be built to believe.
 import { selectDriver } from "../db/driver-select";
 import { runtimeDatabaseUrl } from "../db/runtime-config";
+import { DB_TLS_OPT_OUT_VALUE, databaseTlsPosture, unverifiedDatabaseProblem } from "../db/tls-posture";
 
 export type DeploymentMode = "demo" | "production";
 
@@ -103,6 +104,11 @@ export function trustedProxyHopsState(env: Env = process.env): "unset" | "valid"
  * with the client support for them. (The production plan allowed PG* here; this
  * is a deliberate deviation from it that a human still has to acknowledge, to be
  * revisited with the client support in phase P5.3.)
+ *
+ * Database TLS: a database on another host needs verified TLS as node-postgres
+ * or the Neon driver will actually open it (lib/db/tls-posture.ts); loopback is
+ * exempt. JEEVES_DB_ALLOW_UNVERIFIED=same-host is the only opt-out, and any
+ * other value fails the boot rather than being read as off.
  */
 export function assertProductionConfig(env: Env = process.env): void {
   const problems: string[] = [];
@@ -112,6 +118,17 @@ export function assertProductionConfig(env: Env = process.env): void {
       "DATABASE_URL (or POSTGRES_URL) is required: without it the app would fall back to the local PGlite store, which production never uses",
     );
   }
+
+  const optOut = env.JEEVES_DB_ALLOW_UNVERIFIED?.trim() ?? "";
+  if (optOut && optOut !== DB_TLS_OPT_OUT_VALUE) {
+    problems.push(
+      "JEEVES_DB_ALLOW_UNVERIFIED must be same-host or unset: same-host allows a database on this host's private network " +
+        "without verified TLS; any other value is refused rather than read as off",
+    );
+  }
+  const tls = databaseTlsPosture(env);
+  if (tls.kind === "refused") problems.push(tls.message);
+  else if (tls.kind === "unverified" && optOut !== DB_TLS_OPT_OUT_VALUE) problems.push(unverifiedDatabaseProblem(tls.cause));
 
   if (env.DATA_PROVIDER?.trim().toLowerCase() === "mock") {
     problems.push("DATA_PROVIDER=mock is not allowed in production: it serves fixture data instead of the database");

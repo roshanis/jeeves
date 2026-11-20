@@ -12,6 +12,7 @@ import {
   decide,
   getDraftRunProgress,
   intakeChat,
+  intakeTierGaps,
   isApiError,
   listPromotions,
   postSession,
@@ -420,5 +421,23 @@ describe("403 without a server message", () => {
     fetchMock.mockResolvedValueOnce(new Response("nope", { status: 403 }));
     const err = await submitIntake("tok", "init-1").catch((e) => e);
     expect(apiErrorToMessage(err)).toBe("Not permitted for your current role.");
+  });
+});
+
+describe("intakeTierGaps", () => {
+  const gap = { ruleId: "RFT-02", level: "REQUIRED_FOR_TIER", field: "data.retentionIntent", message: "Retention is required." };
+
+  it("returns the gap list only for the 400 that carries INTAKE_TIER_GAPS", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(400, { error: "cannot pass QC", code: "INTAKE_TIER_GAPS", gaps: [gap, { nope: 1 }] }));
+    const err = await runTriage("tok", "init-1").catch((e) => e);
+    expect(intakeTierGaps(err)).toEqual([{ ruleId: "RFT-02", message: "Retention is required." }]);
+  });
+
+  it("is null for a plain 400, a 409 or a non-ApiError", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(400, { error: "bad", gaps: [{ field: "x", maxChars: 3 }] }));
+    expect(intakeTierGaps(await runTriage("tok", "init-1").catch((e) => e))).toBeNull();
+    fetchMock.mockResolvedValueOnce(jsonResponse(409, { error: "x", code: "INTAKE_TIER_GAPS", gaps: [gap] }));
+    expect(intakeTierGaps(await runTriage("tok", "init-1").catch((e) => e))).toBeNull();
+    expect(intakeTierGaps(new Error("boom"))).toBeNull();
   });
 });

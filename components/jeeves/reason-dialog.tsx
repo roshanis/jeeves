@@ -24,6 +24,7 @@ import {
 } from "@/components/ui/dialog";
 
 function ReasonForm({
+  initialReason,
   confirmLabel,
   pendingLabel,
   destructive,
@@ -32,6 +33,7 @@ function ReasonForm({
   onCancel,
   onConfirm,
 }: {
+  initialReason: string;
   confirmLabel: string;
   pendingLabel: string;
   destructive: boolean;
@@ -40,7 +42,7 @@ function ReasonForm({
   onCancel: () => void;
   onConfirm: (reason: string) => void;
 }) {
-  const [reason, setReason] = React.useState("");
+  const [reason, setReason] = React.useState(initialReason);
   const trimmed = reason.trim();
 
   return (
@@ -88,6 +90,7 @@ export function ReasonDialog({
   destructive = false,
   pending,
   error = null,
+  initialReason = "",
   onConfirm,
 }: {
   open: boolean;
@@ -99,6 +102,7 @@ export function ReasonDialog({
   destructive?: boolean;
   pending: boolean;
   error?: string | null;
+  initialReason?: string;
   onConfirm: (reason: string) => void;
 }) {
   return (
@@ -110,6 +114,7 @@ export function ReasonDialog({
         </DialogHeader>
         {open ? (
           <ReasonForm
+            initialReason={initialReason}
             confirmLabel={confirmLabel}
             pendingLabel={pendingLabel}
             destructive={destructive}

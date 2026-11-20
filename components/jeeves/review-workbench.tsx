@@ -8,6 +8,13 @@
 // Live mode: the server-scoped review supplies its exact cycle; an assigned reviewer gets an
 // EDITABLE assessment textarea and working Sign (submits the edited draft)
 // and Return (mandatory-reason dialog) actions against the real API.
+//
+// Unsaved work (assessment text, a typed return reason, an abstention reason
+// whose submission failed) is also mirrored per persona and review into this browser
+// tab's sessionStorage (lib/client/review-unsaved-store.ts). After the session
+// ends, the same persona is offered it back on the same review and cycle and
+// chooses Restore or Discard; nothing is applied automatically. Demo mode only:
+// a production install never mirrors assessment text into the browser.
 import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -52,6 +59,15 @@ import {
   runReviewAgent,
 } from "@/lib/client/api";
 import { useLiveSessionOptional } from "@/lib/client/session-context";
+import { useDeploymentMode } from "@/lib/client/deployment-mode-context";
+import { findPersona } from "@/lib/client/personas";
+import {
+  clearUnsavedReview,
+  dropStoredReturnReason,
+  readUnsavedReview,
+  writeUnsavedReview,
+  type UnsavedReview,
+} from "@/lib/client/review-unsaved-store";
 import {
   getReviewActionEligibility,
   performReviewMutation,
@@ -118,6 +134,7 @@ export function ReviewWorkbench({ rows, selection, onSelectionChange }: {
   const selectReview = onSelectionChange ?? setLocalSelection;
   const [drafts, setDrafts] = React.useState<Record<string, { text: string; revision: number | undefined; evidencePacketId: string | null }>>({});
   const [returnReasons, setReturnReasons] = React.useState<Record<string, string>>({});
+  const [abstainReasons, setAbstainReasons] = React.useState<Record<string, string>>({});
   const [queueOpen, setQueueOpen] = React.useState(!selection);
   const [override, setOverride] = React.useState<Domain | "all" | null>(null);
   // Queue aging clock — null on server/first render (placeholder), then the
@@ -359,6 +376,13 @@ export function ReviewWorkbench({ rows, selection, onSelectionChange }: {
               editedEvidencePacketId={drafts[draftKey]?.evidencePacketId}
               returnReason={returnReasons[draftKey] ?? ""}
               onReturnReasonChange={(reason) => setReturnReasons((current) => ({ ...current, [draftKey]: reason }))}
+              abstainReason={abstainReasons[draftKey] ?? ""}
+              onAbstainReasonChange={(reason) => setAbstainReasons((current) => ({ ...current, [draftKey]: reason }))}
+              hasLocalEdits={drafts[draftKey] !== undefined || returnReasons[draftKey] !== undefined || abstainReasons[draftKey] !== undefined}
+              onRestoreUnsaved={({ text, revision, evidencePacketId: packetId }) => setDrafts((current) => ({
+                ...current,
+                [draftKey]: { text, revision: revision ?? visibleSelected.review.revision, evidencePacketId: packetId },
+              }))}
               onReviewedRevision={() => setDrafts((current) => ({
                 ...current,
                 [draftKey]: { text: current[draftKey]?.text ?? visibleSelected.review.draftMd ?? "", revision: visibleSelected.review.revision, evidencePacketId },
@@ -399,9 +423,20 @@ export function ReviewWorkbench({ rows, selection, onSelectionChange }: {
   );
 }
 
+function offerParts(offer: UnsavedReview): string {
+  const parts = [
+    offer.text !== undefined ? "assessment edits" : null,
+    offer.returnReason ? "a typed return reason" : null,
+    offer.abstainReason ? "an abstention reason whose submission failed" : null,
+  ].filter((part): part is string => part !== null);
+  return parts.length > 1 ? `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}` : parts[0] ?? "work";
+}
+
 /**
  * Right pane — editable assessment + Sign/Return. Keyed by slug+domain from
- * the parent so its draft-edit state re-initializes per selection.
+ * the parent so its draft-edit state re-initializes per selection. Its unsaved
+ * work is mirrored to sessionStorage and, once per mount, offered back to the
+ * same persona on the same review cycle (never applied without a choice).
  */
 function AssessmentPane({
   row,
@@ -418,6 +453,10 @@ function AssessmentPane({
   onReviewedRevision,
   returnReason,
   onReturnReasonChange,
+  abstainReason,
+  onAbstainReasonChange,
+  hasLocalEdits,
+  onRestoreUnsaved,
 }: {
   row: ReviewQueueRow;
   editedText: string;
@@ -433,6 +472,10 @@ function AssessmentPane({
   onReviewedRevision: () => void;
   returnReason: string;
   onReturnReasonChange: (reason: string) => void;
+  abstainReason: string;
+  onAbstainReasonChange: (reason: string) => void;
+  hasLocalEdits: boolean;
+  onRestoreUnsaved: (work: { text: string; revision: number | null; evidencePacketId: string | null }) => void;
 }) {
   const router = useRouter();
   const live = useLiveSessionOptional();
@@ -450,6 +493,25 @@ function AssessmentPane({
     mounted.current = true;
     return () => { mounted.current = false; };
   }, []);
+  const cycleKey = row.review.cycleId ?? row.review.createdAt;
+  // The unsaved-work store is a demo convenience: production never touches it.
+  const demo = useDeploymentMode() === "demo";
+  const [offer, setOffer] = React.useState<UnsavedReview | null>(() => {
+    if (!demo || !session || session.role === "public" || hasLocalEdits) return null;
+    const entry = readUnsavedReview({ personaKey: session.personaKey, slug: row.slug, domain: row.review.domain, cycleKey });
+    if (!entry) return null;
+    const text = entry.text !== undefined && entry.text !== (row.review.draftMd ?? "") ? entry.text : undefined;
+    return text === undefined && !entry.returnReason && !entry.abstainReason ? null : { ...entry, text };
+  });
+  const offerHeadingId = React.useId();
+  const textareaRef = React.useRef<HTMLTextAreaElement>(null);
+  const focusAfterOffer = React.useRef(false);
+  React.useEffect(() => {
+    if (offer === null && focusAfterOffer.current) {
+      focusAfterOffer.current = false;
+      textareaRef.current?.focus();
+    }
+  }, [offer]);
   const [returnRevision, setReturnRevision] = React.useState<number | null>(null);
   const [conflict, setConflict] = React.useState<{ revision: number; packetId: string | null } | null>(null);
   const staleEdits = (editedRevision !== undefined && editedRevision !== row.review.revision) ||
@@ -465,6 +527,46 @@ function AssessmentPane({
     row.review.revision,
   );
   const alreadySigned = row.review.status === "signed";
+  const offerShown = offer !== null && !alreadySigned && (eligibility.canEdit || eligibility.canAbstain);
+  React.useEffect(() => {
+    if (offerShown) toast.info("Unsaved work from an earlier session is available to restore above your assessment.", { id: "unsaved-review-offer" });
+  }, [offerShown]);
+  // Mirrors the reviewer's unsaved work for this review into this tab. Each
+  // caller passes the field it has just changed; the others come from props.
+  // Returns true only when a non-empty entry was stored.
+  function persistUnsaved(o: { text?: string; returnReason?: string; abstainReason?: string }): boolean {
+    if (!demo || !session || session.role === "public" || offer !== null) return false;
+    const text = "text" in o ? o.text : editedText;
+    const reason = "returnReason" in o ? o.returnReason : returnReason;
+    const abstain = "abstainReason" in o ? o.abstainReason : abstainReason;
+    return writeUnsavedReview({
+      personaKey: session.personaKey,
+      personaLabel: personaLabelOf(session),
+      slug: row.slug,
+      domain: row.review.domain,
+      cycleKey,
+      revision: editedRevision !== undefined ? editedRevision : row.review.revision ?? null,
+      evidencePacketId: editedEvidencePacketId !== undefined ? editedEvidencePacketId : evidencePacketId,
+      text: text !== undefined && text !== (row.review.draftMd ?? "") ? text : undefined,
+      returnReason: reason || undefined,
+      abstainReason: abstain || undefined,
+    });
+  }
+  const personaLabelOf = (s: { personaKey: string; personaLabel?: string }) => s.personaLabel ?? findPersona(s.personaKey)?.label ?? "This persona";
+  const keptMessage = (label: string) => `Your session expired. Your unsaved work is kept in this browser tab. Start the demo again as ${label} to restore it.`;
+  function restoreUnsaved() {
+    if (!offer) return;
+    if (offer.text !== undefined) onRestoreUnsaved({ text: offer.text, revision: offer.revision, evidencePacketId: offer.evidencePacketId });
+    if (offer.returnReason) onReturnReasonChange(offer.returnReason);
+    if (offer.abstainReason) onAbstainReasonChange(offer.abstainReason);
+    focusAfterOffer.current = true;
+    setOffer(null);
+  }
+  function discardUnsaved() {
+    if (demo && session) clearUnsavedReview(session.personaKey, row.slug, row.review.domain);
+    focusAfterOffer.current = true;
+    setOffer(null);
+  }
   // One list of conditions for both buttons, each worded for its own action.
   const disabledReasonFor = (action: "sign" | "return") => {
     const signing = action === "sign";
@@ -482,7 +584,7 @@ function AssessmentPane({
   const blankAssessment = editedText.trim() === "";
 
   async function handleRunAgent() {
-    if (!session || !cycleId || !eligibility.canRunAgent || pending || mustReviewAgain) return;
+    if (!session || !cycleId || !eligibility.canRunAgent || pending || mustReviewAgain || offerShown) return;
     setRunning(true);
     try {
       const res = await runReviewAgent(session.token, cycleId, row.review.domain, row.review.revision);
@@ -497,15 +599,17 @@ function AssessmentPane({
       router.refresh();
     } catch (err) {
       if (!mounted.current) return;
-      toast.error(isApiError(err) ? apiErrorToMessage(err) : "Agent run failed.");
-      if (isApiError(err) && err.status === 401) live?.logout();
+      const unauthorized = isApiError(err) && err.status === 401;
+      const kept = unauthorized && persistUnsaved({});
+      toast.error(kept ? keptMessage(personaLabelOf(session)) : isApiError(err) ? apiErrorToMessage(err) : "Agent run failed.");
+      if (unauthorized) live?.logout();
     } finally {
       if (mounted.current) setRunning(false);
     }
   }
 
   async function handleSign() {
-    if (!session || !cycleId || signingBlock || pending || running || !eligibility.canSignOrReturn || mustReviewAgain || blankAssessment || row.review.revision === undefined) return;
+    if (!session || !cycleId || signingBlock || pending || running || !eligibility.canSignOrReturn || mustReviewAgain || blankAssessment || offerShown || row.review.revision === undefined) return;
     setPending(true);
     try {
       await performReviewMutation(
@@ -520,6 +624,7 @@ function AssessmentPane({
             editedText !== (row.review.draftMd ?? "") ? editedText : undefined,
         },
       );
+      if (demo) clearUnsavedReview(session.personaKey, row.slug, row.review.domain);
       if (!mounted.current) return;
       toast.success(`${DOMAIN_LABEL[row.review.domain]} review signed.`);
       router.refresh();
@@ -529,8 +634,10 @@ function AssessmentPane({
         setConflict({ revision: row.review.revision, packetId: evidencePacketId });
         router.refresh();
       }
-      toast.error(isApiError(err) ? apiErrorToMessage(err) : "Sign failed.");
-      if (isApiError(err) && err.status === 401) live?.logout();
+      const unauthorized = isApiError(err) && err.status === 401;
+      const kept = unauthorized && persistUnsaved({});
+      toast.error(kept ? keptMessage(personaLabelOf(session)) : isApiError(err) ? apiErrorToMessage(err) : "Sign failed.");
+      if (unauthorized) live?.logout();
     } finally {
       if (mounted.current) setPending(false);
     }
@@ -541,14 +648,19 @@ function AssessmentPane({
     setPending(true);
     setReturnError(null);
     onReturnReasonChange(reason);
+    persistUnsaved({ returnReason: reason });
     try {
       await performReviewMutation(session.token, cycleId, row.review.domain, {
         kind: "return",
         reason,
         expectedRevision: returnRevision,
       });
+      // Recorded: the stored copy of this reason must not be offered back, even if the pane has gone.
+      if (demo) dropStoredReturnReason({ personaKey: session.personaKey, slug: row.slug, domain: row.review.domain, cycleKey }, reason);
       if (!mounted.current) return;
       setReturnOpen(false);
+      onReturnReasonChange("");
+      persistUnsaved({ returnReason: "" });
       toast.success(`${DOMAIN_LABEL[row.review.domain]} review returned.`);
       router.refresh();
     } catch (err) {
@@ -558,10 +670,12 @@ function AssessmentPane({
         setReturnOpen(false);
         router.refresh();
       }
-      const returnMessage = isApiError(err) ? apiErrorToMessage(err) : "Return failed.";
+      const unauthorized = isApiError(err) && err.status === 401;
+      const kept = unauthorized && persistUnsaved({ returnReason: reason });
+      const returnMessage = kept ? keptMessage(personaLabelOf(session)) : isApiError(err) ? apiErrorToMessage(err) : "Return failed.";
       if (!(isApiError(err) && err.status === 409)) setReturnError(returnMessage);
       toast.error(returnMessage);
-      if (isApiError(err) && err.status === 401) live?.logout();
+      if (unauthorized) live?.logout();
     } finally {
       if (mounted.current) setPending(false);
     }
@@ -578,15 +692,21 @@ function AssessmentPane({
         kind === "abstain" ? { kind, reason: reason!, expectedRevision } : { kind, expectedRevision });
       if (!mounted.current) return;
       setAbstainRevision(null);
+      if (kind === "abstain") {
+        onAbstainReasonChange("");
+        persistUnsaved({ abstainReason: "" });
+      }
       toast.success(kind === "abstain" ? "Abstention recorded. The review can continue without your sign-off." : "Review resumed. Complete the review before signing.");
       router.refresh();
     } catch (err) {
       if (!mounted.current) return;
-      const message = isApiError(err) ? apiErrorToMessage(err) : "The review could not be updated.";
+      const unauthorized = isApiError(err) && err.status === 401;
+      const kept = unauthorized && persistUnsaved(kind === "abstain" ? { abstainReason: reason } : {});
+      const message = kept ? keptMessage(personaLabelOf(session)) : isApiError(err) ? apiErrorToMessage(err) : "The review could not be updated.";
       setAbstainError(message);
       toast.error(message);
       if (isApiError(err) && err.status === 409) router.refresh();
-      if (isApiError(err) && err.status === 401) live?.logout();
+      if (unauthorized) live?.logout();
     } finally {
       if (mounted.current) setPending(false);
     }
@@ -608,7 +728,7 @@ function AssessmentPane({
             <button
               type="button"
               onClick={() => void handleRunAgent()}
-              disabled={running || pending || alreadySigned || mustReviewAgain}
+              disabled={running || pending || alreadySigned || mustReviewAgain || offerShown}
               data-slot="run-agent-button"
               className="inline-flex items-center justify-center gap-2 rounded-md border px-3 py-2 text-sm font-medium text-primary transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
             >
@@ -622,11 +742,20 @@ function AssessmentPane({
             </p>
           </div>
         ) : null}
+        {offerShown && offer ? <div role="region" aria-labelledby={offerHeadingId} data-slot="unsaved-review-offer" className="space-y-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
+          <h3 id={offerHeadingId} className="font-medium">Unsaved work from an earlier session</h3>
+          <p>{offer.personaLabel} has unsaved work for this review from an earlier session: {offerParts(offer)}. It was kept in this browser tab only. Restore it to keep working, or discard it.</p>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" className="rounded-md border px-3 py-2 font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={restoreUnsaved}>Restore unsaved work</button>
+            <button type="button" className="rounded-md border px-3 py-2 font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={discardUnsaved}>Discard unsaved work</button>
+          </div>
+        </div> : null}
         <textarea
+          ref={textareaRef}
           className="min-h-56 w-full rounded-md border border-input bg-transparent p-3 text-sm leading-relaxed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
           value={editedText}
-          onChange={(e) => onEditedTextChange(e.target.value)}
-          disabled={!eligibility.canEdit || pending || running || evidenceLoading}
+          onChange={(e) => { onEditedTextChange(e.target.value); persistUnsaved({ text: e.target.value }); }}
+          disabled={!eligibility.canEdit || pending || running || evidenceLoading || offerShown}
           maxLength={20_000}
           aria-label="Assessment text"
           data-slot="assessment-textarea"
@@ -636,7 +765,7 @@ function AssessmentPane({
           <p>This review or its evidence changed. Refresh and review the latest draft and evidence again. Your assessment edits are preserved.</p>
           <button type="button" className="rounded-md border px-3 py-2 font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50" disabled={Boolean(signingBlock) || !refreshedAfterConflict || row.review.revision === undefined} onClick={() => { onReviewedRevision(); setConflict(null); }}>I reviewed the refreshed draft and evidence</button>
           <p className="text-xs">Compare the AI draft above with your assessment, check the submitted sources, and update your edits before acknowledging.</p>
-          <button type="button" disabled={Boolean(signingBlock) || !refreshedAfterConflict || row.review.revision === undefined} onClick={onLoadCurrentDraft} className="min-h-11 font-medium underline underline-offset-4 disabled:opacity-50">Discard edits and load current draft</button>
+          <button type="button" disabled={Boolean(signingBlock) || !refreshedAfterConflict || row.review.revision === undefined} onClick={() => { onLoadCurrentDraft(); persistUnsaved({ text: row.review.draftMd ?? "" }); }} className="min-h-11 font-medium underline underline-offset-4 disabled:opacity-50">Discard edits and load current draft</button>
         </div> : null}
         {blankAssessment && eligibility.canSignOrReturn && !alreadySigned ? <p role="status" className="text-xs text-muted-foreground">Write an assessment before signing.</p> : null}
         {signingBlock && !alreadySigned ? <p role="status" className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">{signingBlock}</p> : null}
@@ -653,7 +782,7 @@ function AssessmentPane({
             label="Sign"
             requiresRole="reviewer"
             disabledReason={signDisabledReason}
-            pending={pending || running || Boolean(signingBlock) || mustReviewAgain || blankAssessment}
+            pending={pending || running || Boolean(signingBlock) || mustReviewAgain || blankAssessment || offerShown}
             pendingLabel={pending ? "Signing…" : "Sign"}
             onAction={eligibility.canSignOrReturn ? () => void handleSign() : undefined}
           />
@@ -662,7 +791,7 @@ function AssessmentPane({
             variant="outline"
             requiresRole="reviewer"
             disabledReason={returnDisabledReason}
-            pending={pending || running || mustReviewAgain}
+            pending={pending || running || mustReviewAgain || offerShown}
             onAction={eligibility.canSignOrReturn ? () => { setReturnError(null); setReturnRevision(row.review.revision!); setReturnOpen(true); } : undefined}
           />
         </div>
@@ -681,6 +810,7 @@ function AssessmentPane({
         pendingLabel="Recording abstention…"
         pending={pending}
         error={abstainError}
+        initialReason={abstainReason}
         onConfirm={(reason) => void handleAbstention("abstain", reason)}
       />
       <ReturnReviewDialog

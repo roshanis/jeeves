@@ -3,7 +3,7 @@ import { isValidElement, type ReactElement, type ReactNode } from "react";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { createTestDb, closeTestDb, type TestDb } from "@/lib/db/test-client";
 import { ReviewRequestQueue } from "@/components/jeeves/review-request-queue";
-import { CHAMPION_PREFILL_PAYLOAD } from "@/lib/intake/champion-prefill";
+import { TRIAGE_READY_CHAMPION_PAYLOAD } from "@/tests/fixtures/triage-ready-intake";
 import type { Actor } from "@/lib/domain/types";
 import type { ReviewNotificationRow } from "@/lib/services/notification-service";
 
@@ -36,7 +36,7 @@ const SYSTEM: Actor = { id: "system", role: "system" };
 
 async function triaged(workspaceId: string | null, title: string): Promise<void> {
   const draft = await svc.createDraft(testDb, {
-    payload: { ...CHAMPION_PREFILL_PAYLOAD, basics: { ...CHAMPION_PREFILL_PAYLOAD.basics, title } },
+    payload: { ...TRIAGE_READY_CHAMPION_PAYLOAD, basics: { ...TRIAGE_READY_CHAMPION_PAYLOAD.basics, title } },
     requesterActor: REQUESTER,
     requesterName: "Priya Raman",
     workspaceId,

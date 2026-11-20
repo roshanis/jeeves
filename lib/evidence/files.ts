@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { MAX_FILE_BYTES } from './types';
 export { MAX_FILE_BYTES } from './types';
 export class EvidenceError extends Error {
-  constructor(public status: number, message: string) { super(message); this.name = 'EvidenceError'; }
+  constructor(public status: number, message: string, public retryAfter?: number) { super(message); this.name = 'EvidenceError'; }
 }
 const DOCX = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 /** Format validation only. No parser, execution, extraction or malware verdict. */

@@ -34,7 +34,9 @@ governance, end to end:
    completeness check flags missing answers without blocking submission.
 2. **QC gate** — a submitted intake waits for a Program Office or Admin
    persona to open QC, then to route it on or return it to the requester
-   with a reason. Nothing reaches triage without passing QC.
+   with a reason. Nothing reaches triage without passing QC, and QC cannot
+   pass while an answer the risk tier requires is missing: the Program Office
+   returns the intake instead.
 3. **Deterministic risk triage** — the overlay answers are run through fixed
    rules (`lib/triage/rules.ts`) to assign a tier: **Low / Medium / High /
    Critical**. No LLM is involved in the tier decision itself.

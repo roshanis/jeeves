@@ -1,8 +1,21 @@
 // @vitest-environment node
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { sql } from "drizzle-orm";
-import { bootFailure, resetBootStateForTests } from "./boot-state";
-import { DEMO_CHECK_RETRY_DELAYS_MS, runBootChecks } from "./boot-checks";
+import {
+  DEMO_RECHECK_INTERVAL_MS,
+  bootFailure,
+  closeInstallationGate,
+  installationGateClosed,
+  requestInstallationRecheck,
+  resetBootStateForTests,
+} from "./boot-state";
+import {
+  DEMO_BOOT_ATTEMPT_DEADLINE_MS,
+  DEMO_CHECK_RETRY_DELAYS_MS,
+  DEMO_RECHECK_DEADLINE_MS,
+  recheckDemoInstallation,
+  runBootChecks,
+} from "./boot-checks";
 import { clearInstallationFixtures, closeTestDb, createTestDb, type TestDb } from "../db/test-client";
 import { initiatives, installation } from "../db/schema";
 import { readInstallationStamp } from "../db/installation";
@@ -11,7 +24,7 @@ const SECRET = "0123456789abcdef0123456789abcdef";
 
 const COMPLETE_PRODUCTION: Record<string, string> = {
   JEEVES_MODE: "production",
-  DATABASE_URL: "postgres://jeeves_app:s3cr3t-db-pw@db.internal:5432/jeeves",
+  DATABASE_URL: "postgres://jeeves_app:s3cr3t-db-pw@db.internal:5432/jeeves?sslmode=verify-full",
   JEEVES_COOKIE_SECRET: SECRET,
   APP_BASE_URL: "https://jeeves.example.com",
   JEEVES_TENANT_ID: "tenant-acme",
@@ -64,6 +77,22 @@ afterAll(async () => {
 
 describe("runBootChecks", () => {
   describe("in production mode", () => {
+    it("never touches the gate: an unreachable database still exits, a production stamp leaves it open", async () => {
+      const down = deps(COMPLETE_PRODUCTION);
+      down.getDb.mockRejectedValue(new Error("connect ECONNREFUSED"));
+      await runBootChecks(down);
+      expect(down.exit).toHaveBeenCalledWith(1);
+      expect(down.getDb).toHaveBeenCalledTimes(1);
+      expect(installationGateClosed()).toBe(false);
+      resetBootStateForTests();
+
+      const ok = deps(COMPLETE_PRODUCTION);
+      ok.getDb.mockResolvedValue(await database("production"));
+      await runBootChecks(ok);
+      expect(ok.exit).not.toHaveBeenCalled();
+      expect(installationGateClosed()).toBe(false);
+    });
+
     it("lets a complete configuration boot on a production-stamped database", async () => {
       const d = deps(COMPLETE_PRODUCTION);
       d.getDb.mockResolvedValue(await database("production"));
@@ -71,6 +100,26 @@ describe("runBootChecks", () => {
       expect(d.exit).not.toHaveBeenCalled();
       expect(d.log).not.toHaveBeenCalled();
       expect(bootFailure()).toBeNull();
+    });
+
+    it("refuses to boot when the database on another host is reached without verified TLS, before opening it", async () => {
+      const plain = "postgres://jeeves_app:s3cr3t-db-pw@db.internal:5432/jeeves";
+      const d = deps({ ...COMPLETE_PRODUCTION, DATABASE_URL: plain });
+      await runBootChecks(d);
+      expect(d.exit).toHaveBeenCalledWith(1);
+      expect(bootFailure()).toMatch(/not verified TLS/);
+      expect(bootFailure()).toContain("JEEVES_DB_ALLOW_UNVERIFIED");
+      expect(d.getDb).not.toHaveBeenCalled();
+      const text = [...d.log.mock.calls.flat(), bootFailure()].join(" ");
+      expect(text).not.toContain("s3cr3t-db-pw");
+      expect(text).not.toContain("db.internal");
+    });
+
+    it("boots a plaintext database on this host when the same-host opt-out is set", async () => {
+      const d = deps({ ...COMPLETE_PRODUCTION, DATABASE_URL: "postgres://jeeves_app:s3cr3t-db-pw@db.internal:5432/jeeves", JEEVES_DB_ALLOW_UNVERIFIED: "same-host" });
+      d.getDb.mockResolvedValue(await database("production"));
+      await runBootChecks(d);
+      expect(d.exit).not.toHaveBeenCalled();
     });
 
     it("logs one line, without the value, when JEEVES_MODE is set but not exactly demo", async () => {
@@ -404,15 +453,175 @@ describe("runBootChecks", () => {
       expect((await readInstallationStamp(db))?.deployMode).toBe("production");
     });
 
-    it("fails closed when the database stays unreachable, after the bounded retries", async () => {
-      const d = deps(DEMO_DB);
-      d.getDb.mockRejectedValue(new Error("connect ECONNREFUSED 127.0.0.1:5432"));
+    it("keeps serving with the database closed when it stays unreachable after the bounded retries", async () => {
+      const url = "postgres://u:hunter2@db.internal:5432/jeeves";
+      const d = deps({ ...DEMO_DB, DATABASE_URL: url });
+      d.getDb.mockRejectedValue(new Error(`connect ECONNREFUSED ${url}`));
       await runBootChecks(d);
 
       expect(d.getDb).toHaveBeenCalledTimes(DEMO_CHECK_RETRY_DELAYS_MS.length + 1);
-      expect(d.exit).toHaveBeenCalledTimes(1);
+      expect(d.exit).not.toHaveBeenCalled();
+      expect(bootFailure()).toBeNull();
+      expect(installationGateClosed()).toBe(true);
+      expect(d.log.mock.calls.flat().join(" ")).toMatch(/503/);
+      expect(d.log.mock.calls.flat().join(" ")).not.toContain("hunter2");
+    });
+
+    it("closes the gate before the first attempt and opens it on success", async () => {
+      const d = deps(DEMO_DB);
+      const db = await database();
+      let closedDuringAttempt: boolean | undefined;
+      d.getDb.mockImplementation(async () => {
+        closedDuringAttempt = installationGateClosed();
+        return db;
+      });
+      await runBootChecks(d);
+      expect(closedDuringAttempt).toBe(true);
+      expect(installationGateClosed()).toBe(false);
+    });
+
+    it("keeps the gate closed and exits at once on a production-stamped demo database", async () => {
+      const d = deps(DEMO_DB);
+      d.getDb.mockResolvedValue(await database("production"));
+      await runBootChecks(d);
       expect(d.exit).toHaveBeenCalledWith(1);
-      expect(bootFailure()).toMatch(/ECONNREFUSED/);
+      expect(installationGateClosed()).toBe(true);
+    });
+
+    it("still exits when the database answers with an authentication error, after the retries", async () => {
+      const d = deps(DEMO_DB);
+      d.getDb.mockRejectedValue(Object.assign(new Error("password authentication failed"), { code: "28P01" }));
+      await runBootChecks(d);
+      expect(d.getDb).toHaveBeenCalledTimes(DEMO_CHECK_RETRY_DELAYS_MS.length + 1);
+      expect(d.exit).toHaveBeenCalledWith(1);
+      expect(bootFailure()).toMatch(/28P01/);
+    });
+
+    it("opens the gate, with a warning, when migration 0015 has not run", async () => {
+      const d = deps(DEMO_DB);
+      d.getDb.mockResolvedValue(lagging);
+      await runBootChecks(d);
+      expect(d.exit).not.toHaveBeenCalled();
+      expect(installationGateClosed()).toBe(false);
+    });
+
+    it("counts a boot attempt that never answers as unreachable, after the per-attempt deadline", async () => {
+      vi.useFakeTimers();
+      try {
+        const d = deps(DEMO_DB);
+        d.getDb.mockImplementation(() => new Promise<TestDb>(() => {}));
+        const run = runBootChecks(d);
+        await vi.advanceTimersByTimeAsync(DEMO_BOOT_ATTEMPT_DEADLINE_MS * (DEMO_CHECK_RETRY_DELAYS_MS.length + 1) + 1);
+        await run;
+        expect(d.getDb).toHaveBeenCalledTimes(DEMO_CHECK_RETRY_DELAYS_MS.length + 1);
+        expect(d.exit).not.toHaveBeenCalled();
+        expect(installationGateClosed()).toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("ends in exit(1) and a boot failure when the log sink throws on the degraded line", async () => {
+      const d = deps(DEMO_DB);
+      d.getDb.mockRejectedValue(new Error("connect ECONNREFUSED"));
+      d.log.mockImplementation((...args: unknown[]) => {
+        if (String(args[0]).includes("503")) throw new Error("log sink down");
+      });
+      await runBootChecks(d);
+      expect(d.exit).toHaveBeenCalledWith(1);
+      expect(bootFailure()).not.toBeNull();
+    });
+
+    describe("recheckDemoInstallation", () => {
+      it("opens the gate when the database now verifies", async () => {
+        const d = deps(DEMO_DB);
+        closeInstallationGate();
+        d.getDb.mockResolvedValue(await database("demo"));
+        await recheckDemoInstallation(d);
+        expect(installationGateClosed()).toBe(false);
+        expect(d.exit).not.toHaveBeenCalled();
+      });
+
+      it("stays closed, without exiting, while the database is unreachable", async () => {
+        const d = deps(DEMO_DB);
+        closeInstallationGate();
+        d.getDb.mockRejectedValue(new Error("connect ECONNREFUSED"));
+        await recheckDemoInstallation(d);
+        expect(installationGateClosed()).toBe(true);
+        expect(d.exit).not.toHaveBeenCalled();
+        expect(bootFailure()).toBeNull();
+      });
+
+      it("logs when the recheck opens the gate", async () => {
+        const d = deps(DEMO_DB);
+        closeInstallationGate();
+        d.getDb.mockResolvedValue(await database("demo"));
+        await recheckDemoInstallation(d);
+        expect(d.log).toHaveBeenCalledWith("[boot] installation verified; database-backed routes are open.");
+      });
+
+      it("logs one scrubbed line when the recheck still cannot reach the database", async () => {
+        const url = "postgres://u:hunter2@db.internal:5432/jeeves";
+        const d = deps({ ...DEMO_DB, DATABASE_URL: url });
+        closeInstallationGate();
+        d.getDb.mockRejectedValue(new Error(`connect ECONNREFUSED ${url}`));
+        await recheckDemoInstallation(d);
+        expect(d.log).toHaveBeenCalledTimes(1);
+        const line = String(d.log.mock.calls[0][0]);
+        expect(line).toContain("[boot]");
+        expect(line).toContain("ECONNREFUSED");
+        expect(line).not.toContain("hunter2");
+        expect(line).not.toContain("db.internal");
+      });
+
+      it("marks the boot failed before it logs a failure", async () => {
+        const d = deps(DEMO_DB);
+        closeInstallationGate();
+        d.getDb.mockResolvedValue(await database("production"));
+        const seen: unknown[] = [];
+        d.log.mockImplementation(() => seen.push(bootFailure()));
+        await recheckDemoInstallation(d);
+        expect(seen.length).toBeGreaterThan(0);
+        expect(seen[0]).not.toBeNull();
+        expect(d.exit).toHaveBeenCalledWith(1);
+      });
+
+      it("exits when the database turns out to be production-stamped", async () => {
+        const d = deps(DEMO_DB);
+        closeInstallationGate();
+        d.getDb.mockResolvedValue(await database("production"));
+        await recheckDemoInstallation(d);
+        expect(d.exit).toHaveBeenCalledWith(1);
+        expect(installationGateClosed()).toBe(true);
+      });
+
+      it("stays closed when the check hangs past its deadline", async () => {
+        vi.useFakeTimers();
+        try {
+          const d = deps(DEMO_DB);
+          closeInstallationGate();
+          d.getDb.mockImplementation(() => new Promise<TestDb>(() => {}));
+          const run = recheckDemoInstallation(d);
+          await vi.advanceTimersByTimeAsync(DEMO_RECHECK_DEADLINE_MS + 1);
+          await run;
+          expect(installationGateClosed()).toBe(true);
+          expect(d.exit).not.toHaveBeenCalled();
+        } finally {
+          vi.useRealTimers();
+        }
+      });
+
+      it("is registered by the degraded boot and opens the gate once the database is back", async () => {
+        const d = deps(DEMO_DB);
+        d.getDb.mockRejectedValue(new Error("connect ECONNREFUSED"));
+        await runBootChecks(d);
+        expect(installationGateClosed()).toBe(true);
+
+        d.getDb.mockReset();
+        d.getDb.mockResolvedValue(await database("demo"));
+        await requestInstallationRecheck(Date.now() + DEMO_RECHECK_INTERVAL_MS);
+        expect(installationGateClosed()).toBe(false);
+      });
     });
 
     // On Vercel every cold start does a database round trip before serving, so a

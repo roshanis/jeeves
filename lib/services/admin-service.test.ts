@@ -21,6 +21,7 @@ import {
   NotFoundError,
   ValidationError,
   ConflictError,
+  REASSESSMENT_NOT_APPROVED_MESSAGE,
 } from "./admin-service";
 import { runMonitor, UNSCOPED_WORKSPACE } from "./monitor-service";
 import { IllegalTransitionError, decide, createDraft, runReviewAgent, signReview } from "./initiative-service";
@@ -522,14 +523,27 @@ describe("lib/services/admin-service", () => {
       await expect(resumeDeployment(db, RAY_CHEN, null, initiativeId, "")).rejects.toThrow(ValidationError);
     });
 
-    it("resumeDeployment also restores a re_review (post-breach reassessment) initiative to deployed", async () => {
+    it("resumeDeployment refuses a re_review initiative with ConflictError and writes nothing", async () => {
       const initiativeId = await memberChatCopilotId(db);
       await runMonitor(db, RAY_CHEN, PLUS_14D, UNSCOPED_WORKSPACE);
       const [init] = await db.select().from(initiatives).where(eq(initiatives.id, initiativeId));
       expect(init!.state).toBe("re_review");
+      const snapshot = async () => ({
+        initiatives: await db.select().from(initiatives),
+        deployments: await db.select().from(deploymentVersions),
+        audit: await db.select().from(auditEvents),
+        cycles: await db.select().from(reviewCycles),
+        decisions: await db.select().from(reviewDecisions),
+      });
+      const before = await snapshot();
 
-      const result = await resumeDeployment(db, RAY_CHEN, null, initiativeId, "Reassessment complete, model retrained.");
-      expect(result.after).toBe("deployed");
+      await expect(resumeDeployment(db, APPROVER, null, initiativeId, "Model retrained.")).rejects.toThrow(ForbiddenError);
+      await expect(resumeDeployment(db, RAY_CHEN, null, initiativeId, " ")).rejects.toThrow(ValidationError);
+      const refusal = resumeDeployment(db, RAY_CHEN, null, initiativeId, "Model retrained.");
+      await expect(refusal).rejects.toThrow(ConflictError);
+      await expect(refusal).rejects.toThrow(REASSESSMENT_NOT_APPROVED_MESSAGE);
+
+      expect(await snapshot()).toEqual(before);
     });
 
     it("resumes only by explicit admin action after monitor, domain drafts/signatures, and reassessment approval", async () => {
@@ -1016,6 +1030,14 @@ describe("lib/services/admin-service", () => {
         await expect(resumeDeployment(db, RAY_CHEN, "ws-B", initiativeId, "reason")).rejects.toThrow(
           `initiative not found: ${initiativeId}`,
         );
+      });
+
+      it("a re_review initiative is refused with ConflictError for its owner and NotFoundError for another workspace", async () => {
+        const { initiativeId } = await initiativeWithDeploymentInWorkspace("ws-A", "re_review", "paused");
+        await expect(resumeDeployment(db, RAY_CHEN, "ws-B", initiativeId, "reason")).rejects.toThrow(
+          `initiative not found: ${initiativeId}`,
+        );
+        await expect(resumeDeployment(db, RAY_CHEN, "ws-A", initiativeId, "reason")).rejects.toThrow(ConflictError);
       });
 
       it("the owning workspace session succeeds", async () => {

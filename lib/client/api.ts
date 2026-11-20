@@ -556,6 +556,20 @@ export function returnFromQc(
   );
 }
 
+/** Code on the 400 that refuses the QC pass while a REQUIRED_FOR_TIER intake gap is open. */
+export const INTAKE_TIER_GAPS = "INTAKE_TIER_GAPS";
+
+/** The open REQUIRED_FOR_TIER gaps of a refused QC pass, or null for any other error. */
+export function intakeTierGaps(err: unknown): { ruleId: string; message: string }[] | null {
+  if (!isApiError(err) || err.status !== 400 || err.code !== INTAKE_TIER_GAPS || !Array.isArray(err.gaps)) return null;
+  return err.gaps.flatMap((g) => {
+    const gap = g as { ruleId?: unknown; message?: unknown } | null;
+    return gap && typeof gap.ruleId === "string" && typeof gap.message === "string"
+      ? [{ ruleId: gap.ruleId, message: gap.message }]
+      : [];
+  });
+}
+
 export function runTriage(token: string, initiativeId: string): Promise<TriageResult> {
   return request<TriageResult>(`/api/initiatives/${encodeURIComponent(initiativeId)}/triage`, {
     method: "POST",
@@ -729,7 +743,7 @@ export function pauseDeployment(
   );
 }
 
-/** POST /api/admin/deployments/[id]/resume — admin-only; valid from paused AND re_review. */
+/** POST /api/admin/deployments/[id]/resume — admin-only; valid from paused, or from approved after an approved reassessment; 409 while a reassessment is open. */
 export function resumeDeployment(
   token: string,
   initiativeId: string,

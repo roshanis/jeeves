@@ -5,7 +5,7 @@ import { splitMissing } from "@/lib/intake/split-missing";
 describe("splitMissing (shared by a server and a client component)", () => {
   it("keeps every gap blocking for a flat seeded intake", () => {
     const intake = { fields: { a: 1 }, missing: ["dataRetention"] } as never;
-    expect(splitMissing(intake)).toEqual({ blocking: ["dataRetention"], optional: [] });
+    expect(splitMissing(intake)).toEqual({ blocking: ["dataRetention"], requiredForTier: [], optional: [] });
   });
 
   it("lives in a module without 'use client' and the server rail does not import the client tab", () => {

@@ -18,6 +18,7 @@ function canonical(review: ReviewRow) {
 }
 const review: ReviewRow = { cycleId: "cycle", revision: 4, domain: "privacy-hipaa", status: "drafted", draftMd: "Reviewed draft", citations: [], reviewer: null, signedAt: null, createdAt: "2026-09-19T12:00:00Z" };
 beforeEach(() => {
+  window.sessionStorage.clear();
   mocks.session.mockReturnValue({ session: { token: "token", workspaceId: "workspace", role: "reviewer", personaKey: "marcus-webb" } });
   mocks.mutation.mockResolvedValue({ status: "signed" });
   mocks.request.mockResolvedValue({ initiativeId: "initiative", cycleId: "cycle", documents: [], requirements: [], draft: null, latest: { id: "packet-4", cycleId: "cycle", version: 4, revision: 0, status: "submitted", entries: [], submittedAt: "2026-09-19T12:00:00Z" }, history: [], canEdit: false, reviewerDomain: "privacy-hipaa", usedBytes: 0 });
