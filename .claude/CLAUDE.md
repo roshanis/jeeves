@@ -159,35 +159,28 @@ When context usage exceeds 50%: run `/context-summarizer` to compact and preserv
 
 ## Project Overrides
 
-<!-- Project-specific rules below. These take precedence over global rules. -->
+<!-- AGENTS.md (repo root) is the single source for project facts: stack, layout,
+deployment modes and the full hard rules. This section mirrors only the commands
+and the hard rules, so the two files cannot disagree. Change AGENTS.md first. -->
 
 ### Project
 Jeeves — AI Governance Gateway demo for a fictional healthcare payer ("Meridian Health").
-`plan.md` (v2 + GO amendments) is the authoritative spec. Human GO given 2026-07-11:
-full v1 breadth, 1–2 week budget, fast-lane autonomy reframe confirmed.
+`plan.md` is the authoritative spec; **`AGENTS.md` is the single source** for how the repo
+works today (stack, directories, the two deployment modes, hard rules). Read it before
+changing code. `JEEVES_MODE` defaults to production; tests and local dev set `demo`.
 
-### Stack
-- Next.js (App Router) + TypeScript, Tailwind + shadcn/ui, Recharts
-- Vercel AI SDK + Workflow SDK (P0 gate DECIDED 2026-07-11: fallback adopted; do not introduce eve)
-- Neon Postgres + Drizzle ORM (one dev branch + isolated test schema; no Docker)
-- OpenAI GPT-5.x runtime LLM (env `OPENAI_MODEL`); all LLM calls mocked in tests
+### Commands (npm is the toolchain)
+- `npm test` (Vitest) · `npm run test:e2e` (Playwright golden path) · `npm run lint` · `npm run typecheck`
+- `npm run db:migrate` · `npm run test:postgres` (real-PostgreSQL integrity suite)
+- `npm run db:seed` and `npm run reset:demo` are destructive and demo-only: never against a shared or hosted database.
 
-### Test Command
-- `pnpm test` (Vitest) · `pnpm test:e2e` (Playwright golden path) · `pnpm lint`
-
-### Key Directories
-- Source: `app/` (routes), `agents/` (eve agents-as-directories), `lib/` (domain logic — >80% coverage target)
-- Tests: `tests/` · Seed: `scripts/seed.ts`
-
-### Hard Rules (from Codex review)
-- Agents draft/recommend/route — they NEVER approve. Fast-lane = deterministic policy + named accountable approver.
-- Access model (human decisions 2026-09-19 "let visitors play" and 2026-09-26 "playground + real inbound queue"): there is NO passcode. Two doors, never mixed:
-  1. **Playground** — any visitor gets any of the 13 personas passwordlessly, in their own isolated workspace; visitors cannot mutate shared seeds or global defaults (see AGENTS.md).
-  2. **Real request** — `/api/public-session` mints a `public`-role session in a `public-` workspace. `runMutationGuard` denies `public` by DEFAULT; exactly three routes pass `allowPublic: true` (create initiative, edit intake draft, submit intake). Never mint public sessions as `requester` (it unlocks LLM-spending chat and draft-run). A `public` session never donates its workspace to a persona switch, and `issueDemoSession` refuses `public-` workspaces.
-- The real-request queue (`/api/public-intake`, `/operator`) is gated by the server-side `OPERATOR_TOKEN`, NEVER by persona role — every persona is free to every visitor, so a role-gated queue would show strangers each other's requests. Guarded by app/api/__tests__/public-submission.test.ts.
-- Every mutation endpoint requires a valid session with a non-null isolated workspace + atomic budget check where applicable.
-- `AuditEvent` is append-only at the DB level. State transitions live in app code + Postgres, never in agent adapters.
-- All synthetic telemetry labeled "Synthetic data — demo"; no fake integrations or dead deep links.
+### Hard Rules (mirror of AGENTS.md — see it for the full wording)
+- Agents draft/recommend/route — they NEVER approve. Admin never approves initiatives or exceptions (rule 5 lists what Admin can do).
+- Two doors, never mixed: the playground (any persona, isolated workspace, no passcode) and the real-request door (`public`-role session in a `public-` workspace; `runMutationGuard` denies `public` unless a route passes `allowPublic: true`; never mint public sessions as `requester`). The real-request queue (`/operator`, `/api/public-intake`) is gated by `OPERATOR_TOKEN`, never by persona role.
+- Every mutation endpoint requires a valid session with a non-null isolated workspace, plus an atomic budget check where applicable.
+- `AuditEvent` is append-only through database triggers; the table owner can still disable them, so production runs the app as a non-owner role. State transitions live in app code + Postgres, never in agent adapters.
+- Seeded and playground data is fictional and synthetic telemetry is labeled "Synthetic data — demo"; the real-request queue stores real names, e-mail addresses and free text. No fake integrations or dead deep links.
+- Production mode is the default: demo-only routes call `demoDoorClosed()` first; never weaken a boot check or the installation stamp.
 
 ### Branch Strategy
 - main: production-ready only

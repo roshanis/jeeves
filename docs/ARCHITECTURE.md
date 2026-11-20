@@ -690,10 +690,10 @@ switches within one browser:
 - **Toolchain note:** the project's actual scripts run under **npm**
   (`npm test`, `npm run test:e2e`, `npm run lint`), confirmed by
   `package.json`, `package-lock.json` (no `pnpm-lock.yaml` exists), and
-  explicit call-outs in both `README.md` and `docs/deploy.md`
-  (`.claude/CLAUDE.md` still mentions pnpm). Treat any reference to
-  `pnpm <script>` in this repo's own docs or in CLAUDE.md as
-  aspirational/historical, not current.
+  explicit call-outs in `README.md`, `docs/deploy.md` and `AGENTS.md`;
+  `.claude/CLAUDE.md` mirrors `AGENTS.md` and a test keeps it to scripts that
+  exist. Treat any reference to `pnpm <script>` elsewhere as historical, not
+  current.
 
 ---
 
