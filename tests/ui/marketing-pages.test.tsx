@@ -141,7 +141,7 @@ describe("FrameworkMappingTable", () => {
       (link) => link.getAttribute("href") === "/controls",
     );
     expect(chips.length).toBeGreaterThan(0);
-    // C-01 (Clinician-in-the-loop protocol) maps to GOVERN 3 on the NIST page.
+    // C-01 (Clinician-in-the-loop protocol) maps to GOVERN 3.2 on the NIST page.
     expect(chips.some((chip) => chip.textContent?.includes("C-01"))).toBe(
       true,
     );
