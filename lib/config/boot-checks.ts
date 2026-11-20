@@ -9,7 +9,7 @@ import { BootDeadlineError, isConnectionClassError, safeDriverCode } from "../db
 import { runtimeDatabaseUrl } from "../db/runtime-config";
 import { closeInstallationGate, markBootFailed, openInstallationGate, setInstallationRecheck } from "./boot-state";
 import { assertProductionConfig, deploymentMode, ProductionConfigError, trustedProxyHopsState } from "./deployment-mode";
-import { InstallationCheckError, verifyInstallation } from "./installation-check";
+import { InstallationCheckError, verifyInstallation, verifyRuntimeRole } from "./installation-check";
 
 export interface BootCheckDeps {
   /** Environment to check. Defaults to process.env. */
@@ -96,6 +96,10 @@ function describeError(err: unknown, env: Record<string, string | undefined>): s
  *    database free of demo data; demo stamps an unstamped database 'demo' in
  *    place (the live demo database predates the stamp and cannot be reseeded)
  *    and refuses a 'production' one.
+ * 3. Production only: the runtime database role must be neither a superuser nor
+ *    an owner of the audit, installation or evidence tables
+ *    (verifyRuntimeRole), unless JEEVES_DB_ALLOW_OWNER_ROLE=1, which logs a
+ *    warning on every boot.
  *
  * On any failure the error is logged (variable names and counts only, never
  * values), the process-wide boot-failed flag is set (so /api/health answers 503
@@ -148,6 +152,12 @@ export async function runBootChecks(deps: BootCheckDeps = {}): Promise<void> {
     const requested = env.JEEVES_MODE?.trim();
     if (requested && requested.toLowerCase() !== "production") {
       log("[boot] JEEVES_MODE is set but ignored: this server runs in production mode (demo needs exactly JEEVES_MODE=demo and a demo build).");
+    }
+    if (env.JEEVES_DB_ALLOW_OWNER_ROLE?.trim() === "1") {
+      log(
+        "[boot] JEEVES_DB_ALLOW_OWNER_ROLE=1: the check that the app's database role is neither a superuser nor an owner of the audit tables is OFF. " +
+          "This is for a throwaway evaluation install only.",
+      );
     }
     try {
       assertProductionConfig(env);
@@ -205,7 +215,12 @@ export async function runBootChecks(deps: BootCheckDeps = {}): Promise<void> {
     const delays = mode === "demo" ? DEMO_CHECK_RETRY_DELAYS_MS : [];
     for (let attempt = 0; ; attempt++) {
       try {
-        const verify = async () => verifyInstallation(await getDb(), mode);
+        const verify = async () => {
+          const db = await getDb();
+          await verifyInstallation(db, mode);
+          // Production only; the opt-out is for a throwaway evaluation install.
+          if (mode === "production" && env.JEEVES_DB_ALLOW_OWNER_ROLE?.trim() !== "1") await verifyRuntimeRole(db);
+        };
         await (mode === "demo" ? withDeadline(verify(), DEMO_BOOT_ATTEMPT_DEADLINE_MS) : verify());
         if (mode === "demo") openInstallationGate();
         return;

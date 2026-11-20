@@ -94,9 +94,10 @@ writes land on the authoritative tables above.
 ### 2.3 Append-only audit enforcement
 
 `AuditEvent` is append-only **at the database level**, not just by
-application-code discipline. Rather than a GRANT/REVOKE role split (both
-PGlite in tests and Neon serverless in production run as a single connection
-role, so a role-based revoke wouldn't hold), the enforcement is a trigger —
+application-code discipline. The enforcement is a trigger rather than a
+GRANT/REVOKE split alone, because PGlite in tests and a single-role demo
+database run as one connection role, so a role-based revoke would not hold
+there —
 [`drizzle/0002_audit_events_append_only.sql`](../drizzle/0002_audit_events_append_only.sql):
 
 ```sql
@@ -117,6 +118,26 @@ FOR EACH ROW EXECUTE FUNCTION "audit_events_append_only"();
 
 This is tested at the DB level (plan §8 test 11), not only via the app code
 path.
+
+A trigger stops the role that is bound by it, not the role that owns the table.
+Three layers close the gaps (db-F5):
+
+- Migration `0017` sets every guard trigger to `ENABLE ALWAYS`, so it also fires
+  in a session with `session_replication_role = replica`.
+- Disabling or dropping a trigger, or replacing its function, needs
+  **ownership** (or superuser). Revoking the `TRIGGER` privilege would not stop
+  it: that privilege only governs creating triggers. A production install
+  therefore runs migrations as an owner role (`DATABASE_MIGRATION_URL`) and the
+  app as a role that owns nothing, with no `TRUNCATE`
+  ([`deploy/sql/jeeves-runtime-grants.sql`](../deploy/sql/jeeves-runtime-grants.sql),
+  `docs/deploy.md` "Database roles").
+- The production boot check refuses a runtime role that is a superuser or owns
+  `audit_events`, `installation` or the evidence tables
+  (`verifyRuntimeRole`, `lib/config/installation-check.ts`); the only opt-out is
+  `JEEVES_DB_ALLOW_OWNER_ROLE=1`, for a throwaway evaluation install.
+
+Maintenance that disables the guards (the seed's wipe) re-arms them by name with
+`ENABLE ALWAYS` (`lib/db/guard-triggers.ts`), never `ENABLE TRIGGER USER`.
 
 ### 2.4 Migration history (`drizzle/`)
 

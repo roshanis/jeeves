@@ -186,21 +186,25 @@ nothing to compress.
 
 ## 2. Should fix before a pilot
 
-### 2.0 The audit log is trigger-enforced, not privilege-enforced
+### 2.0 The audit log is trigger-enforced; the role split is documented and checked
 
-The append-only guarantee is a trigger (`drizzle/0002_audit_events_append_only.sql`),
-not a `REVOKE`/`GRANT` split: no migration revokes privileges. The runtime
-role is the table owner and the migrator uses the same role, so anyone holding
-the application's database credentials can `ALTER TABLE audit_events DISABLE
-TRIGGER` and rewrite history (`scripts/seed.ts` does exactly that for the
-reseed). **Production prerequisite:** a separate owner/migrator role, and a
-runtime role without ownership that holds only INSERT and SELECT on
-`audit_events`, the evidence tables and any other append-only table. Not built.
-When it is, the runtime role also needs to read the migration history, which
-the production boot check compares with the build:
-`GRANT USAGE ON SCHEMA drizzle TO <role>; GRANT SELECT ON drizzle.__drizzle_migrations TO <role>;`
-(the boot refuses with `migrations_unreadable` and names these grants when
-they are missing).
+The append-only guarantee is a trigger (`drizzle/0002_audit_events_append_only.sql`
+and the later guards), and since migration 0017 every guard trigger is
+`ENABLE ALWAYS`. A trigger does not bind the role that owns the table: an owner
+can `ALTER TABLE audit_events DISABLE TRIGGER` and rewrite history
+(`scripts/seed.ts` does exactly that for the reseed). Revoking `TRIGGER` from the
+application role would not stop it, since that privilege only governs creating
+triggers. The control is ownership: a separate owner/migrator role
+(`DATABASE_MIGRATION_URL`) and a runtime role that owns nothing and holds only
+INSERT and SELECT on `audit_events`, the evidence tables and `installation`.
+The role setup is in `docs/deploy.md` ("Database roles",
+`deploy/sql/jeeves-runtime-grants.sql`), and the production boot check refuses a
+runtime role that is a superuser or owns those tables unless
+`JEEVES_DB_ALLOW_OWNER_ROLE=1`. The runtime role also needs to read the
+migration history, which the grants file gives it
+(`GRANT USAGE ON SCHEMA drizzle ...; GRANT SELECT ON drizzle.__drizzle_migrations ...`;
+the boot refuses with `migrations_unreadable` and names these grants when they
+are missing). Not yet exercised on a hosted database.
 
 ### 2.1 No backup or restore procedure — DOCUMENTED 2026-09-12, not yet exercised
 
