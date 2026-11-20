@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTestDb, closeTestDb, type TestDb } from "../lib/db/test-client";
 import { resetDemo } from "./reset-demo";
 import { seedDatabase } from "./seed";
-import { initiatives, rateLimitBuckets, runBudget, sessions } from "../lib/db/schema";
+import { initiatives, rateLimitBuckets, runBudget, runBudgetWorkspace, sessions } from "../lib/db/schema";
 
 describe("scripts/reset-demo.ts", () => {
   let db: TestDb;
@@ -14,6 +14,7 @@ describe("scripts/reset-demo.ts", () => {
     await seedDatabase(db);
     await db.insert(sessions).values({ token: "t1", personaKey: "requester", workspaceId: "w1", expiresAt: Date.now() + 1000 });
     await db.insert(rateLimitBuckets).values({ key: "session:abc", tokens: 0, lastRefillMs: 1, lastTouchedMs: 1 });
+    await db.insert(runBudgetWorkspace).values({ day: "2026-07-01", workspaceId: "w1", tokensUsed: 50_000 });
   });
 
   afterEach(async () => {
@@ -25,6 +26,7 @@ describe("scripts/reset-demo.ts", () => {
     await resetDemo(db);
     expect(await db.select().from(sessions)).toHaveLength(0);
     expect(await db.select().from(runBudget)).toHaveLength(0);
+    expect(await db.select().from(runBudgetWorkspace)).toHaveLength(0);
     expect(await db.select().from(rateLimitBuckets)).toHaveLength(0);
     expect(await db.select().from(initiatives)).toHaveLength(12);
   });

@@ -35,6 +35,7 @@ import {
   reviewNotifications,
   riskAssessments,
   runBudget,
+  runBudgetWorkspace,
 } from "../lib/db/schema";
 import { rearmGuardTriggers } from "../lib/db/guard-triggers";
 import { isMain } from "./is-main";
@@ -368,6 +369,7 @@ async function seedInTransaction(db: SeedDb): Promise<RowCounts> {
   await db.delete(controlDefinitions);
   await db.delete(initiatives);
   await db.delete(runBudget);
+  await db.delete(runBudgetWorkspace);
 
   // --- Control catalog -----------------------------------------------
   for (const c of CONTROL_SEEDS) {
