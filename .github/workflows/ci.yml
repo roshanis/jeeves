@@ -183,7 +183,7 @@ jobs:
           docker network create "$CI_NETWORK"
           docker run -d --name jeeves-ci-db --network "$CI_NETWORK" \
             -e POSTGRES_USER=jeeves -e POSTGRES_PASSWORD="$CI_DB_PASSWORD" -e POSTGRES_DB=jeeves \
-            postgres:16-alpine
+            docker.io/library/postgres:16-alpine@sha256:1d5b02d3a9941fbd52437db4107f8c52d6297dac553ca1e5c299ebb3756b4857
           for i in $(seq 1 30); do
             docker exec jeeves-ci-db pg_isready -U jeeves -d jeeves && exit 0
             sleep 2
