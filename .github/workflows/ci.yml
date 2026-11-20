@@ -5,16 +5,20 @@
 # were only ever run by hand. This workflow makes the gate in CLAUDE.md §5
 # ("run full test suite, fix regressions") actually enforceable on a PR.
 #
-# Three jobs so a lint/type/unit failure reports without waiting on the e2e
+# Independent jobs, run in parallel, so a lint/type/unit failure reports without waiting on the e2e
 # build:
 #   verify    — typecheck, lint, unit tests WITH coverage (vitest.config.ts's
 #               thresholds fail the run on regression).
 #   e2e       — the Playwright golden path. playwright.config.ts owns its own
 #               webServer (db:seed && build && start on port 3117), so this job
 #               only installs the browser and runs the suite.
-#   container — the deploy/podman/Containerfile image builds. Build only: nothing
-#               is pushed. Nothing else exercises the Containerfile, so a COPY of
+#   container — the deploy/podman/Containerfile runner and migrator images build,
+#               then run against Postgres in production mode and must answer
+#               /api/health. Nothing is pushed. Before this, a COPY of
 #               a deleted path (public/, a667ec3) broke the image unnoticed.
+#   postgres-integrity — the real-PostgreSQL suite (npm run test:postgres) on a
+#               socket-only cluster started in the job. The unit tests run on
+#               PGlite, which has no roles and no real concurrency.
 #   production-smoke — starts a real production-mode server against a throwaway
 #               Postgres and checks the wire (scripts/smoke-production.ts). Every
 #               other job runs the demo, so a production-only failure (proxy.ts
@@ -120,17 +124,138 @@ jobs:
         run: node scripts/check-agent-bundle.cjs
 
   container:
-    name: Container image builds
+    name: Container image builds and runs
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      # Throwaway values for a database and a network that exist for this job
+      # only; nothing here guards anything.
+      CI_NETWORK: jeeves-ci
+      CI_DB_PASSWORD: jeeves-ci-only
     steps:
       - uses: actions/checkout@v4
 
       # The same command docs/deploy-podman.md gives, with docker in place of
       # podman. Build context is the repo root; .dockerignore keeps it small.
-      # No push, no registry login: this only proves the image can be built.
+      # No push, no registry login: images are built and run on this runner only.
       - name: Build image
         run: docker build -f deploy/podman/Containerfile -t jeeves:ci .
+
+      # A bare build skips this stage (it is not the last one), so a migrator
+      # that cannot reach drizzle/ or tsx broke unnoticed.
+      - name: Build migrator image
+        run: docker build -f deploy/podman/Containerfile --target migrator -t jeeves-migrator:ci .
+
+      - name: Start Postgres
+        run: |
+          docker network create "$CI_NETWORK"
+          docker run -d --name jeeves-ci-db --network "$CI_NETWORK" \
+            -e POSTGRES_USER=jeeves -e POSTGRES_PASSWORD="$CI_DB_PASSWORD" -e POSTGRES_DB=jeeves \
+            postgres:16-alpine
+          for i in $(seq 1 30); do
+            docker exec jeeves-ci-db pg_isready -U jeeves -d jeeves && exit 0
+            sleep 2
+          done
+          docker logs jeeves-ci-db
+          exit 1
+
+      - name: Run the migrator
+        run: |
+          docker run --rm --network "$CI_NETWORK" \
+            -e DATABASE_URL="postgres://jeeves:${CI_DB_PASSWORD}@jeeves-ci-db:5432/jeeves" \
+            jeeves-migrator:ci
+
+      # Production mode: no mode variable is passed (unset means
+      # production), so this runs the image's real boot checks. The image,
+      # not the checkout, serves the request, with the container's read-only
+      # root filesystem as an operator would run it.
+      - name: Run the image and wait for /api/health
+        run: |
+          # JEEVES_DB_ALLOW_OWNER_ROLE: throwaway CI database with one role that owns everything.
+          docker run -d --name jeeves-ci-app --network "$CI_NETWORK" -p 3000:3000 \
+            --read-only --tmpfs /tmp \
+            -e DATABASE_URL="postgres://jeeves:${CI_DB_PASSWORD}@jeeves-ci-db:5432/jeeves" \
+            -e JEEVES_DB_ALLOW_UNVERIFIED=same-host \
+            -e JEEVES_DB_ALLOW_OWNER_ROLE=1 \
+            -e DATA_PROVIDER=db \
+            -e JEEVES_COOKIE_SECRET="$(openssl rand -hex 32)" \
+            -e APP_BASE_URL=https://jeeves.example.test \
+            -e JEEVES_TENANT_ID=ci \
+            -e JEEVES_TRUSTED_PROXY_HOPS=none \
+            jeeves:ci
+          for i in $(seq 1 45); do
+            if [ "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/api/health)" = "200" ]; then
+              echo "GET /api/health answered 200"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "GET /api/health did not answer 200 within 90 seconds"
+          docker logs jeeves-ci-app
+          docker logs jeeves-ci-db
+          exit 1
+
+      - name: Container logs
+        if: ${{ failure() }}
+        run: |
+          docker logs jeeves-ci-app || true
+          docker logs jeeves-ci-db || true
+
+  postgres-integrity:
+    name: Real PostgreSQL integrity tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+
+      # tests/postgres/private-postgres.ts connects only to a socket-only
+      # cluster whose directory is named jeeves-review-pg-*, with the socket in
+      # a directory called "socket" next to "data", and a database named
+      # jeeves_review_integrity_*. It refuses a TCP listener.
+      - name: Start a socket-only PostgreSQL cluster
+        run: |
+          PG_BIN=$(ls -d /usr/lib/postgresql/*/bin 2>/dev/null | sort -V | tail -n 1 || true)
+          if [ -z "$PG_BIN" ]; then
+            sudo apt-get update
+            sudo apt-get install -y postgresql-16
+            PG_BIN=/usr/lib/postgresql/16/bin
+          fi
+          ROOT="${RUNNER_TEMP}/jeeves-review-pg-ci"
+          DB="jeeves_review_integrity_ci_${GITHUB_RUN_ID}"
+          mkdir -p "$ROOT/socket"
+          "$PG_BIN/initdb" -D "$ROOT/data" -U jeeves_ci --auth=trust --no-sync
+          "$PG_BIN/pg_ctl" -D "$ROOT/data" -l "$ROOT/postgres.log" -w \
+            -o "-c listen_addresses='' -c unix_socket_directories=$ROOT/socket -c fsync=off" start
+          "$PG_BIN/createdb" -h "$ROOT/socket" -U jeeves_ci "$DB"
+          {
+            echo "PG_BIN=$PG_BIN"
+            echo "PG_CI_ROOT=$ROOT"
+            echo "JEEVES_REVIEW_TEST_PG_MARKER=disposable-review-integrity"
+            echo "JEEVES_REVIEW_TEST_PG_SOCKET=$ROOT/socket"
+            echo "JEEVES_REVIEW_TEST_PG_DATABASE=$DB"
+            echo "JEEVES_REVIEW_TEST_PG_USER=jeeves_ci"
+          } >> "$GITHUB_ENV"
+
+      - name: Run PostgreSQL integrity tests
+        run: npm run test:postgres
+
+      - name: Postgres log
+        if: ${{ failure() }}
+        run: cat "$PG_CI_ROOT/postgres.log" || true
+
+      - name: Stop PostgreSQL
+        if: ${{ always() }}
+        run: '"$PG_BIN/pg_ctl" -D "$PG_CI_ROOT/data" -m immediate stop || true'
 
   production-smoke:
     name: Production-mode smoke test
