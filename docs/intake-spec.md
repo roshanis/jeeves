@@ -201,6 +201,8 @@ seed-spec §6, baseline ~60%).
 | `ADV-05` | `evidenceAttachments` | array length ≥ 1 when any REQUIRED-FOR-TIER evidence-eligible control applies (§1h "Sometimes" rows) | "No evidence pre-attached — attaching existing artifacts (vendor addendum, model card, etc.) speeds up review." |
 | `ADV-06` | `modelType` | is set | "Model type not specified — helps route to the right technical reviewer." |
 
+_`ADV-05` is defined in `lib/intake/completeness.ts` but not scored (it is left out of the percentage and the gap list): the intake form cannot attach evidence yet, so the advisory could never be satisfied. It returns when intake can attach evidence._
+
 ---
 
 ## 3. `IntakeVersion` JSON payload shape

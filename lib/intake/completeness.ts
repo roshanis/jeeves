@@ -277,6 +277,8 @@ interface AdvisoryRuleCheck {
   /** Whether this advisory rule applies at all (defaults to always true). */
   applies: (payload: IntakePayload, tier: Tier | undefined) => boolean;
   passes: (payload: IntakePayload, tier: Tier | undefined) => boolean;
+  /** `false` keeps the rule defined but out of the percentage and the gap list. */
+  scored?: boolean;
 }
 
 const ADVISORY_RULES: AdvisoryRuleCheck[] = [
@@ -310,6 +312,11 @@ const ADVISORY_RULES: AdvisoryRuleCheck[] = [
   },
   {
     ruleId: "ADV-05",
+    // Not scored: IntakeForm has no control that writes evidenceAttachments
+    // (evidence is attached on the Evidence tab and never updates the intake
+    // payload), so the meter would list an advisory nobody can act on and top
+    // out below 100%. Turn it back on once intake can attach evidence.
+    scored: false,
     field: "evidenceAttachments",
     message:
       "No evidence pre-attached — attaching existing artifacts (vendor addendum, model card, etc.) speeds up review.",
@@ -376,6 +383,7 @@ export function evaluateCompleteness(payload: IntakePayload, tier?: Tier): Compl
   let advEvaluated = 0;
   let advPassed = 0;
   for (const rule of ADVISORY_RULES) {
+    if (rule.scored === false) continue;
     if (!rule.applies(payload, tier)) continue;
     advEvaluated += 1;
     const ok = rule.passes(payload, tier);
