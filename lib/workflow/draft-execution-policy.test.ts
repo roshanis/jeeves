@@ -5,19 +5,34 @@ import { draftBudgetPolicy } from "./draft-execution-policy";
 
 afterEach(() => vi.unstubAllEnvs());
 
+import { estimateDraftAttemptTokens } from "../agents/token-estimate";
+
 describe("resolved draft execution budget", () => {
+  const input = {
+    reviewCycleId: "cycle-1", domain: "legal" as const,
+    intake: { initiativeId: "i", intakeVersionId: "iv", answers: { useCase: "Synthetic test" } },
+    policyContext: ["Policy source: docs/policies/legal.md\nSynthetic policy text"],
+  };
+
   it.each([
-    ["test-placeholder", "ai-sdk", "1", 1500],
-    ["test-placeholder", "unknown", "1", 1500],
-    ["test-placeholder", "agents-sdk", "0", 1500],
-    ["test-placeholder", " agents-sdk ", "1", 15_000],
-  ])("reserves actual attempt capacity for key=%s runtime=%s deep=%s", (key, runtime, deep, tokensPerAttempt) => {
+    ["test-placeholder", "ai-sdk", "1", false],
+    ["test-placeholder", "unknown", "1", false],
+    ["test-placeholder", "agents-sdk", "0", false],
+    ["test-placeholder", " agents-sdk ", "1", true],
+  ])("sizes an attempt from its built prompt for key=%s runtime=%s deep=%s", (key, runtime, deep, isDeep) => {
     vi.stubEnv("OPENAI_API_KEY", key);
     vi.stubEnv("JEEVES_AGENT_RUNTIME", runtime);
     vi.stubEnv("JEEVES_DEEP_REVIEW", deep);
-    expect(draftBudgetPolicy(new Date("2026-09-20T05:00:00Z"))).toEqual({
-      day: "2026-09-20", dailyCap: 500_000, workspaceCap: 50_000, tokensPerAttempt,
-    });
+    const policy = draftBudgetPolicy(new Date("2026-09-20T05:00:00Z"));
+    expect(policy).toMatchObject({ day: "2026-09-20", dailyCap: 500_000, workspaceCap: 50_000 });
+    expect(policy?.estimateAttempt?.(input)).toBe(estimateDraftAttemptTokens(input, isDeep));
+  });
+
+  it("reserves more for a bigger prompt", () => {
+    vi.stubEnv("OPENAI_API_KEY", "test-placeholder");
+    const policy = draftBudgetPolicy();
+    const bigger = { ...input, policyContext: ["x".repeat(40_000)] };
+    expect(policy!.estimateAttempt!(bigger) - policy!.estimateAttempt!(input)).toBeGreaterThan(9_000);
   });
 
   it.each(["", " \t "])("reserves nothing when no key is set (key=%j): the offline mock answers", (key) => {

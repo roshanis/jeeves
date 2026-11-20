@@ -680,11 +680,12 @@ export function budgetFailure(scope: BudgetScope): GuardFailure {
  * share and the install-wide cap in one transaction. Does nothing when the mock
  * adapter will answer. Returns a failure when either cap is spent.
  */
-export async function reserveDailyBudget(tokens: number, workspaceId: string | null, day: string = todayUtc()): Promise<GuardFailure | null> {
+export async function reserveDailyBudget(tokens: number | (() => number), workspaceId: string | null, day: string = todayUtc()): Promise<GuardFailure | null> {
   if (!modelWillBeCalled()) return null;
   // runMutationGuard has already refused a session without a workspace.
   if (!workspaceId) throw new Error("A budget reservation needs a workspace");
-  const result = await reserveForWorkspace(getDb(), { day, workspaceId, tokens });
+  // Sized lazily: building the prompt is only worth doing when a call will be billed.
+  const result = await reserveForWorkspace(getDb(), { day, workspaceId, tokens: typeof tokens === "function" ? tokens() : tokens });
   return result.granted ? null : budgetFailure(result.scope);
 }
 

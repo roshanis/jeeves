@@ -23,6 +23,8 @@
  * 502/504/499: as app/api/chat/auditor/route.ts's PortFailure mapping.
  */
 import { z } from "zod";
+import { AgentInitializationError } from "@/lib/agents/initialization-error";
+import { estimateIntakeTokens } from "@/lib/agents/token-estimate";
 import { getAgentPort } from "@/lib/agents";
 import type { AgentPort, PortFailure } from "@/lib/agents/ports";
 import { agentInitializationResponse, llmNotConfigured } from "@/lib/services/agent-error-response";
@@ -175,15 +177,6 @@ export async function POST(req: Request): Promise<Response> {
   }
   const json = guard.json;
 
-  // Budget reservation must scale with what we actually send to the
-  // provider: system prompt + completion overhead (600 tokens of headroom)
-  // plus the real conversation/partialPayload text, at the standard ~4
-  // chars-per-token heuristic. A flat estimate would let large-but-legal
-  // inputs (e.g. a full 50-message conversation) blow past the atomic daily
-  // budget's intended bound on real LLM spend.
-  const estimatedTokens =
-    600 + Math.ceil((flattenedConversation.length + serializedPartialPayload.length) / 4);
-
   // Guard-first, then role-check (app/api/admin/threshold/route.ts's
   // underlying admin-service.ts precedent) — role always comes from the
   // session-resolved actor, never from the request body.
@@ -198,8 +191,21 @@ export async function POST(req: Request): Promise<Response> {
 
   // Reserve only now that the caller is authenticated, is a requester and
   // sent a valid body: a refused call never spends the shared daily cap.
+  // The estimate is sized from the prompt that will actually be sent (its
+  // system prompt, the conversation and the payload), so a large legal request
+  // reserves more than a small one; see lib/agents/token-estimate.ts.
   if (!noLlm) {
-    const budget = await reserveDailyBudget(estimatedTokens, guard.workspaceId);
+    const size = () => {
+      try { return estimateIntakeTokens(parsed.data); } catch (error) { throw new AgentInitializationError(error); }
+    };
+    let budget: GuardFailure | null;
+    try {
+      budget = await reserveDailyBudget(size, guard.workspaceId);
+    } catch (error) {
+      const unavailable = agentInitializationResponse(error);
+      if (unavailable) return unavailable;
+      throw error;
+    }
     if (budget) return guardFailureResponse(budget);
   }
 

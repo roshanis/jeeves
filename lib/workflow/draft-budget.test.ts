@@ -7,7 +7,9 @@ import { createMockAgentPort } from "../agents/mock-adapter";
 import { createTestDb, closeTestDb, type TestDb } from "../db/test-client";
 import { auditEvents, initiatives, intakeVersions, reviewCycles, reviewDecisions, riskAssessments, runBudget, runBudgetWorkspace } from "../db/schema";
 import { runReviewAgent } from "../services/initiative-service";
+import { estimateDraftAttemptTokens } from "../agents/token-estimate";
 import { draftBudgetPolicy } from "./draft-execution-policy";
+import { loadReviewContext } from "./review-context";
 import { startDraftRun } from "./review-run";
 
 const at = new Date("2026-09-19T10:00:00Z");
@@ -100,16 +102,20 @@ describe("draft attempt reservations", () => {
   });
 
   it.each([
-    { runtime: "openai", deep: "1", estimate: 1_500 },
-    { runtime: "agents-sdk", deep: "0", estimate: 1_500 },
-    { runtime: "agents-sdk", deep: "1", estimate: 15_000 },
-  ])("reserves each retry before invocation with $runtime deep=$deep estimate=$estimate", async ({ runtime, deep, estimate }) => {
+    { runtime: "openai", deep: "1", isDeep: false },
+    { runtime: "agents-sdk", deep: "0", isDeep: false },
+    { runtime: "agents-sdk", deep: "1", isDeep: true },
+  ])("reserves each retry, sized from the built prompt, before invocation with $runtime deep=$deep", async ({ runtime, deep, isDeep }) => {
     vi.stubEnv("OPENAI_API_KEY", "test-placeholder-never-sent");
     vi.stubEnv("JEEVES_AGENT_RUNTIME", runtime);
     vi.stubEnv("JEEVES_DEEP_REVIEW", deep);
     const policy = draftBudgetPolicy(at);
-    expect(policy).toEqual({ ...budget, tokensPerAttempt: estimate });
-    expect(policy).toBeDefined();
+    expect(policy).toMatchObject({ day: budget.day, dailyCap: budget.dailyCap, workspaceCap: budget.workspaceCap });
+    // The same prompt the adapter will build for this claim: real intake, real policy file.
+    const [decision] = await db.select().from(reviewDecisions).where(eq(reviewDecisions.id, "review-legal"));
+    const context = await loadReviewContext(db, decision!.cycleId, "legal");
+    const estimate = estimateDraftAttemptTokens({ reviewCycleId: "cycle", domain: "legal", intake: context.intake, policyContext: context.policyContext, controlIds: context.metadata.controlIds as string[] }, isDeep);
+    expect(estimate).toBeGreaterThan(1_500);
     const observed: number[] = [];
     const { port, draftReview } = mockPort();
     draftReview.mockImplementation(async (input) => {
@@ -118,7 +124,7 @@ describe("draft attempt reservations", () => {
         ? { ok: false, error: { kind: "provider", message: "Transient synthetic provider failure", retryable: true } }
         : { ok: true, value: success(input) };
     });
-    const result = await runReviewAgent(db, "cycle", "legal", reviewer, "workspace-a", port, { ...options, budget: policy, maxAttempts: 3 });
+    const result = await runReviewAgent(db, "cycle", "legal", reviewer, "workspace-a", port, { ...options, budget: { ...policy!, workspaceCap: 10 * estimate }, maxAttempts: 3 });
     expect(result.status).toBe("drafted");
     expect(draftReview).toHaveBeenCalledTimes(2);
     expect(observed).toEqual([estimate, estimate * 2]);
@@ -127,6 +133,18 @@ describe("draft attempt reservations", () => {
     expect(new Set(receipts.map((event) => event.metadata?.attemptId)).size).toBe(1);
     expect(receipts.map((event) => event.metadata?.attempt).sort()).toEqual([1, 2]);
     expect(receipts.every((event) => event.actor === reviewer.id && event.metadata?.estimatedTokens === estimate)).toBe(true);
+  });
+
+  it("stops at the workspace share when each attempt is sized from its prompt", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "test-placeholder-never-sent");
+    const policy = draftBudgetPolicy(at)!;
+    const { port, draftReview } = mockPort();
+    draftReview.mockResolvedValue({ ok: false, error: { kind: "provider", message: "Transient", retryable: true } });
+    const context = await loadReviewContext(db, "cycle", "legal");
+    const one = estimateDraftAttemptTokens({ reviewCycleId: "cycle", domain: "legal", intake: context.intake, policyContext: context.policyContext, controlIds: context.metadata.controlIds as string[] }, false);
+    const result = await startDraftRun(db, "i", ["legal"], port, { ...options, budget: { ...policy, workspaceCap: one + 100 }, maxAttempts: 3 });
+    expect(result.outcomes[0]).toMatchObject({ status: "failed", error: { kind: "budget-exhausted", code: "workspace_budget_exhausted" } });
+    expect(draftReview).toHaveBeenCalledTimes(1);
   });
 
   it("does not invoke or reserve when the day is already exhausted", async () => {

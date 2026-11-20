@@ -6,7 +6,7 @@ import { auditEvents, reviewCycles, reviewDecisions } from "../db/schema";
 import type { Actor, Domain } from "../domain/types";
 import { assertLlmConfigured, getAgentPort } from "../agents";
 import { AgentInitializationError } from "../agents/initialization-error";
-import type { AgentPort, DraftReviewOutput, PortFailure, PortResult } from "../agents/ports";
+import type { AgentPort, DraftReviewInput, DraftReviewOutput, PortFailure, PortResult } from "../agents/ports";
 import { lockCurrentReviewCycle, ReviewIntegrityError, type ReviewTx } from "../services/review-integrity";
 import { BUDGET_REFUSAL, reserveForWorkspace } from "../security/budget";
 import { loadReviewContext } from "./review-context";
@@ -83,6 +83,9 @@ async function claimDomain(db: Db, cycleId: string, domain: Domain, force: boole
 class ReservationInterrupted extends Error {
   constructor(readonly reason: "cancelled" | "timed-out") { super(reason); }
 }
+function draftInput(claim: Claim): DraftReviewInput {
+  return {reviewCycleId:claim.row.cycleId,domain:claim.row.domain as Domain,intake:claim.context.intake,policyContext:claim.context.policyContext,controlIds:claim.context.metadata.controlIds as string[]};
+}
 async function reserveAttempt(db: Db, claim: Claim, options: StartDraftRunOptions, attempt: number, deadline: number): Promise<"ready" | "superseded" | "budget-exhausted" | "workspace-budget-exhausted" | "cancelled" | "timed-out"> {
   const requireTime = () => {
     if (options.signal?.aborted) throw new ReservationInterrupted("cancelled");
@@ -97,7 +100,9 @@ async function reserveAttempt(db: Db, claim: Claim, options: StartDraftRunOption
     if (!row || row.activeAttemptId !== claim.id || row.revision !== claim.row.revision || !row.activeAttemptExpiresAt || row.activeAttemptExpiresAt <= now || row.status === "signed") return "superseded";
     requireTime();
     if (options.budget) {
-      const { day, tokensPerAttempt, dailyCap, workspaceCap } = options.budget;
+      const { day, dailyCap, workspaceCap } = options.budget;
+      // Sized from the prompt this attempt will send (same inputs as invoke()).
+      const tokensPerAttempt = options.budget.estimateAttempt?.(draftInput(claim)) ?? options.budget.tokensPerAttempt;
       const reservationId = `evt-budget-${claim.id}-${attempt}`;
       const [existing] = await tx.select({id: auditEvents.id}).from(auditEvents).where(eq(auditEvents.id, reservationId));
       if (existing) return "ready";
@@ -128,7 +133,7 @@ async function invoke(port: AgentPort, claim: Claim, options: StartDraftRunOptio
     options.signal?.addEventListener("abort", abort, {once:true});
     timer = setTimeout(() => { controller.abort(); resolve({ok:false,error:timeout(timeoutMs)}); }, timeoutMs);
   });
-  const call = Promise.resolve().then(() => port.draftReview({reviewCycleId:claim.row.cycleId,domain:claim.row.domain as Domain,intake:claim.context.intake,policyContext:claim.context.policyContext,controlIds:claim.context.metadata.controlIds as string[]},
+  const call = Promise.resolve().then(() => port.draftReview(draftInput(claim),
     {signal:controller.signal,timeoutMs})).catch((): DraftResult => ({ok:false,error:{kind:"provider",message:"Draft generation failed. Retry this domain.",retryable:true}}));
   try { return await Promise.race([call,stopped]); }
   finally { if(timer)clearTimeout(timer); options.signal?.removeEventListener("abort",abort); }

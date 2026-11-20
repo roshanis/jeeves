@@ -324,7 +324,10 @@ conditional approval — against a real (mocked-LLM) run.
   which cap it was (`workspace_budget_exhausted` or `daily_budget_exhausted`)
   and that it resets at 00:00 UTC. The keyless mock adapter makes no provider
   call, so it reserves nothing and spends no budget; it is bounded by the rate
-  limits instead.
+  limits instead. Reservations are estimates from the real prompt length (about
+  9,000-10,000 tokens for one standard draft attempt), so the public demo allows
+  roughly five draft attempts per workspace and six full runs a day across the
+  installation; see `docs/environment-reference.md`.
 - **Requester-ownership and reviewer-domain authorization** — a reviewer can
   only sign/return reviews in their own assigned domain; a requester can
   only submit/edit their own initiatives.

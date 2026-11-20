@@ -5,6 +5,7 @@
  * app/api/__tests__/routes.test.ts's conventions for issuing a session,
  * exhausting the rate limiter/budget, and asserting on JSON error shapes.
  */
+import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { vi } from "vitest";
 import { createTestDb, closeTestDb, type TestDb } from "@/lib/db/test-client";
@@ -359,6 +360,10 @@ describe("POST /api/chat/auditor", () => {
       expect(Math.max(...sent.groundingRows.map((r) => r.detail.length))).toBeLessThanOrEqual(500);
       const reserved = (await getBudgetStoreForTests().getUsed(day)) - before;
       expect(reserved).toBeGreaterThanOrEqual(Math.ceil(JSON.stringify(sent.groundingRows).length / 4));
+      // The reservation also counts the 5 KB system prompt the model receives (agents-F5).
+      expect(reserved).toBeGreaterThanOrEqual(
+        Math.ceil((JSON.stringify(sent.groundingRows).length + readFileSync("agents/auditor/instructions.md", "utf8").length) / 4),
+      );
     } finally {
       portSpy.mockRestore();
       providerSpy.mockRestore();
