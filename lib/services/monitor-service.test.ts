@@ -56,6 +56,16 @@ async function fwaAnomalyDetector(db: TestDb) {
   return { init: init!, dep: dep! };
 }
 
+/**
+ * Two seeded deployments (pa-correspondence-model, callcenter-qa-scorer) have
+ * eval data but no Q-01, so the first monitor run attaches it (L12). Tests
+ * that count transactions or evaluations attach it first, at a time before any
+ * seeded breach, so their own run sees a stable set.
+ */
+async function attachSeededQ01(db: TestDb): Promise<void> {
+  await runMonitor(db, SYSTEM_ACTOR, BASE_DATE_MS, UNSCOPED_WORKSPACE);
+}
+
 describe("lib/services/monitor-service", () => {
   let db: TestDb;
 
@@ -322,6 +332,56 @@ describe("lib/services/monitor-service", () => {
     });
   });
 
+  describe("runMonitor — Q-01 attaches when eval data first arrives (L12)", () => {
+    async function q01Rows(db: TestDb, deploymentId: string) {
+      return (await db.select().from(effectiveControls).where(eq(effectiveControls.deploymentId, deploymentId))).filter((r) => r.controlId === "Q-01");
+    }
+    async function addEvalSeries(dep: { id: string }, values: number[]) {
+      for (const [i, value] of values.entries()) {
+        await db.insert(observations).values({
+          id: `obs-l12-${i}`, deploymentId: dep.id, kind: "eval_hallucination",
+          ts: new Date(BASE_DATE_MS + (20 + i) * DAY_MS), value,
+        });
+      }
+    }
+
+    it("a deployment with eval data and no Q-01 gets Q-01 on the first run, then it is evaluated as usual", async () => {
+      const { dep } = await fwaAnomalyDetector(db);
+      expect(await q01Rows(db, dep.id)).toHaveLength(0);
+      await addEvalSeries(dep, [0.01, 0.01, 0.01]);
+
+      const first = await runMonitor(db, SYSTEM_ACTOR, BASE_DATE_MS + 30 * DAY_MS, UNSCOPED_WORKSPACE);
+      const rows = await q01Rows(db, dep.id);
+      expect(rows).toHaveLength(1);
+      expect(first.errors).toEqual([]);
+      const events = (await db.select().from(auditEvents).where(eq(auditEvents.action, "effective_control_attached")))
+        .filter((e) => (e.metadata as { deploymentId: string }).deploymentId === dep.id);
+      expect(events).toHaveLength(1);
+      expect(events[0]!.metadata).toMatchObject({ controlId: "Q-01", deploymentId: dep.id });
+
+      // Evaluated in that same run, and not attached a second time.
+      expect(first.evaluated).toBeGreaterThanOrEqual(4);
+      await runMonitor(db, SYSTEM_ACTOR, BASE_DATE_MS + 30 * DAY_MS, UNSCOPED_WORKSPACE);
+      expect(await q01Rows(db, dep.id)).toHaveLength(1);
+    });
+
+    it("an attached Q-01 is evaluated in the same run: a sustained breach opens an incident", async () => {
+      const { dep } = await fwaAnomalyDetector(db);
+      await addEvalSeries(dep, [0.99, 0.99, 0.99, 0.99, 0.99, 0.99]);
+      const result = await runMonitor(db, SYSTEM_ACTOR, BASE_DATE_MS + 40 * DAY_MS, UNSCOPED_WORKSPACE);
+      expect(result.breaches.find((b) => b.deploymentId === dep.id)).toMatchObject({ isNew: true });
+    });
+
+    it("a deployment with no eval data gets nothing", async () => {
+      const { dep } = await fwaAnomalyDetector(db);
+      await runMonitor(db, SYSTEM_ACTOR, PLUS_14D, UNSCOPED_WORKSPACE);
+      expect(await q01Rows(db, dep.id)).toHaveLength(0);
+      // Only the seeded deployments that already have eval data were attached.
+      const events = await db.select().from(auditEvents).where(eq(auditEvents.action, "effective_control_attached"));
+      expect(events.map((e) => (e.metadata as { deploymentId: string }).deploymentId)).not.toContain(dep.id);
+    });
+  });
+
   describe("runMonitor — wall-clock stamps", () => {
     it("stamps audit events and incident rows with the wall clock and keeps nowTs as metadata.evaluatedAt", async () => {
       const { init, dep } = await memberChatCopilot(db);
@@ -381,7 +441,7 @@ describe("lib/services/monitor-service", () => {
         });
       }
       const second = await runMonitor(db, SYSTEM_ACTOR, BASE_DATE_MS + 40 * DAY_MS, UNSCOPED_WORKSPACE);
-      expect(second).toMatchObject({ evaluated: 1, errors: [], alreadyKnown: 0 });
+      expect(second).toMatchObject({ errors: [], alreadyKnown: 0 });
       expect(second.incidentsCreated).toBe(1);
       expect(second.alreadyKnown).toBe(0);
       const [after] = await db.select().from(initiatives).where(eq(initiatives.id, init.id));
@@ -443,6 +503,7 @@ describe("lib/services/monitor-service", () => {
     });
 
     it("a CAS conflict against an incident another run just recorded is reported as already known, not as a failure", async () => {
+      await attachSeededQ01(db);
       const { dep } = await memberChatCopilot(db);
 
       /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -479,6 +540,7 @@ describe("lib/services/monitor-service", () => {
     });
 
     it("a concurrent write that changes the initiative's state before the breach-pause CAS update is recorded in result.errors and does not abort the run (no partial write for that candidate)", async () => {
+      await attachSeededQ01(db);
       const { init, dep } = await memberChatCopilot(db);
 
       /* eslint-disable @typescript-eslint/no-explicit-any */

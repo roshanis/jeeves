@@ -275,9 +275,68 @@ export async function runMonitor(
     }
   }
 
+  // Q-01 is attached by the monitor, not at deploy time: the first time a
+  // deployed initiative has an eval_hallucination series and no Q-01 yet.
+  // Without eval data there is nothing to evaluate, so nothing is attached.
+  if (def && candidates.length > 0) {
+    const kind = def.observationKind ?? "eval_hallucination";
+    const withData = new Set(
+      (
+        await db
+          .selectDistinct({ deploymentId: observations.deploymentId })
+          .from(observations)
+          .where(and(inArray(observations.deploymentId, candidates.map((c) => c.deployment.id)), eq(observations.kind, kind)))
+      ).map((r) => r.deploymentId),
+    );
+    for (const { deployment, initiative } of candidates) {
+      if (!withData.has(deployment.id) || (ecByDeployment.get(deployment.id) ?? []).length > 0) continue;
+      try {
+        const attached = await db.transaction(async (tx) => {
+          // Re-check inside the transaction so overlapping runs attach it once.
+          const [existing] = await tx
+            .select({ id: effectiveControls.id })
+            .from(effectiveControls)
+            .where(and(eq(effectiveControls.deploymentId, deployment.id), eq(effectiveControls.controlId, RUNTIME_CONTROL_ID)))
+            .limit(1);
+          if (existing) return null;
+          const row = {
+            id: `ec-${randomUUID()}`,
+            deploymentId: deployment.id,
+            controlId: RUNTIME_CONTROL_ID,
+            version: 1,
+            status: "pending",
+            thresholdOverride: null,
+            evidence: null,
+            evidenceAt: null,
+            dueAt: null,
+            remediationOwner: def.remediationOwner,
+            createdAt: new Date(),
+          };
+          await tx.insert(effectiveControls).values(row);
+          await tx.insert(auditEvents).values({
+            id: `evt-${randomUUID()}`,
+            initiativeId: initiative.id,
+            ts: new Date(),
+            actor: SYSTEM_ACTOR.id,
+            actorRole: SYSTEM_ACTOR.role,
+            action: "effective_control_attached",
+            detail: `Attached ${RUNTIME_CONTROL_ID} to deployment ${deployment.id}: eval data first seen.`,
+            before: null,
+            after: null,
+            metadata: { controlId: RUNTIME_CONTROL_ID, deploymentId: deployment.id },
+          });
+          return row;
+        });
+        if (attached) ecByDeployment.set(deployment.id, [attached as typeof effectiveControls.$inferSelect]);
+      } catch (err) {
+        errors.push({ initiativeId: initiative.id, deploymentId: deployment.id, message: redactDbError(err).message });
+      }
+    }
+  }
+
   for (const { deployment, initiative, tier } of candidates) {
-    // Q-01 effective control (may not exist for initiatives without an
-    // eval_hallucination series, e.g. seed #10/#5/#6/#12 profiles).
+    // Q-01 effective control (absent until the first eval_hallucination
+    // observation is seen; attached just above).
     const ecRows = ecByDeployment.get(deployment.id) ?? [];
     if (ecRows.length === 0) continue;
     const ec = currentControlRevisions(ecRows)[0]!;

@@ -1514,7 +1514,8 @@ export interface GenerateEffectiveControlsResult {
 
 /**
  * Selects every `control_definitions` row (excluding the runtime-only Q-01,
- * which attaches at breach-monitor time, not review time) whose
+ * which the breach monitor attaches the first time it sees an
+ * eval_hallucination series for the deployment — not at review or deploy time) whose
  * `applicability` matches the initiative's tier + overlay flags, and writes
  * one versioned `effective_controls` row per match against the initiative's
  * most recent deployment. If no deployment exists yet, a placeholder
