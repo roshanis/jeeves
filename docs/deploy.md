@@ -1,7 +1,7 @@
 # Jeeves — Deployment Runbook
 
 This is the practical "how do I actually run this" doc. It covers running the
-demo locally, deploying it to Vercel with Neon Postgres, the known gaps you
+demo locally, deploying it to Vercel with Supabase or Neon Postgres, the known gaps you
 should be honest about if you show this to anyone, and a demo-day checklist.
 
 Jeeves is a **fictional demo**: "Meridian Health" is not a real organization,
@@ -207,6 +207,30 @@ npm run start        # next start (after build)
    Vercel dashboard/CLI). Visit the deployed URL and confirm the portfolio
    board renders the 12 seeded initiatives before sharing the link further.
 
+### Supabase
+
+The live demo runs on Supabase (see
+[`DEPLOYED-DEMO-REPAIR-2026-09-20.md`](./DEPLOYED-DEMO-REPAIR-2026-09-20.md));
+Neon stays a supported provider. For a Supabase project:
+
+- Connect the Vercel Supabase integration. It supplies `POSTGRES_URL`, which
+  is the transaction pooler (port 6543) and is right for runtime traffic.
+- Set `DATABASE_MIGRATION_URL` to the **direct or session-pooler connection on
+  port 5432**. The transaction pooler cannot run migrations and `db:migrate`
+  refuses it.
+- `npm run db:migrate` applies the API-role lockdown itself. Supabase serves
+  the public schema through its Data API to the `anon` and `authenticated`
+  roles and grants them every new table by default, so migration 0016 and a
+  step after every migrate run enable row level security on each Jeeves table
+  and revoke all access from `PUBLIC`, `anon` and `authenticated`, including
+  the tables' sequences. A table a later migration adds is covered by the same
+  run. On a database without both roles (Neon, RDS, Podman) the step does
+  nothing. If it fails, `db:migrate` exits non-zero and names it; the database
+  is then not locked down, so fix the cause and run it again.
+- Leave the Data API unused: do not add policies or grants for `anon` or
+  `authenticated`, and do not expose the anon key to anything that does not need
+  it. Jeeves reaches the database only through its own server connection.
+
 ---
 
 ## 3. KNOWN GAPS — read this before you rely on this in production
@@ -302,6 +326,10 @@ different problems.
    `npm run db:migrate` is non-destructive and tested as such
    (`lib/db/migrate.test.ts`), but a branch costs nothing and covers the case
    where the migration is correct and the *schema change* is the mistake.
+4. **On Supabase, backups and point-in-time recovery are Supabase's** (the
+   Supabase recipe below). A restored database must be migrated again:
+   run `npm run db:migrate` against it before the app uses it, so the API-role
+   lockdown (section 2, Supabase) is applied to the restored tables.
 3. **Never point `npm run db:seed` at a database with real data.** It wipes
    every seeded table and disables the `audit_events` append-only triggers to
    do it. The `ALLOW_SEED=1` guard applies only when `NODE_ENV=production` is

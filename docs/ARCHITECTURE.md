@@ -33,7 +33,8 @@ state transition that matters is performed by application code against
 Postgres, never inside an adapter.
 
 The stack is Next.js (App Router) + TypeScript, Tailwind + shadcn/ui,
-Recharts, Neon Postgres + Drizzle ORM, and the Vercel AI SDK (behind
+Recharts, Postgres + Drizzle ORM (the live demo runs on Supabase, per
+[`DEPLOYED-DEMO-REPAIR-2026-09-20.md`](./DEPLOYED-DEMO-REPAIR-2026-09-20.md); Neon is supported), and the Vercel AI SDK (behind
 app-owned ports) — see §3 for why eve was evaluated and rejected at the P0
 gate. All LLM calls are mocked in tests and the app runs fully keyless by
 default (§3, §7).
@@ -135,6 +136,7 @@ path.
 | `0011_evidence_submission.sql` | Evidence documents, bindings and submissions (`docs/evidence-submission.md`) |
 | `0012_review_integrity.sql` | Review revision and signer/source integrity columns |
 | `0013_review_notifications.sql` | Review-request notifications |
+| `0016_supabase_api_lockdown.sql` | Hand-written: RLS on and API-role revokes for every Jeeves table, only where Supabase's `anon` and `authenticated` roles exist |
 
 `drizzle/` is the source of truth: list it for the current set. `0001`–`0004`
 and most later files are hand-written rather than `drizzle-kit`-generated
