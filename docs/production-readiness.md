@@ -196,7 +196,9 @@ can `ALTER TABLE audit_events DISABLE TRIGGER` and rewrite history
 application role would not stop it, since that privilege only governs creating
 triggers. The control is ownership: a separate owner/migrator role
 (`DATABASE_MIGRATION_URL`) and a runtime role that owns nothing and holds only
-INSERT and SELECT on `audit_events`, the evidence tables and `installation`.
+INSERT and SELECT on `audit_events`, the evidence documents and assessments and
+`installation` (plus UPDATE, never DELETE, on `evidence_packets`, whose drafts
+are revised in place until submitted).
 The role setup is in `docs/deploy.md` ("Database roles",
 `deploy/sql/jeeves-runtime-grants.sql`), and the production boot check refuses a
 runtime role that is a superuser or owns those tables unless
