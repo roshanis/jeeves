@@ -202,7 +202,7 @@ An explicit nonblank `DATABASE_URL` takes precedence. On Vercel, a hosted databa
 and signing key are required; local PGlite is not a serverless fallback. Keep
 `DATA_PROVIDER=mock` only for an intentional read-only preview, and
 set `OPENAI_API_KEY` (+ optionally `OPENAI_MODEL`) only if you want genuinely
-live-generated draft text — see [`docs/environment-reference.md`](docs/environment-reference.md) for every variable the code reads. `.env.example` is a starting template, not an exhaustive list (the code reads more, such as `CRON_SECRET`, `JEEVES_PGLITE_DIR`, `JEEVES_DB_DRIVER` and the Phoenix tracing variables). Leave `OPENAI_API_KEY` empty or commented out unless you have a real key: any non-empty value, including the template's placeholder, switches the app to the live OpenAI adapter.
+live-generated draft text — see [`docs/environment-reference.md`](docs/environment-reference.md) for every variable the code reads. `.env.example` is the starting template and mentions every variable the code reads, most of them commented out (`tests/docs/env-reference.test.ts` fails if one is missing). `OPENAI_API_KEY` is commented out in it: leave it unset unless you have a real key, because any non-empty value, a placeholder included, switches the app to the live OpenAI adapter.
 
 Note: `scripts/seed.ts` refuses to run when `NODE_ENV=production` unless
 `ALLOW_SEED=1` is explicitly set, to prevent an accidental reseed of a live
@@ -332,6 +332,9 @@ conditional approval — against a real (mocked-LLM) run.
   table, so it is not yet a privilege-level guarantee), and every synthetic telemetry panel is
   explicitly labeled as synthetic.
 
+The full model (trust boundaries, limits, data, secrets, what is out of scope)
+is in `docs/security-model.md`; `SECURITY.md` says how to report a problem.
+
 See `docs/deploy.md` §3 for the current, explicitly-documented gaps (e.g.
 rate-limiter scope) and `docs/production-readiness.md` for the fuller
 assessment, before relying on this for anything beyond a controlled demo.
@@ -375,7 +378,8 @@ components/jeeves/      App-specific UI: workbench, case-file tabs, chats,
 deploy/                 Container deploy templates (Podman: Containerfile, compose, Quadlet)
 drizzle/                Generated SQL migrations, incl. the append-only audit trigger
 docs/                   plan.md-adjacent specs: seed-spec, intake-spec, ui-spec,
-                        demo-script, deploy runbook, per-domain policy corpus
+                        demo-script, deploy runbook, security-model, per-domain
+                        policy corpus
 tests/                  Component tests, port compile-tripwire tests, and the
                         required Playwright golden-path spec
 scripts/                seed.ts (deterministic seed), migrate.ts (db:migrate),

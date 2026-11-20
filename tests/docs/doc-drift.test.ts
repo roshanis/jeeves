@@ -1,5 +1,4 @@
 // @vitest-environment node
-import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
@@ -9,19 +8,8 @@ describe("README claims about .env.example (docs-F13)", () => {
   it("does not call .env.example the full variable list", () => {
     expect(read("README.md")).not.toMatch(/full variable list/i);
   });
-  it("only names extra env vars that the code reads", () => {
-    const line = read("README.md").split("\n").find((l) => /not an exhaustive list/.test(l)) ?? "";
-    const names = [...line.matchAll(/`([A-Z][A-Z0-9_]{3,})`/g)].map((m) => m[1]);
-    expect(names.length).toBeGreaterThan(0);
-    for (const name of names) {
-      let hits = "";
-      try {
-        hits = execFileSync("git", ["grep", "-l", "-w", name, "--", "app", "lib", "scripts", ".env.example"], { encoding: "utf8" });
-      } catch {
-        hits = "";
-      }
-      expect(hits, `${name} is not referenced by the code`).not.toBe("");
-    }
+  it("does not describe the template's OpenAI placeholder as live (d17)", () => {
+    expect(read("README.md")).not.toMatch(/including the template's placeholder/i);
   });
 });
 
@@ -81,6 +69,13 @@ describe("audit-log protection claims match the migrations (docs-F21)", () => {
   it("README does not claim revoked privileges unless a migration revokes them", () => {
     if (!/^\s*REVOKE\s/im.test(migrations)) expect(read("README.md")).not.toMatch(/revoked privileges/i);
   });
+  it("AGENTS.md rule 3 says triggers and names the owner-role caveat, not role permissions (d18)", () => {
+    const rule = read("AGENTS.md").split("\n").find((l) => /^3\. `AuditEvent`/.test(l)) ?? "";
+    expect(rule).toMatch(/trigger/i);
+    expect(rule).not.toMatch(/role permissions/i);
+    expect(rule).toMatch(/owner/i);
+    expect(rule).toMatch(/docs\/deploy\.md/);
+  });
   it("production-readiness lists the owner/runtime role split as a prerequisite", () => {
     const doc = read("docs/production-readiness.md");
     expect(doc).toMatch(/runtime role/i);
@@ -97,6 +92,12 @@ describe("data disclaimers cover the real-request door (docs-F23)", () => {
     expect(doc).not.toMatch(/all data is synthetic/);
     expect(doc).not.toMatch(/everything is synthetic, so it is\s+moot/);
     expect(doc).toMatch(/real-request door/i);
+  });
+  it("AGENTS.md rule 9 does not say no real PII ever and names the real-request queue (d18)", () => {
+    const rule = read("AGENTS.md").split("\n").find((l) => /^9\. /.test(l)) ?? "";
+    expect(rule).not.toMatch(/no real PHI\/PII ever/i);
+    expect(rule).toMatch(/real-request/i);
+    expect(rule).toMatch(/e-?mail/i);
   });
   it("ARCHITECTURE.md qualifies the no-real-data claim", () => {
     expect(read("docs/ARCHITECTURE.md")).not.toMatch(/no real PHI,\s+PII, or production data exists anywhere/);
@@ -252,5 +253,16 @@ describe("the demo script plays in the visitor playground (docs-F19)", () => {
     expect((ui.match(/Playground note/g) ?? []).length).toBeGreaterThanOrEqual(3);
     expect(ui).toMatch(/docs\/demo-script\.md/);
     expect(ui).toMatch(/\/api\/cron\/monitor/);
+  });
+});
+
+describe("docs/deploy.md tells a load-balancer deployment to block TRACE (dyn-prod-F9, L10)", () => {
+  const doc = read("docs/deploy.md");
+  const section = doc.slice(doc.indexOf("## 3. KNOWN GAPS"), doc.indexOf("## 4. Backups and restore"));
+  it("names the TRACE method, the ALB and WAF options, and the 500 it causes", () => {
+    expect(section).toMatch(/TRACE/);
+    expect(section).toMatch(/ALB/);
+    expect(section).toMatch(/WAF/);
+    expect(section).toMatch(/500/);
   });
 });

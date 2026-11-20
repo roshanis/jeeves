@@ -5,7 +5,7 @@
  *
  * Content rules (marketing hard rules, mirroring the demo's):
  * - Summary-level references only. NIST refs stop at the category level
- *   except where a subcategory is unambiguous (MEASURE 2.7/2.10/2.11); EU
+ *   except where a subcategory is unambiguous (GOVERN 3.2, MEASURE 2.7/2.10/2.11); EU
  *   refs cite articles, not clause-by-clause readings.
  * - Every controlId here MUST exist in scripts/seed.ts CONTROL_SEEDS —
  *   enforced by tests/ui/framework-mappings.test.ts so the marketing pages
@@ -63,9 +63,9 @@ export const FRAMEWORK_PAGES: FrameworkPageMeta[] = [
     title: "Jeeves and the EU AI Act (high-risk requirements)",
     shortName: "EU AI Act",
     intro:
-      "For high-risk AI systems, the EU AI Act requires a risk management system (Art. 9), data governance (Art. 10), technical documentation (Art. 11), record-keeping (Art. 12), transparency to deployers (Art. 13), human oversight (Art. 14), and accuracy, robustness and cybersecurity (Art. 15), with post-market monitoring and incident reporting (Arts. 72–73). Jeeves gives each of these an owner, a gate, and an audit trail. The crosswalk below maps the demo's control catalog onto those obligations.",
+      "For high-risk AI systems, the EU AI Act requires data governance (Art. 10), technical documentation (Art. 11), transparency to deployers (Art. 13), human oversight (Art. 14), and accuracy, robustness and cybersecurity (Art. 15), with post-market monitoring and incident reporting (Arts. 72–73). Jeeves gives each of these an owner, a gate, and an audit trail. The crosswalk below maps the demo's control catalog onto those obligations and claims nothing beyond the articles listed in the table.",
     summary:
-      "For high-risk AI systems, the EU AI Act requires a risk management system, data governance, human oversight and more.",
+      "For high-risk AI systems, the EU AI Act requires data governance, technical documentation, human oversight and more.",
     refKey: "euAiAct",
   },
 ];
@@ -86,7 +86,9 @@ export const CONTROL_FRAMEWORK_MAPPINGS: ControlFrameworkMapping[] = [
     controlId: "L-02",
     controlName: "Marketing-claims review",
     nistAiRmf: [{ ref: "GOVERN 4", label: "Risk communication culture" }],
-    euAiAct: [{ ref: "Art. 50", label: "Transparency obligations toward users" }],
+    // No EU article is claimed: Art. 50 covers telling people they are talking
+    // to AI and labelling synthetic content, which this review does not evidence.
+    euAiAct: [],
     evidence:
       "Quarterly monitor on member-facing initiatives with an approved-copy log as evidence, owned by the Legal domain reviewer.",
   },
@@ -188,7 +190,7 @@ export const CONTROL_FRAMEWORK_MAPPINGS: ControlFrameworkMapping[] = [
   {
     controlId: "C-01",
     controlName: "Clinician-in-the-loop protocol",
-    nistAiRmf: [{ ref: "GOVERN 3", label: "Human-AI roles and oversight defined" }],
+    nistAiRmf: [{ ref: "GOVERN 3.2", label: "Human-AI roles and oversight defined" }],
     euAiAct: [{ ref: "Art. 14", label: "Human oversight" }],
     evidence:
       "Gate on care/coverage systems: a signed clinician-oversight protocol is required evidence, and agents never approve — a named human decision-maker does.",

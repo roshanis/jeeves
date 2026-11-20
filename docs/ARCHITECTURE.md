@@ -7,7 +7,7 @@ replacement for it. Read `plan.md` §4 (stack + ports), §5 (domain model), §3
 build record, including review findings and disagreements, is
 [`agents-build-log.md`](../agents-build-log.md) — later entries reflect the
 current state; where this document and an earlier doc (e.g. `docs/deploy.md`,
-`docs/MORNING-REPORT.md`) disagree, the build log and the code itself win.
+`docs/archive/MORNING-REPORT.md`) disagree, the build log and the code itself win.
 
 Jeeves is a **fictional demo**: "Meridian Health" is not a real organization,
 every actor/initiative/approval/control/telemetry series is synthetic and
@@ -731,10 +731,10 @@ candid on purpose:
    only, and is explicitly a read-scoping convenience for the demo, not a
    tenant-isolation guarantee suitable for a genuinely multi-tenant
    deployment.
-8. **`docs/deploy.md` and `docs/MORNING-REPORT.md` are snapshots, not
+8. **`docs/deploy.md` and `docs/archive/MORNING-REPORT.md` are snapshots, not
    living docs** — both were written mid-build and are stale on specifics
    (`docs/deploy.md`'s driver/session/budget caveats were corrected
-   2026-08-01, but it may still be stale elsewhere; `docs/MORNING-REPORT.md`
+   2026-08-01, but it may still be stale elsewhere; `docs/archive/MORNING-REPORT.md`
    predates M2.5 entirely). `agents-build-log.md`'s later entries and the
    current source are authoritative over both. *This document itself
    predates two later hardening passes — see the addendum below.*

@@ -1,6 +1,6 @@
 # Jeeves — UI Specification
 
-**Status:** Draft for review. Companion to `plan.md` (§2 champion storyline, §3 public-safety model, §13 milestones) and `docs/seed-spec.md` (actors, initiatives, controls, telemetry, outcome metrics, audit queries).
+**Status:** The M1 design record, kept for the record; not the current UI specification. The app has since changed (routes under `app/(console)/`, the intake chat, a submit rule that blocks only on blocking gaps, the QC gate, production mode), so check the code before building from the route map or the "exactly two live actions" statement. Originally: draft for review. Companion to `plan.md` (§2 champion storyline, §3 public-safety model, §13 milestones) and `docs/seed-spec.md` (actors, initiatives, controls, telemetry, outcome metrics, audit queries).
 **Author:** Sonnet (UI worker), reviewed by Claude (orchestrator).
 **Scope:** M1 champion vertical UI. M2/M3/M4 slot-ins are called out inline where relevant, not designed in full.
 

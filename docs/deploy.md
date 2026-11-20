@@ -270,6 +270,16 @@ current code, not hypothetical ones.
 > - Don't seed against a database that's serving a live public demo (see
 >   §2 step 5).
 
+> **(e) The `TRACE` method.** Next.js route handlers and metadata routes
+> (`/api/health`, `/robots.txt`, and so on) answer an HTTP `TRACE` request with
+> a 500 and log a `TypeError` stack trace, and a closed demo door answers
+> differently from a path that never existed. Scanners send `TRACE`, so left
+> alone it inflates 500 counts and the logs. Behind an AWS load balancer, drop
+> the method before it reaches the app: an ALB listener rule that matches the
+> HTTP request method `TRACE` and returns a fixed 405 response, or an AWS WAF
+> web ACL rule on the method. The same applies to any other proxy or CDN that
+> can filter methods. The app itself does not filter it.
+
 ---
 
 ## 4. Backups and restore
@@ -444,11 +454,45 @@ workspace rows from a staging branch, and do not reseed over a live database
 just because "it is all synthetic".
 
 **Personal data.** Who can read it: operators holding `OPERATOR_TOKEN`
-through `/operator` and `GET /api/public-intake`. `audit_events` is
-append-only, so the application cannot delete the audit rows that refer to
-those initiatives. There is no retention or deletion procedure for these
-rows yet; defining one (and whether audit rows may be purged) is an open
-product decision.
+through `/operator` and `GET /api/public-intake`. What a real request stores:
+the submitter's name (`initiatives.requester`) and everything typed into the
+form, including the e-mail address, in `intake_versions.fields`; the title is
+in `initiatives.title` and in the `intake_draft_created` row of `audit_events`.
+There is no retention period yet; defining one is an open product decision.
+
+**Removing a request's content on request.** `audit_events` is append-only
+(triggers refuse UPDATE, DELETE and TRUNCATE) and refers to the initiative, so
+the initiative and its audit rows cannot be deleted. What can be removed is
+the content: the typed answers and the submitter's name. The audit log keeps a
+record that the request existed, including its title, and that cannot be
+removed today (a title redaction path and a retention period are still to be
+built). The privacy page promises exactly this and no more.
+
+Find the workspace id from the submitter's e-mail address, then run the block
+below in one transaction (`psql -v ws=public-<id> -f remove.sql`, with the
+workspace id from the first query):
+
+```sql
+SELECT i.workspace_id, i.id, i.title
+FROM initiatives i JOIN intake_versions v ON v.initiative_id = i.id
+WHERE i.workspace_id LIKE 'public-%'
+  AND v.fields -> 'basics' ->> 'requesterEmail' = 'submitter@example.com';
+```
+
+<!-- request-removal-sql -->
+```sql
+BEGIN;
+UPDATE intake_versions SET fields = '{}'::jsonb, missing = '[]'::jsonb
+  WHERE initiative_id IN (SELECT id FROM initiatives WHERE workspace_id = :'ws');
+UPDATE initiatives SET requester = '(removed on request)'
+  WHERE workspace_id = :'ws';
+COMMIT;
+```
+
+`tests/docs/request-removal.test.ts` runs this block against a submitted
+request and checks that the content is gone, the audit rows (with the title)
+remain, and no trigger blocks it. Record the removal outside the database
+(who asked, when), since the update itself writes no audit row.
 
 ---
 

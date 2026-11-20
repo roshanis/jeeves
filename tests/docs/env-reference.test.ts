@@ -58,3 +58,37 @@ describe("docs/environment-reference.md", () => {
     }
   });
 });
+
+/**
+ * .env.example is what a developer copies to .env.local. It must mention every
+ * variable the code reads (so none is a surprise), and it must not switch the
+ * app to the live OpenAI adapter with a placeholder key (d17).
+ */
+describe(".env.example", () => {
+  const example = readFileSync(path.join(ROOT, ".env.example"), "utf8");
+
+  /** Ambient or platform-provided: set by Node, Next.js, the host or CI, never by copying .env.example. */
+  const PROVIDED_BY_THE_PLATFORM = new Set([
+    "NODE_ENV", "CI", "PORT", "HOSTNAME", "NEXT_RUNTIME", "NEXT_PHASE", "HOME", "PATH", "TMPDIR",
+    "VERCEL", // set by Vercel; docs/environment-reference.md says so
+    "SMOKE_DATABASE_URL", "SMOKE_DEMO_LOCKED", "SMOKE_PORT", "SMOKE_SERVER", // scripts/smoke-production.ts only
+  ]);
+
+  it("mentions every environment variable the code reads", () => {
+    const names = new Set<string>();
+    for (const file of [...SOURCE_ROOTS, "components"].flatMap(sourceFiles)) {
+      const text = readFileSync(file, "utf8");
+      for (const m of text.matchAll(/\b(?:process\.)?env(?:\.|\[["'])([A-Z][A-Z0-9_]+)/g)) names.add(m[1]!);
+    }
+    const missing = [...names]
+      .filter((n) => !PROVIDED_BY_THE_PLATFORM.has(n) && !n.startsWith("VERCEL_"))
+      .filter((n) => !new RegExp(`\\b${n}\\b`).test(example))
+      .sort();
+    expect(missing.join(", ")).toBe("");
+  });
+
+  it("does not set OPENAI_API_KEY: any non-empty value selects the live adapter", () => {
+    const line = example.split("\n").find((l) => /^\s*OPENAI_API_KEY\s*=/.test(l));
+    expect(line === undefined || /^\s*OPENAI_API_KEY\s*=\s*$/.test(line)).toBe(true);
+  });
+});
