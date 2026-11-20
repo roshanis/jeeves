@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { CHAMPION_PREFILL_PAYLOAD } from "./champion-prefill";
 import { evaluateCompleteness } from "./completeness";
-import { LEGACY_SELF_HOSTED, SELF_HOSTED, withCurrentHosting } from "./hosting";
+import { SELF_HOSTED } from "./hosting";
+import { LEGACY_SELF_HOSTED, withCurrentHosting } from "./hosting-alias";
 import { intakePayloadSchema } from "./schema";
 import type { IntakePayload } from "./types";
 
@@ -29,10 +30,11 @@ describe("self-hosted hosting value", () => {
     expect(withCurrentHosting(null as never)).toBeNull();
   });
 
-  it("scores a legacy stored value like the new one (RFT-05)", () => {
+  // Stored legacy rows are normalised on the way into the engine (storedPayloadOrThrow;
+  // covered by the initiative-service test), so the engine itself knows only the new value.
+  it("scores the new value (RFT-05)", () => {
     const ruleIds = (p: IntakePayload) => evaluateCompleteness(p).gaps.map((g) => g.ruleId);
     expect(ruleIds(selfHosted(SELF_HOSTED))).not.toContain("RFT-05");
-    expect(ruleIds(selfHosted(LEGACY_SELF_HOSTED))).not.toContain("RFT-05");
     const gap = evaluateCompleteness(selfHosted("Vendor-hosted"), "critical").gaps.find((g) => g.ruleId === "RFT-05");
     expect(gap?.message).toBe("Hosting must be set to Self-hosted when overlay.vendorHosted is false.");
   });

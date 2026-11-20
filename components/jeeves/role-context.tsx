@@ -14,7 +14,10 @@
 import * as React from "react";
 import type { ActorRole, Domain } from "@/lib/domain/types";
 import {
+  DEFAULT_PERSONA_KEY,
   LIVE_PERSONAS,
+  REPRESENTATIVE_PERSONA_KEY,
+  findPersona,
   REVIEWER_DOMAIN,
   domainForPersona,
   roleKeyForActorRole,
@@ -28,17 +31,21 @@ export interface RolePersona {
   actorName: string;
 }
 
+// The representative persona's name comes from the roster, which a
+// demo-disabled build replaces with anonymous role entries (lib/client/personas.ts).
+const nameOf = (key: RoleKey): string => findPersona(REPRESENTATIVE_PERSONA_KEY[key])?.label ?? "";
+
 // One representative persona per role (seed-spec §1). Reviewer defaults to
 // Dr. Elena Vasquez (Clinical Safety) as a representative reviewer identity;
 // the Reviews screens are not filtered to a single reviewer's assignments
 // only, since this is a demo of the workflow, not a real per-user inbox.
 export const ROLE_PERSONAS: Record<ActorRole | "audit", RolePersona> = {
-  requester: { role: "requester", label: "Requester", actorName: "Priya Raman" },
-  reviewer: { role: "reviewer", label: "Reviewer", actorName: "Dr. Elena Vasquez" },
-  program: { role: "program", label: "Program Office", actorName: "Nia Okafor" },
-  audit: { role: "approver", label: "Audit / Leadership", actorName: "Angela Torres" },
-  admin: { role: "admin", label: "Admin", actorName: "Ray Chen" },
-  approver: { role: "approver", label: "Audit / Leadership", actorName: "Angela Torres" },
+  requester: { role: "requester", label: "Requester", actorName: nameOf("requester") },
+  reviewer: { role: "reviewer", label: "Reviewer", actorName: nameOf("reviewer") },
+  program: { role: "program", label: "Program Office", actorName: nameOf("program") },
+  audit: { role: "approver", label: "Audit / Leadership", actorName: nameOf("audit") },
+  admin: { role: "admin", label: "Admin", actorName: nameOf("admin") },
+  approver: { role: "approver", label: "Audit / Leadership", actorName: nameOf("audit") },
   system: { role: "system", label: "System", actorName: "system" },
   // Not a pickable persona — `public` never appears in the role switcher
   // (it is absent from RoleKey and ROLE_ORDER below). It exists here only
@@ -51,25 +58,12 @@ export type RoleKey = "requester" | "reviewer" | "program" | "audit" | "admin";
 
 export const ROLE_ORDER: RoleKey[] = ["requester", "reviewer", "program", "audit", "admin"];
 
-/**
- * Representative persona key per RoleKey — used by the back-compat
- * `setRoleKey()` so existing callers (tests, role-gate) that only know
- * about the 5-value RoleKey still land on a sensible specific persona.
- */
-const REPRESENTATIVE_PERSONA: Record<RoleKey, string> = {
-  requester: "priya-raman",
-  reviewer: "elena-vasquez",
-  program: "nia-okafor",
-  audit: "angela-torres",
-  admin: "ray-chen",
-};
-
 function findLivePersona(personaKey: string): LivePersona {
   const found = LIVE_PERSONAS.find((p) => p.personaKey === personaKey);
   if (found) return found;
   // Defensive fallback — should be unreachable given the closed personaKey
   // universe, but keeps this a total function.
-  return LIVE_PERSONAS.find((p) => p.personaKey === "nia-okafor")!;
+  return LIVE_PERSONAS.find((p) => p.personaKey === DEFAULT_PERSONA_KEY)!;
 }
 
 function personaToRolePersona(live: LivePersona): RolePersona {
@@ -103,7 +97,7 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
   // "What needs attention" inbox) renders the same content it always has
   // (ui-spec §2 role-aware saved views; keeps the e2e golden-path assertion
   // intact).
-  const [personaKey, setPersonaKey] = React.useState<string>("nia-okafor");
+  const [personaKey, setPersonaKey] = React.useState<string>(DEFAULT_PERSONA_KEY);
 
   const live = findLivePersona(personaKey);
   const roleKey = roleKeyForActorRole(live.role);
@@ -111,7 +105,7 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
   const reviewerDomain = domainForPersona(personaKey);
 
   const setRoleKey = React.useCallback((key: RoleKey) => {
-    setPersonaKey(REPRESENTATIVE_PERSONA[key]);
+    setPersonaKey(REPRESENTATIVE_PERSONA_KEY[key]);
   }, []);
 
   const value = React.useMemo(

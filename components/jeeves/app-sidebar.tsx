@@ -1,5 +1,6 @@
 "use client";
 
+import { DEMO_COMPANY } from "@/lib/client/demo-copy";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -103,7 +104,7 @@ export function AppSidebar() {
         <div className="border-t border-sidebar-border px-4 py-3">
           <div className="flex items-center gap-1.5 text-[11px] font-medium text-sidebar-foreground">
             <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-status-good" aria-hidden />
-            Meridian Health
+            {DEMO_COMPANY}
           </div>
           <div className="pl-3 text-[10.5px] leading-snug text-sidebar-foreground-muted">
             Synthetic demo workspace

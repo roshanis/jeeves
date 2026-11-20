@@ -26,7 +26,7 @@
  */
 import * as React from "react";
 import { ApiError, apiErrorToMessage, isApiError, postPublicSession, postSession } from "./api";
-import { findPersona, type LivePersona } from "./personas";
+import { DEMO_ENTRY_PERSONA_KEY, findPersona, type LivePersona } from "./personas";
 import { useRole } from "@/components/jeeves/role-context";
 import { READ_ONLY_PREVIEW_MESSAGE } from "@/lib/data/provider-mode";
 
@@ -309,7 +309,7 @@ export function LiveSessionProvider({ children, liveModeAvailable = true }: {
   }, []);
 
   const startDemo = React.useCallback(() => {
-    void login("priya-raman").catch(() => { /* startError is rendered by entry controls. */ });
+    void login(DEMO_ENTRY_PERSONA_KEY).catch(() => { /* startError is rendered by entry controls. */ });
   }, [login]);
 
   const expired = React.useMemo(() => (!session && expiredKind ? { kind: expiredKind } : null), [session, expiredKind]);

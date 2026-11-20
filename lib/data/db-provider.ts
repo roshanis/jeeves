@@ -13,7 +13,7 @@ import type { Domain, LifecycleState, OverlayFlags, Tier } from "@/lib/domain/ty
 import { currentControlRevisions } from "@/lib/controls/current-revisions";
 import { operationalDeployment, latestDeployment } from "@/lib/deployments/selection";
 import { reviewDecisionReadiness } from "@/lib/approval/review-readiness";
-import { withCurrentHosting } from "@/lib/intake/hosting";
+import { withCurrentHosting } from "@/lib/intake/hosting-alias";
 import { isCannedAuditQueryAvailable } from "./canned-audit-queries";
 import { deploymentMode } from "@/lib/config/deployment-mode";
 import { overlayFromStoredIntake } from "@/lib/intake/stored-overlay";

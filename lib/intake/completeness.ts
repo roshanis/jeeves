@@ -14,7 +14,7 @@
 
 import type { Tier } from "../domain/types";
 import type { IntakePayload } from "./types";
-import { SELF_HOSTED, withCurrentHosting } from "./hosting";
+import { SELF_HOSTED } from "./hosting";
 
 /** The three completeness levels from intake-spec §2. */
 export type CompletenessLevel = "BLOCKING" | "REQUIRED_FOR_TIER" | "ADVISORY";
@@ -346,8 +346,7 @@ const ADVISORY_RULES: AdvisoryRuleCheck[] = [
  * (they block passing QC: `triage()` refuses with `IntakeTierGapsError`),
  * and ADVISORY gaps never block anything.
  */
-export function evaluateCompleteness(rawPayload: IntakePayload, tier?: Tier): CompletenessResult {
-  const payload = withCurrentHosting(rawPayload);
+export function evaluateCompleteness(payload: IntakePayload, tier?: Tier): CompletenessResult {
   const gaps: CompletenessGap[] = [];
 
   let blockingEvaluated = 0;

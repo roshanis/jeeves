@@ -14,6 +14,7 @@
 // cards) so the read-only e2e golden path — which loads `/` with no role
 // switch — keeps passing.
 import * as React from "react";
+import { DEMO_COMPANY } from "@/lib/client/demo-copy";
 import { useDeploymentMode } from "@/lib/client/deployment-mode-context";
 import Link from "next/link";
 import {
@@ -576,7 +577,7 @@ function ProgramView({
         heading="What needs attention"
         subheading={
           <>
-            {mode === "demo" ? "Meridian Health AI governance" : "AI governance"} — {attention.length} of {initiatives.length}{" "}
+            {mode === "demo" ? `${DEMO_COMPANY} AI governance` : "AI governance"} — {attention.length} of {initiatives.length}{" "}
             initiatives are waiting on someone right now.
           </>
         }

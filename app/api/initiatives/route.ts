@@ -14,7 +14,7 @@
 import { getDb } from "@/lib/db/client";
 import { ConflictError, createDraft } from "@/lib/services/initiative-service";
 import { intakePayloadSchema } from "@/lib/services/intake-payload-schema";
-import { withCurrentHosting } from "@/lib/intake/hosting";
+import { withCurrentHosting } from "@/lib/intake/hosting-alias";
 import { guardFailureResponse, runMutationGuard } from "@/lib/services/route-guard";
 import { BodyReadError, hasNul, readBodyText } from "@/lib/http/read-json-body";
 import { ACTOR_DIRECTORY, isPersonaKey } from "@/lib/services/actors";

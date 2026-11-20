@@ -53,7 +53,7 @@ import type { AgentPort } from "../agents/ports";
 import { evaluateCompleteness, type CompletenessGap } from "../intake/completeness";
 import type { IntakePayload } from "../intake/types";
 import { intakePayloadSchema } from "../intake/schema";
-import { withCurrentHosting } from "../intake/hosting";
+import { withCurrentHosting } from "../intake/hosting-alias";
 import { normalizeAdditionalAnswers } from "../intake/additional-questions";
 import { deriveTier } from "../triage/rules";
 import { requiredDomains } from "../triage/routing";

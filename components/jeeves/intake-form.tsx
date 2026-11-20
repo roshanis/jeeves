@@ -41,10 +41,10 @@ import {
   evaluateCompleteness,
   type CompletenessGap,
 } from "@/lib/intake/completeness";
-import { SAMPLE_INITIATIVE_PAYLOAD } from "@/lib/intake/champion-prefill";
+import { SAMPLE_INITIATIVE_PAYLOAD as DEMO_SAMPLE_PAYLOAD } from "@/lib/intake/champion-prefill";
 import Link from "next/link";
 import { INTAKE_LIMITS, intakePayloadSchema } from "@/lib/intake/schema";
-import { SELF_HOSTED, withCurrentHosting } from "@/lib/intake/hosting";
+import { SELF_HOSTED } from "@/lib/intake/hosting";
 import { previewTier } from "@/lib/client/tier-preview";
 import {
   createInitiative,
@@ -355,11 +355,16 @@ const LEAVE_MESSAGE = "You have unsaved changes to this intake. Leave this page 
 
 const samePayload = (a: IntakePayload, b: IntakePayload) => JSON.stringify(a) === JSON.stringify(b);
 
+// Build-time switch (next.config.ts inlines JEEVES_DEMO_ENABLED): a demo-disabled
+// build drops the sample, which names the demo payer and a demo persona, from
+// the public JavaScript. The empty fallback never equals a real payload.
+const SAMPLE_INITIATIVE_PAYLOAD: IntakePayload = process.env.JEEVES_DEMO_ENABLED !== "0" ? DEMO_SAMPLE_PAYLOAD : ({} as IntakePayload);
+
 function readPublicDraft(): IntakePayload | null {
   try {
     const raw = window.sessionStorage.getItem(PUBLIC_DRAFT_KEY);
     if (!raw) return null;
-    const parsed = intakePayloadSchema.safeParse(withCurrentHosting((JSON.parse(raw) as { payload?: unknown } | null)?.payload));
+    const parsed = intakePayloadSchema.safeParse((JSON.parse(raw) as { payload?: unknown } | null)?.payload);
     return parsed.success ? (parsed.data as IntakePayload) : null;
   } catch {
     return null;

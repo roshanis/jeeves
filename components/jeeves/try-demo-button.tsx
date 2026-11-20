@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { useLiveSession } from "@/lib/client/session-context";
 import type { ComponentProps } from "react";
 import { READ_ONLY_PREVIEW_MESSAGE } from "@/lib/data/provider-mode";
+import { DEMO_ENTRY_PERSONA_KEY } from "@/lib/client/personas";
 import { useDeploymentMode } from "@/lib/client/deployment-mode-context";
 
 /** One click from the public site to an editable requester intake. */
@@ -16,7 +17,7 @@ export function TryDemoButton({ className, size = "lg", variant, showStatus = tr
     <div className="inline-flex flex-col items-start gap-2">
       <Button className={className} size={size} variant={variant} disabled={!liveModeAvailable || pending} onClick={async () => {
         try {
-          await login("priya-raman");
+          await login(DEMO_ENTRY_PERSONA_KEY);
           router.push("/initiatives/new");
         } catch { /* The provider keeps a visible, retryable error. */ }
       }}>

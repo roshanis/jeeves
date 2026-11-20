@@ -28,6 +28,7 @@ import type { CompletenessGap } from "@/lib/intake/completeness";
 import type { IntakePayload } from "@/lib/intake/types";
 import { intakeChat, isApiError, apiErrorToMessage } from "@/lib/client/api";
 import { useLiveSession } from "@/lib/client/session-context";
+import { DEMO_REAL_REQUEST_NOTE } from "@/lib/client/demo-copy";
 import { useDeploymentMode } from "@/lib/client/deployment-mode-context";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -155,7 +156,7 @@ export function IntakeChat({ payload, payloadRevision, onPayloadChange, onReview
       <Alert data-slot="intake-chat">
         <AlertTitle>{demo ? "The assistant is available in the demo only" : "The assistant is not available for this request"}</AlertTitle>
         <AlertDescription>
-          {demo ? "Use the structured form to send your request to the Meridian team." : "Use the structured form to send your request."}
+          {demo ? DEMO_REAL_REQUEST_NOTE : "Use the structured form to send your request."}
           {onReview ? <> <Button type="button" variant="outline" onClick={onReview}>Open the structured form</Button></> : null}
         </AlertDescription>
       </Alert>

@@ -22,6 +22,7 @@ import { TierBadge } from "./tier-badge";
 import { formatUtcTimestamp } from "@/lib/format/timestamp";
 import { LIFECYCLE_LABEL, LifecycleBadge } from "./lifecycle-badge";
 import { EvidenceLink } from "./evidence-link";
+import { DEMO_APPROVER_NAME } from "@/lib/client/demo-copy";
 import { useDeploymentMode } from "@/lib/client/deployment-mode-context";
 import { isCannedAuditQueryAvailable } from "@/lib/data/canned-audit-queries";
 
@@ -33,8 +34,8 @@ const QUERY_META: { id: CannedAuditQueryId; label: string; explanation: string }
   },
   {
     id: "approved-by-torres",
-    label: "Everything approved by Angela Torres",
-    explanation: "Showing: decisions where approver = Angela Torres",
+    label: `Everything approved by ${DEMO_APPROVER_NAME}`,
+    explanation: `Showing: decisions where approver = ${DEMO_APPROVER_NAME}`,
   },
   {
     id: "overdue-controls",

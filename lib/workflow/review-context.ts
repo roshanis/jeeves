@@ -7,7 +7,7 @@ import { readPolicyFileSafe } from "../agents/policy-corpus";
 import { AgentInitializationError } from "../agents/initialization-error";
 import type { OverlayFlags, Tier } from "../domain/types";
 import { applicabilityApplies } from "../services/applicability";
-import { withCurrentHosting } from "../intake/hosting";
+import { withCurrentHosting } from "../intake/hosting-alias";
 
 const POLICY_FILES: Record<GovernanceDomain, string> = {
   legal: "docs/policies/legal.md",

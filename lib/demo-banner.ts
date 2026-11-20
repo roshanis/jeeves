@@ -4,8 +4,12 @@ import type { DeploymentMode } from "./config/deployment-mode";
 // Lives here (not in components/jeeves/app-topbar.tsx) so the public landing
 // page (components/jeeves/landing-page.tsx) can render the identical
 // disclaimer strip without importing a "use client" console component.
+// Chosen behind the build-time JEEVES_DEMO_ENABLED switch so a demo-disabled
+// build ships neither the text nor the company name in it (L18).
 export const DEMO_BANNER_TEXT =
-  "Fictional demo — synthetic data. Meridian Health is a fictional payer; not affiliated with any real organization.";
+  process.env.JEEVES_DEMO_ENABLED !== "0"
+    ? "Fictional demo — synthetic data. Meridian Health is a fictional payer; not affiliated with any real organization."
+    : "";
 
 /**
  * The banner a surface should show in the given mode: the exact required

@@ -8,6 +8,7 @@ import { useLiveSessionOptional } from '@/lib/client/session-context';
 import { evidenceRequest, downloadEvidenceFile, fileBase64 } from '@/lib/client/evidence-api';
 import { ApiError } from '@/lib/client/api';
 import { useDeploymentMode } from '@/lib/client/deployment-mode-context';
+import { DEMO_EVIDENCE_NOTE } from '@/lib/client/demo-copy';
 import { SignInLink } from './sign-in-link';
 import { sessionExpiredMessage } from '@/lib/client/mode-copy';
 import { MAX_FILE_BYTES, type EvidenceDocument, type EvidenceEntry, type EvidencePacket, type EvidenceState } from '@/lib/evidence/types';
@@ -24,7 +25,7 @@ export function EvidenceTab({slug}:{slug:string}) {
   const demo=useDeploymentMode()==='demo';
   return <section className="space-y-5" aria-label="Evidence" data-slot="evidence-tab">
     <div><h2 className="text-lg font-semibold">Evidence</h2><p className="mt-1 text-sm text-muted-foreground">Attach documents to the requirements they support. Reviewers assess each requirement separately.</p></div>
-    <div className="rounded-lg border bg-muted/40 p-3 text-sm">{demo?<><strong>Fictional documents only.</strong> </>:null}PDF or DOCX, up to 2 MiB each. Files are <strong>not malware scanned</strong>. {demo?'Upload only synthetic Meridian Health material. ':null}Documents are downloaded as attachments; Jeeves does not parse them. Requester notes, page references and file names (not document contents) are included in AI review drafts.</div>
+    <div className="rounded-lg border bg-muted/40 p-3 text-sm">{demo?<><strong>Fictional documents only.</strong> </>:null}PDF or DOCX, up to 2 MiB each. Files are <strong>not malware scanned</strong>. {demo?DEMO_EVIDENCE_NOTE:null}Documents are downloaded as attachments; Jeeves does not parse them. Requester notes, page references and file names (not document contents) are included in AI review drafts.</div>
     {!live?.session?<div className="rounded-lg border p-5"><p className="text-sm">{demo?'Start the demo to work with private evidence in your workspace.':'Sign in to work with private evidence in your workspace.'}</p>{demo?<Button className="mt-3" onClick={()=>live?.startDemo()}>Start demo</Button>:<SignInLink className="mt-3"/>}</div>:<EvidenceWorkspace key={`${slug}:${live.session.token}`} slug={slug} token={live.session.token} demo={demo}/>}
   </section>;
 }

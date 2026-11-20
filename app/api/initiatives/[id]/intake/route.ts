@@ -1,6 +1,6 @@
 import { getDb } from "@/lib/db/client";
 import { intakePayloadSchema } from "@/lib/services/intake-payload-schema";
-import { withCurrentHosting } from "@/lib/intake/hosting";
+import { withCurrentHosting } from "@/lib/intake/hosting-alias";
 import { ConflictError, IllegalTransitionError, NotFoundError, getIntakeDraft, updateIntakeDraft } from "@/lib/services/initiative-service";
 import { guardFailureResponse, runMutationGuard } from "@/lib/services/route-guard";
 import { requireViewerForRequest } from "@/lib/services/require-viewer";
