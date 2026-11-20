@@ -1,5 +1,6 @@
 import { getDb } from "@/lib/db/client";
 import { intakePayloadSchema } from "@/lib/services/intake-payload-schema";
+import { withCurrentHosting } from "@/lib/intake/hosting";
 import { ConflictError, IllegalTransitionError, NotFoundError, getIntakeDraft, updateIntakeDraft } from "@/lib/services/initiative-service";
 import { guardFailureResponse, runMutationGuard } from "@/lib/services/route-guard";
 import { requireViewerForRequest } from "@/lib/services/require-viewer";
@@ -45,7 +46,7 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
     return Response.json({ error: "invalid JSON body" }, { status: 400 }); }
   if (!body || typeof body !== "object" || Array.isArray(body) || hasNul(body)) return Response.json({ error: "invalid request body" }, { status: 400 });
   const candidate = body as { payload?: unknown; expectedVersion?: unknown };
-  const parsed = intakePayloadSchema.safeParse(candidate.payload);
+  const parsed = intakePayloadSchema.safeParse(withCurrentHosting(candidate.payload));
   if (!parsed.success || !Number.isInteger(candidate.expectedVersion) || (candidate.expectedVersion as number) < 1) {
     return Response.json({ error: "invalid intake draft update", issues: parsed.success ? undefined : parsed.error.issues }, { status: 400 });
   }

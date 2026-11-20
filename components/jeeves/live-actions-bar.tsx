@@ -36,6 +36,7 @@ import {
   returnFromQc,
 } from "@/lib/client/api";
 import { useLiveSessionOptional } from "@/lib/client/session-context";
+import { useDeploymentMode } from "@/lib/client/deployment-mode-context";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -63,6 +64,7 @@ export function LiveActionsBar({ initiativeId, isSeeded, state, decisionReadines
   const router = useRouter();
   const live = useLiveSessionOptional();
   const session = live?.session ?? null;
+  const demo = useDeploymentMode() === "demo";
 
   const [triaging, setTriaging] = React.useState(false);
   const [triageResult, setTriageResult] = React.useState<TriageResult | null>(null);
@@ -159,7 +161,7 @@ export function LiveActionsBar({ initiativeId, isSeeded, state, decisionReadines
   return (
     <Card size="sm" data-slot="live-actions-bar">
       <CardHeader>
-        <CardTitle className="text-sm">Live demo actions</CardTitle>
+        <CardTitle className="text-sm">{demo ? "Live demo actions" : "Actions"}</CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
         {showStartQc ? (

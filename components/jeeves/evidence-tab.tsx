@@ -7,24 +7,26 @@ import { Button } from '@/components/ui/button';
 import { useLiveSessionOptional } from '@/lib/client/session-context';
 import { evidenceRequest, downloadEvidenceFile, fileBase64 } from '@/lib/client/evidence-api';
 import { ApiError } from '@/lib/client/api';
+import { useDeploymentMode } from '@/lib/client/deployment-mode-context';
 import { MAX_FILE_BYTES, type EvidenceDocument, type EvidenceEntry, type EvidencePacket, type EvidenceState } from '@/lib/evidence/types';
 
 const inputClass='w-full rounded-md border bg-background px-3 py-2 text-sm disabled:opacity-60';
 const statusLabels={missing:'Missing',submitted:'Submitted',accepted:'Reviewer accepted',changes_requested:'Changes requested'};
-function message(error:unknown,initialLoad=false) {
-  if(error instanceof ApiError && error.status===401)return 'Your session expired. Start the demo again.';
-  if(initialLoad && error instanceof ApiError && error.status===404)return 'Evidence uploads are available for initiatives created in your live demo workspace. Shared sample initiatives are read-only here.';
+function message(error:unknown,demo:boolean,initialLoad=false) {
+  if(error instanceof ApiError && error.status===401)return demo?'Your session expired. Start the demo again.':'Your session expired. Sign in again.';
+  if(initialLoad && error instanceof ApiError && error.status===404)return demo?'Evidence uploads are available for initiatives created in your live demo workspace. Shared sample initiatives are read-only here.':'Evidence is not available for this initiative.';
   return error instanceof Error?error.message:'Evidence could not be loaded. Please retry.';
 }
 export function EvidenceTab({slug}:{slug:string}) {
   const live=useLiveSessionOptional();
+  const demo=useDeploymentMode()==='demo';
   return <section className="space-y-5" aria-label="Evidence" data-slot="evidence-tab">
     <div><h2 className="text-lg font-semibold">Evidence</h2><p className="mt-1 text-sm text-muted-foreground">Attach documents to the requirements they support. Reviewers assess each requirement separately.</p></div>
-    <div className="rounded-lg border bg-muted/40 p-3 text-sm"><strong>Fictional documents only.</strong> PDF or DOCX, up to 2 MiB each. Files are <strong>not malware scanned</strong>. Upload only synthetic Meridian Health material. Documents are downloaded as attachments; Jeeves does not parse them. Requester notes, page references and file names (not document contents) are included in AI review drafts.</div>
-    {!live?.session?<div className="rounded-lg border p-5"><p className="text-sm">Start the demo to work with private evidence in your workspace.</p><Button className="mt-3" onClick={()=>live?.startDemo()}>Start demo</Button></div>:<EvidenceWorkspace key={`${slug}:${live.session.token}`} slug={slug} token={live.session.token}/>}
+    <div className="rounded-lg border bg-muted/40 p-3 text-sm">{demo?<><strong>Fictional documents only.</strong> </>:null}PDF or DOCX, up to 2 MiB each. Files are <strong>not malware scanned</strong>. {demo?'Upload only synthetic Meridian Health material. ':null}Documents are downloaded as attachments; Jeeves does not parse them. Requester notes, page references and file names (not document contents) are included in AI review drafts.</div>
+    {!live?.session?<div className="rounded-lg border p-5"><p className="text-sm">Start the demo to work with private evidence in your workspace.</p><Button className="mt-3" onClick={()=>live?.startDemo()}>Start demo</Button></div>:<EvidenceWorkspace key={`${slug}:${live.session.token}`} slug={slug} token={live.session.token} demo={demo}/>}
   </section>;
 }
-function EvidenceWorkspace({slug,token}:{slug:string;token:string}) {
+function EvidenceWorkspace({slug,token,demo}:{slug:string;token:string;demo:boolean}) {
   const router=useRouter();
   const live=useLiveSessionOptional();
   const logout=live?.logout;
@@ -38,20 +40,22 @@ function EvidenceWorkspace({slug,token}:{slug:string;token:string}) {
   const [fileInputKey,setFileInputKey]=useState(0);
   const [uploadRequestId,setUploadRequestId]=useState('');
   const [supersedesId,setSupersedesId]=useState('');
+  // The attestation is a demo safeguard; a real install uploads real documents.
   const [fictional,setFictional]=useState(false);
+  const attested=!demo||fictional;
   const [reasons,setReasons]=useState<Record<string,string>>({});
   const [retry,setRetry]=useState(0);
   useEffect(()=>{
     const controller=new AbortController();
-    evidenceRequest<EvidenceState>(slug,token,undefined,controller.signal).then(next=>{setState(next);setEntries(next.draft?.entries??next.latest?.entries??[]);setPendingSubmission(null);setError(null);}).catch(e=>{if(controller.signal.aborted)return;if(e instanceof ApiError&&e.status===401)logout?.();setError(message(e,true));});
+    evidenceRequest<EvidenceState>(slug,token,undefined,controller.signal).then(next=>{setState(next);setEntries(next.draft?.entries??next.latest?.entries??[]);setPendingSubmission(null);setError(null);}).catch(e=>{if(controller.signal.aborted)return;if(e instanceof ApiError&&e.status===401)logout?.();setError(message(e,demo,true));});
     return ()=>controller.abort();
-  },[slug,token,retry,logout]);
+  },[slug,token,retry,logout,demo]);
   async function refresh(preserveEdits=false) {
     const next=await evidenceRequest<EvidenceState>(slug,token);setState(next);
     if(!preserveEdits)setEntries(next.draft?.entries??next.latest?.entries??[]);
     router.refresh();
   }
-  async function perform(action:()=>Promise<void>) {setBusy(true);setError(null);setNotice('');try{await action();}catch(e){if(e instanceof ApiError&&e.status===401)logout?.();setError(message(e));}finally{setBusy(false);}}
+  async function perform(action:()=>Promise<void>) {setBusy(true);setError(null);setNotice('');try{await action();}catch(e){if(e instanceof ApiError&&e.status===401)logout?.();setError(message(e,demo));}finally{setBusy(false);}}
   const boundEntries=entries.filter(e=>e.documentId);
   function chooseFile(selected:File|undefined) {
     if(!selected)return;
@@ -94,8 +98,8 @@ function EvidenceWorkspace({slug,token}:{slug:string;token:string}) {
         <label className="block text-sm" htmlFor="evidence-file">Choose document</label><input key={fileInputKey} id="evidence-file" className={inputClass} type="file" accept=".pdf,.docx" disabled={busy} onChange={e=>chooseFile(e.target.files?.[0])}/>
         {file?<p className="text-sm">Selected: {file.name} ({Math.ceil(file.size/1024)} KiB)</p>:null}
         <label className="block text-sm" htmlFor="evidence-replaces">Document version</label><select id="evidence-replaces" className={inputClass} disabled={busy} value={supersedesId} onChange={e=>{setSupersedesId(e.target.value);setUploadRequestId(crypto.randomUUID());}}><option value="">New document</option>{state.documents.filter(d=>!state.documents.some(next=>next.supersedesId===d.id)).map(d=><option value={d.id} key={d.id}>New version of {d.fileName} (v{d.version})</option>)}</select>
-        <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={fictional} onChange={e=>setFictional(e.target.checked)} disabled={busy}/>This document is fictional and contains no real personal, health, or company data.</label>
-        <Button disabled={!file||!fictional||busy} onClick={()=>void perform(upload)}>Upload document</Button><span className="ml-3 text-xs text-muted-foreground">{(state.usedBytes/1024/1024).toFixed(1)} / 20 MiB used</span>
+        {demo?<label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={fictional} onChange={e=>setFictional(e.target.checked)} disabled={busy}/>This document is fictional and contains no real personal, health, or company data.</label>:null}
+        <Button disabled={!file||!attested||busy} onClick={()=>void perform(upload)}>Upload document</Button><span className="ml-3 text-xs text-muted-foreground">{(state.usedBytes/1024/1024).toFixed(1)} / 20 MiB used</span>
       </fieldset>:null}
       {!state.cycleId?<p className="rounded-lg border p-4 text-sm">You can save documents now. Complete intake and run triage to see the applicable evidence requirements.</p>:<>
         <div><h3 className="font-medium">Required evidence</h3><p className="text-sm text-muted-foreground">Submitted files await reviewer assessment. Acceptance confirms evidence sufficiency; it does not approve the initiative.</p></div>

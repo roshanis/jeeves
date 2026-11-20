@@ -4,7 +4,10 @@ const mocks=vi.hoisted(()=>({session:vi.fn(),request:vi.fn(),base64:vi.fn()}));
 vi.mock('@/lib/client/session-context',()=>({useLiveSessionOptional:mocks.session}));
 vi.mock('@/lib/client/evidence-api',()=>({evidenceRequest:mocks.request,downloadEvidenceFile:vi.fn(),fileBase64:mocks.base64}));
 vi.mock('next/navigation',()=>({useRouter:()=>({refresh:vi.fn()})}));
-import { EvidenceTab } from '@/components/jeeves/evidence-tab';
+import { EvidenceTab as BareEvidenceTab } from '@/components/jeeves/evidence-tab';
+import { DeploymentModeProvider } from '@/lib/client/deployment-mode-context';
+// These cases cover the demo's evidence flow, including its fictional-document tick.
+const EvidenceTab=(props:{slug:string})=><DeploymentModeProvider mode="demo"><BareEvidenceTab {...props}/></DeploymentModeProvider>;
 afterEach(()=>{cleanup();vi.clearAllMocks();});
 describe('evidence requester guidance',()=>{
  it('explains private evidence and offers unlock without showing upload controls to public visitors',()=>{mocks.session.mockReturnValue(null);render(<EvidenceTab slug="demo"/>);expect(screen.getByText(/fictional documents only/i)).toBeTruthy();expect(screen.queryByLabelText('Choose document')).toBeNull();});

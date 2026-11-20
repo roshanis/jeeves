@@ -7,6 +7,7 @@ import { readPolicyFileSafe } from "../agents/policy-corpus";
 import { AgentInitializationError } from "../agents/initialization-error";
 import type { OverlayFlags, Tier } from "../domain/types";
 import { applicabilityApplies } from "../services/applicability";
+import { withCurrentHosting } from "../intake/hosting";
 
 const POLICY_FILES: Record<GovernanceDomain, string> = {
   legal: "docs/policies/legal.md",
@@ -82,7 +83,7 @@ export async function loadReviewContext(
   if (documents.length !== documentIds.length) throw new Error("Submitted evidence document metadata is missing.");
   const assessments = packet && controlIds.size ? await db.select().from(evidenceAssessments).where(and(eq(evidenceAssessments.packetId, packet.id), inArray(evidenceAssessments.controlId, [...controlIds]))).orderBy(asc(evidenceAssessments.controlId)) : [];
 
-  const intake: IntakeSnapshot = { initiativeId: cycle.initiativeId, intakeVersionId: intakeRow.id, answers: intakeRow.fields };
+  const intake: IntakeSnapshot = { initiativeId: cycle.initiativeId, intakeVersionId: intakeRow.id, answers: withCurrentHosting(intakeRow.fields) };
   const evidenceStatus = !packet ? "unknown-no-submitted-packet" : entries.length === 0 ? "unknown-no-domain-evidence" : "submitted-metadata-only";
   const evidence = {
     status: evidenceStatus,

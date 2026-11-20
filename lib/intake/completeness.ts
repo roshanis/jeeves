@@ -14,6 +14,7 @@
 
 import type { Tier } from "../domain/types";
 import type { IntakePayload } from "./types";
+import { SELF_HOSTED, withCurrentHosting } from "./hosting";
 
 /** The three completeness levels from intake-spec §2. */
 export type CompletenessLevel = "BLOCKING" | "REQUIRED_FOR_TIER" | "ADVISORY";
@@ -206,9 +207,9 @@ const REQUIRED_FOR_TIER_RULES: TieredRuleCheck[] = [
   {
     ruleId: "RFT-05",
     field: "modelVendor.hosting",
-    message: "Hosting must be set to Self-hosted (Meridian infra) when overlay.vendorHosted is false.",
+    message: "Hosting must be set to Self-hosted when overlay.vendorHosted is false.",
     triggers: (p) => p.overlay.vendorHosted === false,
-    passes: (p) => p.modelVendor.hosting === "Self-hosted (Meridian infra)",
+    passes: (p) => p.modelVendor.hosting === SELF_HOSTED,
   },
   {
     ruleId: "RFT-06",
@@ -345,7 +346,8 @@ const ADVISORY_RULES: AdvisoryRuleCheck[] = [
  * (they block passing QC: `triage()` refuses with `IntakeTierGapsError`),
  * and ADVISORY gaps never block anything.
  */
-export function evaluateCompleteness(payload: IntakePayload, tier?: Tier): CompletenessResult {
+export function evaluateCompleteness(rawPayload: IntakePayload, tier?: Tier): CompletenessResult {
+  const payload = withCurrentHosting(rawPayload);
   const gaps: CompletenessGap[] = [];
 
   let blockingEvaluated = 0;

@@ -2,6 +2,7 @@ import * as React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { RoleProvider } from "@/components/jeeves/role-context";
+import { DeploymentModeProvider } from "@/lib/client/deployment-mode-context";
 import { IntakeForm } from "@/components/jeeves/intake-form";
 import { LiveSessionProvider, resetLiveSessionForTests, useLiveSession } from "@/lib/client/session-context";
 
@@ -76,7 +77,7 @@ describe("session expiry notice (ui-intake-F31)", () => {
   const notices = () => screen.getByText(/session expired/i).closest("[role='status']") as HTMLElement;
 
   function mountForm() {
-    render(<RoleProvider><LiveSessionProvider><Probe /><IntakeForm /></LiveSessionProvider></RoleProvider>);
+    render(<DeploymentModeProvider mode="demo"><RoleProvider><LiveSessionProvider><Probe /><IntakeForm /></LiveSessionProvider></RoleProvider></DeploymentModeProvider>);
   }
 
   it("says the session expired, names the matching door, and does not mint anything", () => {

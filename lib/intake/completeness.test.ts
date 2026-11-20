@@ -32,7 +32,7 @@ function completePayload(): IntakePayload {
     modelVendor: {
       buildOrBuy: "Build (internal)",
       vendorName: null,
-      hosting: "Self-hosted (Meridian infra)",
+      hosting: "Self-hosted",
       modelType: "Rules engine",
     },
     populationImpact: {
@@ -292,7 +292,7 @@ describe("evaluateCompleteness — BLK rules each block submission when violated
       individualImpact: false,
     };
     // hosting must stay consistent with vendorHosted=false per RFT-05
-    payload.modelVendor.hosting = "Self-hosted (Meridian infra)";
+    payload.modelVendor.hosting = "Self-hosted";
     payload.data.retentionIntent = null; // PHI is now false, RFT-01/02 shouldn't trigger
     const result = evaluateCompleteness(payload);
     const overlayBlkIds = ["BLK-05", "BLK-06", "BLK-07", "BLK-08", "BLK-09", "BLK-10"];
@@ -364,7 +364,7 @@ describe("evaluateCompleteness — RFT rules fire only when trigger condition ho
   it("RFT-03 fires when buildOrBuy=Buy and vendorHosted=false (vendor still required)", () => {
     const payload = completePayload();
     payload.overlay.vendorHosted = false;
-    payload.modelVendor.hosting = "Self-hosted (Meridian infra)";
+    payload.modelVendor.hosting = "Self-hosted";
     payload.modelVendor.buildOrBuy = "Buy (vendor)";
     payload.modelVendor.vendorName = null;
     const result = evaluateCompleteness(payload);
@@ -374,7 +374,7 @@ describe("evaluateCompleteness — RFT rules fire only when trigger condition ho
   it("RFT-03 fires when buildOrBuy=Hybrid and vendorName missing", () => {
     const payload = completePayload();
     payload.overlay.vendorHosted = false;
-    payload.modelVendor.hosting = "Self-hosted (Meridian infra)";
+    payload.modelVendor.hosting = "Self-hosted";
     payload.modelVendor.buildOrBuy = "Hybrid";
     payload.modelVendor.vendorName = null;
     const result = evaluateCompleteness(payload);
@@ -384,7 +384,7 @@ describe("evaluateCompleteness — RFT rules fire only when trigger condition ho
   it("RFT-03 does not fire when buildOrBuy=Build (internal) and vendorHosted=false", () => {
     const payload = completePayload();
     payload.overlay.vendorHosted = false;
-    payload.modelVendor.hosting = "Self-hosted (Meridian infra)";
+    payload.modelVendor.hosting = "Self-hosted";
     payload.modelVendor.buildOrBuy = "Build (internal)";
     payload.modelVendor.vendorName = null;
     const result = evaluateCompleteness(payload);
@@ -395,7 +395,7 @@ describe("evaluateCompleteness — RFT rules fire only when trigger condition ho
     const payload = completePayload();
     payload.overlay.vendorHosted = true;
     payload.modelVendor.vendorName = "Acme AI";
-    payload.modelVendor.hosting = "Self-hosted (Meridian infra)";
+    payload.modelVendor.hosting = "Self-hosted";
     const result = evaluateCompleteness(payload);
     expect(result.gaps.some((g) => g.ruleId === "RFT-04")).toBe(true);
   });
@@ -403,7 +403,7 @@ describe("evaluateCompleteness — RFT rules fire only when trigger condition ho
   it("RFT-04 does not fire when vendorHosted=false", () => {
     const payload = completePayload();
     payload.overlay.vendorHosted = false;
-    payload.modelVendor.hosting = "Self-hosted (Meridian infra)";
+    payload.modelVendor.hosting = "Self-hosted";
     const result = evaluateCompleteness(payload);
     expect(result.gaps.some((g) => g.ruleId === "RFT-04")).toBe(false);
   });
@@ -575,7 +575,7 @@ describe("evaluateCompleteness — ADV rules never block submission", () => {
     payload.overlay.vendorHosted = false;
     payload.overlay.careCoverageInfluence = false;
     payload.overlay.memberFacing = false;
-    payload.modelVendor.hosting = "Self-hosted (Meridian infra)";
+    payload.modelVendor.hosting = "Self-hosted";
     payload.data.retentionIntent = null;
     payload.evidenceAttachments = [];
     const result = evaluateCompleteness(payload, "low");

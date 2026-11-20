@@ -5,6 +5,7 @@
  */
 import { z } from "zod";
 import { ADDITIONAL_ANSWER_MAX_LENGTH } from "@/lib/intake/additional-questions";
+import { SELF_HOSTED } from "@/lib/intake/hosting";
 
 /** Server-side caps, exported so the intake form can mirror them as maxLength. */
 export const INTAKE_LIMITS = {
@@ -38,7 +39,7 @@ const retentionIntent = z
 
 const trainingVsInference = z.enum(["Inference-only", "Fine-tuning/training", "Both"]).nullable();
 const buildOrBuy = z.enum(["Build (internal)", "Buy (vendor)", "Hybrid"]).nullable();
-const hosting = z.enum(["Vendor-hosted", "Self-hosted (Meridian infra)"]).nullable();
+const hosting = z.enum(["Vendor-hosted", SELF_HOSTED]).nullable();
 const modelType = z
   .enum(["LLM (generative)", "Classical ML / classifier", "OCR/extraction", "Rules engine", "Other"])
   .nullable();

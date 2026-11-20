@@ -26,6 +26,7 @@
 import * as React from "react";
 import { useRole } from "./role-context";
 import { useLiveSessionOptional } from "@/lib/client/session-context";
+import { useDeploymentMode } from "@/lib/client/deployment-mode-context";
 import type { LivePersona } from "@/lib/client/personas";
 import { Button } from "@/components/ui/button";
 import {
@@ -86,6 +87,7 @@ export function DisableWithTooltip({
 }: GatedActionProps) {
   const live = useLiveSessionOptional();
   const session = live?.session ?? null;
+  const mode = useDeploymentMode();
   const reasonId = React.useId();
 
   // A public (real request) session satisfies no live action.
@@ -113,7 +115,7 @@ export function DisableWithTooltip({
     session?.role === "public"
       ? "Not available for a real request"
       : session && allowedRoles.length > 0 && !roleSatisfied
-      ? `Requires the ${allowedRoles.join(" or ")} role — choose a persona in the header`
+      ? `Requires the ${allowedRoles.join(" or ")} role${mode === "production" ? "" : " — choose a persona in the header"}`
       : session && disabledReason
       ? disabledReason
       : DEMO_SESSION_TOOLTIP;

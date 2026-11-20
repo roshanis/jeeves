@@ -28,6 +28,7 @@ import type { CompletenessGap } from "@/lib/intake/completeness";
 import type { IntakePayload } from "@/lib/intake/types";
 import { intakeChat, isApiError, apiErrorToMessage } from "@/lib/client/api";
 import { useLiveSession } from "@/lib/client/session-context";
+import { useDeploymentMode } from "@/lib/client/deployment-mode-context";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -60,6 +61,7 @@ export function IntakeChat({ payload, payloadRevision, onPayloadChange, onReview
   onReview?: () => void;
 }) {
   const { session, logout } = useLiveSession();
+  const demo = useDeploymentMode() === "demo";
   const isRequester = session?.role === "requester";
 
   const [conversation, setConversation] = React.useState<ConversationTurn[]>([]);
@@ -151,9 +153,9 @@ export function IntakeChat({ payload, payloadRevision, onPayloadChange, onReview
   if (session.role === "public") {
     return (
       <Alert data-slot="intake-chat">
-        <AlertTitle>The assistant is available in the demo only</AlertTitle>
+        <AlertTitle>{demo ? "The assistant is available in the demo only" : "The assistant is not available for this request"}</AlertTitle>
         <AlertDescription>
-          Use the structured form to send your request to the Meridian team.
+          {demo ? "Use the structured form to send your request to the Meridian team." : "Use the structured form to send your request."}
           {onReview ? <> <Button type="button" variant="outline" onClick={onReview}>Open the structured form</Button></> : null}
         </AlertDescription>
       </Alert>
@@ -166,8 +168,8 @@ export function IntakeChat({ payload, payloadRevision, onPayloadChange, onReview
         <AlertTitle>Viewing as {session.personaLabel}</AlertTitle>
         <AlertDescription>
           You are viewing intake as {session.role} — only Requesters may use
-          the conversational intake assistant. Switch to a requester persona
-          via the demo mode chip to continue.
+          the conversational intake assistant.
+          {demo ? " Switch to a requester persona via the demo mode chip to continue." : null}
         </AlertDescription>
       </Alert>
     );

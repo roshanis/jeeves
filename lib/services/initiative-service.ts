@@ -53,6 +53,7 @@ import type { AgentPort } from "../agents/ports";
 import { evaluateCompleteness, type CompletenessGap } from "../intake/completeness";
 import type { IntakePayload } from "../intake/types";
 import { intakePayloadSchema } from "../intake/schema";
+import { withCurrentHosting } from "../intake/hosting";
 import { normalizeAdditionalAnswers } from "../intake/additional-questions";
 import { deriveTier } from "../triage/rules";
 import { requiredDomains } from "../triage/routing";
@@ -87,10 +88,11 @@ export class ValidationError extends Error {
 
 /** Stored intake fields as a payload; a legacy flat record is a typed error, not a TypeError. */
 function storedPayloadOrThrow(fields: unknown): IntakePayload {
-  if (!intakePayloadSchema.safeParse(fields).success) {
+  const current = withCurrentHosting(fields);
+  if (!intakePayloadSchema.safeParse(current).success) {
     throw new ValidationError("stored intake is not in the current format");
   }
-  return fields as IntakePayload;
+  return current as IntakePayload;
 }
 
 /**
@@ -431,7 +433,7 @@ export async function createDraft(db: Db, input: CreateDraftInput): Promise<Crea
         assertWorkspaceAccess(existing[0].workspaceId, workspaceId ?? null, "initiative", initiativeId);
         requireRequesterOwnership(requesterActor, existing[0]);
         const firstIntake = await firstIntakeVersion(tx, initiativeId);
-        if (!firstIntake || canonicalJson(normalizeAdditionalAnswers(firstIntake.fields as unknown as IntakePayload)) !== canonicalJson(normalizeAdditionalAnswers(payload))) {
+        if (!firstIntake || canonicalJson(normalizeAdditionalAnswers(withCurrentHosting(firstIntake.fields as unknown as IntakePayload))) !== canonicalJson(normalizeAdditionalAnswers(payload))) {
           throw new ConflictError("idempotency key was already used with a different intake payload");
         }
         return { initiativeId, slug: existing[0].slug, intakeVersionId: firstIntake.id, version: firstIntake.version };
@@ -456,7 +458,7 @@ export async function createDraft(db: Db, input: CreateDraftInput): Promise<Crea
       assertWorkspaceAccess(existing.workspaceId, workspaceId ?? null, "initiative", initiativeId);
       requireRequesterOwnership(requesterActor, existing);
       const firstIntake = await firstIntakeVersion(tx, initiativeId);
-      if (!firstIntake || canonicalJson(normalizeAdditionalAnswers(firstIntake.fields as unknown as IntakePayload)) !== canonicalJson(normalizeAdditionalAnswers(payload))) {
+      if (!firstIntake || canonicalJson(normalizeAdditionalAnswers(withCurrentHosting(firstIntake.fields as unknown as IntakePayload))) !== canonicalJson(normalizeAdditionalAnswers(payload))) {
         throw new ConflictError("idempotency key was already used with a different intake payload");
       }
       return { initiativeId, slug: existing.slug, intakeVersionId: firstIntake.id, version: firstIntake.version };
@@ -508,7 +510,7 @@ export async function getIntakeDraft(
   if (initiative.state !== "intake_draft") throw new ConflictError("intake is no longer editable", "INTAKE_NOT_EDITABLE");
   const intake = await latestIntakeVersion(db as Tx, initiativeId);
   if (!intake || intake.submitted) throw new ConflictError("intake is no longer editable", "INTAKE_NOT_EDITABLE");
-  return { initiativeId, slug: initiative.slug, intakeVersionId: intake.id, version: intake.version, payload: normalizeAdditionalAnswers(intake.fields as unknown as IntakePayload) };
+  return { initiativeId, slug: initiative.slug, intakeVersionId: intake.id, version: intake.version, payload: normalizeAdditionalAnswers(withCurrentHosting(intake.fields as unknown as IntakePayload)) };
 }
 
 export async function updateIntakeDraft(

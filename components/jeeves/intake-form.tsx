@@ -42,7 +42,9 @@ import {
   type CompletenessGap,
 } from "@/lib/intake/completeness";
 import { SAMPLE_INITIATIVE_PAYLOAD } from "@/lib/intake/champion-prefill";
+import Link from "next/link";
 import { INTAKE_LIMITS, intakePayloadSchema } from "@/lib/intake/schema";
+import { SELF_HOSTED, withCurrentHosting } from "@/lib/intake/hosting";
 import { previewTier } from "@/lib/client/tier-preview";
 import {
   createInitiative,
@@ -91,7 +93,7 @@ const RETENTION_INTENTS = [
 ] as const;
 const TRAINING_VS_INFERENCE = ["Inference-only", "Fine-tuning/training", "Both"] as const;
 const BUILD_OR_BUY = ["Build (internal)", "Buy (vendor)", "Hybrid"] as const;
-const HOSTING = ["Vendor-hosted", "Self-hosted (Meridian infra)"] as const;
+const HOSTING = ["Vendor-hosted", SELF_HOSTED] as const;
 const MODEL_TYPES = [
   "LLM (generative)",
   "Classical ML / classifier",
@@ -357,7 +359,7 @@ function readPublicDraft(): IntakePayload | null {
   try {
     const raw = window.sessionStorage.getItem(PUBLIC_DRAFT_KEY);
     if (!raw) return null;
-    const parsed = intakePayloadSchema.safeParse((JSON.parse(raw) as { payload?: unknown } | null)?.payload);
+    const parsed = intakePayloadSchema.safeParse(withCurrentHosting((JSON.parse(raw) as { payload?: unknown } | null)?.payload));
     return parsed.success ? (parsed.data as IntakePayload) : null;
   } catch {
     return null;
@@ -741,7 +743,14 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
       data-slot="intake-form"
     >
       <div className="flex flex-col gap-4">
-        {!session && expired ? (
+        {!session && expired && mode === "production" ? (
+          <Alert variant="destructive" role="status">
+            <AlertTitle>Your session expired</AlertTitle>
+            <AlertDescription>
+              {pristine ? null : "What you typed is still on this page. "}Sign in again, then submit again.
+            </AlertDescription>
+          </Alert>
+        ) : !session && expired ? (
           <Alert variant="destructive" role="status">
             <AlertTitle>Your session expired</AlertTitle>
             <AlertDescription>
@@ -751,7 +760,15 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
             </AlertDescription>
           </Alert>
         ) : null}
-        {!session ? (
+        {!session && mode === "production" ? (
+          <Alert>
+            <AlertTitle>Sign in to create an initiative</AlertTitle>
+            <AlertDescription>
+              <Link className="font-medium text-primary underline" href="/sign-in">Sign in</Link>{" "}
+              to fill in and submit an intake.
+            </AlertDescription>
+          </Alert>
+        ) : !session ? (
           <Alert>
             <AlertTitle>{realRequestsEnabled ? "Try it, or send a real request" : "Try the demo"}</AlertTitle>
             <AlertDescription className="flex flex-col items-start gap-2.5">
@@ -822,8 +839,8 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
             <AlertTitle>Viewing as {session.personaLabel}</AlertTitle>
             <AlertDescription>
               You are viewing intake as {session.role} — only Requesters may
-              create and submit new initiatives. Switch to a requester persona
-              using the persona picker in the header to submit.
+              create and submit new initiatives.
+              {mode === "production" ? null : " Switch to a requester persona using the persona picker in the header to submit."}
             </AlertDescription>
           </Alert>
         ) : null}
