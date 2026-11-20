@@ -364,6 +364,22 @@ describe("bootRefusalCases", () => {
   });
 });
 
+describe("bootRefusalCases match what the production config check says", () => {
+  it("each configuration refusal's expected text is in the config check's message", async () => {
+    const { assertProductionConfig } = await import("../lib/config/deployment-mode");
+    const good = buildServerEnv({
+      databaseUrl: "postgres://smoke:pw@127.0.0.1:5432/jeeves_smoke_unit",
+      port: 3217,
+      cookieSecret: "a".repeat(31) + "b",
+    });
+    expect(() => assertProductionConfig(good)).not.toThrow();
+    // The demo-mode case is refused by the installation stamp, not the config check.
+    for (const c of bootRefusalCases.filter((r) => r.name !== "demo mode on a production-stamped database")) {
+      expect(() => assertProductionConfig(c.modify({ ...good })), c.name).toThrow(c.expectText);
+    }
+  });
+});
+
 describe("a demo-locked build (JEEVES_DEMO_ENABLED=0)", () => {
   const good = { PATH: "/p", JEEVES_COOKIE_SECRET: "s", APP_BASE_URL: "https://jeeves.example.com" };
 

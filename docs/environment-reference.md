@@ -136,19 +136,20 @@ say "Contact for this installation is not configured."
 ## 8. What the boot checks enforce
 
 `instrumentation.ts` runs them once per server start (not during `next build`).
-On failure the process logs, marks `/api/health` as 503 and exits with code 1.
+On failure the process logs, marks `/api/health` and `/api/health/live` as 503
+and exits with code 1.
 One exception, demo only: a database that cannot be reached at all (see the
 last paragraph of this section) does not exit the instance.
 
 Production reports every configuration problem at once
 (`production configuration is invalid: ...`), among them:
 
-- `DATABASE_URL (or POSTGRES_URL) is required`
+- `DATABASE_URL (or POSTGRES_URL) is required` / `is invalid`
 - `The database is on another host and the connection is not verified TLS` (see "Database TLS in production")
 - `JEEVES_DB_ALLOW_UNVERIFIED must be same-host or unset`
 - `DATA_PROVIDER=mock is not allowed in production`
-- `JEEVES_COOKIE_SECRET is required` / `is too short`
-- `APP_BASE_URL is required` / `must be an absolute https URL without embedded credentials`
+- `JEEVES_COOKIE_SECRET is required` / `is too short` / `is too weak` (one repeated character, or a placeholder word such as `changeme`)
+- `APP_BASE_URL is required` / `must be an https origin` (scheme, host and optional port only: no path, query, fragment or credentials)
 - `JEEVES_TENANT_ID is required`
 - `JEEVES_TRUSTED_PROXY_HOPS is required` / `must be a non-negative integer`
 
@@ -156,8 +157,13 @@ Then, in both modes, the installation stamp is verified against the database
 (`installation check failed: ...`): a production database must be stamped
 `production`, hold no demo data, and have every bundled migration applied
 (`npm run db:migrate`); demo stamps an unstamped database and refuses a
-`production` one, and retries a database read error with a short backoff. In
-demo a malformed `JEEVES_TRUSTED_PROXY_HOPS` also fails the boot.
+`production` one, and retries a database read error with a short backoff.
+Production retries only errors that say the database cannot be reached (refused,
+reset or timed-out connections, a database starting up), about five seconds in
+all, each attempt cut off after 3 seconds; a stamp mismatch, a missing migration,
+bad credentials or a TLS error stop it at once. A production database with an
+empty control catalog logs one warning: approvals are refused until a catalog is
+loaded. In demo a malformed `JEEVES_TRUSTED_PROXY_HOPS` also fails the boot.
 
 A demo that still cannot reach its database after the retries (each attempt is
 cut off after 3 seconds) does not exit: the marketing and legal pages need no
@@ -166,7 +172,8 @@ installation stamp has been verified in that process; database-backed routes
 answer `503` with `Retry-After: 15` and the console shows a notice;
 `/api/health` answers `503` `degraded`. The check is retried from requests, at
 most every 15 seconds. A stamp mismatch still exits at once; a credentials or TLS
-error exits after the retries; production never holds: it exits.
+error exits after the retries; production never holds: it exits after its
+retries.
 
 ## 9. Evidence storage
 

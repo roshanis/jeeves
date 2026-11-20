@@ -79,6 +79,10 @@ export default defineConfig({
       JEEVES_MODE: "demo",
       JEEVES_PGLITE_DIR: disposablePgliteDir,
       DATA_PROVIDER: "db",
+      // Read at build time. The public demo sets both; without them the site
+      // shows no contact buttons and the golden path's copy is not there.
+      NEXT_PUBLIC_CONTACT_URL: "mailto:contact@example.test",
+      NEXT_PUBLIC_PRIVACY_CONTACT: "mailto:privacy@example.test",
     },
   },
 });
