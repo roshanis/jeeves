@@ -7,6 +7,7 @@ import { recordLocks } from "../db/test-lock-recorder";
 import { seedDatabase } from "../../scripts/seed";
 import { auditEvents, controlDefinitions, controlExceptions, deploymentVersions, effectiveControls } from "../db/schema";
 import * as svc from "./exception-service";
+import { selectEffectiveControlsWithLapsedResolved } from "./exception-expiry";
 import { ConflictError, IllegalTransitionError, NotFoundError, ValidationError, createDraft } from "./initiative-service";
 import { CHAMPION_PREFILL_PAYLOAD } from "../intake/champion-prefill";
 
@@ -322,6 +323,106 @@ describe("exception-service", () => {
     expect(again).toHaveLength(0);
   });
 
+  describe("lazy expiry: an approved exception past its date counts as expired wherever it is read (L2)", () => {
+    async function lapsedApproved() {
+      const { ecId } = await anEffectiveControl();
+      const req = await svc.requestException(db, ecId, REQUESTER, null, "reason");
+      await approveAlreadyExpired(req.id, Date.now() - 1000);
+      return { ecId, id: req.id };
+    }
+
+    it("listExceptions reports the lapsed row as expired without the cron, and does not write", async () => {
+      const { id } = await lapsedApproved();
+      const all = await svc.listExceptions(db);
+      expect(all.find((e) => e.id === id)!.status).toBe("expired");
+      expect((await svc.listExceptions(db, "expired")).map((e) => e.id)).toContain(id);
+      expect((await svc.listExceptions(db, "approved")).map((e) => e.id)).not.toContain(id);
+      const [row] = await db.select().from(controlExceptions).where(eq(controlExceptions.id, id));
+      expect(row!.status).toBe("approved");
+    });
+
+    it("the control read model no longer shows the control as excepted", async () => {
+      const { ecId } = await lapsedApproved();
+      const [stored] = await db.select().from(effectiveControls).where(eq(effectiveControls.id, ecId));
+      expect(stored!.status).toBe("exception_requested");
+      const shown = (await selectEffectiveControlsWithLapsedResolved(db, Date.now())).find((r) => r.id === ecId);
+      expect(shown!.status).toBe("overdue");
+    });
+
+    it("a still-valid approved exception keeps the control excepted", async () => {
+      const { ecId } = await anEffectiveControl();
+      const req = await svc.requestException(db, ecId, REQUESTER, null, "reason");
+      await svc.decideException(db, req.id, APPROVER, null, true, "granted");
+      const shown = (await selectEffectiveControlsWithLapsedResolved(db, Date.now())).find((r) => r.id === ecId);
+      expect(shown!.status).toBe("exception_requested");
+    });
+
+    it("a new request on a control whose waiver lapsed is accepted, and settles the lapsed row with an audit event", async () => {
+      const { ecId, id } = await lapsedApproved();
+      const next = await svc.requestException(db, ecId, REQUESTER, null, "waiver ran out, asking again");
+      expect(next.status).toBe("requested");
+      const [old] = await db.select().from(controlExceptions).where(eq(controlExceptions.id, id));
+      expect(old!.status).toBe("expired");
+      const evts = await db.select().from(auditEvents).where(eq(auditEvents.action, "control_exception_expired"));
+      expect(evts.map((e) => (e.metadata as { exceptionId: string }).exceptionId)).toContain(id);
+    });
+
+    it("a lapsed exception cannot be renewed", async () => {
+      const { id } = await lapsedApproved();
+      await expect(svc.renewException(db, id, REQUESTER, null, "too late")).rejects.toThrow(ValidationError);
+    });
+
+    it("recompute ignores a lapsed approved row: rejecting the only pending renewal restores the control", async () => {
+      const { ecId } = await anEffectiveControl();
+      const req = await svc.requestException(db, ecId, REQUESTER, null, "reason");
+      await svc.decideException(db, req.id, APPROVER, null, true, "granted");
+      const renewal = await svc.renewException(db, req.id, REQUESTER, null, "extend");
+      await db.update(controlExceptions).set({ expiresAt: Date.now() - 1000 }).where(eq(controlExceptions.id, req.id));
+      await svc.decideException(db, renewal.id, APPROVER, null, false, "no");
+      const [ec] = await db.select().from(effectiveControls).where(eq(effectiveControls.id, ecId));
+      expect(ec!.status).toBe("overdue");
+    });
+  });
+
+  describe("expiry sweep (L2 / domain-F11)", () => {
+    it("continues past a row that fails and expires the rest", async () => {
+      const first = await anEffectiveControl();
+      const second = await anEffectiveControlWithStatus("overdue");
+      const ids: string[] = [];
+      for (const ec of [{ id: first.ecId }, { id: second.ecId }]) {
+        const req = await svc.requestException(db, ec.id, REQUESTER, null, "reason");
+        await approveAlreadyExpired(req.id, Date.now() - 1000);
+        ids.push(req.id);
+      }
+      const realTransaction = db.transaction.bind(db);
+      let calls = 0;
+      const spy = vi.spyOn(db, "transaction").mockImplementation(((fn: never, cfg: never) => {
+        calls += 1;
+        if (calls === 1) return Promise.reject(new Error("boom on first row"));
+        return realTransaction(fn, cfg);
+      }) as never);
+      const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const expired = await svc.expireDueExceptions(db, Date.now());
+      spy.mockRestore();
+      errSpy.mockRestore();
+      expect(expired).toHaveLength(1);
+      const after = await db.select().from(controlExceptions);
+      const statuses = ids.map((i) => after.find((r) => r.id === i)!.status).sort();
+      expect(statuses).toEqual(["approved", "expired"]);
+    });
+
+    it("records the row's own expiry date in the audit detail, not the sweep time", async () => {
+      const { ecId } = await anEffectiveControl();
+      const req = await svc.requestException(db, ecId, REQUESTER, null, "reason");
+      const lapsedAt = Date.now() - 5 * 24 * 60 * 60 * 1000;
+      await approveAlreadyExpired(req.id, lapsedAt);
+      await svc.expireDueExceptions(db, Date.now());
+      const [evt] = await db.select().from(auditEvents).where(eq(auditEvents.action, "control_exception_expired"));
+      expect(evt!.detail).toContain(new Date(lapsedAt).toISOString());
+      expect(evt!.metadata).toMatchObject({ expiresAt: lapsedAt });
+    });
+  });
+
   /* -----------------------------------------------------------------------
    * Review finding P2-8 (status-integrity bug): `requestException` had no
    * precondition on the target control's status, and `recomputeControlStatus`
@@ -559,11 +660,10 @@ describe("exception-service", () => {
     it("the original expiring while a renewal is still requested leaves the control 'exception_requested', NOT 'overdue'", async () => {
       const { ecId } = await anEffectiveControl();
       const original = await svc.requestException(db, ecId, REQUESTER, null, "original reason");
-      const pastExpiry = Date.now() - 1000;
-      await approveAlreadyExpired(original.id, pastExpiry);
-
+      await svc.decideException(db, original.id, APPROVER, null, true, "granted");
       const renewal = await svc.renewException(db, original.id, REQUESTER, null, "renew while audit completes");
       expect(renewal.status).toBe("requested");
+      await db.update(controlExceptions).set({ expiresAt: Date.now() - 1000 }).where(eq(controlExceptions.id, original.id));
 
       const expired = await svc.expireDueExceptions(db, Date.now());
       expect(expired).toContain(original.id);
@@ -589,10 +689,9 @@ describe("exception-service", () => {
     it("supersession is best-effort: approving a renewal whose original already expired does not fail, and writes no supersede audit", async () => {
       const { ecId } = await anEffectiveControl();
       const original = await svc.requestException(db, ecId, REQUESTER, null, "reason");
-      const pastExpiry = Date.now() - 1000;
-      await approveAlreadyExpired(original.id, pastExpiry);
-
+      await svc.decideException(db, original.id, APPROVER, null, true, "granted");
       const renewal = await svc.renewException(db, original.id, REQUESTER, null, "renew");
+      await db.update(controlExceptions).set({ expiresAt: Date.now() - 1000 }).where(eq(controlExceptions.id, original.id));
       await svc.expireDueExceptions(db, Date.now()); // original: approved -> expired, out from under the renewal
 
       const decided = await svc.decideException(db, renewal.id, APPROVER, null, true, "granted renewal");

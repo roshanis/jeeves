@@ -44,13 +44,15 @@
  * recoverable only by reading audit rows.
  */
 import { randomUUID } from "node:crypto";
-import { and, eq, inArray, isNull, lte, or } from "drizzle-orm";
+import { and, eq, gt, isNull, lte, or } from "drizzle-orm";
 import type { Db } from "../db/client";
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import type * as schema from "../db/schema";
 import { auditEvents, controlExceptions, deploymentVersions, effectiveControls, initiatives } from "../db/schema";
 import type { Actor } from "../domain/types";
 import { ConflictError, NotFoundError, ValidationError, IllegalTransitionError } from "./initiative-service";
+import { isLapsedApproval } from "./exception-expiry";
+import { logUnexpectedError } from "../http/log-error";
 import { mutationWorkspaceMismatch, viewerCannotMutate } from "./workspace-guard";
 
 type Tx = PgDatabase<PgQueryResultHKT, typeof schema>;
@@ -150,6 +152,21 @@ async function assertExceptionWorkspaceAccess(
 }
 
 /**
+ * An exception is active when it is requested, or approved and not yet past
+ * its date. An approved row past its date counts as expired even before the
+ * sweep has written that status (production has no cron).
+ */
+function activeExceptionCondition(nowMs: number) {
+  return or(
+    eq(controlExceptions.status, "requested"),
+    and(
+      eq(controlExceptions.status, "approved"),
+      or(isNull(controlExceptions.expiresAt), gt(controlExceptions.expiresAt, nowMs)),
+    ),
+  )!;
+}
+
+/**
  * Derive `effective_controls.status` from ALL of a control's
  * `control_exceptions` rows and write it — the fix for external-review
  * finding #5 ("Renewal leaves the original exception approved while opening
@@ -183,7 +200,7 @@ async function recomputeControlStatus(
     .where(
       and(
         eq(controlExceptions.effectiveControlId, effectiveControlId),
-        inArray(controlExceptions.status, ["requested", "approved"]),
+        activeExceptionCondition(nowTs()),
       ),
     )
     .limit(1);
@@ -254,12 +271,20 @@ export async function requestException(
 
     // FOR UPDATE serializes concurrent requests on this control, so the
     // active-exception check below cannot race into the unique index.
-    const [ec] = await tx
+    let [ec] = await tx
       .select()
       .from(effectiveControls)
       .where(eq(effectiveControls.id, effectiveControlId))
       .for("update");
     if (!ec) throw new NotFoundError("effectiveControl", effectiveControlId);
+
+    // A lapsed waiver is expired, not active: write that status (and its audit
+    // event) now, so the request below sees the control's real status.
+    const settled = await settleLapsedForControl(tx, effectiveControlId, nowTs());
+    if (settled) {
+      const [fresh] = await tx.select().from(effectiveControls).where(eq(effectiveControls.id, effectiveControlId));
+      if (fresh) ec = fresh;
+    }
 
     if (!ELIGIBLE_EXCEPTION_REQUEST_STATUSES.has(ec.status)) {
       throw new ValidationError(
@@ -270,12 +295,7 @@ export async function requestException(
     const active = await tx
       .select()
       .from(controlExceptions)
-      .where(
-        and(
-          eq(controlExceptions.effectiveControlId, effectiveControlId),
-          inArray(controlExceptions.status, ["requested", "approved"]),
-        ),
-      );
+      .where(and(eq(controlExceptions.effectiveControlId, effectiveControlId), activeExceptionCondition(nowTs())));
     if (active.length > 0) {
       throw new ValidationError(
         `control ${ec.controlId} already has an active exception (${active[0]!.status})`,
@@ -364,6 +384,10 @@ export async function decideException(
         "role",
       );
     }
+
+    // A lapsed approved row for this control would collide with the new
+    // approval on the one-approved-per-control index; settle it first.
+    if (approve) await settleLapsedForControl(tx, exc.effectiveControlId, nowTs());
 
     const newStatus: ExceptionStatus = approve ? "approved" : "rejected";
     const grantedExpiry = approve ? (expiresAt ?? nowTs() + DEFAULT_EXCEPTION_DAYS * DAY_MS) : null;
@@ -528,6 +552,9 @@ export async function renewException(
     if (exc.status !== "approved") {
       throw new ValidationError(`only an approved exception can be renewed; ${exceptionId} is '${exc.status}'`);
     }
+    if (isLapsedApproval(exc, nowTs())) {
+      throw new ValidationError(`exception ${exceptionId} expired on ${new Date(exc.expiresAt!).toISOString()}; request a new exception instead of renewing it`);
+    }
     // Serialize renewals per control, then refuse a second pending request
     // (the partial unique index would otherwise answer with a 500).
     await tx.select().from(effectiveControls).where(eq(effectiveControls.id, exc.effectiveControlId)).for("update");
@@ -587,35 +614,69 @@ export async function expireDueExceptions(
     .where(and(eq(controlExceptions.status, "approved"), lte(controlExceptions.expiresAt, nowMs)));
   const expired: string[] = [];
   for (const exc of due) {
-    await db.transaction(async (tx) => {
-      // Compare-and-set (external-review finding #5): a system sweep, not a
-      // user action — if another transaction already moved this row off
-      // 'approved' since the SELECT above (revoked, or superseded by a
-      // decided renewal), skip it silently rather than throwing.
-      const updated = await tx
-        .update(controlExceptions)
-        .set({ status: "expired" })
-        .where(and(eq(controlExceptions.id, exc.id), eq(controlExceptions.status, "approved")))
-        .returning();
-      if (updated.length === 0) return;
-
-      // P2-8: restore to this (now-terminated) exception's statusAtRequest
-      // if no other exception is left active, instead of hardcoding 'overdue'.
-      await recomputeControlStatus(tx, exc.effectiveControlId, exc.statusAtRequest);
-      await audit(
-        tx,
-        exc.initiativeId,
-        actor,
-        "control_exception_expired",
-        `Exception for ${exc.controlId} expired at ${new Date(nowMs).toISOString()}.`,
-        "approved",
-        "expired",
-        { exceptionId: exc.id, controlId: exc.controlId, expiresAt: exc.expiresAt },
-      );
-      expired.push(exc.id);
-    });
+    // One bad row must not stop the rest of the sweep; it stays 'approved'
+    // (and lazily reads as expired) and is retried on the next run.
+    try {
+      await db.transaction(async (tx) => {
+        if (await expireRow(tx, exc, actor)) expired.push(exc.id);
+      });
+    } catch (err) {
+      logUnexpectedError(`expireDueExceptions: could not expire ${exc.id}`, err);
+    }
   }
   return expired;
+}
+
+type ExceptionRecord = typeof controlExceptions.$inferSelect;
+
+/**
+ * Expire one approved row, recording its own expiry date. Compare-and-set
+ * (external-review finding #5): a system action, not a user action, so if
+ * another transaction already moved the row off 'approved' (revoked, or
+ * superseded by a decided renewal) it is skipped silently. Returns whether
+ * this call expired it.
+ */
+async function expireRow(tx: Tx, exc: ExceptionRecord, actor: Actor): Promise<boolean> {
+  const updated = await tx
+    .update(controlExceptions)
+    .set({ status: "expired" })
+    .where(and(eq(controlExceptions.id, exc.id), eq(controlExceptions.status, "approved")))
+    .returning();
+  if (updated.length === 0) return false;
+
+  // P2-8: restore to this (now-terminated) exception's statusAtRequest
+  // if no other exception is left active, instead of hardcoding 'overdue'.
+  await recomputeControlStatus(tx, exc.effectiveControlId, exc.statusAtRequest);
+  await audit(
+    tx,
+    exc.initiativeId,
+    actor,
+    "control_exception_expired",
+    `Exception for ${exc.controlId} expired on ${new Date(exc.expiresAt!).toISOString()}.`,
+    "approved",
+    "expired",
+    { exceptionId: exc.id, controlId: exc.controlId, expiresAt: exc.expiresAt },
+  );
+  return true;
+}
+
+/** Write the expiry for approved rows of one control whose date has passed (inside a mutation that already holds the control's lock). */
+async function settleLapsedForControl(tx: Tx, effectiveControlId: string, nowMs: number): Promise<boolean> {
+  const lapsed = await tx
+    .select()
+    .from(controlExceptions)
+    .where(
+      and(
+        eq(controlExceptions.effectiveControlId, effectiveControlId),
+        eq(controlExceptions.status, "approved"),
+        lte(controlExceptions.expiresAt, nowMs),
+      ),
+    );
+  let any = false;
+  for (const exc of lapsed) {
+    if (await expireRow(tx, exc, { id: "system", role: "system" })) any = true;
+  }
+  return any;
 }
 
 export interface ExceptionRow {
@@ -662,7 +723,6 @@ export async function listExceptions(
   opts?: ListExceptionsOptions,
 ): Promise<ExceptionRow[]> {
   const conditions = [];
-  if (status) conditions.push(eq(controlExceptions.status, status));
   if (opts) {
     const viewerWorkspaceId = opts.viewerWorkspaceId ?? null;
     // Same rule as workspaceMismatch(): visible when there is no owning
@@ -683,15 +743,21 @@ export async function listExceptions(
   const visibleRows = joined.map((j) => j.row);
   const workspaceIds = new Map(joined.map((j) => [j.row.id, j.workspaceId]));
 
+  // Lapsed approvals read as expired (no cron in production); the status
+  // filter is applied after that, so "approved" never lists a lapsed row.
+  const nowMs = nowTs();
+  const shownStatus = (r: ExceptionRecord): ExceptionStatus =>
+    isLapsedApproval(r, nowMs) ? "expired" : (r.status as ExceptionStatus);
+
   return visibleRows
-    .slice()
+    .filter((r) => !status || shownStatus(r) === status)
     .sort((a, b) => b.requestedAt.getTime() - a.requestedAt.getTime())
     .map((r) => ({
       id: r.id,
       controlId: r.controlId,
       effectiveControlId: r.effectiveControlId,
       initiativeId: r.initiativeId,
-      status: r.status as ExceptionStatus,
+      status: shownStatus(r),
       reason: r.reason,
       requestedBy: r.requestedBy,
       requestedAt: r.requestedAt.toISOString(),
