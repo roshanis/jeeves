@@ -40,6 +40,13 @@ describe("ExceptionsPanel", () => {
     expect(screen.queryByText("Reject")).toBeNull();
   });
 
+  it("shows the expiry date of an approved exception, and a dash when there is none", () => {
+    const approved: ExceptionRow = { ...requested, id: "exc-4", status: "approved", expiresAt: Date.parse("2026-09-30T12:00:00Z") };
+    renderWithProviders(<ExceptionsPanel exceptions={[approved, requested]} />);
+    expect(screen.getByRole("columnheader", { name: "Expires" })).toBeDefined();
+    expect(screen.getByText("2026-09-30")).toBeDefined();
+  });
+
   it("shows an empty state when there are no exceptions", () => {
     renderWithProviders(<ExceptionsPanel exceptions={[]} />);
     expect(screen.getByText("No control exceptions on file.")).toBeDefined();

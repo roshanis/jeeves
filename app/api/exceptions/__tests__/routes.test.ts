@@ -280,6 +280,41 @@ describe("POST /api/exceptions/[id]/decide", () => {
   });
 });
 
+describe("POST /api/exceptions/[id]/decide expiry bounds (L1)", () => {
+  async function decideWith(expiresAt: number | undefined, ip: string): Promise<Response> {
+    const requesterToken = await issueSessionFor("marcus-webb", ip);
+    const workspaceId = await sessionWorkspace(requesterToken);
+    const ecId = await anEffectiveControlId(workspaceId);
+    const { id } = await (await request(requesterToken, ecId, ip)).json();
+    const approverToken = await issueSessionFor("angela-torres", ip, workspaceId);
+    const { POST } = await import("../[id]/decide/route");
+    return POST(
+      new Request(`http://localhost/api/exceptions/${id}/decide`, {
+        method: "POST",
+        headers: bearer(approverToken, ip),
+        body: JSON.stringify({ approve: true, reason: "bounded", ...(expiresAt === undefined ? {} : { expiresAt }) }),
+      }),
+      { params: Promise.resolve({ id }) },
+    );
+  }
+
+  it("400s an expiry in the past or beyond 180 days, with the allowed range in the message", async () => {
+    for (const [at, ip] of [[1, "40.0.7.1"], [Date.now() + 200 * 86_400_000, "40.0.7.2"]] as const) {
+      const res = await decideWith(at, ip);
+      expect(res.status).toBe(400);
+      expect((await res.json()).error).toMatch(/180 days/);
+    }
+  });
+
+  it("defaults to 90 days when omitted", async () => {
+    const res = await decideWith(undefined, "40.0.7.3");
+    expect(res.status).toBe(200);
+    const days = ((await res.json()).expiresAt - Date.now()) / 86_400_000;
+    expect(days).toBeGreaterThan(89.9);
+    expect(days).toBeLessThanOrEqual(90);
+  });
+});
+
 describe("POST /api/exceptions/[id]/decide as admin", () => {
   it("403s an admin on approve and on reject, and the exception stays requested", async () => {
     const requesterToken = await issueSessionFor("marcus-webb", "40.0.4.1");

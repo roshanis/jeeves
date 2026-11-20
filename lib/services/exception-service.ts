@@ -56,7 +56,9 @@ import { mutationWorkspaceMismatch, viewerCannotMutate } from "./workspace-guard
 type Tx = PgDatabase<PgQueryResultHKT, typeof schema>;
 
 /** Default validity window for an approved exception when none is supplied. */
-const DEFAULT_EXCEPTION_DAYS = 90;
+export const DEFAULT_EXCEPTION_DAYS = 90;
+/** Longest an approved exception may run; a "time-boxed" waiver must not be able to become permanent. */
+export const MAX_EXCEPTION_DAYS = 180;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
@@ -316,7 +318,7 @@ export async function requestException(
 
 /**
  * Approve or reject a requested exception. Approver/admin only, and never the
- * requester (SoD). Approving sets an expiry (default 90 days); rejecting
+ * requester (SoD). Approving sets an expiry (default 90 days, at most 180); rejecting
  * returns the effective control to `overdue`.
  */
 export async function decideException(
@@ -331,6 +333,14 @@ export async function decideException(
   requireDecider(actor);
   if (!decisionReason || decisionReason.trim().length === 0) {
     throw new ValidationError("exception decision requires a non-empty reason");
+  }
+  if (approve && expiresAt !== undefined) {
+    const now = nowTs();
+    if (!(expiresAt > now && expiresAt <= now + MAX_EXCEPTION_DAYS * DAY_MS)) {
+      throw new ValidationError(
+        `expiresAt must be in the future and at most ${MAX_EXCEPTION_DAYS} days from now (default ${DEFAULT_EXCEPTION_DAYS} days when omitted)`,
+      );
+    }
   }
   return db.transaction(async (tx) => {
     const [exc] = await tx.select().from(controlExceptions).where(eq(controlExceptions.id, exceptionId));

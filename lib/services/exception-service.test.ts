@@ -25,6 +25,15 @@ afterEach(async () => {
   await closeTestDb(db);
 });
 
+/**
+ * Approval refuses an expiry that is not in the future (L1), so tests that
+ * need an approved-but-lapsed row approve normally and back-date the row.
+ */
+async function approveAlreadyExpired(exceptionId: string, expiresAt: number): Promise<void> {
+  await svc.decideException(db, exceptionId, APPROVER, null, true, "granted");
+  await db.update(controlExceptions).set({ expiresAt }).where(eq(controlExceptions.id, exceptionId));
+}
+
 // Filtered to a genuinely 'overdue' seeded control (fwa-anomaly-detector's
 // D-02) rather than just `rows[0]` — P2-8's status gate on `requestException`
 // means an arbitrary first row (many of which are seeded 'met') is no longer
@@ -199,6 +208,55 @@ describe("exception-service", () => {
     await expect(svc.decideException(db, req.id, APPROVER, null, true, "again")).rejects.toThrow(ConflictError);
   });
 
+  describe("approval expiry bounds (L1)", () => {
+    const DAY = 24 * 60 * 60 * 1000;
+    async function requested() {
+      const { ecId } = await anEffectiveControl();
+      return svc.requestException(db, ecId, REQUESTER, null, "reason");
+    }
+    async function expiryOf(id: string) {
+      const [row] = await db.select().from(controlExceptions).where(eq(controlExceptions.id, id));
+      return row!.expiresAt;
+    }
+
+    it("defaults to 90 days when no expiry is given", async () => {
+      const req = await requested();
+      const before = Date.now();
+      const res = await svc.decideException(db, req.id, APPROVER, null, true, "granted");
+      expect(res.expiresAt!).toBeGreaterThanOrEqual(before + 90 * DAY);
+      expect(res.expiresAt!).toBeLessThanOrEqual(Date.now() + 90 * DAY);
+    });
+
+    it("accepts an expiry up to 180 days ahead", async () => {
+      const req = await requested();
+      const at = Date.now() + 180 * DAY - 60_000;
+      const res = await svc.decideException(db, req.id, APPROVER, null, true, "granted", at);
+      expect(res.expiresAt).toBe(at);
+      expect(await expiryOf(req.id)).toBe(at);
+    });
+
+    it("refuses an expiry more than 180 days ahead, naming the allowed range", async () => {
+      const req = await requested();
+      const err = await svc.decideException(db, req.id, APPROVER, null, true, "granted", Date.now() + 181 * DAY).catch((e) => e);
+      expect(err).toBeInstanceOf(ValidationError);
+      expect(err.message).toMatch(/180 days/);
+    });
+
+    it.each([["the epoch", 1], ["the past", -60_000], ["now", 0]])("refuses an expiry in %s", async (_n, delta) => {
+      const req = await requested();
+      const at = delta === 1 ? 1 : Date.now() + delta;
+      await expect(svc.decideException(db, req.id, APPROVER, null, true, "granted", at)).rejects.toThrow(ValidationError);
+      const [row] = await db.select().from(controlExceptions).where(eq(controlExceptions.id, req.id));
+      expect(row!.status).toBe("requested");
+    });
+
+    it("ignores the expiry bound when rejecting", async () => {
+      const req = await requested();
+      const res = await svc.decideException(db, req.id, APPROVER, null, false, "no", 1);
+      expect(res.status).toBe("rejected");
+    });
+  });
+
   it("IllegalTransitionError from the role guards carries kind 'role'", async () => {
     const { ecId } = await anEffectiveControl();
     const req = await svc.requestException(db, ecId, REQUESTER, null, "reason");
@@ -248,7 +306,7 @@ describe("exception-service", () => {
     const { ecId } = await anEffectiveControl();
     const req = await svc.requestException(db, ecId, REQUESTER, null, "reason");
     const pastExpiry = Date.now() - 1000;
-    await svc.decideException(db, req.id, APPROVER, null, true, "granted", pastExpiry);
+    await approveAlreadyExpired(req.id, pastExpiry);
 
     const expired = await svc.expireDueExceptions(db, Date.now());
     expect(expired).toContain(req.id);
@@ -319,7 +377,7 @@ describe("exception-service", () => {
       const { ecId } = await anEffectiveControlWithStatus("breached");
       const req = await svc.requestException(db, ecId, REQUESTER, null, "reason");
       const pastExpiry = Date.now() - 1000;
-      await svc.decideException(db, req.id, APPROVER, null, true, "granted", pastExpiry);
+      await approveAlreadyExpired(req.id, pastExpiry);
 
       await svc.expireDueExceptions(db, Date.now());
       const [ec] = await db.select().from(effectiveControls).where(eq(effectiveControls.id, ecId));
@@ -502,7 +560,7 @@ describe("exception-service", () => {
       const { ecId } = await anEffectiveControl();
       const original = await svc.requestException(db, ecId, REQUESTER, null, "original reason");
       const pastExpiry = Date.now() - 1000;
-      await svc.decideException(db, original.id, APPROVER, null, true, "granted", pastExpiry);
+      await approveAlreadyExpired(original.id, pastExpiry);
 
       const renewal = await svc.renewException(db, original.id, REQUESTER, null, "renew while audit completes");
       expect(renewal.status).toBe("requested");
@@ -521,7 +579,7 @@ describe("exception-service", () => {
       const { ecId } = await anEffectiveControl();
       const original = await svc.requestException(db, ecId, REQUESTER, null, "reason");
       const pastExpiry = Date.now() - 1000;
-      await svc.decideException(db, original.id, APPROVER, null, true, "granted", pastExpiry);
+      await approveAlreadyExpired(original.id, pastExpiry);
 
       await svc.expireDueExceptions(db, Date.now());
       const [ec] = await db.select().from(effectiveControls).where(eq(effectiveControls.id, ecId));
@@ -532,7 +590,7 @@ describe("exception-service", () => {
       const { ecId } = await anEffectiveControl();
       const original = await svc.requestException(db, ecId, REQUESTER, null, "reason");
       const pastExpiry = Date.now() - 1000;
-      await svc.decideException(db, original.id, APPROVER, null, true, "granted", pastExpiry);
+      await approveAlreadyExpired(original.id, pastExpiry);
 
       const renewal = await svc.renewException(db, original.id, REQUESTER, null, "renew");
       await svc.expireDueExceptions(db, Date.now()); // original: approved -> expired, out from under the renewal
@@ -693,7 +751,7 @@ describe("exception-service", () => {
       const { ecId } = await anEffectiveControl();
       const req = await svc.requestException(db, ecId, REQUESTER, null, "reason");
       const pastExpiry = Date.now() - 1000;
-      await svc.decideException(db, req.id, APPROVER, null, true, "granted", pastExpiry);
+      await approveAlreadyExpired(req.id, pastExpiry);
 
       /* eslint-disable @typescript-eslint/no-explicit-any */
       const dbAny = db as any;
