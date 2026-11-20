@@ -8,7 +8,7 @@ import { seedDatabase } from "../../scripts/seed";
 import { auditEvents, controlDefinitions, controlExceptions, deploymentVersions, effectiveControls } from "../db/schema";
 import * as svc from "./exception-service";
 import { selectEffectiveControlsWithLapsedResolved } from "./exception-expiry";
-import { ConflictError, IllegalTransitionError, NotFoundError, ValidationError, createDraft } from "./initiative-service";
+import { ConflictError, IllegalTransitionError, NotFoundError, ValidationError, createDraft, generateEffectiveControls } from "./initiative-service";
 import { CHAMPION_PREFILL_PAYLOAD } from "../intake/champion-prefill";
 
 const REQUESTER = { id: "marcus-webb", role: "reviewer" as const }; // a stakeholder
@@ -381,6 +381,50 @@ describe("exception-service", () => {
       await svc.decideException(db, renewal.id, APPROVER, null, false, "no");
       const [ec] = await db.select().from(effectiveControls).where(eq(effectiveControls.id, ecId));
       expect(ec!.status).toBe("overdue");
+    });
+  });
+
+  describe("controls regenerated on re-approval supersede open waivers (L3)", () => {
+    async function initiativeOf(ecId: string): Promise<string> {
+      const [ec] = await db.select().from(effectiveControls).where(eq(effectiveControls.id, ecId));
+      const [dep] = await db.select().from(deploymentVersions).where(eq(deploymentVersions.id, ec!.deploymentId));
+      return dep!.initiativeId;
+    }
+
+    it.each([["approved"], ["requested"]])("supersedes a %s waiver, audits it, and gives the new revision no exception", async (state) => {
+      const { ecId, controlId } = await anEffectiveControl();
+      const req = await svc.requestException(db, ecId, REQUESTER, null, "reason");
+      if (state === "approved") await svc.decideException(db, req.id, APPROVER, null, true, "granted");
+      const initiativeId = await initiativeOf(ecId);
+
+      await generateEffectiveControls(db, initiativeId);
+
+      const [old] = await db.select().from(controlExceptions).where(eq(controlExceptions.id, req.id));
+      expect(old!.status).toBe("superseded");
+      const [evt] = await db.select().from(auditEvents).where(eq(auditEvents.action, "control_exception_superseded"));
+      expect(evt).toMatchObject({ initiativeId, before: state, after: "superseded" });
+      expect(evt!.detail).toMatch(/controls regenerated on re-approval/);
+      expect(evt!.metadata).toMatchObject({ exceptionId: req.id, controlId });
+
+      const [oldEc] = await db.select().from(effectiveControls).where(eq(effectiveControls.id, ecId));
+      const revisions = await db.select().from(effectiveControls).where(eq(effectiveControls.deploymentId, oldEc!.deploymentId));
+      const newest = revisions.filter((r) => r.controlId === controlId).sort((a, b) => b.version - a.version)[0]!;
+      expect(newest.id).not.toBe(ecId);
+      expect(newest.status).toBe("pending");
+      const onNew = await db.select().from(controlExceptions).where(eq(controlExceptions.effectiveControlId, newest.id));
+      expect(onNew).toHaveLength(0);
+      // The stale revision row is not written to.
+      expect(oldEc!.status).toBe("exception_requested");
+    });
+
+    it("leaves waivers on other deployments' controls and already-terminal rows alone", async () => {
+      const { ecId } = await anEffectiveControl();
+      const req = await svc.requestException(db, ecId, REQUESTER, null, "reason");
+      await svc.decideException(db, req.id, APPROVER, null, false, "no");
+      await generateEffectiveControls(db, await initiativeOf(ecId));
+      const [row] = await db.select().from(controlExceptions).where(eq(controlExceptions.id, req.id));
+      expect(row!.status).toBe("rejected");
+      expect(await db.select().from(auditEvents).where(eq(auditEvents.action, "control_exception_superseded"))).toHaveLength(0);
     });
   });
 

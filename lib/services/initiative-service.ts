@@ -30,13 +30,14 @@ import { currentAbstention, isResumableReviewStatus } from "../reviews/abstentio
 import { overlayFromStoredIntake } from "../intake/stored-overlay";
 import { createHash, randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import type { Db } from "../db/client";
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import type * as schema from "../db/schema";
 import {
   auditEvents,
   controlDefinitions,
+  controlExceptions,
   deploymentVersions,
   effectiveControls,
   initiativeDecisions,
@@ -1607,6 +1608,39 @@ async function generateEffectiveControlsInTx(
       createdAt: new Date(nowTs()),
     });
     created.push({ controlId: def.id, version: nextVersion });
+  }
+
+  // A waiver belongs to the revision it was requested on. Regenerating the
+  // controls (re-approval) starts a new revision with no waiver, so open
+  // waivers on the replaced rows are superseded and must be requested again.
+  // The replaced rows' own status is left alone: they are stale history.
+  const regenerated = new Set(created.map((c) => c.controlId));
+  const replacedIds = existingEcs.filter((ec) => regenerated.has(ec.controlId)).map((ec) => ec.id);
+  if (replacedIds.length > 0) {
+    const open = await tx
+      .select()
+      .from(controlExceptions)
+      .where(and(inArray(controlExceptions.effectiveControlId, replacedIds), inArray(controlExceptions.status, ["requested", "approved"])));
+    if (open.length > 0) {
+      await tx
+        .update(controlExceptions)
+        .set({ status: "superseded" })
+        .where(inArray(controlExceptions.id, open.map((exc) => exc.id)));
+    }
+    for (const exc of open) {
+      await tx.insert(auditEvents).values({
+        id: `evt-${randomUUID()}`,
+        initiativeId,
+        ts: new Date(nowTs()),
+        actor: SYSTEM_ACTOR.id,
+        actorRole: SYSTEM_ACTOR.role,
+        action: "control_exception_superseded",
+        detail: `Exception ${exc.id} for ${exc.controlId} superseded: controls regenerated on re-approval; request it again if still needed.`,
+        before: exc.status,
+        after: "superseded",
+        metadata: { exceptionId: exc.id, controlId: exc.controlId, reason: "controls regenerated on re-approval" },
+      });
+    }
   }
 
   await tx.insert(auditEvents).values({
