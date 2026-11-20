@@ -110,6 +110,20 @@ describe("legal pages", () => {
     expect(text).toContain("it keeps only this token, any unsent draft in this tab, and the preferences below");
   });
 
+  it("privacy promises only the removal the operator can do: content goes, the audit record and its title stay (d09)", () => {
+    renderWithProviders(<PrivacyPage />);
+    const text = (document.body.textContent ?? "").replace(/\s+/g, " ");
+    // What can be done today: remove what was typed, including contact details.
+    expect(text).toMatch(/removes the content of a request/i);
+    expect(text).toMatch(/description, answers and contact details/i);
+    // What cannot: the append-only audit log keeps a record, with the title.
+    expect(text).toMatch(/audit log keeps a record that the request existed, including its title/i);
+    expect(text).toMatch(/cannot be removed today/i);
+    // The old promise.
+    expect(text).not.toMatch(/it will be deleted/i);
+    expect(text).not.toMatch(/deletion of the whole record/i);
+  });
+
   it("privacy is honest that AI processing sends data to OpenAI", () => {
     renderWithProviders(<PrivacyPage />);
     expect(screen.getByText(/OpenAI/)).toBeDefined();

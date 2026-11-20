@@ -13,6 +13,7 @@ import { guardDemoPage, demoPageMetadata } from "@/lib/config/demo-pages";
 //   - public submissions           -> app/api/public-session/route.ts
 //   - OpenAI calls                 -> lib/agents/openai-adapter.ts
 //   - append-only audit trail      -> lib/db/schema.ts
+//   - what removal can do          -> docs/deploy.md "Removing a request's content" (run by tests/docs/request-removal.test.ts)
 // If one of those changes, this page is wrong and must change with it.
 export const generateMetadata = demoPageMetadata({
   title: "Privacy",
@@ -150,9 +151,10 @@ export default function PrivacyPage() {
           >
             the contact address for this deployment
           </a>{" "}
-          describing what you submitted, and it will be deleted. Because this
-          is a demonstration, the simplest and fastest remedy is usually
-          deletion of the whole record.
+          describing what you submitted, and the operator removes the content
+          of a request: the description, answers and contact details you
+          typed. The append-only audit log keeps a record that the request
+          existed, including its title, and that cannot be removed today.
         </p>
       </LegalSection>
 
