@@ -84,12 +84,13 @@ schema, plan.md §5). Migrations live in [`drizzle/`](../drizzle/).
 | RunBudget | `run_budget` | `day` (`YYYY-MM-DD`, unique), `tokensUsed`, `tokensCap` | **unique per day** |
 | Session | `sessions` | `token` (PK), `personaKey`, `workspaceId`, `expiresAt` (epoch-ms, checked in app code), `createdAt` | added M2.5 inc.1 — see §6.1 |
 
-The **registry** (plan §5: "registry as a view") is `initiative_registry`, a
-read-only SQL view defined in
-[`drizzle/0001_initiative_registry_view.sql`](../drizzle/0001_initiative_registry_view.sql):
-`initiatives LEFT JOIN` the latest `risk_assessments` row `LEFT JOIN` the
-latest `deployment_versions` row. It is never written to directly — all
-writes land on the authoritative tables above.
+The **registry** (plan §5: "registry as a view") was a SQL view,
+`initiative_registry`, created by
+[`drizzle/0001_initiative_registry_view.sql`](../drizzle/0001_initiative_registry_view.sql)
+and dropped by [`drizzle/0018_drop_initiative_registry.sql`](../drizzle/0018_drop_initiative_registry.sql):
+nothing used it, it exposed every workspace (no `workspace_id` column) and its
+"current deployment" disagreed with the app's. A registry page reads the
+authoritative tables above, scoped to the viewer's workspace.
 
 ### 2.3 Append-only audit enforcement
 
@@ -144,7 +145,7 @@ Maintenance that disables the guards (the seed's wipe) re-arms them by name with
 | Migration | Purpose |
 |---|---|
 | `0000_real_falcon.sql` | Initial schema (drizzle-kit generated) — all core tables + FKs + the uniqueness indexes listed in §2.2 |
-| `0001_initiative_registry_view.sql` | Hand-written `initiative_registry` read-only view |
+| `0001_initiative_registry_view.sql` | Hand-written `initiative_registry` read-only view (dropped by 0018) |
 | `0002_audit_events_append_only.sql` | Hand-written append-only trigger (§2.3) |
 | `0003_sessions.sql` | M2.5 inc.1 — DB-backed `sessions` table (§6.1) |
 | `0004_initiatives_workspace.sql` | M2.5 inc.2a — nullable `workspace_id` on `initiatives`, non-breaking (§6.5) |
@@ -159,6 +160,7 @@ Maintenance that disables the guards (the seed's wipe) re-arms them by name with
 | `0013_review_notifications.sql` | Review-request notifications |
 | `0016_supabase_api_lockdown.sql` | Hand-written: RLS on and API-role revokes for every Jeeves table, only where Supabase's `anon` and `authenticated` roles exist |
 | `0017_guard_triggers_enable_always.sql` | Hand-written: every append-only and installation guard trigger set to `ENABLE ALWAYS` (fires under `session_replication_role = replica`) |
+| `0018_drop_initiative_registry.sql` | Hand-written: drops the unused `initiative_registry` view |
 
 `drizzle/` is the source of truth: list it for the current set. `0001`–`0004`
 and most later files are hand-written rather than `drizzle-kit`-generated

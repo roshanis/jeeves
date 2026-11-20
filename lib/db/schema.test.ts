@@ -57,19 +57,16 @@ describe("lib/db/schema — migrations and constraints", () => {
     );
   });
 
-  it("defines the initiative registry as a SQL VIEW, not a table", async () => {
+  it("has no initiative_registry view or table: migration 0018 dropped the unused view", async () => {
     const views = await db.execute(sql`
       select table_name from information_schema.views where table_schema = 'public'
     `);
-    const names = views.rows.map((r) => (r as { table_name: string }).table_name);
-    expect(names).toContain("initiative_registry");
+    expect(views.rows.map((r) => (r as { table_name: string }).table_name)).not.toContain("initiative_registry");
 
     const tables = await db.execute(sql`
-      select table_name from information_schema.tables
-      where table_schema = 'public' and table_type = 'BASE TABLE'
+      select table_name from information_schema.tables where table_schema = 'public'
     `);
-    const tableNames = tables.rows.map((r) => (r as { table_name: string }).table_name);
-    expect(tableNames).not.toContain("initiative_registry");
+    expect(tables.rows.map((r) => (r as { table_name: string }).table_name)).not.toContain("initiative_registry");
   });
 
   it("rejects a second review_decision for the same (cycle, domain)", async () => {

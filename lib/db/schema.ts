@@ -12,10 +12,9 @@
 //   - breach/incident identity unique per (deployment, control, windowStart)
 //   - one RunBudget row per day
 //
-// The "registry" (plan §5: "Registry = a SQL view over authoritative
-// records") is defined as a Postgres view in
-// drizzle/0001_initiative_registry_view.sql — a read-only projection over
-// initiatives + latest risk assessment + latest deployment, not a table.
+// plan §5 once called for the registry to be a SQL view over initiatives; the
+// view (drizzle/0001) was never read by the app and was dropped in
+// drizzle/0018_drop_initiative_registry.sql.
 import { sql } from "drizzle-orm";
 import type { DeploymentMode } from "../config/deployment-mode";
 import type { StoredIntakeFields } from "../intake/stored-overlay";

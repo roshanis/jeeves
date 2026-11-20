@@ -127,6 +127,13 @@
       "when": 1783738680663,
       "tag": "0017_guard_triggers_enable_always",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1783738680664,
+      "tag": "0018_drop_initiative_registry",
+      "breakpoints": true
     }
   ]
 }
