@@ -5,14 +5,14 @@ import type { Actor } from "../domain/types";
 import type { AgentPort, DraftReviewInput, DraftReviewOutput, PortFailure } from "../agents/ports";
 import { createMockAgentPort } from "../agents/mock-adapter";
 import { createTestDb, closeTestDb, type TestDb } from "../db/test-client";
-import { auditEvents, initiatives, intakeVersions, reviewCycles, reviewDecisions, riskAssessments, runBudget } from "../db/schema";
+import { auditEvents, initiatives, intakeVersions, reviewCycles, reviewDecisions, riskAssessments, runBudget, runBudgetWorkspace } from "../db/schema";
 import { runReviewAgent } from "../services/initiative-service";
 import { draftBudgetPolicy } from "./draft-execution-policy";
 import { startDraftRun } from "./review-run";
 
 const at = new Date("2026-09-19T10:00:00Z");
 const reviewer: Actor = { id: "james-liu", role: "reviewer" };
-const budget = { day: "2026-09-19", dailyCap: 500_000, tokensPerAttempt: 1_500 };
+const budget = { day: "2026-09-19", dailyCap: 500_000, workspaceCap: 50_000, tokensPerAttempt: 1_500 };
 const options = { budget, actor: reviewer, sessionWorkspaceId: "workspace-a", retryDelayMs: 0 };
 let db: TestDb;
 
@@ -109,6 +109,7 @@ describe("draft attempt reservations", () => {
     vi.stubEnv("JEEVES_DEEP_REVIEW", deep);
     const policy = draftBudgetPolicy(at);
     expect(policy).toEqual({ ...budget, tokensPerAttempt: estimate });
+    expect(policy).toBeDefined();
     const observed: number[] = [];
     const { port, draftReview } = mockPort();
     draftReview.mockImplementation(async (input) => {
@@ -172,5 +173,47 @@ describe("draft attempt reservations", () => {
     expect(draftReview).toHaveBeenCalledTimes(1);
     expect(await tokensUsed()).toBe(1_500);
     expect(await reservations()).toHaveLength(1);
+  });
+
+  async function workspaceTokens() {
+    const rows = await db.select().from(runBudgetWorkspace).where(eq(runBudgetWorkspace.workspaceId, "workspace-a"));
+    return rows.find((row) => row.day === budget.day)?.tokensUsed ?? 0;
+  }
+
+  it("counts each reservation against the workspace as well as the day", async () => {
+    const { port } = mockPort();
+    await startDraftRun(db, "i", ["legal"], port, options);
+    expect(await tokensUsed()).toBe(1_500);
+    expect(await workspaceTokens()).toBe(1_500);
+  });
+
+  it("refuses at the workspace share with a code that names it, while the day still has room", async () => {
+    await db.insert(runBudgetWorkspace).values({ day: budget.day, workspaceId: "workspace-a", tokensUsed: 49_000 });
+    const { port, draftReview } = mockPort();
+    const result = await startDraftRun(db, "i", ["legal"], port, options);
+    expect(result.outcomes[0]).toMatchObject({
+      status: "failed",
+      error: { kind: "budget-exhausted", code: "workspace_budget_exhausted" },
+    });
+    expect(draftReview).not.toHaveBeenCalled();
+    expect(await tokensUsed()).toBe(0);
+    expect(await workspaceTokens()).toBe(49_000);
+  });
+
+  it("names the daily cap when that is what refused, and leaves the workspace row alone", async () => {
+    await db.insert(runBudget).values({ id: budget.day, day: budget.day, tokensUsed: budget.dailyCap, tokensCap: budget.dailyCap });
+    const { port } = mockPort();
+    const result = await startDraftRun(db, "i", ["legal"], port, options);
+    expect(result.outcomes[0]).toMatchObject({ error: { kind: "budget-exhausted", code: "daily_budget_exhausted" } });
+    expect(await workspaceTokens()).toBe(0);
+  });
+
+  it("reserves nothing when the policy is absent (the mock adapter answers)", async () => {
+    const { port, draftReview } = mockPort();
+    const result = await startDraftRun(db, "i", ["legal"], port, { ...options, budget: undefined });
+    expect(result.outcomes[0]).toMatchObject({ status: "drafted" });
+    expect(draftReview).toHaveBeenCalledTimes(1);
+    expect(await db.select().from(runBudget)).toEqual([]);
+    expect(await db.select().from(runBudgetWorkspace)).toEqual([]);
   });
 });

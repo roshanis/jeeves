@@ -235,8 +235,9 @@ export async function POST(req: Request): Promise<Response> {
   // Reserve from what is actually sent to the model, after grounding.
   const budget = await reserveDailyBudget(
     BASE_ESTIMATED_TOKENS + Math.ceil((parsed.data.question.length + JSON.stringify(rows).length) / 4),
+    guard.workspaceId,
   );
-  if (budget) return Response.json({ error: budget.message }, { status: budget.status });
+  if (budget) return guardFailureResponse(budget);
 
   let port: AgentPort;
   try {

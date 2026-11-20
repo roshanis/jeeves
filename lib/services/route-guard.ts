@@ -16,7 +16,8 @@ import { isProductionMode } from "../config/deployment-mode";
  */
 import { DbTokenBucketRateLimiter } from "../security/db-rate-limit";
 import { issueSession } from "../security/session";
-import { DAILY_TOKEN_CAP, DbBudgetStore, reserve, type BudgetStore } from "../security/budget";
+import { BUDGET_REFUSAL, DbBudgetStore, reserveForWorkspace, type BudgetScope, type BudgetStore } from "../security/budget";
+import { resolveAgentRuntimeConfig } from "../agents/runtime";
 import { SESSION_COOKIE_NAME } from "../security/session-cookie-name";
 import { validateInputSize, type FieldLimit, type InputGap } from "../security/input-limits";
 import { PUBLIC_PERSONA_PREFIX, isPersonaKey, resolveActor } from "./actors";
@@ -263,6 +264,8 @@ export interface GuardFailure {
   kind: GuardFailureKind;
   status: 401 | 403 | 429 | 400 | 413 | 503;
   message: string;
+  /** Machine-readable reason, set where callers must tell two refusals of one kind apart (the budget caps). */
+  code?: string;
   gaps?: InputGap[];
   retryAfterSeconds?: number;
 }
@@ -273,6 +276,7 @@ export function guardFailureResponse(failure: GuardFailure, headers: Record<stri
   return Response.json(
     {
       error: failure.message,
+      ...(failure.code ? { code: failure.code } : {}),
       ...(failure.retryAfterSeconds !== undefined ? { retryAfterSeconds: failure.retryAfterSeconds } : {}),
       ...(failure.gaps ? { gaps: failure.gaps } : {}),
     },
@@ -649,29 +653,39 @@ export async function runMutationGuard(
     }
   }
 
-  if (options.requiresBudget) {
-    const day = options.budgetDay ?? todayUtc();
-    const result = await reserve(budgetStore, day, options.estimatedTokens ?? 0, DAILY_TOKEN_CAP);
-    if (!result.granted) {
-      return {
-        ok: false,
-        failure: { kind: "budget_exhausted", status: 429, message: "daily model budget reached" },
-      };
-    }
+  if (options.requiresBudget && modelWillBeCalled()) {
+    const failure = await reserveDailyBudget(options.estimatedTokens ?? 0, workspaceId, options.budgetDay ?? todayUtc());
+    if (failure) return { ok: false, failure };
   }
 
   return { ok: true, actor, workspaceId, json };
 }
 
 /**
+ * True when a provider call will be billed. The offline mock adapter answers
+ * without one, so it reserves nothing; its cost is bounded by the rate limits.
+ */
+export function modelWillBeCalled(): boolean {
+  return resolveAgentRuntimeConfig().adapter === "openai";
+}
+
+export function budgetFailure(scope: BudgetScope): GuardFailure {
+  return { kind: "budget_exhausted", status: 429, message: BUDGET_REFUSAL[scope].message, code: BUDGET_REFUSAL[scope].code };
+}
+
+/**
  * Reserve daily LLM budget after a route has authenticated, role-checked and
  * validated the request and sized the real prompt, so refused or malformed
- * calls never spend the shared cap. Returns a failure when the cap is spent.
+ * calls never spend the shared cap. The tokens count against the workspace's
+ * share and the install-wide cap in one transaction. Does nothing when the mock
+ * adapter will answer. Returns a failure when either cap is spent.
  */
-export async function reserveDailyBudget(tokens: number, day: string = todayUtc()): Promise<GuardFailure | null> {
-  const result = await reserve(budgetStore, day, tokens, DAILY_TOKEN_CAP);
-  if (result.granted) return null;
-  return { kind: "budget_exhausted", status: 429, message: "daily model budget reached" };
+export async function reserveDailyBudget(tokens: number, workspaceId: string | null, day: string = todayUtc()): Promise<GuardFailure | null> {
+  if (!modelWillBeCalled()) return null;
+  // runMutationGuard has already refused a session without a workspace.
+  if (!workspaceId) throw new Error("A budget reservation needs a workspace");
+  const result = await reserveForWorkspace(getDb(), { day, workspaceId, tokens });
+  return result.granted ? null : budgetFailure(result.scope);
 }
 
 /** Exposed for tests that want to exhaust/reset the shared budget deterministically. */

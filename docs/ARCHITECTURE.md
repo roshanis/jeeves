@@ -82,6 +82,7 @@ schema, plan.md §5). Migrations live in [`drizzle/`](../drizzle/).
 | Incident | `incidents` | `deploymentId` FK, `controlId` FK, `windowStart`, `identityKey` (unique, `${deploymentId}:${controlId}:${windowStartTsMs}`), `detectedAt`, `reviewCycleId` (nullable), `resolvedAt` | **unique `identityKey`** and unique `(deploymentId, controlId, windowStart)` — deterministic breach identity enables idempotent upsert-on-conflict re-runs |
 | AuditEvent | `audit_events` | `initiativeId` FK (nullable), `ts`, `actor`, `actorRole`, `action`, `detail`, `before`, `after`, `metadata` (JSONB) | **append-only at the DB level** — see §2.3 |
 | RunBudget | `run_budget` | `day` (`YYYY-MM-DD`, unique), `tokensUsed`, `tokensCap` | **unique per day** |
+| RunBudgetWorkspace | `run_budget_workspace` | `day`, `workspaceId`, `tokensUsed` | **primary key (day, workspace)** |
 | Session | `sessions` | `token` (PK), `personaKey`, `workspaceId`, `expiresAt` (epoch-ms, checked in app code), `createdAt` | added M2.5 inc.1 — see §6.1 |
 
 The **registry** (plan §5: "registry as a view") was a SQL view,
@@ -561,9 +562,16 @@ const rows = await db.insert(runBudget)
 
 `.returning()` comes back empty when the `setWhere` predicate fails (i.e.
 the reservation would exceed the cap), which the caller treats as denied.
-The cap is `500_000` tokens/day (`route-guard.ts`). An `InMemoryBudgetStore`
-exists for pure unit tests; production/dev-with-Postgres always uses
-`DbBudgetStore`.
+The cap is `500_000` tokens/day (`DAILY_TOKEN_CAP` in `lib/security/budget.ts`).
+An `InMemoryBudgetStore` exists for pure unit tests; production/dev-with-Postgres
+always uses `DbBudgetStore`.
+
+Each workspace also has a row in `run_budget_workspace` (`day`, `workspace_id`,
+`tokens_used`) capped at 10% of the day. `reserveForWorkspace()` takes the
+workspace row first and the day row second in one transaction, and gives the
+workspace increment back if the day refuses, so both pass or nothing is kept.
+The refusal carries `workspace_budget_exhausted` or `daily_budget_exhausted`.
+Nothing is reserved when the offline mock adapter answers (no provider call).
 
 ### 6.4 Requester ownership + reviewer-domain authorization
 

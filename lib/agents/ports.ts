@@ -58,6 +58,8 @@ export type PortFailure =
        */
       kind: "budget-exhausted";
       message: string;
+      /** Which cap refused it: this workspace's share or the install-wide day. */
+      code?: "workspace_budget_exhausted" | "daily_budget_exhausted";
     };
 
 /** Result envelope for a single port invocation. */

@@ -184,7 +184,7 @@ describe("lib/workflow/review-run", () => {
     await db.delete(reviewDecisions).where(and(eq(reviewDecisions.cycleId, cycleId), eq(reviewDecisions.domain, extra)));
     const before = await db.select().from(reviewDecisions).where(eq(reviewDecisions.cycleId, cycleId));
 
-    const result = await startDraftRun(db, initiativeId, [extra], undefined, { budget: { day: "2026-01-01", tokensPerAttempt: 1500, dailyCap: 100_000 } });
+    const result = await startDraftRun(db, initiativeId, [extra], undefined, { budget: { day: "2026-01-01", tokensPerAttempt: 1500, dailyCap: 100_000, workspaceCap: 10_000 } });
 
     expect(result.outcomes).toEqual([{ domain: extra, status: "skipped", reason: "not required" }]);
     const after = await db.select().from(reviewDecisions).where(eq(reviewDecisions.cycleId, cycleId));

@@ -332,6 +332,21 @@ export const runBudget = pgTable(
   (t) => [uniqueIndex("run_budget_day_uq").on(t.day)],
 );
 
+/**
+ * What each workspace has reserved on a UTC day (decision d06). The app caps a
+ * workspace at a share of the daily cap and updates this row in the same
+ * transaction as run_budget, so one visitor cannot use up everyone's budget.
+ */
+export const runBudgetWorkspace = pgTable(
+  "run_budget_workspace",
+  {
+    day: text("day").notNull(),
+    workspaceId: text("workspace_id").notNull(),
+    tokensUsed: integer("tokens_used").notNull().default(0),
+  },
+  (t) => [primaryKey({ columns: [t.day, t.workspaceId] })],
+);
+
 /* -------------------------------------------------------------------------
  * Demo sessions — DB-backed (M2.5 inc.1) so a server-issued session and
  * its bound persona survive a process restart / span multiple serverless

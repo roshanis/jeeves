@@ -37,8 +37,8 @@ describe("review route runtime reservations", () => {
   });
 
   it.each([
-    ["", "agents-sdk", "1", 1500, 60_000, 45_000],
-    ["   ", "agents-sdk", "1", 1500, 60_000, 45_000],
+    ["", "agents-sdk", "1", 0, 60_000, 45_000],
+    ["   ", "agents-sdk", "1", 0, 60_000, 45_000],
     ["test-placeholder", "ai-sdk", "1", 1500, 60_000, 45_000],
     ["test-placeholder", "unknown", "1", 1500, 60_000, 45_000],
     ["test-placeholder", "agents-sdk", "0", 1500, 60_000, 45_000],
@@ -55,14 +55,14 @@ describe("review route runtime reservations", () => {
     expect(mocks.guard).toHaveBeenLastCalledWith(fanOutRequest, expect.any(Function), { bodyOptional: true });
     expect(mocks.startDraftRun).toHaveBeenLastCalledWith(mocks.db, "i", ["legal", "security"], undefined, {
       actor: { role: "requester" }, sessionWorkspaceId: "visitor-workspace", signal: fanOutRequest.signal,
-      budget: expect.objectContaining({ tokensPerAttempt: tokens, dailyCap: 500_000 }),
+      budget: tokens === 0 ? undefined : expect.objectContaining({ tokensPerAttempt: tokens, dailyCap: 500_000, workspaceCap: 50_000 }),
       runTimeoutMs: timeoutMs, attemptTimeoutMs,
     });
     const singleRequest = new Request("http://localhost/api/reviews/c/legal/run", { method: "POST", signal: controller.signal });
     expect((await single(singleRequest, { params: Promise.resolve({ cycleId: "c", domain: "legal" }) })).status).toBe(200);
     expect(mocks.guard).toHaveBeenLastCalledWith(singleRequest, undefined);
     expect(mocks.runReviewAgent).toHaveBeenLastCalledWith(mocks.db, "c", "legal", { role: "requester" }, "visitor-workspace", undefined, {
-      signal: singleRequest.signal, budget: expect.objectContaining({ tokensPerAttempt: tokens, dailyCap: 500_000 }),
+      signal: singleRequest.signal, budget: tokens === 0 ? undefined : expect.objectContaining({ tokensPerAttempt: tokens, dailyCap: 500_000, workspaceCap: 50_000 }),
       runTimeoutMs: timeoutMs, attemptTimeoutMs,
     });
   });

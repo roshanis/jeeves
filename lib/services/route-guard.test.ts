@@ -2,13 +2,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq, sql } from "drizzle-orm";
 import { markBootFailed, resetBootStateForTests } from "../config/boot-state";
 import { closeTestDb, createTestDb, type TestDb } from "../db/test-client";
-import { rateLimitBuckets, runBudget, sessions } from "../db/schema";
+import { rateLimitBuckets, runBudget, runBudgetWorkspace, sessions } from "../db/schema";
 import { reserve } from "../security/budget";
 import { DbTokenBucketRateLimiter } from "../security/db-rate-limit";
 import {
   clientKeyFor,
   checkSessionAttempt,
   extractSessionToken,
+  guardFailureResponse,
   getBudgetStoreForTests,
   issueDemoSession,
   issuePublicSession,
@@ -281,31 +282,65 @@ describe("lib/services/route-guard", () => {
       expect(result.failure.gaps?.[0]?.field).toBe("title");
     });
 
-    it("429s when the daily token budget is exhausted", async () => {
+    it("429s when the daily token budget is exhausted, saying the day is used up and when it resets", async () => {
+      vi.stubEnv("OPENAI_API_KEY", "test-placeholder-never-sent");
       const session = (await issueDemoSession("priya-raman"))!;
       const req = reqWithBearer(session.token, "9.9.9.1");
+      await testDb.insert(runBudget).values({ id: "2099-01-01", day: "2099-01-01", tokensUsed: 499_000, tokensCap: 500_000 });
       const result = await runMutationGuard(req, undefined, {
         requiresBudget: true,
         budgetDay: "2099-01-01",
-        estimatedTokens: 10_000_000, // far exceeds the daily cap in one shot
+        estimatedTokens: 2_000,
       });
       expect(result.ok).toBe(false);
       if (result.ok) throw new Error("unreachable");
       expect(result.failure.status).toBe(429);
       expect(result.failure.kind).toBe("budget_exhausted");
-      expect(result.failure.message).toBe("daily model budget reached");
+      expect(result.failure.code).toBe("daily_budget_exhausted");
+      expect(result.failure.message).toMatch(/daily model budget.*00:00 UTC/);
     });
 
-    it("budget reserve costs 0 tokens for the mock adapter but still exercises the reserve path", async () => {
+    it("429s with its own code when only this workspace's share is used up", async () => {
+      vi.stubEnv("OPENAI_API_KEY", "test-placeholder-never-sent");
       const session = (await issueDemoSession("priya-raman"))!;
-      const req = reqWithBearer(session.token, "9.9.9.2");
-      const result = await runMutationGuard(req, undefined, {
+      await testDb.insert(runBudgetWorkspace).values({ day: "2099-01-04", workspaceId: session.workspaceId, tokensUsed: 49_900 });
+      const result = await runMutationGuard(reqWithBearer(session.token, "9.9.9.4"), undefined, {
+        requiresBudget: true,
+        budgetDay: "2099-01-04",
+        estimatedTokens: 200,
+      });
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("unreachable");
+      expect(result.failure).toMatchObject({ status: 429, kind: "budget_exhausted", code: "workspace_budget_exhausted" });
+      expect(result.failure.message).toMatch(/workspace.*share.*00:00 UTC/);
+      const response = guardFailureResponse(result.failure);
+      expect(await response.json()).toMatchObject({ code: "workspace_budget_exhausted" });
+    });
+
+    it("reserves from the workspace and the day together when a key is configured", async () => {
+      vi.stubEnv("OPENAI_API_KEY", "test-placeholder-never-sent");
+      const session = (await issueDemoSession("priya-raman"))!;
+      const result = await runMutationGuard(reqWithBearer(session.token, "9.9.9.2"), undefined, {
         requiresBudget: true,
         budgetDay: "2099-01-02",
-        estimatedTokens: 0,
+        estimatedTokens: 700,
       });
       expect(result.ok).toBe(true);
-      expect(await testDb.select().from(runBudget).where(eq(runBudget.day, "2099-01-02"))).toHaveLength(1);
+      expect((await testDb.select().from(runBudget).where(eq(runBudget.day, "2099-01-02")))[0]?.tokensUsed).toBe(700);
+      expect((await testDb.select().from(runBudgetWorkspace))[0]).toMatchObject({ day: "2099-01-02", tokensUsed: 700 });
+    });
+
+    it("reserves nothing when the offline mock adapter will answer", async () => {
+      vi.stubEnv("OPENAI_API_KEY", "");
+      const session = (await issueDemoSession("priya-raman"))!;
+      const result = await runMutationGuard(reqWithBearer(session.token, "9.9.9.3"), undefined, {
+        requiresBudget: true,
+        budgetDay: "2099-01-03",
+        estimatedTokens: 700,
+      });
+      expect(result.ok).toBe(true);
+      expect(await testDb.select().from(runBudget)).toEqual([]);
+      expect(await testDb.select().from(runBudgetWorkspace)).toEqual([]);
     });
   });
 

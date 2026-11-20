@@ -65,7 +65,7 @@ describe("draft deadline across database waits", () => {
     clock.mockReturnValue(start);
     const run = runSingleDomainDraft(blocked.db, cycleId, "legal", { ...base, draftReview }, {
       runTimeoutMs: 1000, attemptTimeoutMs: 1000, maxAttempts: 1,
-      budget: { day: "2026-09-19", dailyCap: 5000, tokensPerAttempt: 1500 },
+      budget: { day: "2026-09-19", dailyCap: 5000, workspaceCap: 5000, tokensPerAttempt: 1500 },
     });
     await blocked.entered.promise;
     // Advance only the application's elapsed clock while the query waits.
@@ -125,7 +125,7 @@ describe("draft deadline across database waits", () => {
     const draftReview = vi.fn(base.draftReview);
     const run = runSingleDomainDraft(blocked.db, cycleId, "legal", { ...base, draftReview }, {
       signal: controller.signal, maxAttempts: 1,
-      budget: { day: "2026-09-19", dailyCap: 5000, tokensPerAttempt: 1500 },
+      budget: { day: "2026-09-19", dailyCap: 5000, workspaceCap: 5000, tokensPerAttempt: 1500 },
     });
     await blocked.entered.promise;
     controller.abort();

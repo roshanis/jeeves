@@ -50,8 +50,9 @@ const GAP_LEVEL_CLASS: Record<CompletenessGap["level"], string> = {
   ADVISORY: "text-muted-foreground",
 };
 
-/** The route rejects conversations over 50 messages; send only the most recent turns (the payload carries the state). */
-const MAX_SENT_TURNS = 40;
+/** The route rejects conversations over 20 messages of 1,000 characters; send only the most recent turns (the payload carries the state). */
+const MAX_SENT_TURNS = 20;
+const MAX_TURN_CHARS = 1000;
 
 export function IntakeChat({ payload, payloadRevision, onPayloadChange, onReview }: {
   payload?: IntakePayload;
@@ -94,7 +95,7 @@ export function IntakeChat({ payload, payloadRevision, onPayloadChange, onReview
 
     const userTurn: ConversationTurn = { role: "user", content: trimmed };
     const nextConversation: ConversationTurn[] = [...conversation, userTurn];
-    // The next send must fail neither the server's 50-turn cap nor leave a
+    // The next send must fail neither the server's 20-turn cap nor leave a
     // turn behind: undo the optimistic turn and give the text back.
     const rollback = () => {
       setConversation((prev) => prev.filter((turn) => turn !== userTurn));
@@ -105,7 +106,7 @@ export function IntakeChat({ payload, payloadRevision, onPayloadChange, onReview
     setPending(true);
     try {
       const result = await intakeChat(session.token, {
-        conversation: nextConversation.slice(-MAX_SENT_TURNS),
+        conversation: nextConversation.slice(-MAX_SENT_TURNS).map((turn) => ({ ...turn, content: turn.content.slice(0, MAX_TURN_CHARS) })),
         partialPayload: (payload as unknown as Record<string, unknown>) ?? partialPayload,
       });
       if (onPayloadChange?.(result.updatedPayload, payloadRevision ?? 0) === false) {
@@ -221,7 +222,7 @@ export function IntakeChat({ payload, payloadRevision, onPayloadChange, onReview
               }}
               placeholder="Tell the assistant about your initiative…"
               aria-label="Message to the intake assistant"
-              maxLength={4000}
+              maxLength={1000}
               data-slot="intake-chat-input"
               className="h-8 flex-1 rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
             />

@@ -17,7 +17,9 @@ import { eq } from "drizzle-orm";
 import { createTestDb, closeTestDb, type TestDb } from "@/lib/db/test-client";
 import { reserve } from "@/lib/security/budget";
 import { getBudgetStoreForTests } from "@/lib/services/route-guard";
-import { auditEvents, initiatives, intakeVersions, reviewCycles, reviewDecisions, riskAssessments, runBudget } from "@/lib/db/schema";
+import { auditEvents, initiatives, intakeVersions, reviewCycles, reviewDecisions, riskAssessments, runBudget, runBudgetWorkspace } from "@/lib/db/schema";
+import * as agentsModule from "@/lib/agents";
+import { createMockAgentPort } from "@/lib/agents/mock-adapter";
 import * as chatAuditor from "../chat/auditor/route";
 import * as chatIntake from "../chat/intake/route";
 import * as agentsHealth from "../agents/health/route";
@@ -206,8 +208,8 @@ describe("chat routes reserve no tokens when the install has no LLM", () => {
     expect(await testDb.select().from(runBudget)).toEqual([]);
   });
 
-  // Positive control: demo still makes a reservation, and this file sees it.
-  it.each(CHAT_ROUTES)("$name reserves tokens in demo, where the keyless mock answers", async ({ actor, call }) => {
+  // Decision d06: the offline mock answers without a provider call, so it reserves nothing.
+  it.each(CHAT_ROUTES)("$name reserves no tokens in demo, where the keyless mock answers", async ({ actor, call }) => {
     vi.stubEnv("JEEVES_MODE", "demo");
     vi.stubEnv("OPENAI_API_KEY", undefined);
     guardThatReservesLikeTheRealOne(...actor);
@@ -215,7 +217,23 @@ describe("chat routes reserve no tokens when the install has no LLM", () => {
     const response = await call();
 
     expect(response.status).toBe(200);
+    expect(await testDb.select().from(runBudget)).toEqual([]);
+    expect(await testDb.select().from(runBudgetWorkspace)).toEqual([]);
+  });
+
+  // Positive control: with a key the reservation is made, and this file sees it.
+  it.each(CHAT_ROUTES)("$name reserves tokens when a key is configured", async ({ actor, call }) => {
+    vi.stubEnv("JEEVES_MODE", "demo");
+    vi.stubEnv("OPENAI_API_KEY", "test-placeholder-never-sent");
+    vi.spyOn(agentsModule, "getAgentPort").mockReturnValue(createMockAgentPort());
+    guardThatReservesLikeTheRealOne(...actor);
+
+    const response = await call();
+
+    expect(response.status).toBe(200);
     expect(await testDb.select().from(runBudget)).toHaveLength(1);
+    expect(await testDb.select().from(runBudgetWorkspace)).toHaveLength(1);
+    vi.mocked(agentsModule.getAgentPort).mockRestore();
   });
 });
 

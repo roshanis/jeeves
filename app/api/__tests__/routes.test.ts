@@ -716,6 +716,7 @@ describe("deep-review budget multiplier on draft-run", () => {
 
 describe("budget-exhaustion 429 on draft-run", () => {
   it("429s when the daily token budget is already exhausted", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "test-placeholder-never-sent"); // a keyless install reserves no budget
     // Exhaust the shared budget store for "today" directly via the guard's
     // test hook, then confirm the route surfaces 429 rather than invoking
     // the AgentPort.
@@ -894,6 +895,7 @@ describe("POST /api/reviews/[cycleId]/[domain]/run — on-demand agent run", () 
   });
 
   it("does not enable deep budgeting for the AI SDK runtime alone", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "test-placeholder-never-sent"); // a keyless install reserves no budget
     vi.stubEnv("JEEVES_AGENT_RUNTIME", "ai-sdk");
     vi.stubEnv("JEEVES_DEEP_REVIEW", "1");
     const { cycleId, workspaceCookie } = await setUpCycle("23.1.0.1");
@@ -923,6 +925,7 @@ describe("POST /api/reviews/[cycleId]/[domain]/run — on-demand agent run", () 
   });
 
   it("returns a budget-specific 429 without invoking the reviewer provider", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "test-placeholder-never-sent"); // a keyless install reserves no budget
     vi.stubEnv("JEEVES_AGENT_RUNTIME", "agents-sdk");
     vi.stubEnv("JEEVES_DEEP_REVIEW", "1");
     const { cycleId, workspaceCookie } = await setUpCycle("23.3.0.1");
@@ -1407,6 +1410,7 @@ describe("POST /api/initiatives/[id]/draft-run — role + workspace authorizatio
   });
 
   it("does not reserve again for repeated or duplicate domains and signed no-ops", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "test-placeholder-never-sent"); // a keyless install reserves no budget
     const { token, workspaceCookie } = await issueSessionInWorkspace("priya-raman");
     const initiativeId = await createSubmittedTriagedInitiative(token, "51.0.3.1", workspaceCookie);
     const { POST } = await import("../initiatives/[id]/draft-run/route");
