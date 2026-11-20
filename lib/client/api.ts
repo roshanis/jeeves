@@ -458,7 +458,7 @@ export interface PublicSubmissionRow {
   requesterEmail: string | null;
   businessProblem: string | null;
   state: string;
-  submittedAt: string | null;
+  submittedAt: string;
   createdAt: string;
 }
 

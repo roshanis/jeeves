@@ -27,7 +27,8 @@ export interface PublicSubmissionRow {
   requesterEmail: string | null;
   businessProblem: string | null;
   state: string;
-  submittedAt: string | null;
+  /** When the request was first submitted. Never-submitted drafts are not listed. */
+  submittedAt: string;
   createdAt: string;
 }
 
@@ -36,16 +37,21 @@ export interface PublicSubmissionRow {
 export const PUBLIC_QUEUE_LIMIT = 200;
 
 /**
- * The newest PUBLIC_QUEUE_LIMIT initiatives created through the public form,
- * newest first, in ONE query (latest intake version joined per row).
+ * The newest PUBLIC_QUEUE_LIMIT initiatives sent through the public form,
+ * newest first by submission time, in ONE query (latest intake version joined
+ * per row). A draft the visitor typed but never submitted is not listed: the
+ * privacy page promises operators only see what was sent, and an unvalidated
+ * draft (no checked email) is not a request anyone should act on.
  *
  * Matched on the workspace prefix rather than a flag column — the prefix is
  * assigned at session-mint time and nothing else can produce it, so there is
  * no way for a persona session to forge its way into this list.
  */
 export async function listPublicSubmissions(db: Db): Promise<PublicSubmissionRow[]> {
+  // Inline subquery (not a joined builder) so the whole list stays one query.
+  const firstSubmittedAt = sql<Date | string | null>`(select min(s.created_at) from ${intakeVersions} s where s.initiative_id = ${initiatives.id} and s.submitted)`;
   const rows = await db
-    .select({ row: initiatives, intake: intakeVersions })
+    .select({ row: initiatives, intake: intakeVersions, submittedAt: firstSubmittedAt })
     .from(initiatives)
     .leftJoin(
       intakeVersions,
@@ -57,11 +63,11 @@ export async function listPublicSubmissions(db: Db): Promise<PublicSubmissionRow
         ),
       ),
     )
-    .where(like(initiatives.workspaceId, `${PUBLIC_WORKSPACE_PREFIX}%`))
-    .orderBy(desc(initiatives.createdAt))
+    .where(and(like(initiatives.workspaceId, `${PUBLIC_WORKSPACE_PREFIX}%`), sql`${firstSubmittedAt} is not null`))
+    .orderBy(desc(firstSubmittedAt))
     .limit(PUBLIC_QUEUE_LIMIT);
 
-  return rows.map(({ row, intake }) => {
+  return rows.map(({ row, intake, submittedAt }) => {
     const basics = (intake?.fields as { basics?: { requesterEmail?: unknown; businessProblem?: unknown } } | undefined)
       ?.basics;
     return {
@@ -72,7 +78,7 @@ export async function listPublicSubmissions(db: Db): Promise<PublicSubmissionRow
       requesterEmail: typeof basics?.requesterEmail === "string" ? basics.requesterEmail : null,
       businessProblem: typeof basics?.businessProblem === "string" ? basics.businessProblem : null,
       state: row.state,
-      submittedAt: intake?.submitted ? row.updatedAt.toISOString() : null,
+      submittedAt: new Date(submittedAt as Date | string).toISOString(),
       createdAt: row.createdAt.toISOString(),
     };
   });

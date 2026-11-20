@@ -120,6 +120,14 @@ async function createAsPublic(token: string, ip: string, requestId = "public-int
   );
 }
 
+async function submitAsPublic(token: string, ip: string, initiativeId: string): Promise<Response> {
+  const { POST } = await import("../initiatives/[id]/submit/route");
+  return POST(
+    new Request(`http://localhost/api/initiatives/${initiativeId}/submit`, { method: "POST", headers: headers(token, ip) }),
+    { params: Promise.resolve({ id: initiativeId }) },
+  );
+}
+
 /* ------------------------------------------------------------------------
  * The money tests. These are the reason the `public` role exists.
  * --------------------------------------------------------------------- */
@@ -418,15 +426,28 @@ describe("the operator's inbound request queue", () => {
     const visitor = await publicSession("80.5.0.1");
     const createRes = await createAsPublic(visitor.token, "80.5.0.2", "public-intake-000010");
     expect(createRes.status).toBe(200);
+    const { initiativeId } = (await createRes.json()) as { initiativeId: string };
+    expect((await submitAsPublic(visitor.token, "80.5.0.3", initiativeId)).status).toBe(200);
 
     const res = await readQueue(`Bearer ${OPERATOR_TOKEN}`);
     expect(res.status).toBe(200);
-    const rows = (await res.json()) as { title: string; requester: string; requesterEmail: string | null }[];
+    const rows = (await res.json()) as { title: string; requester: string; requesterEmail: string | null; submittedAt: string | null }[];
     expect(rows).toHaveLength(1);
+    expect(rows[0]!.submittedAt).toEqual(expect.stringMatching(/^\d{4}-\d\d-\d\dT/));
     expect(rows[0]!.title).toBe("Appointment Reminder Summarizer");
     expect(rows[0]!.requester).toBe("Jordan Ellis");
     // The queue exists so someone can reply. Without the address it can't.
     expect(rows[0]!.requesterEmail).toBe("jordan.ellis@meridianhealth-demo.example");
+  });
+
+  it("does not list a draft the visitor typed but never submitted", async () => {
+    process.env.OPERATOR_TOKEN = OPERATOR_TOKEN;
+    const visitor = await publicSession("80.5.0.10");
+    expect((await createAsPublic(visitor.token, "80.5.0.11", "public-intake-000011")).status).toBe(200);
+
+    const res = await readQueue(`Bearer ${OPERATOR_TOKEN}`);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual([]);
   });
 
   it("is closed to a Program Office persona — personas are free to anyone now", async () => {
