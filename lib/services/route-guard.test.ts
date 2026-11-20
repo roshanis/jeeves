@@ -3,7 +3,7 @@ import { eq, sql } from "drizzle-orm";
 import { markBootFailed, resetBootStateForTests } from "../config/boot-state";
 import { closeTestDb, createTestDb, type TestDb } from "../db/test-client";
 import { rateLimitBuckets, runBudget, runBudgetWorkspace, sessions } from "../db/schema";
-import { reserve } from "../security/budget";
+import { WORKSPACE_DAILY_TOKEN_CAP, reserve } from "../security/budget";
 import { DbTokenBucketRateLimiter } from "../security/db-rate-limit";
 import {
   clientKeyFor,
@@ -303,7 +303,8 @@ describe("lib/services/route-guard", () => {
     it("429s with its own code when only this workspace's share is used up", async () => {
       vi.stubEnv("OPENAI_API_KEY", "test-placeholder-never-sent");
       const session = (await issueDemoSession("priya-raman"))!;
-      await testDb.insert(runBudgetWorkspace).values({ day: "2099-01-04", workspaceId: session.workspaceId, tokensUsed: 49_900 });
+      // 100 tokens short of the share, whatever the share is set to.
+      await testDb.insert(runBudgetWorkspace).values({ day: "2099-01-04", workspaceId: session.workspaceId, tokensUsed: WORKSPACE_DAILY_TOKEN_CAP - 100 });
       const result = await runMutationGuard(reqWithBearer(session.token, "9.9.9.4"), undefined, {
         requiresBudget: true,
         budgetDay: "2099-01-04",
