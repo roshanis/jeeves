@@ -296,6 +296,11 @@ curl -s localhost:3000/api/health      # {"status":"ok","database":"ok"}
 podman exec jeeves-db psql -U jeeves jeeves -c 'select count(*) from audit_events'
 ```
 
+Then run the grants file once more (`podman compose run --rm grants`, or the
+`psql ... < deploy/sql/jeeves-runtime-grants.sql` line above for Quadlet), so
+the restored database carries `jeeves_app`'s grants whatever the dump held. It
+is idempotent.
+
 Keep `jeeves_before_restore` until the post-restore checks in `deploy.md` §4
 pass; it is what you compare the restored audit trail against. Drop it only
 after that.

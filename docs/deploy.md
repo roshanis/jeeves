@@ -448,10 +448,6 @@ different problems.
    `npm run db:migrate` is non-destructive and tested as such
    (`lib/db/migrate.test.ts`), but a branch costs nothing and covers the case
    where the migration is correct and the *schema change* is the mistake.
-4. **On Supabase, backups and point-in-time recovery are Supabase's** (the
-   Supabase recipe below). A restored database must be migrated again:
-   run `npm run db:migrate` against it before the app uses it, so the API-role
-   lockdown (section 2, Supabase) is applied to the restored tables.
 3. **Never point `npm run db:seed` at a database with real data.** It wipes
    every seeded table and disables the `audit_events` append-only triggers to
    do it. The `ALLOW_SEED=1` guard applies only when `NODE_ENV=production` is
@@ -460,6 +456,10 @@ different problems.
    the refusals that hold whatever `ALLOW_SEED` and `NODE_ENV` say; one is a
    database stamped `production` (`installation.deploy_mode`, migration
    0015), which the seed and reset scripts refuse.
+4. **On Supabase, backups and point-in-time recovery are Supabase's** (the
+   Supabase recipe below). A restored database must be migrated again:
+   run `npm run db:migrate` against it before the app uses it, so the API-role
+   lockdown (section 2, Supabase) is applied to the restored tables.
 
 ### Restore
 
