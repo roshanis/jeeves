@@ -68,6 +68,18 @@ describe("ci.yml job container", () => {
     expect(text).toMatch(/JEEVES_TRUSTED_PROXY_HOPS/);
   });
 
+  it("stamps the migrated database as a production install before the image boots", () => {
+    // A production boot refuses an unstamped database, and no install script
+    // stamps one yet; the image would exit and /api/health never answer.
+    const text = job();
+    const migrate = text.search(/^\s+jeeves-migrator:ci\s*$/m);
+    const stamp = text.search(/INSERT INTO installation \(deploy_mode, install_id\) VALUES \('production'/);
+    const boot = text.search(/^\s+jeeves:ci\s*$/m);
+    expect(stamp, "no production stamp in the container job").toBeGreaterThan(-1);
+    expect(migrate).toBeLessThan(stamp);
+    expect(stamp).toBeLessThan(boot);
+  });
+
   it("still only builds and runs locally: no push, no registry login", () => {
     expect(job()).not.toMatch(/docker push|docker\/login-action|--push|docker login/);
   });

@@ -197,6 +197,14 @@ jobs:
             -e DATABASE_URL="postgres://jeeves:${CI_DB_PASSWORD}@jeeves-ci-db:5432/jeeves" \
             jeeves-migrator:ci
 
+      # A production boot refuses an unstamped database, and the install script
+      # that stamps one does not exist yet (phase P4). Stamp this throwaway
+      # database the way scripts/smoke-production.ts stamps its own.
+      - name: Stamp the database as a production install
+        run: |
+          docker exec jeeves-ci-db psql -v ON_ERROR_STOP=1 -U jeeves -d jeeves \
+            -c "INSERT INTO installation (deploy_mode, install_id) VALUES ('production', 'ci-${GITHUB_RUN_ID}') ON CONFLICT (id) DO NOTHING"
+
       # Production mode: no mode variable is passed (unset means
       # production), so this runs the image's real boot checks. The image,
       # not the checkout, serves the request, with the container's read-only
