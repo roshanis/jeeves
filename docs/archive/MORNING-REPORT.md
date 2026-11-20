@@ -1,3 +1,5 @@
+> **Historical document, kept for the record; not current guidance.** It reports the state of the build on 2026-07-11, written for `GOAL.md` in this folder. Its run instructions (a passcode, `/dashboard`) are out of date; see `README.md` and `docs/deploy.md`.
+
 # Morning Report — Jeeves overnight build
 
 **Written:** 2026-07-11, end of autonomous session (per GOAL.md §6).

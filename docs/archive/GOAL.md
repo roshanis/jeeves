@@ -1,3 +1,5 @@
+> **Historical document, kept for the record; not current guidance.** This was a one-night directive for an autonomous build on 2026-07-11. Its instructions (including "do not wait for further human input") do not apply to current work: follow `AGENTS.md` and the plan-first gate instead.
+
 # GOAL.md — Overnight Autonomous Build Directive (Jeeves)
 
 **Authorized by:** Roshan (repo owner), 2026-07-11, before going to sleep.
