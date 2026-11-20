@@ -55,8 +55,8 @@ export function reviewDecisionReadiness(input: {
         ? `All participating reviews signed; ${abstained} abstained. Ready for an approver decision.`
         : "All required reviews signed; ready for approval."
     : canConditionallyApprove ? abstained > 0
-      ? `Ready for conditional approval; ${abstained} abstained, participating signatures still pending.`
-      : "Ready for conditional approval; signatures still pending."
+      ? `Ready for conditional approval; ${abstained} abstained. A conditional approval closes the review cycle: drafts still unsigned cannot be signed afterwards.`
+      : "Ready for conditional approval. A conditional approval closes the review cycle: drafts still unsigned cannot be signed afterwards."
     : "Required reviews are incomplete.";
   return { canApprove, canConditionallyApprove, canReject: allows("reject"), hasRequiredDomains, approvalBlockers, conditionalBlockers, reason };
 }

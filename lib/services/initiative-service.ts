@@ -1406,6 +1406,12 @@ export async function decide(
       }
     }
     const byDomain = new Map(reviews.map((row) => [row.domain, row]));
+    // Required reviews that are neither signed nor validly abstained when the
+    // decision closes the cycle; none of them can be signed afterwards.
+    const unsignedDomains = (cycleRa?.requiredDomains ?? reviews.map(row => row.domain)).filter((domain) => {
+      const row = byDomain.get(domain);
+      return !(row && (row.status === "signed" || (row.status === "abstained" && row.abstention)));
+    });
     for (const domain of cycleRa?.requiredDomains ?? reviews.map(row => row.domain)) {
       const row = byDomain.get(domain);
       // Rejection may conclude before all domain rows exist.
@@ -1477,7 +1483,7 @@ export async function decide(
       initiativeId,
       result.auditEvent,
       `${decision} by ${actor.id}${conditions.length > 0 ? ` with ${conditions.length} condition(s)` : ""}.`,
-      { conditions, citations, cycleId: cycle.id, decisionId, reviewSnapshots },
+      { conditions, citations, cycleId: cycle.id, decisionId, reviewSnapshots, unsignedRequiredReviews: unsignedDomains.length, unsignedDomains },
     );
 
     // External-review finding #4 ("the live champion workflow stops before

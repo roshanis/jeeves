@@ -55,3 +55,19 @@ describe("nonblocking recorded abstention", () => {
     expect(reviewDecisionReadiness({ ...input, reviews })).toMatchObject({ canApprove: false, canConditionallyApprove: false, approvalBlockers: [`security:${status}`] });
   });
 });
+
+describe("conditional-approval readiness copy (L30)", () => {
+  const drafted = { ...input, reviews: [input.reviews[0], { domain: "security", status: "drafted" }] };
+  it("does not promise that pending signatures will still happen, and says the cycle closes", () => {
+    const { reason } = reviewDecisionReadiness(drafted);
+    expect(reason).not.toMatch(/still pending|will be signed/i);
+    expect(reason).toMatch(/closes the review cycle/i);
+    expect(reason).toMatch(/unsigned/i);
+  });
+  it("says the same when some reviewers abstained", () => {
+    const { reason } = reviewDecisionReadiness({ ...drafted, reviews: [{ domain: "legal", status: "abstained", abstention: receipt }, { domain: "security", status: "drafted" }] });
+    expect(reason).not.toMatch(/still pending/i);
+    expect(reason).toMatch(/abstained/);
+    expect(reason).toMatch(/closes the review cycle/i);
+  });
+});
