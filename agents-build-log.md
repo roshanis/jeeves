@@ -1843,3 +1843,16 @@ Hard rules: no violations found.
 ### Recommendations / Next steps:
 - Codex: a new browser storage key needs a line on the privacy page and an entry in the storage-key test in tests/ui/site-essentials.test.tsx.
 - Owner: bump LEGAL_LAST_UPDATED when you have read the new bullet; the operator queue's own sessionStorage token (`jeeves_operator_token`) is not listed, since only the operator holds it.
+
+## [AGENT: Claude] [2026-11-20T15:25Z]
+### Action: implementer: database lane of the accepted peer-review decisions (human "go", 2026-11-20): d08, d05 (three commits) and L38
+### Files changed: drizzle/0016_supabase_api_lockdown.sql, drizzle/0017_guard_triggers_enable_always.sql, drizzle/0018_drop_initiative_registry.sql, drizzle/meta/_journal.json, lib/db/api-role-lockdown.ts, lib/db/guard-triggers.ts, lib/db/migrate.ts, lib/db/schema.ts, lib/config/boot-checks.ts, lib/config/installation-check.ts, scripts/seed.ts, scripts/smoke-production.ts, deploy/sql/jeeves-runtime-grants.sql, deploy/podman/*, docs (deploy.md, deploy-podman.md, ARCHITECTURE.md, environment-reference.md, production-readiness.md, README.md) and their tests.
+### Diff summary:
+- d08 (docs-F4): migration 0016 and a guarded post-migrate step in lib/db/migrate.ts enable RLS and revoke PUBLIC, anon and authenticated on every Jeeves table and its sequences, only when both Supabase roles exist; a failure exits non-zero naming the step. deploy.md gains a Supabase subsection and a backup line. This corrects the earlier entry that said to apply 0014 and 0015 to Neon: the live database is Supabase per docs/DEPLOYED-DEMO-REPAIR-2026-09-20.md.
+- d05 (db-F5), three commits: (1) 0017 sets the 12 guard triggers ENABLE ALWAYS; lib/db/guard-triggers.ts holds the list and the seed re-arms by name. (2) Production boot refuses a superuser or owner runtime role (verifyRuntimeRole); the only opt-out is JEEVES_DB_ALLOW_OWNER_ROLE=1 with a warning on every boot; deploy/sql/jeeves-runtime-grants.sql and deploy.md "Database roles"; the production smoke sets the opt-out. (3) The Podman stack creates jeeves_owner and jeeves_app through an init script and a grants one-shot.
+- L38 (db-F23): 0018 drops the initiative_registry view.
+### Verified: each test was run before its fix and failed for the stated reason. Full unit suite 283 files, 3,423 tests, all passed. Migrations 0000-0018, the grants file and the role restrictions were also run against a disposable real PostgreSQL 16 cluster (RLS on 21 of 21 tables, no anon or authenticated privileges, all triggers 'A', view gone, jeeves_app refused DISABLE TRIGGER, UPDATE, TRUNCATE and session_replication_role). Container start-up was not run (no container engine).
+### Recommendations / Next steps:
+- Run the grants file a second time after the first db:migrate (it narrows the append-only tables); the Podman stack has `compose run --rm grants` for it.
+- Supabase production installs need a runtime role with BYPASSRLS, or the opt-out; neither is verified on Supabase.
+- A migration that adds an append-only table needs a line in the last block of deploy/sql/jeeves-runtime-grants.sql and in lib/db/guard-triggers.ts.
