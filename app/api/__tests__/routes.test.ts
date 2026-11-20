@@ -1114,7 +1114,7 @@ describe("workspace isolation on mutation routes (external-review finding #1)", 
       new Request(`http://localhost/api/initiatives/${initiativeId}/decide`, {
         method: "POST",
         headers: bearer(strangerToken, "50.0.0.2"),
-        body: JSON.stringify({ decision: "rejected" }),
+        body: JSON.stringify({ decision: "rejected", reason: "Synthetic rejection reason." }),
       }),
       { params: Promise.resolve({ id: initiativeId }) },
     );
@@ -1126,7 +1126,7 @@ describe("workspace isolation on mutation routes (external-review finding #1)", 
       new Request(`http://localhost/api/initiatives/${initiativeId}/decide`, {
         method: "POST",
         headers: bearer(approverToken, "50.0.0.3"),
-        body: JSON.stringify({ decision: "rejected" }),
+        body: JSON.stringify({ decision: "rejected", reason: "Synthetic rejection reason." }),
       }),
       { params: Promise.resolve({ id: initiativeId }) },
     );

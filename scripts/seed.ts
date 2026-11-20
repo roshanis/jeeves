@@ -783,6 +783,7 @@ async function seedInTransaction(db: SeedDb): Promise<RowCounts> {
       approver: ACTORS.angelaTorres.name,
       citations: ["MP-H-5.1(b)", "MP-H-5.2", "MP-R-5.1(a)", "MP-R-5.2", "MP-L-6.1(b)", "MP-L-6.2"],
       conditions: [],
+      reason: "Joint Privacy/HIPAA, Responsible AI and Legal grounds: the tool infers sensitive conditions from monitored member communications without consent.",
       decidedAt: dateAt(-20),
     });
     await insertAudit(ctx, {

@@ -7,10 +7,13 @@
  *
  * Body:  { decision: "approved" | "conditionally_approved" | "rejected",
  *          conditions?: { text: string, controlId: string }[],
- *          citations?: string[] }
+ *          citations?: string[],
+ *          reason?: string }   required (1 to 2,000 characters) when rejecting;
+ *                              ignored for the other decisions
  * 200:   { initiativeId, decisionId, type, after: LifecycleState }
  * 401/429: as other mutating routes.
- * 400:   { error: string }  (invalid body, e.g. conditionally_approved with no conditions)
+ * 400:   { error: string }  (invalid body, e.g. conditionally_approved with no conditions,
+ *                            or a rejection with no reason)
  * 403:   { error: string }  (non-approver actor)
  * 404:   { error: string }  (unknown initiative id)
  */
@@ -31,6 +34,8 @@ const bodySchema = z.object({
   decision: z.enum(["approved", "conditionally_approved", "rejected"]),
   conditions: z.array(z.object({ text: z.string().trim().min(1).max(1000), controlId: z.string().trim().min(1).max(50) })).max(20).optional(),
   citations: z.array(z.string().trim().min(1).max(200)).max(20).optional(),
+  // Length is checked in decide(), which names the field in its 400.
+  reason: z.string().optional(),
   expectedCycleId: z.string().max(100).optional(),
   expectedReviewRevisions: z.record(z.string().max(50), z.number().int().min(0)).refine((m) => Object.keys(m).length <= 20).optional(),
 });

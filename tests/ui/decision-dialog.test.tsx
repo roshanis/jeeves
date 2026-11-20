@@ -44,4 +44,45 @@ describe("decision dialog (ui-intake-F40)", () => {
     await waitFor(() => expect(mocks.decide).toHaveBeenCalled());
     expect((screen.getByRole("button", { name: "Cancel" }) as HTMLButtonElement).disabled).toBe(true);
   });
+
+  describe("rejection reason (domain-F10)", () => {
+    const rejectable = reviewDecisionReadiness({ state: "in_review", cycleOpen: true, requiredDomains: ["privacy-hipaa"], reviews: [{ domain: "privacy-hipaa", status: "pending" }] });
+    function openReject() {
+      mocks.session.mockReturnValue({ session: { ...base, role: "approver" }, logout: vi.fn() });
+      renderWithProviders(<LiveActionsBar initiativeId="i" isSeeded={false} state="in_review" decisionReadiness={rejectable} />);
+      fireEvent.click(screen.getByRole("button", { name: "Record decision" }));
+      fireEvent.change(document.querySelector('[data-slot="decide-select"]')!, { target: { value: "rejected" } });
+    }
+    const confirm = () => document.querySelector('[data-slot="decide-confirm"]') as HTMLButtonElement;
+
+    it("keeps the confirm button disabled until a reason is typed, then sends it trimmed", async () => {
+      mocks.decide.mockResolvedValue({ type: "rejected", after: "rejected" });
+      openReject();
+      expect(confirm().disabled).toBe(true);
+      fireEvent.change(screen.getByRole("textbox", { name: /reason for rejecting/i }), { target: { value: "   " } });
+      expect(confirm().disabled).toBe(true);
+      fireEvent.change(screen.getByRole("textbox", { name: /reason for rejecting/i }), { target: { value: "  Unconsented use of member data.  " } });
+      expect(confirm().disabled).toBe(false);
+      fireEvent.click(confirm());
+      await waitFor(() => expect(mocks.decide).toHaveBeenCalled());
+      expect(mocks.decide.mock.calls[0]![2]).toMatchObject({ decision: "rejected", reason: "Unconsented use of member data." });
+    });
+
+    it("caps the reason at 2,000 characters like the route", () => {
+      openReject();
+      expect((screen.getByRole("textbox", { name: /reason for rejecting/i }) as HTMLTextAreaElement).maxLength).toBe(2000);
+    });
+
+    it("shows no reason field, and sends none, for an approval", async () => {
+      mocks.decide.mockResolvedValue({ type: "approved", after: "approved" });
+      mocks.session.mockReturnValue({ session: { ...base, role: "approver" }, logout: vi.fn() });
+      const approvable = reviewDecisionReadiness({ state: "in_review", cycleOpen: true, requiredDomains: ["privacy-hipaa"], reviews: [{ domain: "privacy-hipaa", status: "signed" }] });
+      renderWithProviders(<LiveActionsBar initiativeId="i" isSeeded={false} state="in_review" decisionReadiness={approvable} />);
+      fireEvent.click(screen.getByRole("button", { name: "Record decision" }));
+      expect(screen.queryByRole("textbox", { name: /reason for rejecting/i })).toBeNull();
+      fireEvent.click(confirm());
+      await waitFor(() => expect(mocks.decide).toHaveBeenCalled());
+      expect(mocks.decide.mock.calls[0]![2]).not.toHaveProperty("reason");
+    });
+  });
 });

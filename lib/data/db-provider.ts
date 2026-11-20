@@ -491,6 +491,7 @@ export class DbDataProvider implements DataProvider {
         at: toIso(d.decidedAt),
         conditions: d.conditions,
         citations: d.citations,
+        reason: d.reason,
       }));
 
     const operationalDep = this.displayDeployment(snap, init.id);

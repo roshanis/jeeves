@@ -393,6 +393,7 @@ function buildDecisions(init: InitiativeFixture): DecisionRow[] {
           at: isoAt(-40),
           conditions: [],
           citations: ["MP-H-5.1(b)", "MP-H-5.2", "MP-R-5.1(a)", "MP-R-5.2", "MP-L-6.1(b)", "MP-L-6.2"],
+          reason: "Joint Privacy/HIPAA, Responsible AI and Legal grounds: the tool infers sensitive conditions from monitored member communications without consent.",
         },
       ];
     case "conditional":

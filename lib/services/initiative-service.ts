@@ -1290,12 +1290,16 @@ export async function runReviewAgent(
  * 5. decide — approver-only initiative-level decision (SoD via transition())
  * ---------------------------------------------------------------------- */
 
+const DECISION_REASON_MAX_LENGTH = 2000;
+
 export type DecisionType = "approved" | "conditionally_approved" | "rejected";
 
 export interface DecideInput {
   decision: DecisionType;
   conditions?: { text: string; controlId: string }[];
   citations?: string[];
+  /** Required on a rejection (trimmed, 1 to 2,000 characters). Ignored, and not stored, for other decisions. */
+  reason?: string;
   /**
    * What the approver's page rendered. Optional: when present the decision is
    * only recorded if the cycle and every review revision are still these.
@@ -1341,6 +1345,11 @@ export async function decide(
   input: DecideInput,
 ): Promise<DecideResult> {
   const { decision, conditions = [], citations = [] } = input;
+  // Rejection is terminal, so the requester and a later auditor need the reason on the record.
+  const reason = decision === "rejected" ? (input.reason ?? "").trim() : null;
+  if (reason !== null && (reason.length === 0 || reason.length > DECISION_REASON_MAX_LENGTH)) {
+    throw new ValidationError(`rejected requires a reason of 1 to ${DECISION_REASON_MAX_LENGTH.toLocaleString("en-US")} characters`);
+  }
   if (decision === "conditionally_approved" && conditions.length === 0) {
     throw new ValidationError("conditionally_approved requires at least one condition");
   }
@@ -1456,6 +1465,7 @@ export async function decide(
       policyId: null,
       citations,
       conditions,
+      reason,
       decidedAt: new Date(nowTs()),
     });
 
@@ -1472,8 +1482,8 @@ export async function decide(
       tx,
       initiativeId,
       result.auditEvent,
-      `${decision} by ${actor.id}${conditions.length > 0 ? ` with ${conditions.length} condition(s)` : ""}.`,
-      { conditions, citations, cycleId: cycle.id, decisionId, reviewSnapshots },
+      `${decision} by ${actor.id}${conditions.length > 0 ? ` with ${conditions.length} condition(s)` : ""}${reason ? `: ${reason}` : "."}`,
+      { conditions, citations, cycleId: cycle.id, decisionId, reviewSnapshots, ...(reason ? { reason } : {}) },
     );
 
     // External-review finding #4 ("the live champion workflow stops before

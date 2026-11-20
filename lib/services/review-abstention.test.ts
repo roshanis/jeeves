@@ -138,7 +138,7 @@ describe("domain reviewer abstention", () => {
   function decisionInput(decision: "approved" | "conditionally_approved" | "rejected") {
     return decision === "conditionally_approved"
       ? { decision, conditions: [{ text: "Pilot controls", controlId: "H-01" }] }
-      : { decision };
+      : decision === "rejected" ? { decision, reason: "Synthetic rejection reason." } : { decision };
   }
   async function abstainAll() {
     const rows = await db.select().from(reviewDecisions).where(eq(reviewDecisions.cycleId, cycleId));

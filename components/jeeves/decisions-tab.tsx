@@ -68,6 +68,12 @@ export function DecisionsTab({
                 </ul>
               </div>
             ) : null}
+            {decision.reason ? (
+              <div className="space-y-1.5">
+                <p className="kicker">Reason</p>
+                <p className="whitespace-pre-wrap text-sm" data-slot="decision-reason">{decision.reason}</p>
+              </div>
+            ) : null}
             {decision.citations.length > 0 ? (
               <div className="space-y-1.5">
                 <p className="kicker">Policy citations</p>

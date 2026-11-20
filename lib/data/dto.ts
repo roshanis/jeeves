@@ -63,6 +63,8 @@ export interface DecisionRow {
   at: string;
   conditions: { text: string; controlId: string }[];
   citations: string[];
+  /** The approver's written reason; present on rejections made after it became required. */
+  reason?: string | null;
 }
 
 export interface ControlRow {

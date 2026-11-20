@@ -169,6 +169,8 @@ export const initiativeDecisions = pgTable(
       .$type<{ text: string; controlId: string }[]>()
       .notNull()
       .default(sql`'[]'::jsonb`),
+    // Written reason; required on a rejection, null on every other type and on decisions recorded before 0020.
+    reason: text("reason"),
     decidedAt: timestamp("decided_at", { withTimezone: true }).notNull(),
   },
   (t) => [
