@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { installBaseUrl } from "./site-metadata";
 import {
   ProductionConfigError,
   assertProductionConfig,
@@ -95,6 +96,14 @@ function problemsFor(env: Record<string, string | undefined>): readonly string[]
 }
 
 describe("assertProductionConfig", () => {
+  it("lists a malformed database URL with the other problems, without its value", () => {
+    const env = { ...completeConfig(), DATABASE_URL: "postgres://user:hunter2@:notaport/db", JEEVES_TRUSTED_PROXY_HOPS: undefined };
+    const problems = problemsFor(env);
+    expect(problems.join("\n")).toMatch(/DATABASE_URL[\s\S]*valid PostgreSQL/);
+    expect(problems.join("\n")).toContain("JEEVES_TRUSTED_PROXY_HOPS");
+    expect(problems.join("\n")).not.toContain("hunter2");
+  });
+
   it("accepts a complete configuration", () => {
     expect(() => assertProductionConfig(completeConfig())).not.toThrow();
   });
@@ -259,6 +268,17 @@ describe("assertProductionConfig", () => {
       expect(problemsFor({ ...completeConfig(), JEEVES_COOKIE_SECRET: padded })).toHaveLength(1);
     });
 
+    it.each([
+      ["one repeated character", "a".repeat(40)],
+      ["a repeated placeholder", "changeme".repeat(5)],
+      ["a placeholder word", "CHANGE_ME"],
+      ["the word secret repeated", "secret".repeat(6)],
+    ])("rejects %s as a weak secret", (_label, value) => {
+      const problems = problemsFor({ ...completeConfig(), JEEVES_COOKIE_SECRET: value });
+      expect(problems.join("\n")).toMatch(/JEEVES_COOKIE_SECRET is too weak/);
+      expect(problems.join("\n")).not.toContain(value);
+    });
+
     // resolveWorkspaceCookieSecret() derives a signing key from DEMO_PASSCODE
     // when no cookie secret is set. That fallback exists for the legacy demo
     // only; a production install must not sign sessions with a passcode.
@@ -289,9 +309,34 @@ describe("assertProductionConfig", () => {
       expect(problems[0]).toMatch(/APP_BASE_URL/);
     });
 
-    it("accepts an absolute https URL, with a port or a path", () => {
+    it("accepts an https origin, with a port or a single trailing slash", () => {
       expect(problemsFor({ ...completeConfig(), APP_BASE_URL: "https://jeeves.example.com:8443" })).toEqual([]);
-      expect(problemsFor({ ...completeConfig(), APP_BASE_URL: "https://example.com/jeeves" })).toEqual([]);
+      expect(problemsFor({ ...completeConfig(), APP_BASE_URL: "https://jeeves.example.com/" })).toEqual([]);
+    });
+
+    // The value is used as metadataBase and og:url, i.e. as an origin: anything
+    // after the host would silently change what those resolve to.
+    it.each([
+      ["a path", "https://example.com/jeeves"],
+      ["a query", "https://example.com/?x=1"],
+      ["a fragment", "https://example.com/#top"],
+      ["credentials", "https://user:pw@example.com"],
+    ])("rejects %s", (_label, value) => {
+      const problems = problemsFor({ ...completeConfig(), APP_BASE_URL: value });
+      expect(problems).toHaveLength(1);
+      expect(problems[0]).toMatch(/APP_BASE_URL.*origin/);
+    });
+
+    it("shares one rule with installBaseUrl", () => {
+      for (const value of ["https://example.com/jeeves", "https://example.com/?x=1", "https://example.com/", "http://example.com"]) {
+        const accepted = problemsFor({ ...completeConfig(), APP_BASE_URL: value }).length === 0;
+        expect(installBaseUrl({ APP_BASE_URL: value }) !== null, value).toBe(accepted);
+      }
+    });
+
+    it("uses the trimmed value", () => {
+      expect(problemsFor({ ...completeConfig(), APP_BASE_URL: "  https://jeeves.example.com  " })).toEqual([]);
+      expect(installBaseUrl({ APP_BASE_URL: "  https://jeeves.example.com  " })?.origin).toBe("https://jeeves.example.com");
     });
   });
 
