@@ -1843,3 +1843,20 @@ Hard rules: no violations found.
 ### Recommendations / Next steps:
 - Codex: a new browser storage key needs a line on the privacy page and an entry in the storage-key test in tests/ui/site-essentials.test.tsx.
 - Owner: bump LEGAL_LAST_UPDATED when you have read the new bullet; the operator queue's own sessionStorage token (`jeeves_operator_token`) is not listed, since only the operator holds it.
+
+## [AGENT: Claude] [2026-11-20T16:10Z]
+### Action: implementer: workflow lane of the peer-review decisions (owner "go", 2026-11-20): L31, L1, L2, L3, L12, L15, L30, L32
+### Files changed: lib/lifecycle/transitions.ts, lib/http/illegal-transition-response.ts, every route that caught IllegalTransitionError, lib/services/{exception-service,exception-expiry,initiative-service,admin-service,monitor-service,notification-service}.ts, lib/data/db-provider.ts, lib/approval/review-readiness.ts, lib/reviews/queue-order.ts, app/(console)/reviews/page.tsx, components/jeeves/{exceptions-panel,review-workbench}.tsx, and their tests.
+### Diff summary:
+- L31 (domain-F22, api-initiatives-F20): IllegalTransitionError has kind role/state/reason; one helper maps 403/409/400 on every route; "already decided" and "already signed" are ConflictError (409). No idempotent repeat.
+- L1 (api-initiatives-F26, domain-F21): approved exception expiry defaults to 90 days and must be in the future and at most 180 days ahead, else 400; the panel shows the expiry.
+- L2 (api-ops-F5, domain-F11): an approved exception past its date reads as expired in listExceptions, the control read model, recompute, renewal and request checks; the demo sweep isolates each row and records the row's own expiry. The scheduled job is not built.
+- L3 (domain-F23): regenerating controls supersedes open waivers on the replaced rows, with an audit event each.
+- L12 (domain-F35): the monitor attaches Q-01 when an eval_hallucination series first exists, then evaluates it.
+- L15 (api-ops-F12): an approved-reassessment resume closes the incident and sets Q-01 to pending; the monitor sets pending to met on fresh passing evidence and leaves a control with a requested exception alone.
+- L30 (domain-F3): readiness copy says a conditional approval closes the cycle; closed-cycle unsigned reviews sort last with a "Cycle closed" label; the decision audit event records unsignedRequiredReviews.
+- L32 (domain-F24): the request panel lists only requests whose review is unsigned in an open cycle; the two unscoped readers are removed.
+### Verified: tests first; full unit suite 282 files, 3,442 tests, all passed; typecheck and lint clean on changed files.
+### Recommendations / Next steps:
+- Codex: new IllegalTransitionError throw sites must pass a kind; routes use illegalTransitionResponse. Read paths that decide whether an exception is active must treat an approved row with expiresAt <= now as expired (lib/services/exception-expiry.ts).
+- Owner: the scheduled expiry job waits for the AWS setup. The first demo monitor run now attaches Q-01 to pa-correspondence-model and callcenter-qa-scorer.
