@@ -39,7 +39,9 @@ describe("explicit JEEVES_MODE=demo for every demo, dev, test and CI path", () =
   it("playwright.config.ts sets it for the server and for the build command", () => {
     const config = read("playwright.config.ts");
     expect(config).toMatch(/env:\s*\{[^}]*JEEVES_MODE:\s*"demo"/);
-    expect(config).toMatch(/command:\s*"[^"]*JEEVES_MODE=demo[^"]*npm run build/);
+    // Both server commands share one build prefix that names the mode.
+    expect(config).toMatch(/const BUILD_ENV = "[^"]*JEEVES_MODE=demo[^"]*"/);
+    expect(config).toMatch(/\$\{BUILD_ENV\} npm run build/);
   });
 
   it.each(["verify", "e2e"])("ci.yml job %s sets it", (job) => {

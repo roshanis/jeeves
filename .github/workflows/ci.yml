@@ -10,8 +10,10 @@
 #   verify    — typecheck, lint, unit tests WITH coverage (vitest.config.ts's
 #               thresholds fail the run on regression).
 #   e2e       — the Playwright golden path. playwright.config.ts owns its own
-#               webServer (db:seed && build && start on port 3117), so this job
-#               only installs the browser and runs the suite.
+#               webServer (db:seed && build && serve on port 3117; here the
+#               Turbopack standalone server the image ships), so this job only
+#               installs the browser and runs the suite.
+#   agent-bundle-webpack — the packaged-agent check, which still needs webpack.
 #   container — the deploy/podman/Containerfile runner and migrator images build,
 #               then run against Postgres in production mode and must answer
 #               /api/health. Nothing is pushed. Before this, a COPY of
@@ -108,7 +110,10 @@ jobs:
 
       - name: Run e2e suite
         run: npm run test:e2e
-
+        env:
+          # Build with Turbopack and serve .next/standalone/server.js, as the
+          # container image and Vercel do. Locally the default is webpack.
+          PLAYWRIGHT_SERVER: standalone
 
       - name: Upload Playwright report
         if: ${{ !cancelled() }}
@@ -118,8 +123,35 @@ jobs:
           path: playwright-report/
           retention-days: 7
 
-      # Reuse the webpack production build emitted by Playwright. The check
-      # relocates only deployable files and forbids network/source-tree reads.
+  # scripts/check-agent-bundle.cjs only understands webpack's runtime
+  # (.next/server/webpack-runtime.js), so it keeps a webpack build of its own
+  # until it is ported to the Turbopack output. The e2e job above is what
+  # covers the build that ships.
+  agent-bundle-webpack:
+    name: Packaged agent runtime (webpack)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      JEEVES_MODE: demo
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+
+      - name: Build with webpack
+        run: npm run build -- --webpack
+        env:
+          DATA_PROVIDER: mock
+
+      # Relocates only deployable files and forbids network/source-tree reads.
       - name: Verify packaged agent runtime
         run: node scripts/check-agent-bundle.cjs
 
