@@ -316,6 +316,7 @@ function requireRequesterOwnership(
       "intake_draft",
       "submit",
       actor.role,
+      "role",
     );
   }
 }
@@ -1034,6 +1035,7 @@ function requireReviewerRole(actor: Actor): void {
       "in_review",
       "start_review",
       actor.role,
+      "role",
     );
   }
 }
@@ -1056,6 +1058,7 @@ function requireReviewerDomainMatch(actor: Actor, domain: Domain): void {
       "in_review",
       "start_review",
       actor.role,
+      "role",
     );
   }
 }
@@ -1113,7 +1116,7 @@ export async function signReview(
       throw new ValidationError("An explicit expected evidence packet identity is required.");
     }
     if (decision.status === "signed") {
-      throw new ValidationError(`review for ${domain} in cycle ${cycleId} is already signed`);
+      throw new ConflictError(`review for ${domain} in cycle ${cycleId} is already signed`);
     }
     let evidenceSnapshot;
     try { evidenceSnapshot = await evidenceForSignature(tx, initiative.id, cycleId, domain); }
@@ -1272,7 +1275,7 @@ export async function runReviewAgent(
     await lockReviewForMutation(tx, cycleId, domain, sessionWorkspaceId);
     const decision = await loadReviewDecisionOrThrow(tx, cycleId, domain);
     if (decision.status === "signed") {
-      throw new ValidationError(`review for ${domain} in cycle ${cycleId} is already signed; return it before re-drafting`);
+      throw new ConflictError(`review for ${domain} in cycle ${cycleId} is already signed; return it before re-drafting`);
     }
   });
   try {

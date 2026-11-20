@@ -192,6 +192,19 @@ describe("exception-service", () => {
     expect(ec!.status).toBe("overdue");
   });
 
+  it("deciding an exception that is already decided is a state conflict (409), not a validation error", async () => {
+    const { ecId } = await anEffectiveControl();
+    const req = await svc.requestException(db, ecId, REQUESTER, null, "reason");
+    await svc.decideException(db, req.id, APPROVER, null, true, "granted");
+    await expect(svc.decideException(db, req.id, APPROVER, null, true, "again")).rejects.toThrow(ConflictError);
+  });
+
+  it("IllegalTransitionError from the role guards carries kind 'role'", async () => {
+    const { ecId } = await anEffectiveControl();
+    const req = await svc.requestException(db, ecId, REQUESTER, null, "reason");
+    await expect(svc.decideException(db, req.id, ADMIN, null, true, "x")).rejects.toMatchObject({ kind: "role" });
+  });
+
   it("an approved exception can be revoked by an admin, returning the control to overdue", async () => {
     const { ecId } = await anEffectiveControl();
     const req = await svc.requestException(db, ecId, REQUESTER, null, "reason");

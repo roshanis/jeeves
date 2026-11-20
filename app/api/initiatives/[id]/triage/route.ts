@@ -35,6 +35,7 @@ import { guardFailureResponse, runMutationGuard } from "@/lib/services/route-gua
 import { isRouteId, notFoundResponse } from "@/lib/http/route-id";
 import { SYSTEM_ACTOR } from "@/lib/services/actors";
 import { databaseNotReady } from "@/lib/http/database-gate";
+import { illegalTransitionResponse } from "@/lib/http/illegal-transition-response";
 
 export async function POST(
   req: Request,
@@ -65,9 +66,7 @@ export async function POST(
     if (err instanceof ConflictError) {
       return Response.json({ error: err.message }, { status: 409 });
     }
-    if (err instanceof IllegalTransitionError) {
-      return Response.json({ error: err.message }, { status: 409 });
-    }
+    if (err instanceof IllegalTransitionError) return illegalTransitionResponse(err);
     if (err instanceof IntakeTierGapsError) {
       return Response.json({ error: err.message, code: err.code, gaps: err.gaps }, { status: 400 });
     }

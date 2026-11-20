@@ -7,10 +7,11 @@ import { BodyReadError, hasNul, readBodyText } from "@/lib/http/read-json-body";
 import { isRouteId, notFoundResponse } from "@/lib/http/route-id";
 import { INTAKE_AUTHOR_ROLES } from "@/lib/services/intake-author-roles";
 import { databaseNotReady } from "@/lib/http/database-gate";
+import { illegalTransitionResponse } from "@/lib/http/illegal-transition-response";
 
 function failure(error: unknown): Response {
   if (error instanceof NotFoundError) return Response.json({ error: error.message }, { status: 404 });
-  if (error instanceof IllegalTransitionError) return Response.json({ error: error.message }, { status: 403 });
+  if (error instanceof IllegalTransitionError) return illegalTransitionResponse(error);
   if (error instanceof ConflictError) return Response.json({ error: error.message, ...(error.code ? { code: error.code } : {}) }, { status: 409 });
   throw error;
 }

@@ -746,7 +746,7 @@ describe("lib/services/initiative-service", () => {
       ).rejects.toThrow(IllegalTransitionError);
     });
 
-    it("refuses to re-draft an already-signed review (ValidationError)", async () => {
+    it("refuses to re-draft an already-signed review (ConflictError, a state problem)", async () => {
       await setUpInReview();
       const cycleId = await cycleFor("clinical-safety");
       // Draft then sign as the assigned reviewer.
@@ -755,7 +755,7 @@ describe("lib/services/initiative-service", () => {
 
       await expect(
         svc.runReviewAgent(db, cycleId, "clinical-safety", REVIEWER, null, createMockAgentPort()),
-      ).rejects.toThrow(ValidationError);
+      ).rejects.toThrow(ConflictError);
     });
 
     it("404s (NotFoundError) when the (cycle, domain) review does not exist", async () => {

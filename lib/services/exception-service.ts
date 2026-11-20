@@ -96,6 +96,7 @@ function requireDecider(actor: Actor, allowAdmin = false): void {
       "in_review",
       "start_review",
       actor.role,
+      "role",
     );
   }
 }
@@ -342,7 +343,7 @@ export async function decideException(
       exceptionId,
     );
     if (exc.status !== "requested") {
-      throw new ValidationError(`exception ${exceptionId} is '${exc.status}', not 'requested'`);
+      throw new ConflictError(`exception ${exceptionId} is '${exc.status}', not 'requested'`);
     }
     if (exc.requestedBy === actor.id) {
       throw new IllegalTransitionError(
@@ -350,6 +351,7 @@ export async function decideException(
         "in_review",
         "start_review",
         actor.role,
+        "role",
       );
     }
 

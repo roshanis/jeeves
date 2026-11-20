@@ -68,9 +68,17 @@ export interface TransitionResult {
   auditEvent: AuditEventPayload;
 }
 
+/**
+ * What kind of rule a rejected transition broke. Routes map it to one HTTP
+ * status (lib/http/illegal-transition-response.ts): role -> 403, state -> 409,
+ * reason -> 400, so a client can tell "not allowed" from "already done".
+ */
+export type IllegalTransitionKind = "role" | "state" | "reason";
+
 /** Typed error for any rejected transition; `violation` names exactly what rule was broken. */
 export class IllegalTransitionError extends Error {
   readonly violation: string;
+  readonly kind: IllegalTransitionKind;
   readonly state: LifecycleState;
   readonly action: LifecycleAction;
   readonly actorRole: ActorRole;
@@ -80,8 +88,10 @@ export class IllegalTransitionError extends Error {
     state: LifecycleState,
     action: LifecycleAction,
     actorRole: ActorRole,
+    kind: IllegalTransitionKind,
   ) {
     super(`Illegal transition: ${violation}`);
+    this.kind = kind;
     this.name = "IllegalTransitionError";
     this.violation = violation;
     this.state = state;
@@ -212,6 +222,7 @@ export function transition(
       state,
       action,
       actor.role,
+      "state",
     );
   }
 
@@ -223,6 +234,7 @@ export function transition(
       state,
       action,
       actor.role,
+      "role",
     );
   }
 
@@ -232,6 +244,7 @@ export function transition(
       state,
       action,
       actor.role,
+      "reason",
     );
   }
 
@@ -242,6 +255,7 @@ export function transition(
         state,
         action,
         actor.role,
+        "reason",
       );
     }
     if (!hasNonEmpty(context.accountableApprover)) {
@@ -250,6 +264,7 @@ export function transition(
         state,
         action,
         actor.role,
+        "reason",
       );
     }
   }

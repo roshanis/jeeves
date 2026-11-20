@@ -11,6 +11,7 @@ import { isRouteId, notFoundResponse } from "@/lib/http/route-id";
 import { decideException } from "@/lib/services/exception-service";
 import { ConflictError, NotFoundError, ValidationError, IllegalTransitionError } from "@/lib/services/initiative-service";
 import { databaseNotReady } from "@/lib/http/database-gate";
+import { illegalTransitionResponse } from "@/lib/http/illegal-transition-response";
 
 const REASON_MAX = 2_000;
 const bodySchema = z.object({
@@ -60,7 +61,7 @@ export async function POST(
     );
     return Response.json(result, { status: 200 });
   } catch (err) {
-    if (err instanceof IllegalTransitionError) return Response.json({ error: err.message }, { status: 403 });
+    if (err instanceof IllegalTransitionError) return illegalTransitionResponse(err);
     if (err instanceof NotFoundError) return Response.json({ error: err.message }, { status: 404 });
     if (err instanceof ValidationError) return Response.json({ error: err.message }, { status: 400 });
     if (err instanceof ConflictError) return Response.json({ error: err.message }, { status: 409 });

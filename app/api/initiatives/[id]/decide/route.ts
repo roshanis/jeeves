@@ -26,6 +26,7 @@ import {
 import { guardFailureResponse, runMutationGuard } from "@/lib/services/route-guard";
 import { isRouteId, notFoundResponse } from "@/lib/http/route-id";
 import { databaseNotReady } from "@/lib/http/database-gate";
+import { illegalTransitionResponse } from "@/lib/http/illegal-transition-response";
 
 const bodySchema = z.object({
   decision: z.enum(["approved", "conditionally_approved", "rejected"]),
@@ -59,9 +60,7 @@ export async function POST(
     const result = await decide(db, id, guard.actor, guard.workspaceId, parsed.data);
     return Response.json(result, { status: 200 });
   } catch (err) {
-    if (err instanceof IllegalTransitionError) {
-      return Response.json({ error: err.message }, { status: 403 });
-    }
+    if (err instanceof IllegalTransitionError) return illegalTransitionResponse(err);
     if (err instanceof NotFoundError) {
       return Response.json({ error: err.message }, { status: 404 });
     }
