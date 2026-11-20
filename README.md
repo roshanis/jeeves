@@ -202,7 +202,7 @@ An explicit nonblank `DATABASE_URL` takes precedence. On Vercel, a hosted databa
 and signing key are required; local PGlite is not a serverless fallback. Keep
 `DATA_PROVIDER=mock` only for an intentional read-only preview, and
 set `OPENAI_API_KEY` (+ optionally `OPENAI_MODEL`) only if you want genuinely
-live-generated draft text — see [`docs/environment-reference.md`](docs/environment-reference.md) for every variable the code reads. `.env.example` is a starting template, not an exhaustive list (the code reads more, such as `CRON_SECRET`, `JEEVES_PGLITE_DIR`, `JEEVES_DB_DRIVER` and the Phoenix tracing variables). Leave `OPENAI_API_KEY` empty or commented out unless you have a real key: any non-empty value, including the template's placeholder, switches the app to the live OpenAI adapter.
+live-generated draft text — see [`docs/environment-reference.md`](docs/environment-reference.md) for every variable the code reads. `.env.example` is the starting template and mentions every variable the code reads, most of them commented out (`tests/docs/env-reference.test.ts` fails if one is missing). `OPENAI_API_KEY` is commented out in it: leave it unset unless you have a real key, because any non-empty value, a placeholder included, switches the app to the live OpenAI adapter.
 
 Note: `scripts/seed.ts` refuses to run when `NODE_ENV=production` unless
 `ALLOW_SEED=1` is explicitly set, to prevent an accidental reseed of a live
