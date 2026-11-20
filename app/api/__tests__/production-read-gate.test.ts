@@ -137,6 +137,10 @@ const ROUTE_ALLOW_LIST: Record<string, { kind: "public" | "door"; why: string }>
     kind: "public",
     why: "container and load-balancer probe: has no session by necessity and reveals only a status word",
   },
+  "app/api/health/live/route.ts": {
+    kind: "public",
+    why: "container liveness probe: process-only, never touches the database, reveals only a status word",
+  },
   "app/api/public-intake/route.ts": {
     kind: "door",
     why: "operator queue of real inbound requests, gated by OPERATOR_TOKEN in demo; 404 in production",

@@ -1,10 +1,14 @@
 /**
- * GET /api/health — container liveness/readiness probe.
+ * GET /api/health — readiness probe for the load balancer.
+ *
+ * Liveness (container health check, restart decisions) is /api/health/live,
+ * which never touches the database: a short database outage must take
+ * instances out of rotation, not get them restarted.
  *
  * A container that is "running" but cannot reach Postgres is not healthy, so
  * this does a trivial round-trip (`select 1`) rather than just returning 200
  * because the process is alive. Used by the healthcheck in
- * deploy/podman/Containerfile and by the compose/Quadlet units.
+ * the load balancer's target-group check.
  *
  * This endpoint is UNAUTHENTICATED by necessity — a probe has no session — so
  * it deliberately reveals nothing: no version, no hostname, no driver, and in
@@ -33,6 +37,7 @@
  */
 import { sql } from "drizzle-orm";
 import { bootFailure, installationGateClosed } from "@/lib/config/boot-state";
+import { safeDriverCode } from "@/lib/db/driver-error";
 import { getDb } from "@/lib/db/client";
 import { RETRY_AFTER_SECONDS, scheduleInstallationRecheck } from "@/lib/http/database-gate";
 
@@ -69,7 +74,10 @@ export async function GET(): Promise<Response> {
     return Response.json({ status: "ok", database: "ok" }, { status: 200, headers: NO_STORE });
   } catch (err) {
     // Server-side only. The response body stays opaque.
-    console.error("[health] database probe failed:", err);
+    // One line with the allow-listed driver code: the error object carries the
+    // query, the cause chain and a stack, per probe per task.
+    const code = safeDriverCode(err);
+    console.error(`[health] database probe failed${code ? ` (${code})` : err instanceof Error && err.message === "health probe timed out" ? " (timeout)" : ""}`);
     return Response.json(
       { status: "degraded", database: "unreachable" },
       { status: 503, headers: NO_STORE },

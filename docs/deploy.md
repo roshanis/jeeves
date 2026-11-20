@@ -404,6 +404,22 @@ discards everything written since the backup, `audit_events` rows included,
 and brings the append-only triggers back with it; it is never a way to edit
 or delete audit history.
 
+### Health checks behind a load balancer
+
+Two probes, with different jobs:
+
+- `GET /api/health` is readiness. It round-trips `select 1` and answers 503
+  within about 2 seconds when the database is unreachable or the pool is
+  saturated. Use it for the load balancer (the ALB target group): an instance
+  that cannot reach the database leaves rotation.
+- `GET /api/health/live` is liveness. It answers 200 from the process alone and
+  never touches the database. Use it for the container health check (the ECS
+  task definition `healthCheck`, the Podman/Quadlet health command), so a
+  short database outage does not get every healthy task replaced.
+
+A production boot retries a database connection error for about 5 seconds
+before it gives up; a schema or installation-stamp mismatch stops it at once.
+
 ### Not covered
 
 No automated backup verification. A backup nobody has restored from is a

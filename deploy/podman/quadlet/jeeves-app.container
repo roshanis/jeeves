@@ -50,9 +50,10 @@ Environment=JEEVES_MODE=demo
 # publishing the port to the network.
 Environment=JEEVES_TRUSTED_PROXY_HOPS=none
 
-# GET /api/health round-trips `select 1` to Postgres, so an instance that is
-# running but cannot reach its database reports unhealthy rather than up.
-HealthCmd=node -e "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+# GET /api/health/live answers from the process alone, so a short database
+# outage does not get the container restarted. GET /api/health is the
+# database-aware readiness check, for a load balancer in front.
+HealthCmd=node -e "fetch('http://127.0.0.1:3000/api/health/live').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 HealthInterval=30s
 HealthRetries=3
 HealthStartPeriod=15s

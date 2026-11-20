@@ -34,13 +34,23 @@ export interface BootCheckDeps {
  * attempts, 5 s of waiting plus up to 3 x DEMO_BOOT_ATTEMPT_DEADLINE_MS of
  * attempts, so about 14 s in the worst case. On Vercel every cold start does three
  * database calls before serving, and a brief Neon error (a compute waking from
- * suspend, a dropped connection) must not take the instance down. Production
- * does not retry: a database it cannot read is not one it may serve from.
+ * suspend, a dropped connection) must not take the instance down. Production retries
+ * connection-class errors only, see PRODUCTION_CHECK_RETRY_DELAYS_MS.
  */
 export const DEMO_CHECK_RETRY_DELAYS_MS: readonly number[] = [1_000, 4_000];
 
 /**
- * One attempt of a demo boot check may take this long before it counts as
+ * Waits between the attempts of a production boot's installation check: about
+ * five seconds in total, and only for connection-class errors (a database that
+ * is restarting or failing over). Without it every replacement task exits at
+ * once during a short outage and the orchestrator's restart back-off outlasts
+ * it. A stamp mismatch, a missing migration or any other error is an answer
+ * and still stops the boot at once.
+ */
+export const PRODUCTION_CHECK_RETRY_DELAYS_MS: readonly number[] = [1_000, 2_000, 2_000];
+
+/**
+ * One attempt of a boot check may take this long before it counts as
  * "the database cannot be reached". Without it a hanging endpoint costs three
  * 10 s connect timeouts inside register(), before any page is served.
  */
@@ -123,7 +133,8 @@ function describeError(err: unknown, env: Record<string, string | undefined>): s
  * starts at most every DEMO_RECHECK_INTERVAL_MS. The gate is closed before the
  * first attempt and opens only when the check passes (or the database predates
  * the stamp). Any other error (credentials, TLS, an unexpected throw) still
- * fails the boot. Production never uses the gate: one attempt, exit on failure.
+ * fails the boot. Production never uses the gate: it retries connection-class errors only,
+ * for about five seconds (PRODUCTION_CHECK_RETRY_DELAYS_MS), then exits.
  *
  * Further boot-time checks belong here, inside the same fail-closed handling.
  */
@@ -202,11 +213,11 @@ export async function runBootChecks(deps: BootCheckDeps = {}): Promise<void> {
   }
 
   async function checkInstallation(): Promise<void> {
-    const delays = mode === "demo" ? DEMO_CHECK_RETRY_DELAYS_MS : [];
+    const delays = mode === "demo" ? DEMO_CHECK_RETRY_DELAYS_MS : PRODUCTION_CHECK_RETRY_DELAYS_MS;
     for (let attempt = 0; ; attempt++) {
       try {
         const verify = async () => verifyInstallation(await getDb(), mode);
-        await (mode === "demo" ? withDeadline(verify(), DEMO_BOOT_ATTEMPT_DEADLINE_MS) : verify());
+        await withDeadline(verify(), DEMO_BOOT_ATTEMPT_DEADLINE_MS);
         if (mode === "demo") openInstallationGate();
         return;
       } catch (err) {
@@ -219,7 +230,9 @@ export async function runBootChecks(deps: BootCheckDeps = {}): Promise<void> {
           fail(`installation check failed: ${err.message}`);
           return;
         }
-        if (attempt < delays.length) {
+        // Demo retries any error (its failure mode is a waking Neon compute);
+        // production retries only what says the database cannot be reached.
+        if (attempt < delays.length && (mode === "demo" || isConnectionClassError(err))) {
           log(
             `[boot] installation check could not read the database (attempt ${attempt + 1} of ${delays.length + 1}): ` +
               `${describeError(err, env)}; retrying in ${delays[attempt]} ms.`,

@@ -12,6 +12,7 @@ import {
 import {
   DEMO_BOOT_ATTEMPT_DEADLINE_MS,
   DEMO_CHECK_RETRY_DELAYS_MS,
+  PRODUCTION_CHECK_RETRY_DELAYS_MS,
   DEMO_RECHECK_DEADLINE_MS,
   recheckDemoInstallation,
   runBootChecks,
@@ -82,7 +83,7 @@ describe("runBootChecks", () => {
       down.getDb.mockRejectedValue(new Error("connect ECONNREFUSED"));
       await runBootChecks(down);
       expect(down.exit).toHaveBeenCalledWith(1);
-      expect(down.getDb).toHaveBeenCalledTimes(1);
+      expect(down.getDb).toHaveBeenCalledTimes(PRODUCTION_CHECK_RETRY_DELAYS_MS.length + 1);
       expect(installationGateClosed()).toBe(false);
       resetBootStateForTests();
 
@@ -258,15 +259,48 @@ describe("runBootChecks", () => {
         expect(logged).not.toContain("s3cr3t-db-pw");
       });
 
-      it("does not retry in production: an unreachable database fails closed at once", async () => {
+      it("retries a connection error in production and boots when the database comes up within the window", async () => {
+        const d = deps(COMPLETE_PRODUCTION);
+        const db = await database("production");
+        d.getDb
+          .mockRejectedValueOnce(Object.assign(new Error("connect failed"), { code: "ECONNREFUSED" }))
+          .mockRejectedValueOnce(Object.assign(new Error("the database system is starting up"), { code: "57P03" }))
+          .mockResolvedValue(db);
+        await runBootChecks(d);
+
+        expect(d.getDb).toHaveBeenCalledTimes(3);
+        expect(d.exit).not.toHaveBeenCalled();
+        expect(bootFailure()).toBeNull();
+        expect(d.sleep.mock.calls.map(([ms]) => ms)).toEqual(PRODUCTION_CHECK_RETRY_DELAYS_MS.slice(0, 2));
+      });
+
+      it("gives up after about five seconds of waiting and fails closed", async () => {
         const d = deps(COMPLETE_PRODUCTION);
         d.getDb.mockRejectedValue(new Error("connect ECONNREFUSED"));
         await runBootChecks(d);
 
-        expect(d.getDb).toHaveBeenCalledTimes(1);
-        expect(d.sleep).not.toHaveBeenCalled();
+        expect(d.getDb).toHaveBeenCalledTimes(PRODUCTION_CHECK_RETRY_DELAYS_MS.length + 1);
+        const total = PRODUCTION_CHECK_RETRY_DELAYS_MS.reduce((sum, ms) => sum + ms, 0);
+        expect(total).toBeGreaterThanOrEqual(4_000);
+        expect(total).toBeLessThanOrEqual(6_000);
         expect(d.exit).toHaveBeenCalledTimes(1);
         expect(d.exit).toHaveBeenCalledWith(1);
+      });
+
+      it("does not retry a stamp mismatch or any non-connection error in production", async () => {
+        const mismatch = deps(COMPLETE_PRODUCTION);
+        mismatch.getDb.mockResolvedValue(await database("demo"));
+        await runBootChecks(mismatch);
+        expect(mismatch.getDb).toHaveBeenCalledTimes(1);
+        expect(mismatch.sleep).not.toHaveBeenCalled();
+        expect(mismatch.exit).toHaveBeenCalledWith(1);
+
+        const credentials = deps(COMPLETE_PRODUCTION);
+        credentials.getDb.mockRejectedValue(Object.assign(new Error("password authentication failed"), { code: "28P01" }));
+        await runBootChecks(credentials);
+        expect(credentials.getDb).toHaveBeenCalledTimes(1);
+        expect(credentials.sleep).not.toHaveBeenCalled();
+        expect(credentials.exit).toHaveBeenCalledWith(1);
       });
 
       it("names the driver code from the cause of a wrapped query error, never the URL", async () => {
