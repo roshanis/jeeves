@@ -44,14 +44,14 @@
  * recoverable only by reading audit rows.
  */
 import { randomUUID } from "node:crypto";
-import { and, eq, gt, isNull, lte, or } from "drizzle-orm";
+import { and, eq, isNull, lte, or } from "drizzle-orm";
 import type { Db } from "../db/client";
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import type * as schema from "../db/schema";
 import { auditEvents, controlExceptions, deploymentVersions, effectiveControls, initiatives } from "../db/schema";
 import type { Actor } from "../domain/types";
 import { ConflictError, NotFoundError, ValidationError, IllegalTransitionError } from "./initiative-service";
-import { isLapsedApproval } from "./exception-expiry";
+import { activeExceptionCondition, isLapsedApproval } from "./exception-expiry";
 import { logUnexpectedError } from "../http/log-error";
 import { mutationWorkspaceMismatch, viewerCannotMutate } from "./workspace-guard";
 
@@ -149,21 +149,6 @@ async function assertExceptionWorkspaceAccess(
   if (mutationWorkspaceMismatch(resourceWorkspaceId, sessionWorkspaceId)) {
     throw new NotFoundError(entity, id);
   }
-}
-
-/**
- * An exception is active when it is requested, or approved and not yet past
- * its date. An approved row past its date counts as expired even before the
- * sweep has written that status (production has no cron).
- */
-function activeExceptionCondition(nowMs: number) {
-  return or(
-    eq(controlExceptions.status, "requested"),
-    and(
-      eq(controlExceptions.status, "approved"),
-      or(isNull(controlExceptions.expiresAt), gt(controlExceptions.expiresAt, nowMs)),
-    ),
-  )!;
 }
 
 /**

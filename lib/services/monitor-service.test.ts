@@ -11,6 +11,7 @@ import { createTestDb, closeTestDb, type TestDb } from "../db/test-client";
 import { seedDatabase, BASE_DATE_MS } from "../../scripts/seed";
 import {
   auditEvents,
+  controlExceptions,
   deploymentVersions,
   effectiveControls,
   incidents,
@@ -31,7 +32,7 @@ import {
 } from "./monitor-service";
 import { SYSTEM_ACTOR } from "./actors";
 import { resumeDeployment } from "./admin-service";
-import { requestException } from "./exception-service";
+import { decideException, requestException } from "./exception-service";
 import { createDraft } from "./initiative-service";
 import { CHAMPION_PREFILL_PAYLOAD } from "../intake/champion-prefill";
 
@@ -422,6 +423,33 @@ describe("lib/services/monitor-service", () => {
       expect(result.incidentsCreated).toBe(1);
       const [after] = await db.select().from(effectiveControls).where(eq(effectiveControls.id, ec!.id));
       expect(after!.status).toBe("exception_requested");
+    });
+
+    async function q01WithApprovedWaiver() {
+      const { dep } = await memberChatCopilot(db);
+      const [ec] = (await db.select().from(effectiveControls).where(eq(effectiveControls.deploymentId, dep.id)))
+        .filter((r) => r.controlId === "Q-01");
+      await db.update(effectiveControls).set({ status: "overdue" }).where(eq(effectiveControls.id, ec!.id));
+      const req = await requestException(db, ec!.id, { id: "marcus-webb", role: "reviewer" }, null, "Retraining in progress");
+      await decideException(db, req.id, { id: "angela-torres", role: "approver" }, null, true, "Accepted while retraining");
+      return { ecId: ec!.id, exceptionId: req.id };
+    }
+
+    it("a breach still records the incident but leaves a control alone while its approved waiver is in date", async () => {
+      const { ecId } = await q01WithApprovedWaiver();
+      const result = await runMonitor(db, SYSTEM_ACTOR, PLUS_14D, UNSCOPED_WORKSPACE);
+      expect(result.incidentsCreated).toBe(1);
+      const [after] = await db.select().from(effectiveControls).where(eq(effectiveControls.id, ecId));
+      expect(after!.status).toBe("exception_requested");
+    });
+
+    it("an approved waiver past its date no longer holds the control's status", async () => {
+      const { ecId, exceptionId } = await q01WithApprovedWaiver();
+      await db.update(controlExceptions).set({ expiresAt: Date.now() - DAY_MS }).where(eq(controlExceptions.id, exceptionId));
+      const result = await runMonitor(db, SYSTEM_ACTOR, PLUS_14D, UNSCOPED_WORKSPACE);
+      expect(result.incidentsCreated).toBe(1);
+      const [after] = await db.select().from(effectiveControls).where(eq(effectiveControls.id, ecId));
+      expect(after!.status).toBe("breached");
     });
   });
 

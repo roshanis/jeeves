@@ -58,6 +58,7 @@ import { SYSTEM_ACTOR } from "./actors";
 import { enqueueReviewRequests } from "./notification-service";
 import { ConflictError } from "./initiative-service";
 import { viewerRowsFilter } from "./viewer-workspace";
+import { activeExceptionCondition } from "./exception-expiry";
 
 /**
  * Re-exported so route handlers/callers can catch a compare-and-set race on
@@ -188,11 +189,18 @@ function insertAuditEvent(
   });
 }
 
-async function hasRequestedException(tx: Tx, effectiveControlId: string): Promise<boolean> {
+/**
+ * Whether the control has an open request or an approved waiver still in
+ * date. Its status is then derived from its exceptions
+ * (exception-service's recomputeControlStatus), so the monitor leaves it
+ * alone. Judged on the real clock, as the exception reads are, not on the
+ * run's simulated time.
+ */
+async function hasActiveException(tx: Tx, effectiveControlId: string): Promise<boolean> {
   const rows = await tx
     .select({ id: controlExceptions.id })
     .from(controlExceptions)
-    .where(and(eq(controlExceptions.effectiveControlId, effectiveControlId), eq(controlExceptions.status, "requested")))
+    .where(and(eq(controlExceptions.effectiveControlId, effectiveControlId), activeExceptionCondition(Date.now())))
     .limit(1);
   return rows.length > 0;
 }
@@ -406,13 +414,13 @@ export async function runMonitor(
 
     // A control reset to 'pending' (new Q-01, or after an approved
     // reassessment) becomes 'met' once there is a passing observation newer
-    // than any known breach. A control with an open exception request is left
-    // alone, as for a breach below.
+    // than any known breach. A control with an open exception request or an
+    // in-date waiver is left alone, as for a breach below.
     if (ec.status === "pending" && (!evalResult.breached || pastKnownBreach)) {
       const latest = series.filter((o) => o.ts <= nowTs).sort((a, b) => b.ts - a.ts)[0];
       if (latest && latest.value <= threshold && (since === undefined || latest.ts > since)) {
         await db.transaction(async (tx) => {
-          if (await hasRequestedException(tx, ec.id)) return;
+          if (await hasActiveException(tx, ec.id)) return;
           const updated = await tx
             .update(effectiveControls)
             .set({ status: "met" })
@@ -645,8 +653,9 @@ export async function runMonitor(
           .set({ incidentId })
           .where(eq(reviewCycles.id, reviewCycleId));
         // The incident is recorded either way; the control's status is not
-        // overwritten while an exception request for it is open.
-        if (!(await hasRequestedException(tx, ec.id))) {
+        // overwritten while it has an open exception request or an in-date
+        // waiver.
+        if (!(await hasActiveException(tx, ec.id))) {
           await tx
             .update(effectiveControls)
             .set({ status: "breached" })

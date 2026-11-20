@@ -1,7 +1,7 @@
-import { getTableColumns, sql } from "drizzle-orm";
+import { and, eq, getTableColumns, gt, isNull, or, sql } from "drizzle-orm";
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import type * as schema from "../db/schema";
-import { effectiveControls } from "../db/schema";
+import { controlExceptions, effectiveControls } from "../db/schema";
 
 type Reader = PgDatabase<PgQueryResultHKT, typeof schema>;
 
@@ -12,6 +12,22 @@ type Reader = PgDatabase<PgQueryResultHKT, typeof schema>;
  */
 export function isLapsedApproval(row: { status: string; expiresAt: number | null }, nowMs: number): boolean {
   return row.status === "approved" && row.expiresAt !== null && row.expiresAt <= nowMs;
+}
+
+/**
+ * An exception is active when it is requested, or approved and not yet past
+ * its date. An approved row past its date counts as expired even before the
+ * sweep has written that status (production has no cron). Anything that keeps
+ * or writes a control's status from its exceptions uses this one definition.
+ */
+export function activeExceptionCondition(nowMs: number) {
+  return or(
+    eq(controlExceptions.status, "requested"),
+    and(
+      eq(controlExceptions.status, "approved"),
+      or(isNull(controlExceptions.expiresAt), gt(controlExceptions.expiresAt, nowMs)),
+    ),
+  )!;
 }
 
 /**
