@@ -25,6 +25,7 @@
  * and regardless of ALLOW_SEED, it stamps the database 'demo' and refuses to
  * touch one stamped 'production' (lib/demo/bootstrap.ts).
  */
+import { configuredCronSecret } from "../lib/services/route-guard";
 import { resolveWorkspaceCookieSecret } from "../lib/security/workspace-cookie";
 import { execSync } from "node:child_process";
 import { getDb, closeDb, type Db } from "../lib/db/client";
@@ -97,10 +98,10 @@ export async function resetDemo(database?: Db): Promise<void> {
   if (telemetry.configured) ok("Telemetry connector", telemetry.provider);
   else warn("Telemetry connector", "synthetic (PHOENIX_ENDPOINT unset) — telemetry is the in-repo synthetic series");
 
-  if (process.env.CRON_SECRET && process.env.CRON_SECRET.length > 0) {
+  if (configuredCronSecret()) {
     ok("Scheduled monitoring", "CRON_SECRET set");
   } else {
-    warn("Scheduled monitoring", "CRON_SECRET unset — /api/cron/monitor returns 503 (manual /api/monitor/run still works)");
+    warn("Scheduled monitoring", "CRON_SECRET unset or shorter than 32 characters — /api/cron/monitor returns 503 (manual /api/monitor/run still works)");
   }
 
   ok("Build SHA", buildSha());

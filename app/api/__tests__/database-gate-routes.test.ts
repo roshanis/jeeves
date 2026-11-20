@@ -45,7 +45,7 @@ beforeEach(() => {
   vi.stubEnv("JEEVES_MODE", "demo");
   vi.stubEnv("DATABASE_URL", "postgres://u:p@db.internal:5432/jeeves");
   vi.stubEnv("OPERATOR_TOKEN", "operator-token-for-the-gate-test-0123456789");
-  vi.stubEnv("CRON_SECRET", "cron-secret-for-the-gate-test");
+  vi.stubEnv("CRON_SECRET", "cron-secret-for-the-gate-test-0123456789");
   vi.stubEnv("JEEVES_COOKIE_SECRET", "cookie-secret-for-the-gate-test-0123456789");
   closeInstallationGate();
 });

@@ -31,7 +31,7 @@ const COOKIE_SECRET = "test-only-workspace-cookie-secret";
 
 beforeEach(async () => {
   process.env.JEEVES_COOKIE_SECRET = COOKIE_SECRET;
-  process.env.CRON_SECRET = "read-isolation-cron-secret";
+  process.env.CRON_SECRET = "read-isolation-cron-secret-0123456789";
   process.env.JEEVES_COOKIE_SECRET = "read-isolation-test-secret";
   testDb = await createTestDb();
   await seedDatabase(testDb);
@@ -156,7 +156,7 @@ describe("GET /api/monitor/incidents — read isolation", () => {
     // not by a visitor session whose workspace cannot mutate shared seeds.
     const { GET: monitorRun } = await import("../cron/monitor/route");
     const runRes = await monitorRun(new Request("http://localhost/api/cron/monitor", {
-      headers: { authorization: "Bearer read-isolation-cron-secret" },
+      headers: { authorization: "Bearer read-isolation-cron-secret-0123456789" },
     }));
     expect(runRes.status).toBe(200);
     expect((await runRes.json()).incidentsCreated).toBe(1);

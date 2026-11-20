@@ -214,6 +214,15 @@ export function configuredOperatorToken(): string | null {
   return token.length >= OPERATOR_TOKEN_MIN_LENGTH ? token : null;
 }
 
+/** Same floor for the scheduled-monitoring secret (GET /api/cron/monitor). */
+export const CRON_SECRET_MIN_LENGTH = 32;
+
+/** The configured cron secret, or null when the route is switched off (unset or too short). */
+export function configuredCronSecret(): string | null {
+  const secret = process.env.CRON_SECRET?.trim() ?? "";
+  return secret.length >= CRON_SECRET_MIN_LENGTH ? secret : null;
+}
+
 /**
  * Constant-time check of `Authorization: Bearer <token>` against the
  * configured operator token. Both sides are hashed first so the comparison

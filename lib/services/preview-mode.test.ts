@@ -58,8 +58,8 @@ describe.each([
   // preview would be an unthrottled oracle for a CRON_SECRET that a production
   // deployment may share.
   it("answers every scheduled call with the read-only 403 before comparing the secret or opening the database", async () => {
-    vi.stubEnv("CRON_SECRET", "preview-cron-test-only");
-    for (const authorization of [undefined, "Bearer wrong-guess", "Bearer preview-cron-test-only"]) {
+    vi.stubEnv("CRON_SECRET", "preview-cron-test-only-0123456789abcdef");
+    for (const authorization of [undefined, "Bearer wrong-guess", "Bearer preview-cron-test-only-0123456789abcdef"]) {
       const response = await runScheduledMonitor(new Request("http://localhost/api/cron/monitor", {
         headers: authorization ? { authorization } : {},
       }));
