@@ -130,6 +130,16 @@ describe("lib/services/route-guard", () => {
     expect(await testDb.select().from(runBudget)).toHaveLength(0);
   });
 
+  it("refuses a mutation authenticated only by a jeeves_session cookie", async () => {
+    const issued = (await issueDemoSession("ray-chen"))!;
+    const req = new Request("http://localhost/api/x", {
+      method: "POST",
+      headers: { cookie: `jeeves_session=${issued.token}`, origin: "https://evil.example" },
+    });
+    expect(await runMutationGuard(req, undefined)).toMatchObject({ ok: false, failure: { status: 401 } });
+    expect(await runMutationGuard(reqWithBearer(issued.token), undefined)).toMatchObject({ ok: true });
+  });
+
   describe("extractSessionToken", () => {
     it("reads a Bearer token from the Authorization header", () => {
       const req = reqWithBearer("abc123");

@@ -11,9 +11,8 @@
  *   status and the server's `{ error }` message (plus `gaps` when present).
  *   Use `isApiError` to narrow and `apiErrorToMessage` for stable UX copy.
  * - Session-token transport is `Authorization: Bearer <token>` on every
- *   mutating call (route-guard.ts `extractSessionToken` also accepts a
- *   `jeeves_session` cookie, but the header avoids cookie-encoding and
- *   SameSite edge cases entirely).
+ *   mutating call (route-guard.ts `extractBearerToken`; mutations do not
+ *   accept the `jeeves_session` cookie, which would open a CSRF surface).
  */
 import type { Domain, LifecycleState, Tier } from "@/lib/domain/types";
 import type { IntakePayload } from "@/lib/intake/types";

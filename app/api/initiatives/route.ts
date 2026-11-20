@@ -1,7 +1,7 @@
 /**
  * POST /api/initiatives — create a new intake draft (task brief deliverable 3).
  *
- * Auth: session required (Bearer token or `jeeves_session` cookie), role
+ * Auth: session required (Bearer token only; a cookie is not accepted on mutations), role
  * must be `requester` — enforced by `createDraft` receiving the resolved
  * session actor unchanged; requester name is looked up server-side too.
  *

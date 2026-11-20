@@ -429,13 +429,26 @@ export async function resolveSessionActor(token: string | null): Promise<Actor |
  * Token extraction (cookie or bearer)
  * ---------------------------------------------------------------------- */
 
-export function extractSessionToken(req: Request): string | null {
+/**
+ * Bearer token only. Mutations use this: a cookie is attached by the browser
+ * to cross-site requests, so accepting one here would open a CSRF surface.
+ * TODO(sign-in): when sign-in lands and sets a session cookie, accept it here
+ * again, but only with an Origin check and a `__Host-` cookie name.
+ */
+export function extractBearerToken(req: Request): string | null {
   const auth = req.headers.get("authorization");
   if (auth && /^bearer /i.test(auth)) {
     const bearer = auth.slice("Bearer ".length).trim();
     // U+0000 cannot be stored in Postgres text: such a token is signed out, not a 500.
     return bearer.includes("\u0000") ? null : bearer;
   }
+  return null;
+}
+
+/** Bearer token, else the session cookie. Reads only (GETs carry no CSRF risk); see extractBearerToken. */
+export function extractSessionToken(req: Request): string | null {
+  const auth = req.headers.get("authorization");
+  if (auth && /^bearer /i.test(auth)) return extractBearerToken(req);
   const cookieHeader = req.headers.get("cookie");
   if (cookieHeader) {
     const match = cookieHeader
@@ -587,7 +600,7 @@ export async function runMutationGuard(
   const readOnlyFailure = checkBootFailure() ?? checkReadOnlyMode();
   if (readOnlyFailure) return { ok: false, failure: readOnlyFailure };
 
-  const token = extractSessionToken(req);
+  const token = extractBearerToken(req);
   const { actor, workspaceId } = await resolveSession(token);
   if (!actor || !workspaceId) {
     return { ok: false, failure: { kind: "unauthorized", status: 401, message: "invalid or missing session" } };
