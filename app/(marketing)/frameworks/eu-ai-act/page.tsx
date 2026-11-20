@@ -29,9 +29,11 @@ export default function EuAiActCrosswalkPage() {
         </div>
 
         <div className="mt-10 flex flex-wrap items-center gap-3 border-t pt-8">
-          <Link href={CONTACT_URL} className={buttonVariants({ size: "lg" })}>
-            Book a governance assessment
-          </Link>
+          {CONTACT_URL ? (
+            <Link href={CONTACT_URL} className={buttonVariants({ size: "lg" })}>
+              Book a governance assessment
+            </Link>
+          ) : null}
           <Link
             href="/inbox"
             className={buttonVariants({ variant: "outline", size: "lg" })}

@@ -23,6 +23,7 @@ has no effect. Secrets are marked; never log or commit them.
 | `JEEVES_DEMO_ENABLED` | optional | `0` | build | no | `1` | `0` compiles the demo out: `JEEVES_MODE=demo` at runtime then has no effect. Build a production image with `0`. | `next.config.ts`, `lib/config/deployment-mode.ts` |
 | `NODE_ENV` | `production` when built | `production` | build/run | no | set by Next | Adds `Secure` to the workspace cookie; `scripts/seed.ts` refuses to run under `production` without `ALLOW_SEED=1`. | `app/api/session/route.ts`, `scripts/seed.ts` |
 | `VERCEL` | set by Vercel | set by Vercel | runtime | no | unset | Only used by the boot check: off Vercel, an unset `JEEVES_TRUSTED_PROXY_HOPS` logs a warning in demo. | `lib/config/boot-checks.ts` |
+| `VERCEL_ENV` | set by Vercel | set by Vercel | build | no | unset | Only used by `next.config.ts`: `production` on a Vercel build with `JEEVES_MODE=demo` makes `NEXT_PUBLIC_PRIVACY_CONTACT` mandatory. | `lib/marketing/contact.ts` |
 
 ## 2. Database
 
@@ -119,14 +120,18 @@ deterministic keyless mock adapter and cannot spend; production answers 503
 
 ## 7. Marketing site (build time)
 
-Inlined by Next.js at build; set them in the build environment.
+Inlined by Next.js at build: set them in the build environment (Vercel project
+settings; `--build-arg` for the container image, whose Containerfile declares
+them). Setting them when a container runs has no effect. None has a built-in
+contact address: unset, the pages render no contact links and the legal pages
+say "Contact for this installation is not configured."
 
 | Variable | Default | Effect | Source |
 |---|---|---|---|
 | `NEXT_PUBLIC_SITE_URL` | `http://localhost:3000` | Origin used by the sitemap and robots. | `lib/marketing/site-config.ts` |
-| `NEXT_PUBLIC_CONTACT_URL` | a `mailto:` link | Where marketing calls to action point. | `lib/marketing/site-config.ts` |
+| `NEXT_PUBLIC_CONTACT_URL` | none | A `mailto:` or http(s) link that the marketing calls to action point at. Unset or invalid: no call-to-action links. | `lib/marketing/site-config.ts` |
 | `NEXT_PUBLIC_PILOT_PRICE` | none | Pilot price; unset renders "Contact for pricing". | `lib/marketing/site-config.ts` |
-| `NEXT_PUBLIC_PRIVACY_CONTACT` | the contact URL | Where privacy requests go. | `lib/marketing/site-config.ts` |
+| `NEXT_PUBLIC_PRIVACY_CONTACT` | none | Where privacy requests go; must be a `mailto:` address, and is shown as "Email ...". A Vercel production build with `JEEVES_MODE=demo` fails without it. | `lib/marketing/site-config.ts`, `lib/marketing/contact.ts` |
 
 ## 8. What the boot checks enforce
 

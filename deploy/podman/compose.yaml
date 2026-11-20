@@ -41,6 +41,13 @@ services:
     build:
       context: ../..
       dockerfile: deploy/podman/Containerfile
+      # Build-time settings, passed through from your environment when set
+      # (see docs/environment-reference.md, "Marketing site (build time)").
+      args:
+        - NEXT_PUBLIC_SITE_URL
+        - NEXT_PUBLIC_CONTACT_URL
+        - NEXT_PUBLIC_PRIVACY_CONTACT
+        - NEXT_PUBLIC_PILOT_PRICE
     image: jeeves:local
     environment:
       # host `db` resolves on the compose network. lib/db/driver-select.ts
