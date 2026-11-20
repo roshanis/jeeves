@@ -33,6 +33,7 @@ import { guardFailureResponse, runMutationGuard } from "@/lib/services/route-gua
 import { isRouteId, notFoundResponse } from "@/lib/http/route-id";
 import { INTAKE_AUTHOR_ROLES } from "@/lib/services/intake-author-roles";
 import { databaseNotReady } from "@/lib/http/database-gate";
+import { illegalTransitionResponse } from "@/lib/http/illegal-transition-response";
 
 export async function POST(
   req: Request,
@@ -59,9 +60,7 @@ export async function POST(
     if (err instanceof NotFoundError) {
       return Response.json({ error: err.message }, { status: 404 });
     }
-    if (err instanceof IllegalTransitionError) {
-      return Response.json({ error: err.message }, { status: 403 });
-    }
+    if (err instanceof IllegalTransitionError) return illegalTransitionResponse(err);
     if (err instanceof ConflictError) {
       return Response.json({ error: err.message }, { status: 409 });
     }

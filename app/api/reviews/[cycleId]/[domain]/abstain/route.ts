@@ -11,6 +11,7 @@ import { guardFailureResponse, runMutationGuard } from "@/lib/services/route-gua
 import { isRouteId, notFoundResponse } from "@/lib/http/route-id";
 import type { Domain } from "@/lib/domain/types";
 import { databaseNotReady } from "@/lib/http/database-gate";
+import { illegalTransitionResponse } from "@/lib/http/illegal-transition-response";
 
 const bodySchema = z.object({
   expectedRevision: z.number().int().nonnegative().safe(),
@@ -58,9 +59,7 @@ export async function POST(
     );
     return Response.json(result, { status: 200 });
   } catch (err) {
-    if (err instanceof IllegalTransitionError) {
-      return Response.json({ error: err.message }, { status: 403 });
-    }
+    if (err instanceof IllegalTransitionError) return illegalTransitionResponse(err);
     if (err instanceof NotFoundError) {
       return Response.json({ error: err.message }, { status: 404 });
     }

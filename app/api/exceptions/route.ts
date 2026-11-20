@@ -21,6 +21,7 @@ import {
 } from "@/lib/services/exception-service";
 import { NotFoundError, ValidationError, IllegalTransitionError } from "@/lib/services/initiative-service";
 import { databaseNotReady } from "@/lib/http/database-gate";
+import { illegalTransitionResponse } from "@/lib/http/illegal-transition-response";
 
 const REASON_MAX = 2_000;
 
@@ -78,7 +79,7 @@ export async function POST(req: Request): Promise<Response> {
     );
     return Response.json(result, { status: 200 });
   } catch (err) {
-    if (err instanceof IllegalTransitionError) return Response.json({ error: err.message }, { status: 403 });
+    if (err instanceof IllegalTransitionError) return illegalTransitionResponse(err);
     if (err instanceof NotFoundError) return Response.json({ error: err.message }, { status: 404 });
     if (err instanceof ValidationError) return Response.json({ error: err.message }, { status: 400 });
     // A concurrent request lost the race for the one-pending-exception index.

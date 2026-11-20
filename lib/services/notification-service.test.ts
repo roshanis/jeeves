@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq, sql } from "drizzle-orm";
 import { createTestDb, closeTestDb, type TestDb } from "@/lib/db/test-client";
-import { initiatives, reviewDecisions, reviewNotifications } from "@/lib/db/schema";
+import { initiatives, reviewCycles, reviewDecisions, reviewNotifications } from "@/lib/db/schema";
 import { TRIAGE_READY_CHAMPION_PAYLOAD } from "../../tests/fixtures/triage-ready-intake";
 import type { Actor } from "@/lib/domain/types";
 
@@ -10,8 +10,6 @@ vi.mock("@/lib/db/client", () => ({ getDb: () => testDb }));
 
 const svc = await import("./initiative-service");
 const {
-  pendingNotificationsForDomain,
-  undeliveredNotifications,
   recentUndeliveredNotifications,
   deliveryTransportStatus,
 } = await import("./notification-service");
@@ -124,27 +122,8 @@ describe("review-request notifications", () => {
     expect((await testDb.select().from(reviewNotifications)).length).toBe(first);
   });
 
-  it("exposes a reviewer's own outstanding asks", async () => {
-    const id = await championReadyToTriage();
-    await svc.triage(testDb, id, SYSTEM, null);
-
-    const legal = await pendingNotificationsForDomain(testDb, "legal");
-    expect(legal.length).toBe(1);
-    expect(legal[0]!.domain).toBe("legal");
-
-    // A domain that was not asked has nothing outstanding.
-    const none = await pendingNotificationsForDomain(testDb, "procurement");
-    expect(none.length).toBeLessThanOrEqual(1);
-  });
-
-  it("exposes the undelivered queue for the operator view", async () => {
-    const id = await championReadyToTriage();
-    await svc.triage(testDb, id, SYSTEM, null);
-
-    const queue = await undeliveredNotifications(testDb);
-    expect(queue.length).toBeGreaterThan(0);
-    expect(queue.every((n) => n.deliveredAt === null)).toBe(true);
-  });
+  // Nothing is delivered in these tests, so every recorded ask is undelivered.
+  const allNotifications = () => testDb.select().from(reviewNotifications);
 
   // The queue names initiatives ("<Domain> review requested: <title>"), and every
   // playground visitor has their own workspace: a queue that lists every row
@@ -199,7 +178,7 @@ describe("review-request notifications", () => {
 
     it("counts only what the viewer may see, so the total gives nothing away", async () => {
       await threeInitiatives();
-      const everything = (await undeliveredNotifications(testDb)).length;
+      const everything = (await allNotifications()).length;
       const asAlpha = await recentUndeliveredNotifications(testDb, "ws_alpha");
       const asNobody = await recentUndeliveredNotifications(testDb, null);
 
@@ -209,16 +188,69 @@ describe("review-request notifications", () => {
       expect(asAlpha.total).toBeLessThan(everything);
     });
 
-    it("leaves the unscoped operator query as it was: every ask, every workspace", async () => {
-      const { alpha, bravo, shared } = await threeInitiatives();
-      expect(idsOf(await undeliveredNotifications(testDb))).toEqual(new Set([alpha, bravo, shared]));
+  });
+
+  // L32: a request is on the panel only while its review still needs a
+  // human and its cycle is open.
+  describe("the panel lists only reviews still outstanding in an open cycle", () => {
+    it("drops the request for a signed review, and keeps the others", async () => {
+      const id = await championReadyToTriage();
+      await svc.triage(testDb, id, SYSTEM, null);
+      const before = await recentUndeliveredNotifications(testDb, null);
+      const [review] = await testDb.select().from(reviewDecisions).where(eq(reviewDecisions.domain, "legal"));
+      await testDb.update(reviewDecisions).set({ status: "signed" }).where(eq(reviewDecisions.id, review!.id));
+
+      const after = await recentUndeliveredNotifications(testDb, null);
+      expect(after.rows.some((r) => r.domain === "legal")).toBe(false);
+      expect(after.rows).toHaveLength(before.rows.length - 1);
+      expect(after.total).toBe(before.total - 1);
     });
+
+    it("drops the request for a review that abstained", async () => {
+      const id = await championReadyToTriage();
+      await svc.triage(testDb, id, SYSTEM, null);
+      await testDb.update(reviewDecisions).set({ status: "abstained" }).where(eq(reviewDecisions.domain, "legal"));
+      expect((await recentUndeliveredNotifications(testDb, null)).rows.some((r) => r.domain === "legal")).toBe(false);
+    });
+
+    it("keeps the request for a drafted review", async () => {
+      const id = await championReadyToTriage();
+      await svc.triage(testDb, id, SYSTEM, null);
+      await testDb.update(reviewDecisions).set({ status: "drafted" }).where(eq(reviewDecisions.domain, "legal"));
+      expect((await recentUndeliveredNotifications(testDb, null)).rows.some((r) => r.domain === "legal")).toBe(true);
+    });
+
+    it("drops every request of a cycle once it closes", async () => {
+      const id = await championReadyToTriage();
+      const res = await svc.triage(testDb, id, SYSTEM, null);
+      expect((await recentUndeliveredNotifications(testDb, null)).total).toBeGreaterThan(0);
+      await testDb.update(reviewCycles).set({ closedAt: new Date() }).where(eq(reviewCycles.id, res.cycleId!));
+      expect(await recentUndeliveredNotifications(testDb, null)).toEqual({ rows: [], total: 0 });
+    });
+
+    it("keeps workspace scoping when the review filter applies", async () => {
+      const alpha = await championReadyToTriage("ws_alpha", "Alpha Ward Copilot");
+      const bravo = await championReadyToTriage("ws_bravo", "Bravo Ward Copilot");
+      await svc.triage(testDb, alpha, SYSTEM, "ws_alpha");
+      await svc.triage(testDb, bravo, SYSTEM, "ws_bravo");
+      await testDb.update(reviewDecisions).set({ status: "signed" }).where(eq(reviewDecisions.domain, "legal"));
+      const asAlpha = await recentUndeliveredNotifications(testDb, "ws_alpha");
+      expect(new Set(asAlpha.rows.map((r) => r.initiativeId))).toEqual(new Set([alpha]));
+      expect(asAlpha.rows.some((r) => r.domain === "legal")).toBe(false);
+      expect(asAlpha.total).toBe(asAlpha.rows.length);
+    });
+  });
+
+  it("no longer exports unscoped readers", async () => {
+    const mod = await import("./notification-service");
+    expect(mod).not.toHaveProperty("pendingNotificationsForDomain");
+    expect(mod).not.toHaveProperty("undeliveredNotifications");
   });
 
   it("shows the newest 50 undelivered requests first, with the total", async () => {
     const id = await championReadyToTriage();
     await svc.triage(testDb, id, SYSTEM, null);
-    const [seed] = await undeliveredNotifications(testDb);
+    const [seed] = await allNotifications();
     await testDb.insert(reviewNotifications).values(
       Array.from({ length: 60 }, (_, i) => ({
         id: `bulk-${i}`,
@@ -231,7 +263,7 @@ describe("review-request notifications", () => {
         createdAt: new Date(Date.UTC(2030, 0, 1, 0, i)),
       })),
     );
-    const all = await undeliveredNotifications(testDb);
+    const all = await allNotifications();
     const { rows, total } = await recentUndeliveredNotifications(testDb, null);
     expect(total).toBe(all.length);
     expect(rows).toHaveLength(50);
@@ -242,7 +274,7 @@ describe("review-request notifications", () => {
   it("lists and counts only requests the viewer's workspace may see", async () => {
     const mine = await championReadyToTriage();
     await svc.triage(testDb, mine, SYSTEM, null);
-    const [seed] = await undeliveredNotifications(testDb);
+    const [seed] = await allNotifications();
     const foreign = {
       ...seed!,
       id: "foreign-1",

@@ -586,8 +586,13 @@ describe("lib/services/admin-service", () => {
         .toMatchObject({ deploymentId: deployment.id, before: "approved", after: "deployed" });
       const [resumed] = await db.select().from(deploymentVersions).where(eq(deploymentVersions.id, deployment.id));
       expect(resumed).toMatchObject({ status: "deployed", pausedAt: null });
+      // L15: the approved reassessment closes the incident, and Q-01 shows
+      // pending until fresh passing evidence arrives.
       const [incident] = await db.select().from(incidents).where(eq(incidents.id, breach.incidentId));
-      expect(incident.resolvedAt).toBeNull();
+      expect(incident.resolvedAt).not.toBeNull();
+      const q01 = (await db.select().from(effectiveControls).where(eq(effectiveControls.deploymentId, deployment.id)))
+        .filter((row) => row.controlId === "Q-01");
+      expect(q01.map((row) => row.status)).toEqual(["pending"]);
       const events = await db.select().from(auditEvents).where(eq(auditEvents.initiativeId, initiativeId));
       const recoveryEvents = events.filter((event) => event.action === "deploy" && event.metadata?.reviewCycleId === reviewCycleId);
       expect(recoveryEvents).toHaveLength(1);
@@ -595,6 +600,10 @@ describe("lib/services/admin-service", () => {
         actor: RAY_CHEN.id, actorRole: "admin", before: "approved", after: "deployed",
         metadata: { deploymentId: deployment.id, reviewCycleId, reason },
       });
+      const closing = events.filter((event) => event.action === "incident_resolved");
+      expect(closing).toHaveLength(1);
+      expect(closing[0]!.metadata).toMatchObject({ incidentId: breach.incidentId, reviewCycleId });
+      expect(events.filter((event) => event.action === "control_status_reset")).toHaveLength(1);
       await expect(resumeDeployment(db, RAY_CHEN, "ws-reassessment", initiativeId, reason)).rejects.toThrow(IllegalTransitionError);
     });
 

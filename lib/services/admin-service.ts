@@ -10,11 +10,11 @@
  * admin surface too, not just initiative-service's own tests).
  */
 import { randomUUID } from "node:crypto";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, isNull } from "drizzle-orm";
 import type { Db } from "../db/client";
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import type * as schema from "../db/schema";
-import { auditEvents, controlDefinitions, deploymentVersions, effectiveControls, initiativeDecisions, initiatives, reviewCycles } from "../db/schema";
+import { auditEvents, controlDefinitions, deploymentVersions, effectiveControls, incidents, initiativeDecisions, initiatives, reviewCycles } from "../db/schema";
 import type { Actor, LifecycleState, Tier } from "../domain/types";
 import { operationalDeployment } from "../deployments/selection";
 import { currentControlRevisions } from "../controls/current-revisions";
@@ -481,6 +481,40 @@ export async function resumeDeployment(
       ts,
       { deploymentId: deployment.id, reason, ...(approvedReassessmentCycleId ? { reviewCycleId: approvedReassessmentCycleId } : {}) },
     );
+
+    // An approved reassessment ends the incident that opened it, and Q-01 no
+    // longer shows 'breached': it goes back to 'pending' (not yet evaluated)
+    // until the monitor sees fresh passing evidence. Same transaction as the resume.
+    if (approvedReassessmentCycleId) {
+      const closed = await tx
+        .update(incidents)
+        .set({ resolvedAt: new Date(ts) })
+        .where(and(
+          eq(incidents.deploymentId, deployment.id),
+          eq(incidents.reviewCycleId, approvedReassessmentCycleId),
+          isNull(incidents.resolvedAt),
+        ))
+        .returning();
+      for (const incident of closed) {
+        await insertAuditEvent(
+          tx, initiativeId, actor, "incident_resolved", "open", "resolved",
+          `Incident ${incident.id} closed: reassessment ${approvedReassessmentCycleId} approved and deployment resumed.`,
+          ts, { incidentId: incident.id, reviewCycleId: approvedReassessmentCycleId, deploymentId: deployment.id },
+        );
+      }
+      const q01 = currentControlRevisions(
+        (await tx.select().from(effectiveControls).where(eq(effectiveControls.deploymentId, deployment.id)))
+          .filter((row) => row.controlId === "Q-01"),
+      )[0];
+      if (q01 && q01.status === "breached") {
+        await tx.update(effectiveControls).set({ status: "pending" }).where(eq(effectiveControls.id, q01.id));
+        await insertAuditEvent(
+          tx, initiativeId, actor, "control_status_reset", "breached", "pending",
+          `Q-01 reset to pending after the approved reassessment; it returns to met when fresh passing evidence arrives.`,
+          ts, { effectiveControlId: q01.id, controlId: "Q-01", deploymentId: deployment.id },
+        );
+      }
+    }
 
     return { initiativeId, deploymentId: deployment.id, before: result.before, after: result.after };
   });

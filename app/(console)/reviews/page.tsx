@@ -1,5 +1,6 @@
 import { loadPortfolioDetails } from "@/app/_lib/portfolio-data";
 import { getAppProvider, getCurrentWorkspaceId } from "@/app/_lib/data-provider";
+import { sortReviewQueue } from "@/lib/reviews/queue-order";
 import type { ReviewQueueRow } from "@/components/jeeves/review-workbench";
 import { ReviewWorkbenchRoute } from "./review-workbench-route";
 import { ReviewRequestQueue } from "@/components/jeeves/review-request-queue";
@@ -62,13 +63,8 @@ export default async function ReviewsPage() {
     }
   }
 
-  // Keep blocked and incomplete reviews ahead of completed signatures.
-  const order = { returned: 0, drafted: 1, pending: 2, abstained: 3, signed: 4 } as const;
-  rows.sort(
-    (a, b) =>
-      order[a.review.status] - order[b.review.status] ||
-      a.slug.localeCompare(b.slug),
-  );
+  // Blocked and incomplete reviews first; unsigned reviews of closed cycles last.
+  const sortedRows = sortReviewQueue(rows);
 
   return (
     <div className="flex flex-col gap-6">
@@ -79,7 +75,7 @@ export default async function ReviewsPage() {
           decide — signing authority never sits with agents or Admin.
         </p>
       </div>
-      <ReviewWorkbenchRoute rows={rows} />
+      <ReviewWorkbenchRoute rows={sortedRows} />
       <ReviewRequestQueue
         notifications={requests}
         total={requestsTotal}

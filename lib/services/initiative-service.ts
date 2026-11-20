@@ -30,13 +30,14 @@ import { currentAbstention, isResumableReviewStatus } from "../reviews/abstentio
 import { overlayFromStoredIntake } from "../intake/stored-overlay";
 import { createHash, randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import type { Db } from "../db/client";
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import type * as schema from "../db/schema";
 import {
   auditEvents,
   controlDefinitions,
+  controlExceptions,
   deploymentVersions,
   effectiveControls,
   initiativeDecisions,
@@ -316,6 +317,7 @@ function requireRequesterOwnership(
       "intake_draft",
       "submit",
       actor.role,
+      "role",
     );
   }
 }
@@ -1034,6 +1036,7 @@ function requireReviewerRole(actor: Actor): void {
       "in_review",
       "start_review",
       actor.role,
+      "role",
     );
   }
 }
@@ -1056,6 +1059,7 @@ function requireReviewerDomainMatch(actor: Actor, domain: Domain): void {
       "in_review",
       "start_review",
       actor.role,
+      "role",
     );
   }
 }
@@ -1113,7 +1117,7 @@ export async function signReview(
       throw new ValidationError("An explicit expected evidence packet identity is required.");
     }
     if (decision.status === "signed") {
-      throw new ValidationError(`review for ${domain} in cycle ${cycleId} is already signed`);
+      throw new ConflictError(`review for ${domain} in cycle ${cycleId} is already signed`);
     }
     let evidenceSnapshot;
     try { evidenceSnapshot = await evidenceForSignature(tx, initiative.id, cycleId, domain); }
@@ -1272,7 +1276,7 @@ export async function runReviewAgent(
     await lockReviewForMutation(tx, cycleId, domain, sessionWorkspaceId);
     const decision = await loadReviewDecisionOrThrow(tx, cycleId, domain);
     if (decision.status === "signed") {
-      throw new ValidationError(`review for ${domain} in cycle ${cycleId} is already signed; return it before re-drafting`);
+      throw new ConflictError(`review for ${domain} in cycle ${cycleId} is already signed; return it before re-drafting`);
     }
   });
   try {
@@ -1402,6 +1406,12 @@ export async function decide(
       }
     }
     const byDomain = new Map(reviews.map((row) => [row.domain, row]));
+    // Required reviews that are neither signed nor validly abstained when the
+    // decision closes the cycle; none of them can be signed afterwards.
+    const unsignedDomains = (cycleRa?.requiredDomains ?? reviews.map(row => row.domain)).filter((domain) => {
+      const row = byDomain.get(domain);
+      return !(row && (row.status === "signed" || (row.status === "abstained" && row.abstention)));
+    });
     for (const domain of cycleRa?.requiredDomains ?? reviews.map(row => row.domain)) {
       const row = byDomain.get(domain);
       // Rejection may conclude before all domain rows exist.
@@ -1473,7 +1483,7 @@ export async function decide(
       initiativeId,
       result.auditEvent,
       `${decision} by ${actor.id}${conditions.length > 0 ? ` with ${conditions.length} condition(s)` : ""}.`,
-      { conditions, citations, cycleId: cycle.id, decisionId, reviewSnapshots },
+      { conditions, citations, cycleId: cycle.id, decisionId, reviewSnapshots, unsignedRequiredReviews: unsignedDomains.length, unsignedDomains },
     );
 
     // External-review finding #4 ("the live champion workflow stops before
@@ -1510,7 +1520,8 @@ export interface GenerateEffectiveControlsResult {
 
 /**
  * Selects every `control_definitions` row (excluding the runtime-only Q-01,
- * which attaches at breach-monitor time, not review time) whose
+ * which the breach monitor attaches the first time it sees an
+ * eval_hallucination series for the deployment — not at review or deploy time) whose
  * `applicability` matches the initiative's tier + overlay flags, and writes
  * one versioned `effective_controls` row per match against the initiative's
  * most recent deployment. If no deployment exists yet, a placeholder
@@ -1604,6 +1615,39 @@ async function generateEffectiveControlsInTx(
       createdAt: new Date(nowTs()),
     });
     created.push({ controlId: def.id, version: nextVersion });
+  }
+
+  // A waiver belongs to the revision it was requested on. Regenerating the
+  // controls (re-approval) starts a new revision with no waiver, so open
+  // waivers on the replaced rows are superseded and must be requested again.
+  // The replaced rows' own status is left alone: they are stale history.
+  const regenerated = new Set(created.map((c) => c.controlId));
+  const replacedIds = existingEcs.filter((ec) => regenerated.has(ec.controlId)).map((ec) => ec.id);
+  if (replacedIds.length > 0) {
+    const open = await tx
+      .select()
+      .from(controlExceptions)
+      .where(and(inArray(controlExceptions.effectiveControlId, replacedIds), inArray(controlExceptions.status, ["requested", "approved"])));
+    if (open.length > 0) {
+      await tx
+        .update(controlExceptions)
+        .set({ status: "superseded" })
+        .where(inArray(controlExceptions.id, open.map((exc) => exc.id)));
+    }
+    for (const exc of open) {
+      await tx.insert(auditEvents).values({
+        id: `evt-${randomUUID()}`,
+        initiativeId,
+        ts: new Date(nowTs()),
+        actor: SYSTEM_ACTOR.id,
+        actorRole: SYSTEM_ACTOR.role,
+        action: "control_exception_superseded",
+        detail: `Exception ${exc.id} for ${exc.controlId} superseded: controls regenerated on re-approval; request it again if still needed.`,
+        before: exc.status,
+        after: "superseded",
+        metadata: { exceptionId: exc.id, controlId: exc.controlId, reason: "controls regenerated on re-approval" },
+      });
+    }
   }
 
   await tx.insert(auditEvents).values({

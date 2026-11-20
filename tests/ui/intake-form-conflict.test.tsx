@@ -36,6 +36,18 @@ describe("IntakeForm 409 messages", () => {
     expect(alert.textContent).not.toMatch(/reload/i);
   });
 
+  it("treats a submit refused for the intake's state as already submitted, not as a concurrent edit", async () => {
+    const { ApiError } = await import("@/lib/client/api");
+    mocks.create.mockResolvedValue({ initiativeId: "init-1", slug: "sample", intakeVersionId: "iv-1", version: 1 });
+    mocks.submit.mockRejectedValue(new ApiError(409, "Illegal transition: cannot submit from submitted", undefined, "INVALID_STATE"));
+    render(<DeploymentModeProvider mode="demo"><IntakeForm /></DeploymentModeProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "Use a sample initiative" }));
+    fireEvent.click(screen.getByRole("button", { name: "Submit intake" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("already submitted");
+    expect(alert.textContent).not.toMatch(/another tab/i);
+  });
+
   it("warns that reloading discards input on a version conflict", async () => {
     const { ApiError } = await import("@/lib/client/api");
     mocks.create.mockRejectedValue(new ApiError(409, "draft changed concurrently (expected version 1)"));

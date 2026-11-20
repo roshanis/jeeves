@@ -72,6 +72,7 @@ import {
   getReviewActionEligibility,
   performReviewMutation,
 } from "@/lib/client/review-actions";
+import { isClosedUnsigned } from "@/lib/reviews/queue-order";
 import { ReviewEvidenceWorkspace } from "./review-evidence-workspace";
 
 export interface ReviewQueueRow {
@@ -312,6 +313,9 @@ export function ReviewWorkbench({ rows, selection, onSelectionChange }: {
                   </TableCell>
                   <TableCell>
                     <ReviewStatusBadge status={row.review.status} />
+                    {isClosedUnsigned(row.review) ? (
+                      <span className="ml-1.5 text-xs text-muted-foreground">Cycle closed</span>
+                    ) : null}
                   </TableCell>
                   <TableCell>
                     <QueueAgeCell

@@ -487,7 +487,9 @@ describe("full champion route chain: submit -> triage -> draft-run -> sign -> de
     expect(decideJson.controlsGenerated.deploymentId).toBeTruthy();
     expect(decideJson.controlsGenerated.created).toBeGreaterThan(0);
 
-    // Requester cannot decide — 403 (SoD).
+    // The initiative is already decided, so the wrong-state check answers
+    // first: 409, not 403 (L31). The 403 role case is covered in
+    // illegal-transition-status.test.ts.
     const decideAsRequesterRes = await decidePost(
       new Request(`http://localhost/api/initiatives/${initiativeId}/decide`, {
         method: "POST",
@@ -496,7 +498,7 @@ describe("full champion route chain: submit -> triage -> draft-run -> sign -> de
       }),
       { params: Promise.resolve({ id: initiativeId }) },
     );
-    expect(decideAsRequesterRes.status).toBe(403);
+    expect(decideAsRequesterRes.status).toBe(409);
   });
 });
 
@@ -911,7 +913,7 @@ describe("POST /api/reviews/[cycleId]/[domain]/run — on-demand agent run", () 
     await testDb.update(reviewDecisions).set({ status: "signed", draftMd: "Signed review" }).where(and(
       eq(reviewDecisions.cycleId, cycleId), eq(reviewDecisions.domain, "clinical-safety"),
     ));
-    expect((await runDomain(cycleId, token)).status).toBe(400);
+    expect((await runDomain(cycleId, token)).status).toBe(409);
     await testDb.update(reviewDecisions).set({ status: "pending", activeAttemptId: "active-duplicate", activeAttemptExpiresAt: new Date(Date.now() + 60_000) }).where(and(
       eq(reviewDecisions.cycleId, cycleId), eq(reviewDecisions.domain, "clinical-safety"),
     ));

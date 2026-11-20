@@ -407,3 +407,26 @@ describe("TransitionContext type is usable standalone (sanity)", () => {
     expect(ctx.ts).toBe(NOW);
   });
 });
+
+describe("transition — IllegalTransitionError kind (L31)", () => {
+  const kindOf = (fn: () => unknown): string | undefined => {
+    try {
+      fn();
+    } catch (e) {
+      return (e as IllegalTransitionError).kind;
+    }
+    return undefined;
+  };
+
+  it("no transition from the current state is kind 'state'", () => {
+    expect(kindOf(() => transition("deployed", "approve", actor("approver"), { ts: NOW }))).toBe("state");
+  });
+
+  it("a disallowed role is kind 'role'", () => {
+    expect(kindOf(() => transition("deployed", "pause", actor("requester"), { ts: NOW, reason: "x" }))).toBe("role");
+  });
+
+  it("a missing reason is kind 'reason'", () => {
+    expect(kindOf(() => transition("deployed", "pause", actor("admin"), { ts: NOW }))).toBe("reason");
+  });
+});

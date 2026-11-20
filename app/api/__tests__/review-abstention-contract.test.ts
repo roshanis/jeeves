@@ -4,7 +4,7 @@ vi.mock("@/lib/db/client", () => ({ getDb: () => mocks.db }));
 vi.mock("@/lib/services/route-guard", async (importOriginal) => ({ guardFailureResponse: (await importOriginal<typeof import("@/lib/services/route-guard")>()).guardFailureResponse, runMutationGuard: mocks.guard }));
 vi.mock("@/lib/services/initiative-service", () => ({
   abstainReview: mocks.abstain, resumeReview: mocks.resume,
-  ConflictError: class ConflictError extends Error {}, IllegalTransitionError: class IllegalTransitionError extends Error {},
+  ConflictError: class ConflictError extends Error {}, IllegalTransitionError: class IllegalTransitionError extends Error { kind = "role"; },
   NotFoundError: class NotFoundError extends Error {}, ValidationError: class ValidationError extends Error {},
 }));
 import { POST as abstain } from "../reviews/[cycleId]/[domain]/abstain/route";
@@ -31,7 +31,7 @@ describe("review abstention routes", () => {
     for (const route of [abstain,resume]) expect((await route(request({reason:"Conflict",expectedRevision:0}),context)).status).toBe(status);
     expect(mocks.abstain).not.toHaveBeenCalled(); expect(mocks.resume).not.toHaveBeenCalled();
   });
-  it.each([[new ConflictError("Denied"),409],[new IllegalTransitionError("Denied", "in_review", "start_review", "reviewer"),403],[new NotFoundError("review", "missing"),404],[new ValidationError("Denied"),400]] as const)("maps service errors", async (error,status) => {
+  it.each([[new ConflictError("Denied"),409],[new IllegalTransitionError("Denied", "in_review", "start_review", "reviewer", "role"),403],[new NotFoundError("review", "missing"),404],[new ValidationError("Denied"),400]] as const)("maps service errors", async (error,status) => {
     mocks.abstain.mockRejectedValue(error); mocks.resume.mockRejectedValue(error);
     for (const route of [abstain,resume]) expect((await route(request({reason:"Conflict",expectedRevision:0}),context)).status).toBe(status);
   });

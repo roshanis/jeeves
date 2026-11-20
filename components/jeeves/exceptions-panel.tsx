@@ -131,6 +131,7 @@ export function ExceptionsPanel({ exceptions, loadFailed = false }: { exceptions
                   <th className="px-4 py-2 text-left font-medium text-muted-foreground">Status</th>
                   <th className="px-4 py-2 text-left font-medium text-muted-foreground">Requested by</th>
                   <th className="px-4 py-2 text-left font-medium text-muted-foreground">Reason</th>
+                  <th className="px-4 py-2 text-left font-medium text-muted-foreground">Expires</th>
                   <th className="px-4 py-2 text-left font-medium text-muted-foreground">Actions</th>
                 </tr>
               </thead>
@@ -147,6 +148,9 @@ export function ExceptionsPanel({ exceptions, loadFailed = false }: { exceptions
                       </td>
                       <td className="px-4 py-2.5 text-muted-foreground">{e.requestedBy}</td>
                       <td className="max-w-[24rem] px-4 py-2.5 text-muted-foreground">{e.reason}</td>
+                      <td className="px-4 py-2.5 text-muted-foreground">
+                        {e.expiresAt === null ? "—" : new Date(e.expiresAt).toISOString().slice(0, 10)}
+                      </td>
                       <td className="px-4 py-2.5">
                         {e.isShared && canDecide ? (
                           <span className="text-xs text-muted-foreground">Sample data — read-only</span>

@@ -11,6 +11,7 @@ import { createTestDb, closeTestDb, type TestDb } from "../db/test-client";
 import { seedDatabase, BASE_DATE_MS } from "../../scripts/seed";
 import {
   auditEvents,
+  controlExceptions,
   deploymentVersions,
   effectiveControls,
   incidents,
@@ -31,6 +32,7 @@ import {
 } from "./monitor-service";
 import { SYSTEM_ACTOR } from "./actors";
 import { resumeDeployment } from "./admin-service";
+import { decideException, requestException } from "./exception-service";
 import { createDraft } from "./initiative-service";
 import { CHAMPION_PREFILL_PAYLOAD } from "../intake/champion-prefill";
 
@@ -54,6 +56,16 @@ async function fwaAnomalyDetector(db: TestDb) {
   const [init] = await db.select().from(initiatives).where(eq(initiatives.slug, "fwa-anomaly-detector"));
   const [dep] = await db.select().from(deploymentVersions).where(eq(deploymentVersions.initiativeId, init!.id));
   return { init: init!, dep: dep! };
+}
+
+/**
+ * Two seeded deployments (pa-correspondence-model, callcenter-qa-scorer) have
+ * eval data but no Q-01, so the first monitor run attaches it (L12). Tests
+ * that count transactions or evaluations attach it first, at a time before any
+ * seeded breach, so their own run sees a stable set.
+ */
+async function attachSeededQ01(db: TestDb): Promise<void> {
+  await runMonitor(db, SYSTEM_ACTOR, BASE_DATE_MS, UNSCOPED_WORKSPACE);
 }
 
 describe("lib/services/monitor-service", () => {
@@ -322,6 +334,125 @@ describe("lib/services/monitor-service", () => {
     });
   });
 
+  describe("runMonitor — Q-01 attaches when eval data first arrives (L12)", () => {
+    async function q01Rows(db: TestDb, deploymentId: string) {
+      return (await db.select().from(effectiveControls).where(eq(effectiveControls.deploymentId, deploymentId))).filter((r) => r.controlId === "Q-01");
+    }
+    async function addEvalSeries(dep: { id: string }, values: number[]) {
+      for (const [i, value] of values.entries()) {
+        await db.insert(observations).values({
+          id: `obs-l12-${i}`, deploymentId: dep.id, kind: "eval_hallucination",
+          ts: new Date(BASE_DATE_MS + (20 + i) * DAY_MS), value,
+        });
+      }
+    }
+
+    it("a deployment with eval data and no Q-01 gets Q-01 on the first run, then it is evaluated as usual", async () => {
+      const { dep } = await fwaAnomalyDetector(db);
+      expect(await q01Rows(db, dep.id)).toHaveLength(0);
+      await addEvalSeries(dep, [0.01, 0.01, 0.01]);
+
+      const first = await runMonitor(db, SYSTEM_ACTOR, BASE_DATE_MS + 30 * DAY_MS, UNSCOPED_WORKSPACE);
+      const rows = await q01Rows(db, dep.id);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]!.status).toBe("met"); // passing evidence in the same run
+      expect(first.errors).toEqual([]);
+      const events = (await db.select().from(auditEvents).where(eq(auditEvents.action, "effective_control_attached")))
+        .filter((e) => (e.metadata as { deploymentId: string }).deploymentId === dep.id);
+      expect(events).toHaveLength(1);
+      expect(events[0]!.metadata).toMatchObject({ controlId: "Q-01", deploymentId: dep.id });
+
+      // Evaluated in that same run, and not attached a second time.
+      expect(first.evaluated).toBeGreaterThanOrEqual(4);
+      await runMonitor(db, SYSTEM_ACTOR, BASE_DATE_MS + 30 * DAY_MS, UNSCOPED_WORKSPACE);
+      expect(await q01Rows(db, dep.id)).toHaveLength(1);
+    });
+
+    it("an attached Q-01 is evaluated in the same run: a sustained breach opens an incident", async () => {
+      const { dep } = await fwaAnomalyDetector(db);
+      await addEvalSeries(dep, [0.99, 0.99, 0.99, 0.99, 0.99, 0.99]);
+      const result = await runMonitor(db, SYSTEM_ACTOR, BASE_DATE_MS + 40 * DAY_MS, UNSCOPED_WORKSPACE);
+      expect(result.breaches.find((b) => b.deploymentId === dep.id)).toMatchObject({ isNew: true });
+    });
+
+    it("a deployment with no eval data gets nothing", async () => {
+      const { dep } = await fwaAnomalyDetector(db);
+      await runMonitor(db, SYSTEM_ACTOR, PLUS_14D, UNSCOPED_WORKSPACE);
+      expect(await q01Rows(db, dep.id)).toHaveLength(0);
+      // Only the seeded deployments that already have eval data were attached.
+      const events = await db.select().from(auditEvents).where(eq(auditEvents.action, "effective_control_attached"));
+      expect(events.map((e) => (e.metadata as { deploymentId: string }).deploymentId)).not.toContain(dep.id);
+    });
+  });
+
+  describe("runMonitor — Q-01 status after resume and with an open exception request (L15)", () => {
+    it("a Q-01 reset to pending stays pending without fresh evidence and becomes met when passing evidence arrives", async () => {
+      const { init, dep } = await memberChatCopilot(db);
+      const first = await runMonitor(db, SYSTEM_ACTOR, PLUS_14D, UNSCOPED_WORKSPACE);
+      const cycleId = first.breaches[0]!.reviewCycleId!;
+      await db.update(reviewCycles).set({ closedAt: new Date() }).where(eq(reviewCycles.id, cycleId));
+      await db.insert(initiativeDecisions).values({
+        id: `decision-${randomUUID()}`, initiativeId: init.id, cycleId, type: "approved",
+        approver: "angela-torres", decidedAt: new Date(),
+      });
+      await db.update(initiatives).set({ state: "approved" }).where(eq(initiatives.id, init.id));
+      await resumeDeployment(db, RAY_CHEN, null, init.id, "Reassessment approved; resume.");
+      const q01 = async () => (await db.select().from(effectiveControls).where(eq(effectiveControls.deploymentId, dep.id)))
+        .find((r) => r.controlId === "Q-01")!.status;
+      expect(await q01()).toBe("pending");
+
+      // Only the old breach is in the series: nothing fresh, so no change.
+      await runMonitor(db, SYSTEM_ACTOR, PLUS_14D + DAY_MS, UNSCOPED_WORKSPACE);
+      expect(await q01()).toBe("pending");
+
+      await db.insert(observations).values({
+        id: "obs-l15-pass", deploymentId: dep.id, kind: "eval_hallucination",
+        ts: new Date(BASE_DATE_MS + 20 * DAY_MS), value: 0.01,
+      });
+      await runMonitor(db, SYSTEM_ACTOR, BASE_DATE_MS + 25 * DAY_MS, UNSCOPED_WORKSPACE);
+      expect(await q01()).toBe("met");
+    });
+
+    it("a breach still records the incident but leaves a control with an open exception request alone", async () => {
+      const { dep } = await memberChatCopilot(db);
+      const [ec] = (await db.select().from(effectiveControls).where(eq(effectiveControls.deploymentId, dep.id)))
+        .filter((r) => r.controlId === "Q-01");
+      await db.update(effectiveControls).set({ status: "overdue" }).where(eq(effectiveControls.id, ec!.id));
+      await requestException(db, ec!.id, { id: "marcus-webb", role: "reviewer" }, null, "Retraining in progress");
+      const result = await runMonitor(db, SYSTEM_ACTOR, PLUS_14D, UNSCOPED_WORKSPACE);
+      expect(result.incidentsCreated).toBe(1);
+      const [after] = await db.select().from(effectiveControls).where(eq(effectiveControls.id, ec!.id));
+      expect(after!.status).toBe("exception_requested");
+    });
+
+    async function q01WithApprovedWaiver() {
+      const { dep } = await memberChatCopilot(db);
+      const [ec] = (await db.select().from(effectiveControls).where(eq(effectiveControls.deploymentId, dep.id)))
+        .filter((r) => r.controlId === "Q-01");
+      await db.update(effectiveControls).set({ status: "overdue" }).where(eq(effectiveControls.id, ec!.id));
+      const req = await requestException(db, ec!.id, { id: "marcus-webb", role: "reviewer" }, null, "Retraining in progress");
+      await decideException(db, req.id, { id: "angela-torres", role: "approver" }, null, true, "Accepted while retraining");
+      return { ecId: ec!.id, exceptionId: req.id };
+    }
+
+    it("a breach still records the incident but leaves a control alone while its approved waiver is in date", async () => {
+      const { ecId } = await q01WithApprovedWaiver();
+      const result = await runMonitor(db, SYSTEM_ACTOR, PLUS_14D, UNSCOPED_WORKSPACE);
+      expect(result.incidentsCreated).toBe(1);
+      const [after] = await db.select().from(effectiveControls).where(eq(effectiveControls.id, ecId));
+      expect(after!.status).toBe("exception_requested");
+    });
+
+    it("an approved waiver past its date no longer holds the control's status", async () => {
+      const { ecId, exceptionId } = await q01WithApprovedWaiver();
+      await db.update(controlExceptions).set({ expiresAt: Date.now() - DAY_MS }).where(eq(controlExceptions.id, exceptionId));
+      const result = await runMonitor(db, SYSTEM_ACTOR, PLUS_14D, UNSCOPED_WORKSPACE);
+      expect(result.incidentsCreated).toBe(1);
+      const [after] = await db.select().from(effectiveControls).where(eq(effectiveControls.id, ecId));
+      expect(after!.status).toBe("breached");
+    });
+  });
+
   describe("runMonitor — wall-clock stamps", () => {
     it("stamps audit events and incident rows with the wall clock and keeps nowTs as metadata.evaluatedAt", async () => {
       const { init, dep } = await memberChatCopilot(db);
@@ -381,7 +512,7 @@ describe("lib/services/monitor-service", () => {
         });
       }
       const second = await runMonitor(db, SYSTEM_ACTOR, BASE_DATE_MS + 40 * DAY_MS, UNSCOPED_WORKSPACE);
-      expect(second).toMatchObject({ evaluated: 1, errors: [], alreadyKnown: 0 });
+      expect(second).toMatchObject({ errors: [], alreadyKnown: 0 });
       expect(second.incidentsCreated).toBe(1);
       expect(second.alreadyKnown).toBe(0);
       const [after] = await db.select().from(initiatives).where(eq(initiatives.id, init.id));
@@ -443,6 +574,7 @@ describe("lib/services/monitor-service", () => {
     });
 
     it("a CAS conflict against an incident another run just recorded is reported as already known, not as a failure", async () => {
+      await attachSeededQ01(db);
       const { dep } = await memberChatCopilot(db);
 
       /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -479,6 +611,7 @@ describe("lib/services/monitor-service", () => {
     });
 
     it("a concurrent write that changes the initiative's state before the breach-pause CAS update is recorded in result.errors and does not abort the run (no partial write for that candidate)", async () => {
+      await attachSeededQ01(db);
       const { init, dep } = await memberChatCopilot(db);
 
       /* eslint-disable @typescript-eslint/no-explicit-any */

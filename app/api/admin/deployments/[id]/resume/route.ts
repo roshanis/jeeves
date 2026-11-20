@@ -33,6 +33,7 @@ import {
 import { guardFailureResponse, runMutationGuard } from "@/lib/services/route-guard";
 import { isRouteId, notFoundResponse } from "@/lib/http/route-id";
 import { databaseNotReady } from "@/lib/http/database-gate";
+import { illegalTransitionResponse } from "@/lib/http/illegal-transition-response";
 
 const bodySchema = z.object({
   reason: z.string().min(1).max(2000),
@@ -80,9 +81,7 @@ export async function POST(
     if (err instanceof ValidationError) {
       return Response.json({ error: err.message }, { status: 400 });
     }
-    if (err instanceof IllegalTransitionError) {
-      return Response.json({ error: err.message }, { status: 400 });
-    }
+    if (err instanceof IllegalTransitionError) return illegalTransitionResponse(err);
     if (err instanceof ConflictError) {
       return Response.json({ error: err.message }, { status: 409 });
     }

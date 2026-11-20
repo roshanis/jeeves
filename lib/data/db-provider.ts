@@ -17,6 +17,7 @@ import { overlayFromStoredIntake } from "@/lib/intake/stored-overlay";
 import { resolveThreshold } from "@/lib/controls/evaluate";
 import { actorMatches, displayNameFor } from "@/lib/services/actors";
 import { getDb, type Db } from "@/lib/db/client";
+import { selectEffectiveControlsWithLapsedResolved } from "@/lib/services/exception-expiry";
 import {
   auditEvents,
   controlDefinitions,
@@ -218,7 +219,7 @@ export class DbDataProvider implements DataProvider {
       this.db.select().from(reviewDecisions),
       this.db.select().from(initiativeDecisions),
       this.db.select().from(deploymentVersions),
-      this.db.select().from(effectiveControls),
+      selectEffectiveControlsWithLapsedResolved(this.db, Date.now()),
       this.db.select().from(controlDefinitions),
       this.db.select().from(intakeVersions),
       this.db.select().from(observations),

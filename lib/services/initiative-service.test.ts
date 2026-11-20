@@ -746,7 +746,7 @@ describe("lib/services/initiative-service", () => {
       ).rejects.toThrow(IllegalTransitionError);
     });
 
-    it("refuses to re-draft an already-signed review (ValidationError)", async () => {
+    it("refuses to re-draft an already-signed review (ConflictError, a state problem)", async () => {
       await setUpInReview();
       const cycleId = await cycleFor("clinical-safety");
       // Draft then sign as the assigned reviewer.
@@ -755,7 +755,7 @@ describe("lib/services/initiative-service", () => {
 
       await expect(
         svc.runReviewAgent(db, cycleId, "clinical-safety", REVIEWER, null, createMockAgentPort()),
-      ).rejects.toThrow(ValidationError);
+      ).rejects.toThrow(ConflictError);
     });
 
     it("404s (NotFoundError) when the (cycle, domain) review does not exist", async () => {
@@ -841,6 +841,29 @@ describe("lib/services/initiative-service", () => {
         conditions: [{ text: "100% human review.", controlId: "C-01" }],
       });
       expect(res.type).toBe("conditionally_approved");
+    });
+
+    it("records how many required reviews were unsigned in the decision's audit event (L30)", async () => {
+      const { initiativeId, cycleId } = await setUpInReview();
+      const domains = await draftAll(cycleId);
+      await signLoadedReview(db, cycleId, domains[0]!, DOMAIN_REVIEWER[domains[0]!], null);
+      await svc.decide(db, initiativeId, APPROVER, null, {
+        decision: "conditionally_approved",
+        conditions: [{ text: "100% human review.", controlId: "C-01" }],
+      });
+      const events = await db.select().from(auditEvents).where(eq(auditEvents.initiativeId, initiativeId));
+      const decided = events.find((e) => e.action === "conditionally_approve")!;
+      expect(decided.metadata).toMatchObject({ unsignedRequiredReviews: domains.length - 1 });
+      expect((decided.metadata as { unsignedDomains: string[] }).unsignedDomains).not.toContain(domains[0]);
+    });
+
+    it("records zero unsigned required reviews when every domain signed (L30)", async () => {
+      const { initiativeId, cycleId } = await setUpInReview();
+      const domains = await draftAll(cycleId);
+      for (const domain of domains) await signLoadedReview(db, cycleId, domain, DOMAIN_REVIEWER[domain], null);
+      await svc.decide(db, initiativeId, APPROVER, null, { decision: "approved" });
+      const events = await db.select().from(auditEvents).where(eq(auditEvents.initiativeId, initiativeId));
+      expect(events.find((e) => e.action === "approve")!.metadata).toMatchObject({ unsignedRequiredReviews: 0 });
     });
 
     it("rejects a decision carrying a stale review revision or another cycle id with ConflictError and records nothing (api-initiatives-F17)", async () => {

@@ -39,6 +39,7 @@ import type * as schema from "../db/schema";
 import {
   auditEvents,
   controlDefinitions,
+  controlExceptions,
   deploymentVersions,
   effectiveControls,
   incidents,
@@ -57,6 +58,7 @@ import { SYSTEM_ACTOR } from "./actors";
 import { enqueueReviewRequests } from "./notification-service";
 import { ConflictError } from "./initiative-service";
 import { viewerRowsFilter } from "./viewer-workspace";
+import { activeExceptionCondition } from "./exception-expiry";
 
 /**
  * Re-exported so route handlers/callers can catch a compare-and-set race on
@@ -187,6 +189,22 @@ function insertAuditEvent(
   });
 }
 
+/**
+ * Whether the control has an open request or an approved waiver still in
+ * date. Its status is then derived from its exceptions
+ * (exception-service's recomputeControlStatus), so the monitor leaves it
+ * alone. Judged on the real clock, as the exception reads are, not on the
+ * run's simulated time.
+ */
+async function hasActiveException(tx: Tx, effectiveControlId: string): Promise<boolean> {
+  const rows = await tx
+    .select({ id: controlExceptions.id })
+    .from(controlExceptions)
+    .where(and(eq(controlExceptions.effectiveControlId, effectiveControlId), activeExceptionCondition(Date.now())))
+    .limit(1);
+  return rows.length > 0;
+}
+
 /** Deployments currently `deployed` with their owning initiative + tier + flags. */
 async function loadDeployedCandidates(
   tx: Tx,
@@ -275,9 +293,68 @@ export async function runMonitor(
     }
   }
 
+  // Q-01 is attached by the monitor, not at deploy time: the first time a
+  // deployed initiative has an eval_hallucination series and no Q-01 yet.
+  // Without eval data there is nothing to evaluate, so nothing is attached.
+  if (def && candidates.length > 0) {
+    const kind = def.observationKind ?? "eval_hallucination";
+    const withData = new Set(
+      (
+        await db
+          .selectDistinct({ deploymentId: observations.deploymentId })
+          .from(observations)
+          .where(and(inArray(observations.deploymentId, candidates.map((c) => c.deployment.id)), eq(observations.kind, kind)))
+      ).map((r) => r.deploymentId),
+    );
+    for (const { deployment, initiative } of candidates) {
+      if (!withData.has(deployment.id) || (ecByDeployment.get(deployment.id) ?? []).length > 0) continue;
+      try {
+        const attached = await db.transaction(async (tx) => {
+          // Re-check inside the transaction so overlapping runs attach it once.
+          const [existing] = await tx
+            .select({ id: effectiveControls.id })
+            .from(effectiveControls)
+            .where(and(eq(effectiveControls.deploymentId, deployment.id), eq(effectiveControls.controlId, RUNTIME_CONTROL_ID)))
+            .limit(1);
+          if (existing) return null;
+          const row = {
+            id: `ec-${randomUUID()}`,
+            deploymentId: deployment.id,
+            controlId: RUNTIME_CONTROL_ID,
+            version: 1,
+            status: "pending",
+            thresholdOverride: null,
+            evidence: null,
+            evidenceAt: null,
+            dueAt: null,
+            remediationOwner: def.remediationOwner,
+            createdAt: new Date(),
+          };
+          await tx.insert(effectiveControls).values(row);
+          await tx.insert(auditEvents).values({
+            id: `evt-${randomUUID()}`,
+            initiativeId: initiative.id,
+            ts: new Date(),
+            actor: SYSTEM_ACTOR.id,
+            actorRole: SYSTEM_ACTOR.role,
+            action: "effective_control_attached",
+            detail: `Attached ${RUNTIME_CONTROL_ID} to deployment ${deployment.id}: eval data first seen.`,
+            before: null,
+            after: null,
+            metadata: { controlId: RUNTIME_CONTROL_ID, deploymentId: deployment.id },
+          });
+          return row;
+        });
+        if (attached) ecByDeployment.set(deployment.id, [attached as typeof effectiveControls.$inferSelect]);
+      } catch (err) {
+        errors.push({ initiativeId: initiative.id, deploymentId: deployment.id, message: redactDbError(err).message });
+      }
+    }
+  }
+
   for (const { deployment, initiative, tier } of candidates) {
-    // Q-01 effective control (may not exist for initiatives without an
-    // eval_hallucination series, e.g. seed #10/#5/#6/#12 profiles).
+    // Q-01 effective control (absent until the first eval_hallucination
+    // observation is seen; attached just above).
     const ecRows = ecByDeployment.get(deployment.id) ?? [];
     if (ecRows.length === 0) continue;
     const ec = currentControlRevisions(ecRows)[0]!;
@@ -314,10 +391,13 @@ export async function runMonitor(
     // a recorded incident; then look past the end of that run so a LATER breach
     // (e.g. after a resume) is detected instead of the old one found again.
     let evalResult = evaluateControl(control, series, nowTs);
+    // End of the latest known breach run, and whether the series has moved
+    // past a known breach (no later sustained breach).
+    let since: number | undefined;
+    let pastKnownBreach = false;
     if (evalResult.identityKey) {
       const known = await db.select().from(incidents).where(eq(incidents.deploymentId, deployment.id));
       const sorted = series.slice().sort((a, b) => a.ts - b.ts);
-      let since: number | undefined;
       for (const inc of known) {
         const startIdx = sorted.findIndex((o) => o.ts >= inc.windowStart.getTime());
         if (startIdx === -1) continue;
@@ -328,6 +408,38 @@ export async function runMonitor(
       if (since !== undefined && known.some((k) => k.identityKey === evalResult.identityKey)) {
         const later = evaluateControl(control, series, nowTs, since);
         if (later.breached) evalResult = later;
+        else pastKnownBreach = true;
+      }
+    }
+
+    // A control reset to 'pending' (new Q-01, or after an approved
+    // reassessment) becomes 'met' once there is a passing observation newer
+    // than any known breach. A control with an open exception request or an
+    // in-date waiver is left alone, as for a breach below.
+    if (ec.status === "pending" && (!evalResult.breached || pastKnownBreach)) {
+      const latest = series.filter((o) => o.ts <= nowTs).sort((a, b) => b.ts - a.ts)[0];
+      if (latest && latest.value <= threshold && (since === undefined || latest.ts > since)) {
+        await db.transaction(async (tx) => {
+          if (await hasActiveException(tx, ec.id)) return;
+          const updated = await tx
+            .update(effectiveControls)
+            .set({ status: "met" })
+            .where(and(eq(effectiveControls.id, ec.id), eq(effectiveControls.status, "pending")))
+            .returning();
+          if (updated.length === 0) return;
+          await tx.insert(auditEvents).values({
+            id: `evt-${randomUUID()}`,
+            initiativeId: initiative.id,
+            ts: new Date(),
+            actor: SYSTEM_ACTOR.id,
+            actorRole: SYSTEM_ACTOR.role,
+            action: "control_met",
+            detail: `${RUNTIME_CONTROL_ID} is met for deployment ${deployment.id}: passing evidence at ${new Date(latest.ts).toISOString()}.`,
+            before: "pending",
+            after: "met",
+            metadata: { effectiveControlId: ec.id, controlId: RUNTIME_CONTROL_ID, deploymentId: deployment.id, evidenceTs: latest.ts },
+          });
+        });
       }
     }
     if (!evalResult.breached || !evalResult.identityKey || evalResult.windowStartTs === null) {
@@ -540,10 +652,15 @@ export async function runMonitor(
           .update(reviewCycles)
           .set({ incidentId })
           .where(eq(reviewCycles.id, reviewCycleId));
-        await tx
-          .update(effectiveControls)
-          .set({ status: "breached" })
-          .where(eq(effectiveControls.id, ec.id));
+        // The incident is recorded either way; the control's status is not
+        // overwritten while it has an open exception request or an in-date
+        // waiver.
+        if (!(await hasActiveException(tx, ec.id))) {
+          await tx
+            .update(effectiveControls)
+            .set({ status: "breached" })
+            .where(eq(effectiveControls.id, ec.id));
+        }
 
         await tx.insert(auditEvents).values({
           id: `evt-${randomUUID()}`,

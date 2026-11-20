@@ -643,7 +643,8 @@ export function IntakeForm({ initialPayload, onPayloadChange, initiativeId: init
   function reportError(err: unknown) {
     if (isApiError(err)) {
       const message = err.status === 409
-        ? err.code === "INTAKE_NOT_EDITABLE"
+        ? // INVALID_STATE: the submit transition was refused because the intake already left the draft state.
+          err.code === "INTAKE_NOT_EDITABLE" || err.code === "INVALID_STATE"
           ? "This intake was already submitted and can no longer be edited. Open its case file from your initiatives list."
           : "This draft changed in another tab. Reloading discards what you typed here, so copy your text first."
         : apiErrorToMessage(err);

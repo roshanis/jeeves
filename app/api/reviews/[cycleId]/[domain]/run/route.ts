@@ -18,6 +18,7 @@ import { BodyReadError, DEFAULT_BODY_MAX_BYTES, readBodyText } from "@/lib/http/
 import type { Domain } from "@/lib/domain/types";
 import { agentInitializationResponse } from "@/lib/services/agent-error-response";
 import { databaseNotReady } from "@/lib/http/database-gate";
+import { illegalTransitionResponse } from "@/lib/http/illegal-transition-response";
 
 const DOMAINS = [
   "legal",
@@ -71,9 +72,7 @@ export async function POST(
     const unavailable = agentInitializationResponse(err);
     if (unavailable) return unavailable;
     if (err instanceof ConflictError) return Response.json({ error: err.message }, { status: 409 });
-    if (err instanceof IllegalTransitionError) {
-      return Response.json({ error: err.message }, { status: 403 });
-    }
+    if (err instanceof IllegalTransitionError) return illegalTransitionResponse(err);
     if (err instanceof NotFoundError) {
       return Response.json({ error: err.message }, { status: 404 });
     }

@@ -11,6 +11,7 @@ import { isRouteId, notFoundResponse } from "@/lib/http/route-id";
 import { renewException } from "@/lib/services/exception-service";
 import { NotFoundError, ValidationError, IllegalTransitionError } from "@/lib/services/initiative-service";
 import { databaseNotReady } from "@/lib/http/database-gate";
+import { illegalTransitionResponse } from "@/lib/http/illegal-transition-response";
 
 const REASON_MAX = 2_000;
 const bodySchema = z.object({ reason: z.string().min(1).max(REASON_MAX) });
@@ -48,7 +49,7 @@ export async function POST(
     const result = await renewException(getDb(), id, guard.actor, guard.workspaceId, parsed.data.reason);
     return Response.json(result, { status: 200 });
   } catch (err) {
-    if (err instanceof IllegalTransitionError) return Response.json({ error: err.message }, { status: 403 });
+    if (err instanceof IllegalTransitionError) return illegalTransitionResponse(err);
     if (err instanceof NotFoundError) return Response.json({ error: err.message }, { status: 404 });
     if (err instanceof ValidationError) return Response.json({ error: err.message }, { status: 400 });
     // A concurrent request lost the race for the one-pending-exception index.
