@@ -267,3 +267,14 @@ describe("the demo script plays in the visitor playground (docs-F19)", () => {
     expect(ui).toMatch(/\/api\/cron\/monitor/);
   });
 });
+
+describe("docs/deploy.md tells a load-balancer deployment to block TRACE (dyn-prod-F9, L10)", () => {
+  const doc = read("docs/deploy.md");
+  const section = doc.slice(doc.indexOf("## 3. KNOWN GAPS"), doc.indexOf("## 4. Backups and restore"));
+  it("names the TRACE method, the ALB and WAF options, and the 500 it causes", () => {
+    expect(section).toMatch(/TRACE/);
+    expect(section).toMatch(/ALB/);
+    expect(section).toMatch(/WAF/);
+    expect(section).toMatch(/500/);
+  });
+});

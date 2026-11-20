@@ -270,6 +270,16 @@ current code, not hypothetical ones.
 > - Don't seed against a database that's serving a live public demo (see
 >   §2 step 5).
 
+> **(e) The `TRACE` method.** Next.js route handlers and metadata routes
+> (`/api/health`, `/robots.txt`, and so on) answer an HTTP `TRACE` request with
+> a 500 and log a `TypeError` stack trace, and a closed demo door answers
+> differently from a path that never existed. Scanners send `TRACE`, so left
+> alone it inflates 500 counts and the logs. Behind an AWS load balancer, drop
+> the method before it reaches the app: an ALB listener rule that matches the
+> HTTP request method `TRACE` and returns a fixed 405 response, or an AWS WAF
+> web ACL rule on the method. The same applies to any other proxy or CDN that
+> can filter methods. The app itself does not filter it.
+
 ---
 
 ## 4. Backups and restore
