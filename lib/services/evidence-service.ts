@@ -7,6 +7,7 @@ import type { EvidenceAssessment, EvidenceDocument, EvidenceEntry, EvidencePacke
 import { MAX_FILE_BYTES, MAX_INITIATIVE_BYTES } from '../evidence/types';
 import { EvidenceError, validateDocument } from '../evidence/files';
 import { evidenceStorageLimits, formatCeiling, type EvidenceStorageLimits } from '../evidence/storage-limits';
+import { isProductionMode } from '../config/deployment-mode';
 import { actorName, reviewerDomainFor } from './actors';
 import { applicabilityApplies } from './applicability';
 export { EvidenceError } from '../evidence/files';
@@ -64,7 +65,7 @@ function assessmentFor(controlId:string, submitted:PacketRow[], assessments:Asse
   }
   return null;
 }
-async function audit(tx:Tx, initiativeId:string, viewer:EvidenceViewer, action:string, detail:string, metadata:Record<string,unknown>) {
+async function audit(tx:Pick<Db,'insert'>, initiativeId:string, viewer:EvidenceViewer, action:string, detail:string, metadata:Record<string,unknown>) {
   await tx.insert(auditEvents).values({id:`evt-${randomUUID()}`,initiativeId,ts:new Date(),actor:viewer.actor.id,actorRole:viewer.actor.role,action,detail,metadata});
 }
 export async function getEvidence(db:Reader, ref:string, viewer:EvidenceViewer):Promise<EvidenceState> {
@@ -203,6 +204,8 @@ export async function downloadEvidence(db:Db,ref:string,documentId:string,viewer
   if(viewer.actor.role==='requester'&&initiative.requester!==actorName(viewer.actor.id))throw new EvidenceError(404,'Document not found.');
   const [doc]=await db.select().from(evidenceDocuments).where(and(eq(evidenceDocuments.id,documentId),eq(evidenceDocuments.initiativeId,initiative.id)));
   if(!doc)throw new EvidenceError(404,'Document not found.');
+  // Production holds real documents, so reads are recorded; the demo's audit table is append-only and cannot be pruned.
+  if(isProductionMode())await audit(db,initiative.id,viewer,'evidence_downloaded',`Downloaded ${doc.fileName}, version ${doc.version}.`,{documentId:doc.id,sha256:doc.sha256,version:doc.version});
   return {document:documentDto(doc),bytes:Buffer.from(doc.content)};
 }
 /** Called inside the signReview transaction after locking the same initiative row. */

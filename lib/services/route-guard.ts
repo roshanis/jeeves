@@ -266,6 +266,24 @@ export async function operatorAttemptStatus(
   return operatorAttemptLimiter.peek(bucketKey("operator", clientKey));
 }
 
+/**
+ * Evidence downloads each stream up to 2 MiB out of Postgres, so they get a
+ * read bucket of their own (60 in a burst, then one a second) in every mode.
+ * Generous for a person opening documents, tight for a download loop.
+ */
+const evidenceReadLimiter = new DbTokenBucketRateLimiter(
+  { capacity: 60, refillPerSecond: 1 },
+  getDb,
+  () => Date.now(),
+);
+
+export async function checkEvidenceRead(
+  clientKey: string,
+): Promise<{ allowed: boolean; retryAfterSeconds: number }> {
+  await maybePruneStaleState();
+  return evidenceReadLimiter.checkAndConsume(bucketKey("evidence-read", clientKey));
+}
+
 export type GuardFailureKind = "unauthorized" | "rate_limited" | "invalid_input" | "budget_exhausted" | "read_only" | "payload_too_large" | "unavailable";
 
 export interface GuardFailure {
