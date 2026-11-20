@@ -134,12 +134,19 @@ export async function POST(req: Request): Promise<Response> {
     return Response.json({ error: "session expired or invalid" }, { status: 401 });
   }
 
+  // A valid signed workspace cookie marks a returning visitor re-entering their
+  // own workspace. They are charged to the looser persona-switch bucket, not
+  // the anonymous entry bucket, so a team behind one office address does not
+  // lock each other out. A missing, forged or expired cookie still counts as
+  // an anonymous entry.
+  const cookieWorkspaceId = verifyWorkspaceCookie(readWorkspaceCookie(req), secret);
+
   // These guards use persistent session and rate-limit state.
   let parent;
   let attempt;
   try {
     parent = token ? await resolveSession(token) : null;
-    attempt = await checkSessionAttempt(clientKeyFor(req), Boolean(parent?.actor && parent.workspaceId && parent.actor.role !== "public"));
+    attempt = await checkSessionAttempt(clientKeyFor(req), Boolean(cookieWorkspaceId) || Boolean(parent?.actor && parent.workspaceId && parent.actor.role !== "public"));
     // A public parent is never a workspace donor (below), so it mints a fresh workspace and pays the anonymous rate.
   } catch (error) {
     return storageUnavailable(error);
@@ -162,7 +169,7 @@ export async function POST(req: Request): Promise<Response> {
   // approve their own real request and every sample they made afterwards
   // would appear in the operator's queue.
   const donor = parent?.actor?.role === "public" ? null : parent?.workspaceId;
-  const existingWorkspaceId = donor ?? verifyWorkspaceCookie(readWorkspaceCookie(req), secret);
+  const existingWorkspaceId = donor ?? cookieWorkspaceId;
 
   let result;
   try {

@@ -1452,6 +1452,29 @@ describe("POST /api/session — signed workspace cookie", () => {
     return decodeURIComponent(match![1]!);
   }
 
+  it("a returning visitor with a valid workspace cookie is not held to the anonymous entry limit", async () => {
+    const { POST } = await import("../session/route");
+    const enter = (ip: string, cookie?: string) =>
+      POST(
+        new Request("http://localhost/api/session", {
+          method: "POST",
+          headers: { "content-type": "application/json", "x-forwarded-for": ip, ...(cookie ? { cookie: `jeeves_workspace=${encodeURIComponent(cookie)}` } : {}) },
+          body: JSON.stringify({ personaKey: "priya-raman" }),
+        }),
+      );
+    const first = await enter("12.1.1.1");
+    const cookie = extractCookie(first);
+    // The same address uses up its anonymous allowance (the first entry above was one)...
+    const anonymous: number[] = [];
+    for (let i = 0; i < 6; i++) anonymous.push((await enter("12.1.1.2")).status);
+    expect(anonymous.slice(0, 5)).toEqual([200, 200, 200, 200, 200]);
+    expect(anonymous[5]).toBe(429);
+    // ...but entries that present the signed cookie are not charged to it.
+    for (let i = 0; i < 7; i++) expect((await enter("12.1.1.2", cookie)).status).toBe(200);
+    // A forged cookie is still anonymous.
+    expect((await enter("12.1.1.2", "ws_forged_0123456789.deadbeef")).status).toBe(429);
+  });
+
   it("the Set-Cookie value is signed (v1.issued.id.hexmac) and reusing it keeps the SAME workspaceId across logins", async () => {
     const { POST } = await import("../session/route");
     const res1 = await POST(
