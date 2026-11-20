@@ -90,12 +90,53 @@ narrows the append-only tables to read and insert. Run `grants` again after any
 migrate that adds a table, and after a restore.
 
 An **existing volume** already has its data directory, so the init script does
-not run. Create the two roles by hand (the `CREATE ROLE` lines at the top of
-`jeeves-runtime-grants.sql`'s instructions in `deploy.md`), make
-`jeeves_owner` the owner of the existing tables and sequences
-(`ALTER TABLE ... OWNER TO jeeves_owner`, for each, as the bootstrap user), set
-`JEEVES_OWNER_PASSWORD` and `JEEVES_APP_PASSWORD` in `.env`, then
-`podman compose run --rm grants`.
+not run, and everything Jeeves created there (tables, views, trigger functions
+and the `drizzle` migration history) belongs to the bootstrap user. Once, before
+the first `migrate` with the new compose file:
+
+1. Set `JEEVES_OWNER_PASSWORD` and `JEEVES_APP_PASSWORD` in `.env`.
+2. Create the two roles as the bootstrap user
+   (`podman compose exec -T db psql -U jeeves -d jeeves`), with the
+   `CREATE ROLE` lines from `deploy.md` ("Database roles") and those passwords.
+3. In the same session, hand Jeeves's objects to `jeeves_owner` (owned
+   sequences move with their table):
+
+   ```sql
+   DO $$
+   DECLARE r record;
+   BEGIN
+     FOR r IN
+       SELECT c.oid::regclass AS obj, c.relkind
+       FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+       WHERE n.nspname IN ('public', 'drizzle')
+         AND c.relkind IN ('r', 'p', 'v', 'm', 'S')
+         AND NOT (c.relkind = 'S' AND EXISTS (
+           SELECT 1 FROM pg_depend d WHERE d.objid = c.oid AND d.deptype IN ('a', 'i')))
+     LOOP
+       EXECUTE format('ALTER %s %s OWNER TO jeeves_owner',
+         CASE r.relkind WHEN 'v' THEN 'VIEW' WHEN 'm' THEN 'MATERIALIZED VIEW'
+                        WHEN 'S' THEN 'SEQUENCE' ELSE 'TABLE' END, r.obj);
+     END LOOP;
+     FOR r IN
+       SELECT p.oid::regprocedure AS fn
+       FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+       WHERE n.nspname = 'public'
+     LOOP
+       EXECUTE format('ALTER FUNCTION %s OWNER TO jeeves_owner', r.fn);
+     END LOOP;
+     IF EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'drizzle') THEN
+       ALTER SCHEMA drizzle OWNER TO jeeves_owner;
+     END IF;
+   END
+   $$;
+   ```
+
+4. `podman compose run --rm grants`, then `podman compose run --rm migrate`, then
+   `podman compose run --rm grants` again.
+
+This sequence was checked on PostgreSQL 16 against a database migrated to 0015
+by a superuser: the new migrations then applied as `jeeves_owner`, and
+`jeeves_app` passed the production role check and could not disable a trigger.
 
 ### The image carries no source tree
 
