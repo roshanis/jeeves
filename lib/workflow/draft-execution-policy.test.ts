@@ -24,7 +24,7 @@ describe("resolved draft execution budget", () => {
     vi.stubEnv("JEEVES_AGENT_RUNTIME", runtime);
     vi.stubEnv("JEEVES_DEEP_REVIEW", deep);
     const policy = draftBudgetPolicy(new Date("2026-09-20T05:00:00Z"));
-    expect(policy).toMatchObject({ day: "2026-09-20", dailyCap: 500_000, workspaceCap: 50_000 });
+    expect(policy).toMatchObject({ day: "2026-09-20", dailyCap: 500_000, workspaceCap: 100_000 });
     expect(policy?.estimateAttempt?.(input)).toBe(estimateDraftAttemptTokens(input, isDeep));
   });
 

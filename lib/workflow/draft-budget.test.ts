@@ -14,7 +14,7 @@ import { startDraftRun } from "./review-run";
 
 const at = new Date("2026-09-19T10:00:00Z");
 const reviewer: Actor = { id: "james-liu", role: "reviewer" };
-const budget = { day: "2026-09-19", dailyCap: 500_000, workspaceCap: 50_000, tokensPerAttempt: 1_500 };
+const budget = { day: "2026-09-19", dailyCap: 500_000, workspaceCap: 100_000, tokensPerAttempt: 1_500 };
 const options = { budget, actor: reviewer, sessionWorkspaceId: "workspace-a", retryDelayMs: 0 };
 let db: TestDb;
 
@@ -206,7 +206,8 @@ describe("draft attempt reservations", () => {
   });
 
   it("refuses at the workspace share with a code that names it, while the day still has room", async () => {
-    await db.insert(runBudgetWorkspace).values({ day: budget.day, workspaceId: "workspace-a", tokensUsed: 49_000 });
+    const nearlySpent = budget.workspaceCap - 1_000;
+    await db.insert(runBudgetWorkspace).values({ day: budget.day, workspaceId: "workspace-a", tokensUsed: nearlySpent });
     const { port, draftReview } = mockPort();
     const result = await startDraftRun(db, "i", ["legal"], port, options);
     expect(result.outcomes[0]).toMatchObject({
@@ -215,7 +216,7 @@ describe("draft attempt reservations", () => {
     });
     expect(draftReview).not.toHaveBeenCalled();
     expect(await tokensUsed()).toBe(0);
-    expect(await workspaceTokens()).toBe(49_000);
+    expect(await workspaceTokens()).toBe(nearlySpent);
   });
 
   it("names the daily cap when that is what refused, and leaves the workspace row alone", async () => {

@@ -21,22 +21,22 @@ async function globalUsed(day = DAY): Promise<number> {
 }
 
 describe("per-workspace share of the daily model budget", () => {
-  it("is 10 percent of the daily cap", () => {
-    expect(WORKSPACE_DAILY_TOKEN_CAP).toBe(Math.floor(DAILY_TOKEN_CAP * 0.1));
-    expect(WORKSPACE_DAILY_TOKEN_CAP).toBe(50_000);
+  it("is 20 percent of the daily cap", () => {
+    expect(WORKSPACE_DAILY_TOKEN_CAP).toBe(Math.floor(DAILY_TOKEN_CAP * 0.2));
+    expect(WORKSPACE_DAILY_TOKEN_CAP).toBe(100_000);
   });
 
   it("stops one workspace at its share while another workspace can still reserve", async () => {
-    for (let i = 0; i < 5; i += 1) {
+    for (let i = 0; i < 10; i += 1) {
       expect(await reserveForWorkspace(db, { day: DAY, workspaceId: "ws-a", tokens: 10_000 })).toEqual({ granted: true });
     }
     const refused = await reserveForWorkspace(db, { day: DAY, workspaceId: "ws-a", tokens: 1 });
     expect(refused).toEqual({ granted: false, scope: "workspace", remaining: 0 });
-    expect(await workspaceUsed("ws-a")).toBe(50_000);
-    expect(await globalUsed()).toBe(50_000);
+    expect(await workspaceUsed("ws-a")).toBe(100_000);
+    expect(await globalUsed()).toBe(100_000);
 
     expect(await reserveForWorkspace(db, { day: DAY, workspaceId: "ws-b", tokens: 10_000 })).toEqual({ granted: true });
-    expect(await globalUsed()).toBe(60_000);
+    expect(await globalUsed()).toBe(110_000);
   });
 
   it("still applies the global cap, and a refusal leaves the workspace row untouched", async () => {
@@ -55,16 +55,16 @@ describe("per-workspace share of the daily model budget", () => {
   });
 
   it("tracks each UTC day separately", async () => {
-    await reserveForWorkspace(db, { day: DAY, workspaceId: "ws-a", tokens: 50_000 });
-    expect(await reserveForWorkspace(db, { day: "2099-02-02", workspaceId: "ws-a", tokens: 50_000 })).toEqual({ granted: true });
+    await reserveForWorkspace(db, { day: DAY, workspaceId: "ws-a", tokens: WORKSPACE_DAILY_TOKEN_CAP });
+    expect(await reserveForWorkspace(db, { day: "2099-02-02", workspaceId: "ws-a", tokens: WORKSPACE_DAILY_TOKEN_CAP })).toEqual({ granted: true });
   });
 
   it("cannot overshoot under concurrent reservations in one workspace", async () => {
     const results = await Promise.all(
-      Array.from({ length: 20 }, () => reserveForWorkspace(db, { day: DAY, workspaceId: "ws-a", tokens: 5_000 })),
+      Array.from({ length: 30 }, () => reserveForWorkspace(db, { day: DAY, workspaceId: "ws-a", tokens: 5_000 })),
     );
-    expect(results.filter((r) => r.granted)).toHaveLength(10);
-    expect(await workspaceUsed("ws-a")).toBe(50_000);
-    expect(await globalUsed()).toBe(50_000);
+    expect(results.filter((r) => r.granted)).toHaveLength(20);
+    expect(await workspaceUsed("ws-a")).toBe(100_000);
+    expect(await globalUsed()).toBe(100_000);
   });
 });

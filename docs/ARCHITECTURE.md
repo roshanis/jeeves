@@ -567,7 +567,7 @@ An `InMemoryBudgetStore` exists for pure unit tests; production/dev-with-Postgre
 always uses `DbBudgetStore`.
 
 Each workspace also has a row in `run_budget_workspace` (`day`, `workspace_id`,
-`tokens_used`) capped at 10% of the day. `reserveForWorkspace()` takes the
+`tokens_used`) capped at 20% of the day. `reserveForWorkspace()` takes the
 workspace row first and the day row second in one transaction, and gives the
 workspace increment back if the day refuses, so both pass or nothing is kept.
 The refusal carries `workspace_budget_exhausted` or `daily_budget_exhausted`.
