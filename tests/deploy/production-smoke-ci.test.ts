@@ -45,4 +45,15 @@ describe("ci.yml job production-smoke", () => {
     // The locked build must come before the locked smoke run.
     expect(job.indexOf('JEEVES_DEMO_ENABLED: "0"')).toBeLessThan(job.indexOf('SMOKE_DEMO_LOCKED: "1"'));
   });
+
+  it("checks the demo-locked build's public JavaScript for persona names and the company name (L18)", () => {
+    const job = ciJob("production-smoke");
+    const check = job.search(/run:\s*npm run check:demo-free-bundle\s*$/m);
+    expect(check, "no step runs npm run check:demo-free-bundle").toBeGreaterThanOrEqual(0);
+    // It must read the locked build: after that build, and with no other build in between.
+    const lockedBuild = job.indexOf('JEEVES_DEMO_ENABLED: "0"');
+    expect(lockedBuild).toBeGreaterThanOrEqual(0);
+    expect(lockedBuild).toBeLessThan(check);
+    expect(job.slice(lockedBuild, check)).not.toMatch(/run:\s*npm run build\s*$/m);
+  });
 });
