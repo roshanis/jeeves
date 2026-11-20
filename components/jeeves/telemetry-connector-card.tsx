@@ -1,9 +1,8 @@
 // Telemetry connector status card (M3 telemetry-depth) — the honesty
 // pattern for observability, mirroring lib/agents/registry.ts's
 // agentRuntimeStatus() card treatment. Server-rendered: telemetryConnectorStatus()
-// is a pure function of env vars, and lastSyncIso (when configured) is a
-// fixed synthetic timestamp, not Date.now() — no client clock needed here,
-// so there is no hydration-mismatch risk.
+// is a pure function of env vars, so there is no client clock and no
+// hydration-mismatch risk. Never green: nothing polls PHOENIX_ENDPOINT yet.
 import type { SyntheticTraceRow, TelemetryConnectorStatus } from "@/lib/telemetry/connector";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -28,6 +27,12 @@ function formatSyntheticDuration(ms: number): string {
 // (end-ellipsis) instead of literally splitting the id.
 const TRUNCATED_MONO_ID = "block max-w-32 truncate font-mono text-xs sm:max-w-40";
 
+const STATE_LABEL = {
+  synthetic: "not configured",
+  endpoint_set: "endpoint set, not polled",
+  invalid_endpoint: "endpoint is not a valid URL",
+} as const;
+
 export function TelemetryConnectorCard({
   status,
   traces,
@@ -40,15 +45,7 @@ export function TelemetryConnectorCard({
       <CardHeader className="border-b bg-muted/40 py-3">
         <CardTitle className="kicker flex flex-wrap items-center gap-2">
           Telemetry connector
-          {status.configured ? (
-            <span
-              data-slot="connector-configured-indicator"
-              className="inline-flex items-center gap-1.5 rounded-full bg-status-good-bg px-2 py-0.5 text-xs font-medium text-status-good-fg"
-            >
-              <span className="size-1.5 shrink-0 rounded-full bg-current" aria-hidden="true" />
-              configured
-            </span>
-          ) : (
+          {status.state === "synthetic" ? (
             <span
               data-slot="connector-synthetic-indicator"
               className="inline-flex items-center gap-1.5 rounded-full bg-status-warning-bg px-2 py-0.5 text-xs font-medium text-status-warning-fg"
@@ -56,16 +53,29 @@ export function TelemetryConnectorCard({
               <span className="size-1.5 shrink-0 rounded-full bg-current" aria-hidden="true" />
               synthetic
             </span>
+          ) : (
+            <span
+              data-slot="connector-endpoint-indicator"
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium",
+                status.state === "invalid_endpoint"
+                  ? "bg-status-critical-bg text-status-critical-fg"
+                  : "bg-status-warning-bg text-status-warning-fg",
+              )}
+            >
+              <span className="size-1.5 shrink-0 rounded-full bg-current" aria-hidden="true" />
+              {STATE_LABEL[status.state]}
+            </span>
           )}
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
         <Badge variant="secondary">Synthetic data — demo</Badge>
 
-        {/* Compact definition row: provider / state / last-sync in one line,
-            state carrying its own LED so the connector's live/synthetic
+        {/* Compact definition row: provider / state in one line,
+            state carrying its own LED so the connector's
             reading is visible without parsing text. */}
-        <dl className="grid grid-cols-1 gap-x-4 gap-y-2 rounded-md border border-border bg-muted/30 px-3 py-2 text-xs sm:grid-cols-3">
+        <dl className="grid grid-cols-1 gap-x-4 gap-y-2 rounded-md border border-border bg-muted/30 px-3 py-2 text-xs sm:grid-cols-2">
           <div className="flex items-baseline justify-between gap-2 sm:block">
             <dt className="kicker">Provider</dt>
             <dd className="font-mono font-medium text-foreground">{status.provider}</dd>
@@ -76,17 +86,11 @@ export function TelemetryConnectorCard({
               <span
                 className={cn(
                   "size-1.5 shrink-0 rounded-full",
-                  status.configured ? "bg-status-good" : "bg-status-warning",
+                  status.state === "invalid_endpoint" ? "bg-status-critical" : "bg-status-warning",
                 )}
                 aria-hidden="true"
               />
-              {status.configured ? "configured" : "not configured"}
-            </dd>
-          </div>
-          <div className="flex items-baseline justify-between gap-2 sm:block">
-            <dt className="kicker">Example timestamp (synthetic)</dt>
-            <dd className="font-mono text-foreground">
-              {status.lastSyncIso ? status.lastSyncIso.slice(0, 19).replace("T", " ") + " UTC" : "—"}
+              {STATE_LABEL[status.state]}
             </dd>
           </div>
         </dl>

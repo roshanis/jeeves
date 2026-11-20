@@ -1,5 +1,5 @@
 import { describe, expect, it, afterEach } from "vitest";
-import { telemetryConnectorStatus, syntheticTraces } from "./connector";
+import { telemetryChecklistLine, telemetryConnectorStatus, syntheticTraces } from "./connector";
 
 describe("telemetryConnectorStatus", () => {
   const originalEndpoint = process.env.PHOENIX_ENDPOINT;
@@ -12,38 +12,49 @@ describe("telemetryConnectorStatus", () => {
     else process.env.PHOENIX_PROVIDER_NAME = originalProviderName;
   });
 
-  it("reports not-configured/synthetic when PHOENIX_ENDPOINT is unset", () => {
+  it("reports synthetic when PHOENIX_ENDPOINT is unset", () => {
     delete process.env.PHOENIX_ENDPOINT;
     delete process.env.PHOENIX_PROVIDER_NAME;
 
     const status = telemetryConnectorStatus();
 
-    expect(status.configured).toBe(false);
+    expect(status.state).toBe("synthetic");
     expect(status.provider).toBe("Synthetic telemetry (demo)");
-    expect(status.lastSyncIso).toBeNull();
     expect(status.detail).toContain("synthetic");
     expect(status.detail.toLowerCase()).toContain("never breaks the demo");
   });
 
-  it("reports configured with a deterministic lastSync when PHOENIX_ENDPOINT is set", () => {
+  it("is amber 'endpoint set, not polled' for a valid http(s) URL: never configured, no sync time", () => {
     process.env.PHOENIX_ENDPOINT = "https://phoenix.example.internal";
     delete process.env.PHOENIX_PROVIDER_NAME;
 
     const status = telemetryConnectorStatus();
 
-    expect(status.configured).toBe(true);
+    expect(status.state).toBe("endpoint_set");
     expect(status.provider).toBe("Phoenix (Arize)");
-    expect(status.lastSyncIso).toBe("2026-07-01T06:00:00.000Z");
-    expect(status.detail).toContain("Connector failure never breaks the demo");
+    expect(status.detail).toMatch(/not polled/i);
+    expect(status.detail).not.toMatch(/configured|last sync/i);
+    expect("lastSyncIso" in status).toBe(false);
   });
 
-  it("uses PHOENIX_PROVIDER_NAME when set alongside PHOENIX_ENDPOINT", () => {
+  it.each(["not a url", "phoenix.example.internal", "ftp://phoenix.example.internal", "https://"])(
+    "says the endpoint is not a valid URL for %j",
+    (value) => {
+      process.env.PHOENIX_ENDPOINT = value;
+      const status = telemetryConnectorStatus();
+      expect(status.state).toBe("invalid_endpoint");
+      expect(status.detail).toMatch(/not a valid URL/);
+      expect(status.detail).not.toContain(value);
+    },
+  );
+
+  it("uses PHOENIX_PROVIDER_NAME when set alongside a valid PHOENIX_ENDPOINT", () => {
     process.env.PHOENIX_ENDPOINT = "https://phoenix.example.internal";
     process.env.PHOENIX_PROVIDER_NAME = "Acme Tracing";
 
     const status = telemetryConnectorStatus();
 
-    expect(status.configured).toBe(true);
+    expect(status.state).toBe("endpoint_set");
     expect(status.provider).toBe("Acme Tracing");
   });
 
@@ -52,6 +63,26 @@ describe("telemetryConnectorStatus", () => {
     const a = telemetryConnectorStatus();
     const b = telemetryConnectorStatus();
     expect(a).toEqual(b);
+  });
+});
+
+describe("telemetryChecklistLine (reset-demo)", () => {
+  afterEach(() => {
+    delete process.env.PHOENIX_ENDPOINT;
+  });
+
+  it("never reports a tick for PHOENIX_ENDPOINT: a warning that nothing contacts it", () => {
+    process.env.PHOENIX_ENDPOINT = "https://phoenix.example.internal";
+    const line = telemetryChecklistLine(telemetryConnectorStatus());
+    expect(line.level).toBe("warn");
+    expect(line.value).toMatch(/not polled/i);
+  });
+
+  it("warns about an invalid endpoint and about an unset one", () => {
+    process.env.PHOENIX_ENDPOINT = "nope";
+    expect(telemetryChecklistLine(telemetryConnectorStatus()).value).toMatch(/not a valid URL/);
+    delete process.env.PHOENIX_ENDPOINT;
+    expect(telemetryChecklistLine(telemetryConnectorStatus()).value).toMatch(/synthetic/i);
   });
 });
 

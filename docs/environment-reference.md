@@ -114,8 +114,8 @@ deterministic keyless mock adapter and cannot spend; production answers 503
 |---|---|---|---|---|---|---|---|
 | `OPERATOR_TOKEN` | needed to read real requests | unused | runtime | yes | none | Bearer token for `/api/public-intake` and `/operator`. Under 32 characters counts as unset and switches the queue off. | `lib/services/route-guard.ts` |
 | `CRON_SECRET` | optional | unused | runtime | yes | none | Bearer token for `GET /api/cron/monitor`. Unset answers 503; in production the route answers 404. | `app/api/cron/monitor/route.ts`, `scripts/reset-demo.ts` |
-| `PHOENIX_ENDPOINT` | optional | unused | runtime | no | none | When set, the telemetry page reports a Phoenix connector as configured. The data stays synthetic ("Synthetic data — demo"). | `lib/telemetry/connector.ts` |
-| `PHOENIX_PROVIDER_NAME` | optional | unused | runtime | no | built-in name | Label for that connector. | `lib/telemetry/connector.ts` |
+| `PHOENIX_ENDPOINT` | optional | unused | runtime | no | none | When set to an http(s) URL, the telemetry page shows an amber "endpoint set, not polled" state; an invalid value shows "endpoint is not a valid URL". Nothing contacts the endpoint yet, and the data stays synthetic ("Synthetic data — demo"). | `lib/telemetry/connector.ts` |
+| `PHOENIX_PROVIDER_NAME` | optional | unused | runtime | no | built-in name | Label shown for that endpoint. | `lib/telemetry/connector.ts` |
 
 ## 7. Marketing site (build time)
 

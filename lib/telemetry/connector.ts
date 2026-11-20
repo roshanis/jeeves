@@ -7,13 +7,14 @@
  * imply a live integration that doesn't exist (project hard rule).
  *
  * Env vars (document here — the only two this module reads):
- *   PHOENIX_ENDPOINT      — presence alone flips `configured` to true. This
- *                            is the connector's "is a backend wired up?"
- *                            signal, analogous to OPENAI_API_KEY.
+ *   PHOENIX_ENDPOINT      — presence flips the state from "synthetic" to
+ *                            "endpoint_set" (a valid http(s) URL) or
+ *                            "invalid_endpoint". Never "connected": nothing
+ *                            polls it yet, so the card is amber either way.
  *   PHOENIX_PROVIDER_NAME — optional human-readable provider name shown when
- *                            configured; falls back to a constant.
+ *                            an endpoint is set; falls back to a constant.
  *
- * No live network call is ever made from this module — flipping the env var
+ * No live network call is ever made from this module — setting the env var
  * only changes what the status CARD says, never causes the demo to actually
  * reach out to a tracing backend. If a real connector is added later, its
  * failure must still fall back to the in-repo synthetic series (never break
@@ -22,39 +23,66 @@
 
 const DEFAULT_PROVIDER_NAME = "Phoenix (Arize)";
 
-// Fixed synthetic base date (matches lib/data/mock-provider.ts BASE_DATE) so
-// a "configured" connector's lastSync is deterministic across renders and
-// hydration-safe — never derived from Date.now().
-const SYNTHETIC_BASE_MS = Date.parse("2026-07-01T00:00:00.000Z");
-const SYNTHETIC_LAST_SYNC_OFFSET_MS = 6 * 60 * 60 * 1000; // +6h into the demo day
+export type TelemetryConnectorState = "synthetic" | "endpoint_set" | "invalid_endpoint";
 
 export interface TelemetryConnectorStatus {
-  configured: boolean;
+  state: TelemetryConnectorState;
   provider: string;
-  lastSyncIso: string | null;
   detail: string;
 }
 
+function isHttpUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return (url.protocol === "http:" || url.protocol === "https:") && url.hostname !== "";
+  } catch {
+    return false;
+  }
+}
+
+const FALLBACK_NOTE = "Connector failure never breaks the demo: telemetry falls back to the in-repo synthetic series.";
+
 export function telemetryConnectorStatus(): TelemetryConnectorStatus {
-  const configured = !!process.env.PHOENIX_ENDPOINT;
+  const endpoint = process.env.PHOENIX_ENDPOINT?.trim();
   const providerName = process.env.PHOENIX_PROVIDER_NAME?.trim() || DEFAULT_PROVIDER_NAME;
 
-  if (!configured) {
+  if (!endpoint) {
     return {
-      configured: false,
+      state: "synthetic",
       provider: "Synthetic telemetry (demo)",
-      lastSyncIso: null,
       detail:
         "No external tracing backend is connected (PHOENIX_ENDPOINT is unset) — every series on this page is the in-repo synthetic dataset. Connector failure never breaks the demo: telemetry always falls back to this synthetic series.",
     };
   }
 
+  // The value itself is not echoed: it may carry credentials in the URL.
+  if (!isHttpUrl(endpoint)) {
+    return {
+      state: "invalid_endpoint",
+      provider: providerName,
+      detail: `PHOENIX_ENDPOINT is not a valid URL (an http or https address is expected). Nothing is polled; every series on this page is the in-repo synthetic dataset. ${FALLBACK_NOTE}`,
+    };
+  }
+
   return {
-    configured: true,
+    state: "endpoint_set",
     provider: providerName,
-    lastSyncIso: new Date(SYNTHETIC_BASE_MS + SYNTHETIC_LAST_SYNC_OFFSET_MS).toISOString(),
-    detail: `${providerName} connector configured (PHOENIX_ENDPOINT set) — last sync shown is a deterministic demo timestamp, not a live poll. Connector failure never breaks the demo: telemetry falls back to the in-repo synthetic series.`,
+    detail: `PHOENIX_ENDPOINT is set but not polled (nothing contacts it yet): every series on this page is still the in-repo synthetic dataset. ${FALLBACK_NOTE}`,
   };
+}
+
+export type ChecklistLine = { level: "ok" | "warn"; label: string; value: string };
+
+/** The reset-demo readiness line for the connector. Never a tick: nothing contacts the endpoint. */
+export function telemetryChecklistLine(status: TelemetryConnectorStatus): ChecklistLine {
+  const label = "Telemetry connector";
+  if (status.state === "endpoint_set") {
+    return { level: "warn", label, value: "PHOENIX_ENDPOINT is set but not polled — telemetry is still the in-repo synthetic series" };
+  }
+  if (status.state === "invalid_endpoint") {
+    return { level: "warn", label, value: "PHOENIX_ENDPOINT is not a valid URL — telemetry is the in-repo synthetic series" };
+  }
+  return { level: "warn", label, value: "synthetic (PHOENIX_ENDPOINT unset) — telemetry is the in-repo synthetic series" };
 }
 
 /** A single synthetic OTel-shaped trace row for display only (no external link). */
