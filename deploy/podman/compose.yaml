@@ -48,20 +48,30 @@ services:
       # driver would try to open a WebSocket to :443 here and fail.
       DATABASE_URL: postgres://${POSTGRES_USER:-jeeves}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-jeeves}
       DATA_PROVIDER: db
+      # How many reverse proxies in front of the app append to X-Forwarded-For;
+      # rate limits key on the client address that implies. `none` means
+      # nothing in front appends to or overwrites the header. This stack
+      # publishes the app port directly, with no proxy, so any X-Forwarded-For
+      # a caller sends is forged: `none` ignores it and all callers share one
+      # rate-limit bucket. Behind a proxy that appends the client address
+      # (an AWS ALB, or Caddy/nginx with $proxy_add_x_forwarded_for) set 1 in
+      # .env and stop publishing the port. Never leave the port published AND
+      # set 0 or 1.
+      JEEVES_TRUSTED_PROXY_HOPS: ${JEEVES_TRUSTED_PROXY_HOPS:-none}
       # This stack runs the demo. An unset JEEVES_MODE means production, which
       # refuses to boot without APP_BASE_URL, JEEVES_TENANT_ID and a cookie
       # secret, and closes the demo doors.
       JEEVES_MODE: demo
-      # Signs browser workspace cookies. Blank falls back to a key derived from
-      # DEMO_PASSCODE (deprecated, demo only); set it with `openssl rand -hex 32`.
-      JEEVES_COOKIE_SECRET: ${JEEVES_COOKIE_SECRET:-}
-      DEMO_PASSCODE: ${DEMO_PASSCODE:?set DEMO_PASSCODE in .env}
+      # Signs browser workspace cookies. Required: `openssl rand -hex 32`.
+      JEEVES_COOKIE_SECRET: ${JEEVES_COOKIE_SECRET:?set JEEVES_COOKIE_SECRET in .env (openssl rand -hex 32)}
       # Unset by default: with no key the app uses the deterministic keyless
       # mock adapter and cannot generate spend. Set it only for a controlled
       # live session.
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-}
       CRON_SECRET: ${CRON_SECRET:-}
+      # Optional. Opens the "Send a real request" door and the /operator queue.
+      OPERATOR_TOKEN: ${OPERATOR_TOKEN:-}
     ports:
       - "${APP_PORT:-3000}:3000"
     depends_on:
@@ -124,3 +134,9 @@ services:
 
 volumes:
   jeeves-pgdata:
+    # Pinned: without `name:` compose prefixes the project (podman_jeeves-pgdata)
+    # and `podman volume export jeeves-pgdata` finds nothing. The Quadlet unit
+    # uses the same name. An install that already has podman_jeeves-pgdata keeps
+    # its data there: export it, then import into jeeves-pgdata (see
+    # docs/deploy-podman.md, Backups).
+    name: jeeves-pgdata

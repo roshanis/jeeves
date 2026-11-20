@@ -42,24 +42,21 @@ export async function GET(req: Request): Promise<Response> {
 }
 
 export async function POST(req: Request): Promise<Response> {
-  let json: unknown;
-  try {
-    json = await req.json();
-  } catch {
-    json = {};
-  }
-  const bodyText: Record<string, string> =
-    typeof (json as { reason?: unknown })?.reason === "string"
-      ? { reason: (json as { reason: string }).reason }
-      : {};
-
-  const guard = await runMutationGuard(req, bodyText, {
+  const guard = await runMutationGuard(req, (json) => {
+    const bodyText: Record<string, string> =
+      typeof (json as { reason?: unknown })?.reason === "string"
+        ? { reason: (json as { reason: string }).reason }
+        : {};
+    return bodyText;
+  }, {
+    bodyOptional: true,
     inputLimits: [{ field: "reason", maxChars: REASON_MAX }],
     inputTotalCap: REASON_MAX,
   });
   if (!guard.ok) {
     return Response.json({ error: guard.failure.message }, { status: guard.failure.status });
   }
+  const json = guard.json;
 
   const parsed = bodySchema.safeParse(json);
   if (!parsed.success) {
@@ -79,6 +76,10 @@ export async function POST(req: Request): Promise<Response> {
     if (err instanceof IllegalTransitionError) return Response.json({ error: err.message }, { status: 403 });
     if (err instanceof NotFoundError) return Response.json({ error: err.message }, { status: 404 });
     if (err instanceof ValidationError) return Response.json({ error: err.message }, { status: 400 });
+    // A concurrent request lost the race for the one-pending-exception index.
+    if ((err as { code?: unknown; cause?: { code?: unknown } }).code === "23505" || (err as { cause?: { code?: unknown } }).cause?.code === "23505") {
+      return Response.json({ error: "an exception is already pending for this control" }, { status: 409 });
+    }
     throw err;
   }
 }

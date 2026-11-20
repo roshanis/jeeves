@@ -20,10 +20,13 @@ export function proxy(request: NextRequest): NextResponse {
 
   switch (decision.kind) {
     case "redirect":
-      // A relative Location, like the one a page's redirect() emits: NextResponse.redirect
-      // wants an absolute URL, and behind a load balancer the request's own host is the
-      // one place the public origin could be wrong.
-      return new NextResponse(null, { status: 307, headers: { ...NO_STORE, Location: decision.to } });
+      // An ABSOLUTE URL on the request's own origin. Next runs this response through
+      // its proxy adapter, which parses Location with `new URL(location)` and throws on
+      // a relative value: the visitor then gets a 500, not the redirect. For a same-host
+      // redirect the adapter rewrites Location back to a relative path before it reaches
+      // the wire, so the origin Next believes it is served from (which can be wrong
+      // behind a load balancer) never leaves the process.
+      return NextResponse.redirect(new URL(decision.to, request.url), { status: 307, headers: NO_STORE });
     case "not-found":
       return new NextResponse(null, { status: 404, headers: NO_STORE });
     case "next":

@@ -2,7 +2,7 @@ import { ProductionConfigError, isProductionMode } from "../config/deployment-mo
 import { runtimeDatabaseUrl } from "../db/runtime-config";
 import type { DataProvider } from "./provider";
 import { MockDataProvider } from "./mock-provider";
-import { DbDataProvider } from "./db-provider";
+import { DbDataProvider, type SnapshotHolder } from "./db-provider";
 import { resolveDataProviderMode } from "./provider-mode";
 
 /**
@@ -17,12 +17,12 @@ import { resolveDataProviderMode } from "./provider-mode";
  * tenant canned data. (The database half of "no fallback" is getDb(), which
  * refuses PGlite in production.)
  */
-export function getProvider(): DataProvider {
+export function getProvider(options?: { snapshotHolder?: SnapshotHolder }): DataProvider {
   const mode = resolveDataProviderMode(process.env.DATA_PROVIDER, !!runtimeDatabaseUrl());
   if (mode === "mock" && isProductionMode()) {
     throw new ProductionConfigError([
       "the mock data provider is not available in production: configure DATABASE_URL (or POSTGRES_URL) and do not set DATA_PROVIDER=mock",
     ]);
   }
-  return mode === "db" ? new DbDataProvider() : new MockDataProvider();
+  return mode === "db" ? new DbDataProvider(undefined, options) : new MockDataProvider();
 }

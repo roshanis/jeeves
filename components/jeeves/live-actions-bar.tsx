@@ -10,7 +10,8 @@
  *                  fan-out: triage asks every required domain at once, so
  *                  this is the last point at which an incomplete intake
  *                  costs nobody else time.
- *  - in_qc      -> "Run triage" (the server records the system actor) or
+ *  - in_qc      -> "Run triage" (Program Office / Admin pass QC; the
+ *                  server records them and the system actor) or
  *                  "Return to requester" (Program Office / Admin, reason
  *                  required).
  *  - decision   -> shown when the server's decision readiness allows it.
@@ -20,6 +21,7 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import type { LifecycleState } from "@/lib/domain/types";
 import type { ReviewDecisionReadiness } from "@/lib/approval/review-readiness";
+import type { ReviewRow } from "@/lib/data/dto";
 import {
   apiErrorToMessage,
   decide,
@@ -47,11 +49,13 @@ import { ReasonDialog } from "./reason-dialog";
 import { TierBadge } from "./tier-badge";
 import { DOMAIN_LABEL } from "./domain-labels";
 
-export function LiveActionsBar({ initiativeId, isSeeded, state, decisionReadiness }: {
+export function LiveActionsBar({ initiativeId, isSeeded, state, decisionReadiness, reviews }: {
   initiativeId?: string;
   isSeeded?: boolean;
   state: LifecycleState;
   decisionReadiness?: ReviewDecisionReadiness;
+  /** The reviews this page rendered; a decision is only recorded against these exact revisions. */
+  reviews?: Pick<ReviewRow, "cycleId" | "domain" | "revision">[];
 }) {
   const router = useRouter();
   const live = useLiveSessionOptional();
@@ -168,6 +172,7 @@ export function LiveActionsBar({ initiativeId, isSeeded, state, decisionReadines
           <div className="flex items-center gap-3">
             <DisableWithTooltip
               label="Run triage"
+              requiresRole="program"
               onAction={() => void handleTriage()}
               pending={triaging}
               pendingLabel="Running triage…"
@@ -266,6 +271,7 @@ export function LiveActionsBar({ initiativeId, isSeeded, state, decisionReadines
               initiativeId={initiativeId}
               reassessment={state === "re_review"}
               readiness={decisionReadiness}
+              reviews={reviews}
               onCancel={() => setDecideOpen(false)}
               onDecided={() => {
                 setDecideOpen(false);
@@ -296,12 +302,14 @@ function DecideForm({
   initiativeId,
   reassessment,
   readiness,
+  reviews,
   onCancel,
   onDecided,
 }: {
   initiativeId: string;
   reassessment: boolean;
   readiness: ReviewDecisionReadiness;
+  reviews?: Pick<ReviewRow, "cycleId" | "domain" | "revision">[];
   onCancel: () => void;
   onDecided: () => void;
 }) {
@@ -319,7 +327,8 @@ function DecideForm({
   async function handleConfirm() {
     if (!session) return;
     if (!(decision === "approved" ? readiness.canApprove : decision === "conditionally_approved" ? readiness.canConditionallyApprove : readiness.canReject)) return;
-    const cleanConditions = conditions
+    // Conditions only belong to a conditional approval; decide() refuses them otherwise.
+    const cleanConditions = (decision === "conditionally_approved" ? conditions : [])
       .map((c) => ({ text: c.text.trim(), controlId: c.controlId.trim() }))
       .filter((c) => c.text.length > 0 || c.controlId.length > 0);
     if (decision === "conditionally_approved" && cleanConditions.length === 0) {
@@ -342,6 +351,12 @@ function DecideForm({
         decision,
         conditions: cleanConditions.length > 0 ? cleanConditions : undefined,
         citations: citations.length > 0 ? citations : undefined,
+        ...(reviews && reviews.length > 0 && reviews.every((r) => r.cycleId && r.revision !== undefined)
+          ? {
+              expectedCycleId: reviews[0]!.cycleId,
+              expectedReviewRevisions: Object.fromEntries(reviews.map((r) => [r.domain, r.revision as number])),
+            }
+          : {}),
       });
       toast.success(`Decision recorded: ${result.type} — initiative is now ${result.after}.`);
       onDecided();
@@ -371,10 +386,8 @@ function DecideForm({
         </select>
       </label>
 
-      {!reassessment ? <div className="flex flex-col gap-2 text-sm">
-        <span className="font-medium">
-          Conditions{decision === "conditionally_approved" ? " (at least one required)" : ""}
-        </span>
+      {!reassessment && decision === "conditionally_approved" ? <div className="flex flex-col gap-2 text-sm">
+        <span className="font-medium">Conditions (at least one required)</span>
         {conditions.map((condition, index) => (
           <div key={index} className="flex gap-2">
             <input

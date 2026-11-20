@@ -63,7 +63,7 @@ interface ReviewsTabProps {
 
 function unfinishedDomains(outcomes: DraftRunDomainOutcome[], reviews: ReviewRow[]): Domain[] {
   return outcomes.filter((outcome) => {
-    if (outcome.reason === "reviewer abstained" || reviews.some((review) => review.domain === outcome.domain && review.status === "abstained")) return false;
+    if (outcome.reason === "not required" || outcome.reason === "reviewer abstained" || reviews.some((review) => review.domain === outcome.domain && review.status === "abstained")) return false;
     if (outcome.status === "failed") return true;
     if (outcome.status !== "skipped" || outcome.reason === "already signed") return false;
     // An unqualified no-op can also mean a returned review. Only a known

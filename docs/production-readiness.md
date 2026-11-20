@@ -1,6 +1,7 @@
 # Jeeves — Production Readiness Assessment
 
-> Assessed 2026-09-11; revised 2026-09-12 after a remediation pass. Items
+> Assessed 2026-09-11; revised 2026-09-12 after a remediation pass; the
+> retired-passcode, test-count and driver statements were corrected 2026-11-15. Items
 > marked FIXED were closed in that pass and carry the evidence. Every claim below was
 > checked against the code, not inferred from the docs; where a finding was
 > measured against a running build, the measurement is quoted.
@@ -14,7 +15,7 @@
 ## Verdict
 
 **As a public demo: ready.** Deploy it, share the URL, run it in front of an
-audience. `docs/deploy.md` is an accurate runbook and the safety posture for
+audience. `docs/deploy.md` is the runbook and the safety posture for
 a shared link is sound.
 
 **As a production installation: no — but for one reason now, not two.**
@@ -35,15 +36,16 @@ actually enforced.
 
 ### 1.1 There is no authentication — approver identity is self-asserted
 
-**The finding.** `app/api/session/route.ts` accepts `{ passcode, personaKey }`.
-The caller supplies a single shared passcode and then *chooses which person
-they are*. `components/jeeves/role-context.tsx` is explicit that switching
-role is client-side and never re-fetches a different data set.
+**The finding.** `app/api/session/route.ts` accepts `{ personaKey }` only.
+Entry is passwordless (section 1.3): any visitor *chooses which person they
+are* from the 13 fictional personas and is placed in their own isolated
+workspace. There is no identity provider behind that choice, and none in a
+customer installation either; that is the known gap this section is about.
 
 **Why it is disqualifying rather than incomplete.** The product's central
 claim is "agents draft, humans decide", realised as a *named accountable
 approver* recorded against every decision. That name is the primary artifact
-this system produces. Today anyone holding the passcode can present as Angela
+this system produces. Today any visitor can present as Angela
 Torres and record an approval in her name. The audit log will faithfully,
 immutably record an attribution that was never authenticated — which is worse
 than no audit log, because it carries the authority of one.
@@ -51,16 +53,16 @@ than no audit log, because it carries the authority of one.
 **What it would take.** Real IdP integration (SAML/OIDC against the
 customer's directory), server-side role assignment derived from directory
 group membership rather than a client-side switcher, and per-user sessions
-replacing the shared passcode. Every mutation route would then authorise
+replacing the self-chosen persona. Every mutation route would then authorise
 against the authenticated principal instead of a workspace token. This is a
 project, not a task.
 
 **Note on scope.** The demo's own posture is *correct for a demo* and
-carefully built: public visitors are strictly read-only, the passcode gates
-the mutable workspace, the workspace cookie is signed
+carefully built: every visitor writes only into their own isolated workspace
+and cannot change shared seeds or global defaults, real requests arrive
+through a separate `public`-role door (section 1.3), the workspace cookie is signed
 (`lib/security/workspace-cookie.ts`) after an earlier review found it could
-be forged to adopt another workspace, and the session route deliberately does
-not reveal which half of the credential failed. None of that is wasted work —
+be forged to adopt another workspace, and the session route validates the persona key against the fixed list. None of that is wasted work —
 it is simply solving a different problem than authentication.
 
 ### 1.2 Rate limiting is per-instance and will not hold on serverless — FIXED 2026-09-12
@@ -71,11 +73,10 @@ held in module scope (see the module-scoped `rateLimiter` and
 `resetGuardStateForTests`). On Vercel each lambda instance has its own
 memory, and instances scale out and recycle.
 
-**Consequence.** The passcode brute-force bucket — 5 attempts, refilling at
-1/30s — is per instance. An attacker who spreads attempts across a warm fan-out
-gets a multiple of the configured budget, and a cold start resets it entirely.
-With a low-entropy passcode (which is what a demo passcode is designed to be)
-this is the practical way in.
+**Consequence.** Every per-client limit (session issue, mutations, the
+real-request limit) was per instance. A caller who spreads requests across a
+warm fan-out gets a multiple of the configured budget, and a cold start resets
+it entirely.
 
 **FIXED.** The buckets moved to Postgres — `rate_limit_buckets`
 (`drizzle/0009_rate_limit_buckets.sql`), driven by
@@ -95,6 +96,16 @@ allowance. It also covers a 12-request concurrent burst against a capacity of
 The unused in-memory `TokenBucketRateLimiter` and its exclusive tests were
 retired on 2026-09-19. Shared rate-limit types and the active database limiter
 remain; its focused tests cover burst, refill, isolation and shared allowance.
+
+**Client key (X-Forwarded-For).** The bucket key is the client address from
+`X-Forwarded-For`, read according to `JEEVES_TRUSTED_PROXY_HOPS` (the number of
+trusted proxies that append to the header; `none` when nothing is in front and
+the header is ignored, as in the Podman stacks; `0` is only right where the
+platform overwrites it, as on Vercel). Left unset anywhere else, the leftmost
+entry is whatever the caller sent, so a random header per request gets a fresh
+bucket each time. Production boot therefore refuses to start without an explicit
+value (`none` or an integer), a malformed value fails boot in both modes, and demo off Vercel warns
+when it is unset. See `docs/deploy-podman.md` §6 for the values per shape.
 
 **Correctly scoped already:** sessions and the daily token budget are *not*
 affected — both moved to Postgres. `DbBudgetStore.reserveAtomic()` is a single
@@ -170,13 +181,26 @@ EU/UK visitors, where a controller's identity and address are generally
 expected on a privacy notice. Set a real entity and address before this is
 used commercially.
 
-Also outstanding, and smaller: `public/` still holds five unused SVGs from
-the Next.js starter (`file`, `globe`, `next`, `vercel`, `window` — about 3KB
-total, referenced nowhere). They are harmless but they are not ours; worth
-deleting. There are no raster images in the project at all, so there is
+Also outstanding, and smaller: the project has no `public/` directory and no raster images, so there is
 nothing to compress.
 
 ## 2. Should fix before a pilot
+
+### 2.0 The audit log is trigger-enforced, not privilege-enforced
+
+The append-only guarantee is a trigger (`drizzle/0002_audit_events_append_only.sql`),
+not a `REVOKE`/`GRANT` split: no migration revokes privileges. The runtime
+role is the table owner and the migrator uses the same role, so anyone holding
+the application's database credentials can `ALTER TABLE audit_events DISABLE
+TRIGGER` and rewrite history (`scripts/seed.ts` does exactly that for the
+reseed). **Production prerequisite:** a separate owner/migrator role, and a
+runtime role without ownership that holds only INSERT and SELECT on
+`audit_events`, the evidence tables and any other append-only table. Not built.
+When it is, the runtime role also needs to read the migration history, which
+the production boot check compares with the build:
+`GRANT USAGE ON SCHEMA drizzle TO <role>; GRANT SELECT ON drizzle.__drizzle_migrations TO <role>;`
+(the boot refuses with `migrations_unreadable` and names these grants when
+they are missing).
 
 ### 2.1 No backup or restore procedure — DOCUMENTED 2026-09-12, not yet exercised
 
@@ -221,12 +245,43 @@ deployment. The test encodes that distinction.
 The failing state is now reachable from a mock-sourced fixture, so a test
 like the original blockers-rail one would catch the original bug.
 
+### 2.2a Production-mode smoke test — ADDED
+
+Nothing used to start a real production-mode server, which is how a relative
+`Location` in `proxy.ts` made every signed-out page answer 500 unnoticed.
+`npm run smoke:production` closes that gap. It migrates a throwaway Postgres
+database, stamps it `production`, boots the real server (the standalone build
+the container image runs, or `next start`), and checks the HTTP behaviour on
+the wire: redirects, 404s for marketing pages and demo doors, 401s for gated
+reads, the sign-in page and its security headers, robots, sitemap and health.
+It also starts the server four times with a deliberately bad configuration and
+requires each to refuse to boot.
+
+It stamps its database for good, so it only accepts `SMOKE_DATABASE_URL`
+(there is no fallback to `DATABASE_URL`) naming a database called
+`jeeves_smoke_<name>`. Create one with `CREATE DATABASE jeeves_smoke_local;`.
+It needs a finished build and never builds: run
+`DATA_PROVIDER=mock JEEVES_MODE=demo npm run build` first. Then:
+
+    SMOKE_DATABASE_URL=postgres://user:pass@127.0.0.1:5432/jeeves_smoke_local npm run smoke:production
+
+`SMOKE_PORT` changes the port (default 3217) and `SMOKE_SERVER=standalone` or
+`next-start` forces the server command. The run is repeatable on the same
+database and exits 1 if any check fails.
+
+A production image is built with `JEEVES_DEMO_ENABLED=0`, which compiles demo
+mode out. To check such a build, add `SMOKE_DEMO_LOCKED=1`: the server is then
+started with `JEEVES_MODE=demo` set, and every production check must still
+pass, which is the proof that the flag cannot open the demo on that build. Run
+against a build that is not locked, the same command fails, because the server
+enters demo mode and refuses the production-stamped database.
+
 ### 2.3 No staging environment — DOCUMENTED 2026-09-12, not built
 
 `docs/deploy.md` §5 now describes the cheap version — a second Vercel project
 against a Neon *branch* of production, so the data is realistic by
-construction and costs almost nothing — along with the traps (separate
-`DEMO_PASSCODE`, `OPENAI_API_KEY` unset, and the fact that a branch inherits
+construction and costs almost nothing — along with the traps (a separate
+`JEEVES_COOKIE_SECRET`, `OPENAI_API_KEY` unset, and the fact that a branch inherits
 whatever the parent held at branch time).
 
 **It is described, not built.** Nobody has stood one up, so the rehearsal
@@ -262,16 +317,20 @@ data — neither of which is meaningful without the staging environment in
 Listed because it is substantial, and because the gaps above are easier to
 weigh against it.
 
-- **Transactions are real.** `lib/db/client.ts` uses
-  `drizzle-orm/neon-serverless` over a pooled WebSocket `Pool` when
-  `DATABASE_URL` is set. Every state-changing service goes through
+- **Transactions are real.** `lib/db/driver-select.ts` picks the driver
+  (Neon serverless WebSocket pool, node-postgres, or PGlite) from the
+  connection URL. Every state-changing service goes through
   `db.transaction(fn)` with genuine rollback-on-throw, including the
   compare-and-set predicates those services rely on. An earlier version used
   `neon-http`, whose `transaction()` is a stub; that was found and fixed.
 - **The audit log is append-only at the database level**, not in application
   code — `drizzle/0002_audit_events_append_only.sql` installs triggers that
-  raise on UPDATE and DELETE, enforced regardless of which role issues the
-  statement. `lib/db/schema.test.ts` tests it at the DB level.
+  raise on UPDATE and DELETE for every role, but the table owner can disable them.
+  `lib/db/schema.test.ts` tests it at the DB level. A production boot therefore
+  checks that all six append-only triggers (audit_events, installation) exist
+  and are enabled, and refuses to start otherwise (`audit_triggers` in
+  `lib/config/installation-check.ts`). See the prerequisite below: the runtime
+  role currently owns the table.
 - **Security response headers are thorough**: a real CSP pinning every
   fetchable resource to same-origin, HSTS with preload, `X-Frame-Options:
   DENY`, nosniff, Referrer-Policy, Permissions-Policy. `next/image` is
@@ -282,7 +341,8 @@ weigh against it.
   ownership via `deploymentId -> initiative.workspaceId`.
 - **CI gates every push**: typecheck, lint, unit tests with coverage, and the
   Playwright golden path.
-- **1022 unit tests across 90 files, plus 22 e2e**, all passing.
+- **A large unit suite plus a Playwright golden path**; run `npm test` and
+  `npm run test:e2e` for the current counts.
 
 ---
 
@@ -290,8 +350,8 @@ weigh against it.
 
 | | Status |
 |---|---|
-| Schema + migrations | Ready — 9 migrations, Drizzle, hand-written trigger/view migrations included |
-| Driver + transactions | Ready — pooled Neon serverless, real interactive transactions |
+| Schema + migrations | Ready — Drizzle migrations under `drizzle/`, hand-written trigger/view migrations included |
+| Driver + transactions | Ready — driver chosen in `lib/db/driver-select.ts`, real interactive transactions |
 | Append-only audit enforcement | Ready — DB-level triggers, tested |
 | Non-destructive migration path | **Added 2026-09-11** — see below |
 | Shared rate limiting | **Added 2026-09-12** — §1.2 |
@@ -331,6 +391,5 @@ security posture and test fidelity are all in good shape.
 
 Authentication does not exist. Until it does, the system's central output — a
 named accountable approval — is not trustworthy, no matter how immutably it is
-stored, because the name on it was chosen by whoever typed the shared
-passcode. Everything else on this page is an engineering task. This one is a
+stored, because the name on it was chosen by whoever picked the persona. Everything else on this page is an engineering task. This one is a
 product decision about what the system is for.

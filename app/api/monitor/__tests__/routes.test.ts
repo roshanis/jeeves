@@ -1,6 +1,6 @@
 /**
  * HTTP-layer tests for app/api/monitor/** (task brief deliverable 3 + 4):
- * POST /api/monitor/run (session required, any role, budget-reserved) and
+ * POST /api/monitor/run (session required, any role, no budget reserve) and
  * GET /api/monitor/incidents (public read-only). Mirrors the guard-order
  * conventions of app/api/__tests__/routes.test.ts (401 -> 429 -> 400 -> 403).
  */
@@ -75,6 +75,23 @@ describe("POST /api/monitor/run", () => {
     const json = await res.json();
     expect(typeof json.evaluated).toBe("number");
     expect(Array.isArray(json.breaches)).toBe(true);
+  });
+
+  it("does not reserve any of the shared daily LLM budget (no model call is made)", async () => {
+    const token = await issueSessionFor("nia-okafor", "21.0.0.9");
+    const { getBudgetStoreForTests } = await import("@/lib/services/route-guard");
+    const day = new Date().toISOString().slice(0, 10);
+    const before = await getBudgetStoreForTests().getUsed(day);
+    const { POST } = await import("../run/route");
+    const res = await POST(
+      new Request("http://localhost/api/monitor/run", {
+        method: "POST",
+        headers: bearer(token, "21.0.0.9"),
+        body: JSON.stringify({}),
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(await getBudgetStoreForTests().getUsed(day)).toBe(before);
   });
 
   it("defaults nowTs but does not let a visitor monitor mutate shared seeded records", async () => {

@@ -21,6 +21,6 @@ describe("intake entry", () => {
   });
   it("requires a session before submission", () => {
     show();
-    expect(screen.getAllByRole("button", { name: /submit intake/i })[0]).toHaveProperty("disabled", true);
+    expect(screen.getAllByRole("button", { name: /submit intake/i })[0]).toHaveProperty("ariaDisabled", "true");
   });
 });

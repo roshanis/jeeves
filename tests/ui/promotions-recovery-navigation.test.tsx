@@ -35,4 +35,12 @@ describe("promotion recovery navigation", () => {
     expect(screen.queryByRole("button", { name: "Roll back" })).toBeNull();
     expect(screen.getByRole("button", { name: "Promote" })).toBeTruthy();
   });
+
+  it("shows a shared sample checkpoint read-only instead of a Promote button that always 404s", async () => {
+    mocks.promotions.mockResolvedValue([{ ...(await mocks.promotions()) [0], isShared: true }]);
+    renderWithProviders(<PromotionsPageClient historyByInitiativeId={{}} />);
+    await screen.findByText("Case one", { selector: "a" });
+    expect(screen.queryByRole("button", { name: "Promote" })).toBeNull();
+    expect(screen.getByText(/sample data/i)).toBeTruthy();
+  });
 });

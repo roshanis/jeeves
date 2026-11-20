@@ -96,9 +96,11 @@ describe.each([
 });
 
 describe("Administration metadata keeps its separation-of-duties statement in production", () => {
-  it("still says Admin never approves, signs or returns", async () => {
+  it("still says Admin never approves or rejects, and never signs or returns a review", async () => {
     vi.stubEnv("JEEVES_MODE", undefined);
-    expect(String((await adminMetadata()).description)).toMatch(/never approves, signs, or returns/);
+    expect(String((await adminMetadata()).description)).toMatch(
+      /Admin never approves or rejects, and never signs or returns a review/,
+    );
   });
 });
 

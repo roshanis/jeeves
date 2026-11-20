@@ -6,6 +6,7 @@
 // data, or a production process ends up serving a database full of seeded demo
 // rows, so every boot compares them and refuses on any mismatch.
 import { sql } from "drizzle-orm";
+import journal from "../../drizzle/meta/_journal.json";
 import { ensureDemoInstallation } from "../demo/bootstrap";
 import {
   installationTableExists,
@@ -22,7 +23,13 @@ export type InstallationCheckCode =
   /** The stamp says one mode and the process is running the other. */
   | "mode_mismatch"
   /** Production, and the database holds demo rows. */
-  | "demo_data";
+  | "demo_data"
+  /** Production, and the applied migrations do not cover the bundled journal (or the history table is missing). */
+  | "schema_behind"
+  /** Production, and the database role cannot read the migration history. */
+  | "migrations_unreadable"
+  /** Production, and an append-only trigger on audit_events or installation is missing or disabled. */
+  | "audit_triggers";
 
 /**
  * Thrown by verifyInstallation(). The message names what was found and what to
@@ -83,6 +90,93 @@ async function countDemoData(db: InstallationDb): Promise<DemoDataCounts> {
     realRequestWorkspace: Number(row.real_request_workspace),
     sessions: Number(row.sessions),
   };
+}
+
+/**
+ * The `when` of every migration this build was compiled with. drizzle stores
+ * it as created_at in drizzle.__drizzle_migrations. The journal is imported,
+ * not read from disk at boot: it is then part of the server bundle wherever
+ * the process runs (standalone image, serverless function, `next start`), and
+ * a missing file can never be what refuses a boot.
+ */
+const BUNDLED_MIGRATION_TIMES: readonly number[] = journal.entries.map((entry) => Number(entry.when));
+
+function rowsOf<T>(result: unknown): T[] {
+  return (Array.isArray(result) ? result : (result as { rows: unknown[] }).rows) as T[];
+}
+
+/**
+ * How many bundled migrations the database has not applied.
+ *
+ * The history table is probed through the catalog first. Naming it in a query
+ * fails outright when it is missing, and a runtime role that is not the schema
+ * owner (the split docs/production-readiness.md asks for) has no access to the
+ * `drizzle` schema unless it is granted; both must end in a message that says
+ * what to do, not in a raw driver error.
+ */
+async function countUnappliedMigrations(db: InstallationDb): Promise<number> {
+  const probe = rowsOf<{ access: string }>(
+    await db.execute(sql`
+      SELECT CASE
+        WHEN to_regnamespace('drizzle') IS NULL THEN 'missing'
+        WHEN NOT has_schema_privilege('drizzle', 'USAGE') THEN 'denied'
+        WHEN to_regclass('drizzle.__drizzle_migrations') IS NULL THEN 'missing'
+        WHEN NOT has_table_privilege('drizzle.__drizzle_migrations', 'SELECT') THEN 'denied'
+        ELSE 'ok' END AS access
+    `),
+  )[0]?.access;
+  if (probe === "denied") {
+    throw new InstallationCheckError(
+      "migrations_unreadable",
+      "The database role this server connects as cannot read the migration history, so the schema cannot be checked " +
+        "against this build. As the schema owner run: GRANT USAGE ON SCHEMA drizzle TO <role>; " +
+        "GRANT SELECT ON drizzle.__drizzle_migrations TO <role>; then restart. Refusing to start.",
+    );
+  }
+  if (probe !== "ok") {
+    throw new InstallationCheckError(
+      "schema_behind",
+      "The migration history (drizzle.__drizzle_migrations) is missing, so the schema cannot be checked against this build. " +
+        "A restore must include the `drizzle` schema; otherwise run `npm run db:migrate` against a fresh database. Refusing to start.",
+    );
+  }
+  const applied = new Set(
+    rowsOf<{ created_at: string | number }>(await db.execute(sql`SELECT created_at FROM drizzle.__drizzle_migrations`)).map((row) =>
+      Number(row.created_at),
+    ),
+  );
+  return BUNDLED_MIGRATION_TIMES.filter((when) => !applied.has(when)).length;
+}
+
+/**
+ * The triggers that make audit_events and installation append-only
+ * (drizzle/0002, 0014, 0015). Each must exist and fire for the app's sessions
+ * ('O', the default, or 'A', always; not 'D' disabled or 'R' replica only):
+ * the app role owns these tables, so a DISABLE TRIGGER leaves the server
+ * answering health checks with the audit log silently rewritable.
+ */
+const APPEND_ONLY_TRIGGERS: { table: string; trigger: string }[] = [
+  { table: "audit_events", trigger: "audit_events_no_update" },
+  { table: "audit_events", trigger: "audit_events_no_delete" },
+  { table: "audit_events", trigger: "audit_events_no_truncate" },
+  { table: "installation", trigger: "installation_no_rewrite" },
+  { table: "installation", trigger: "installation_no_delete" },
+  { table: "installation", trigger: "installation_no_truncate" },
+];
+
+/** The names of the append-only triggers that are missing or not enabled. */
+async function findBrokenAppendOnlyTriggers(db: InstallationDb): Promise<string[]> {
+  const result = await db.execute(sql`
+    SELECT c.relname AS table_name, t.tgname AS trigger_name
+    FROM pg_trigger t
+    JOIN pg_class c ON c.oid = t.tgrelid
+    WHERE NOT t.tgisinternal AND t.tgenabled IN ('O', 'A')
+      AND c.relnamespace = to_regnamespace(current_schema())
+      AND c.relname IN ('audit_events', 'installation')
+  `);
+  const rows = (Array.isArray(result) ? result : result.rows) as { table_name: string; trigger_name: string }[];
+  const enabled = new Set(rows.map((r) => `${r.table_name}.${r.trigger_name}`));
+  return APPEND_ONLY_TRIGGERS.filter((t) => !enabled.has(`${t.table}.${t.trigger}`)).map((t) => `${t.table}.${t.trigger}`);
 }
 
 function plural(n: number, singular: string, pluralForm = `${singular}s`): string {
@@ -158,6 +252,26 @@ export async function verifyInstallation(db: InstallationDb, mode: DeploymentMod
   }
 
   if (mode === "production") {
+    // Demo deliberately tolerates a database that lags (a deploy that outruns
+    // its migration must not take the demo down); a production install must
+    // fail the deploy, not serve 500s from the load balancer's healthy pool.
+    const unapplied = await countUnappliedMigrations(db);
+    if (unapplied > 0) {
+      throw new InstallationCheckError(
+        "schema_behind",
+        `The database schema is behind this build: ${unapplied} of ${BUNDLED_MIGRATION_TIMES.length} migrations are not applied. ` +
+          "Run `npm run db:migrate` against this database, then restart. Refusing to start.",
+      );
+    }
+    const broken = await findBrokenAppendOnlyTriggers(db);
+    if (broken.length > 0) {
+      throw new InstallationCheckError(
+        "audit_triggers",
+        `The append-only triggers that protect the audit log are missing or disabled: ${broken.join(", ")}. ` +
+          "Re-create or re-enable them (ALTER TABLE ... ENABLE TRIGGER, or re-apply drizzle/0002, 0014 and 0015) " +
+          "and find out who disabled them. Refusing to start.",
+      );
+    }
     const found = describeDemoData(await countDemoData(db));
     if (found.length > 0) {
       throw new InstallationCheckError(

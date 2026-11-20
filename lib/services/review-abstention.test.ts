@@ -134,6 +134,12 @@ describe("domain reviewer abstention", () => {
   });
 
   const approver = { id: "angela-torres", role: "approver" as const };
+  // Conditions are accepted only on a conditional approval.
+  function decisionInput(decision: "approved" | "conditionally_approved" | "rejected") {
+    return decision === "conditionally_approved"
+      ? { decision, conditions: [{ text: "Pilot controls", controlId: "H-01" }] }
+      : { decision };
+  }
   async function abstainAll() {
     const rows = await db.select().from(reviewDecisions).where(eq(reviewDecisions.cycleId, cycleId));
     for (const review of rows) {
@@ -149,7 +155,7 @@ describe("domain reviewer abstention", () => {
     const before = await new DbDataProvider(db).getInitiativeDetail(slug, { viewerWorkspaceId: workspace });
     expect(before?.summary).toMatchObject({ domainsSigned: 7, domainsAbstained: 1, decisionReadiness: { canApprove: true, canConditionallyApprove: true } });
     expect(await db.select().from(initiativeDecisions)).toHaveLength(0);
-    await svc.decide(db, initiativeId, approver, workspace, { decision, conditions: [{ text: "Pilot controls", controlId: "H-01" }] });
+    await svc.decide(db, initiativeId, approver, workspace, decisionInput(decision));
     expect((await db.select().from(initiatives))[0]).toMatchObject({ state: decision, accountableApprover: approver.id });
     expect((await db.select().from(reviewCycles))[0].closedAt).not.toBeNull();
     const event = (await db.select().from(auditEvents)).find(event => event.metadata?.reviewSnapshots);
@@ -170,9 +176,9 @@ describe("domain reviewer abstention", () => {
     expect(await db.select().from(initiativeDecisions)).toHaveLength(0);
     expect((await db.select().from(initiatives))[0].state).toBe("in_review");
     for (const actor of [requester, reviewer, { id: "ray-chen", role: "admin" as const }]) {
-      await expect(svc.decide(db, initiativeId, actor, workspace, { decision, conditions: [{ text: "Pilot controls", controlId: "H-01" }] })).rejects.toThrow(svc.IllegalTransitionError);
+      await expect(svc.decide(db, initiativeId, actor, workspace, decisionInput(decision))).rejects.toThrow(svc.IllegalTransitionError);
     }
-    await svc.decide(db, initiativeId, approver, workspace, { decision, conditions: [{ text: "Pilot controls", controlId: "H-01" }] });
+    await svc.decide(db, initiativeId, approver, workspace, decisionInput(decision));
     const detail = await new DbDataProvider(db).getInitiativeDetail(slug, { viewerWorkspaceId: workspace });
     expect(detail?.summary).toMatchObject({ state: decision, domainsRequired: 8, domainsSigned: 0, domainsAbstained: 8 });
     expect(detail?.controls.length).toBeGreaterThan(0);
@@ -203,7 +209,7 @@ describe("domain reviewer abstention", () => {
       }
     }
     for (const decision of ["approved", "conditionally_approved"] as const) {
-      await expect(svc.decide(db, initiativeId, approver, workspace, { decision, conditions: [{ text: "Pilot controls", controlId: "H-01" }] })).rejects.toThrow(/abstained/);
+      await expect(svc.decide(db, initiativeId, approver, workspace, decisionInput(decision))).rejects.toThrow(/abstained/);
     }
     const detail = await new DbDataProvider(db).getInitiativeDetail(slug, { viewerWorkspaceId: workspace });
     expect(detail?.summary.decisionReadiness).toMatchObject({ canApprove: false, canConditionallyApprove: false });

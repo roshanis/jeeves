@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTestDb, closeTestDb, type TestDb } from "@/lib/db/test-client";
 import { sessions } from "@/lib/db/schema";
+import { resetHousekeepingCounterForTests } from "@/lib/services/route-guard";
 import { POST } from "./route";
 
 let db: TestDb;
@@ -106,6 +107,8 @@ describe("public demo entry", () => {
   });
 
   it("returns a safe error when the DB-backed session limiter fails", async () => {
+    // Park the housekeeping counter: this test stubs db.execute and asserts the first console.error call.
+    resetHousekeepingCounterForTests(1);
     const insert = vi.spyOn(db, "insert");
     const execute = vi.spyOn(db, "execute").mockImplementation(() => {
       throw Object.assign(new Error("postgres://private-user:private-password/private-db; query=SELECT private_data; ip=198.51.100.7"), { code: "ECONNRESET" });

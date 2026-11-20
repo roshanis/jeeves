@@ -6,6 +6,7 @@ import {
   deploymentMode,
   isDemoMode,
   isProductionMode,
+  trustedProxyHopsState,
 } from "./deployment-mode";
 
 afterEach(() => {
@@ -79,6 +80,7 @@ function completeConfig(): Record<string, string> {
     JEEVES_COOKIE_SECRET: SECRET,
     APP_BASE_URL: "https://jeeves.example.com",
     JEEVES_TENANT_ID: "tenant-acme",
+    JEEVES_TRUSTED_PROXY_HOPS: "1",
   };
 }
 
@@ -120,8 +122,8 @@ describe("assertProductionConfig", () => {
     expect(thrown).toBeInstanceOf(ProductionConfigError);
     const error = thrown as ProductionConfigError;
     expect(error.name).toBe("ProductionConfigError");
-    expect(error.problems).toHaveLength(4);
-    for (const name of ["DATABASE_URL", "JEEVES_COOKIE_SECRET", "APP_BASE_URL", "JEEVES_TENANT_ID"]) {
+    expect(error.problems).toHaveLength(5);
+    for (const name of ["DATABASE_URL", "JEEVES_COOKIE_SECRET", "APP_BASE_URL", "JEEVES_TENANT_ID", "JEEVES_TRUSTED_PROXY_HOPS"]) {
       expect(error.message).toContain(name);
     }
   });
@@ -224,6 +226,34 @@ describe("assertProductionConfig", () => {
     it("accepts an absolute https URL, with a port or a path", () => {
       expect(problemsFor({ ...completeConfig(), APP_BASE_URL: "https://jeeves.example.com:8443" })).toEqual([]);
       expect(problemsFor({ ...completeConfig(), APP_BASE_URL: "https://example.com/jeeves" })).toEqual([]);
+    });
+  });
+
+  describe("JEEVES_TRUSTED_PROXY_HOPS", () => {
+    it("is required: without it the rate limiter trusts a caller-supplied X-Forwarded-For", () => {
+      for (const value of [undefined, "", "  "]) {
+        const env: Record<string, string | undefined> = { ...completeConfig(), JEEVES_TRUSTED_PROXY_HOPS: value };
+        expect(problemsFor(env).join(" ")).toContain("JEEVES_TRUSTED_PROXY_HOPS is required");
+      }
+    });
+
+    it("must be a non-negative integer", () => {
+      for (const value of ["abc", "-1", "1.5", "1e2", "99999999999999999999"]) {
+        const problems = problemsFor({ ...completeConfig(), JEEVES_TRUSTED_PROXY_HOPS: value });
+        expect(problems.join(" "), value).toContain("JEEVES_TRUSTED_PROXY_HOPS must be a non-negative integer");
+      }
+    });
+
+    it("accepts 0 (a proxy that overwrites the header), 1 (ALB) and 2", () => {
+      for (const value of ["0", "1", "2"]) {
+        expect(problemsFor({ ...completeConfig(), JEEVES_TRUSTED_PROXY_HOPS: value }), value).toEqual([]);
+      }
+    });
+    it("accepts none (no proxy in front: the header is ignored), case-insensitively", () => {
+      for (const value of ["none", "NONE", " None "]) {
+        expect(trustedProxyHopsState({ JEEVES_TRUSTED_PROXY_HOPS: value }), value).toBe("valid");
+        expect(problemsFor({ ...completeConfig(), JEEVES_TRUSTED_PROXY_HOPS: value }), value).toEqual([]);
+      }
     });
   });
 

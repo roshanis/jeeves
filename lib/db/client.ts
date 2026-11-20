@@ -15,6 +15,7 @@ import { postgresPoolConfig } from "./connection-config";
 import { assertRuntimeDatabaseConfigured, runtimeDatabaseUrl } from "./runtime-config";
 import ws from "ws";
 import * as schema from "./schema";
+import { redactTransactionErrors } from "./redact-error";
 import { selectDriver } from "./driver-select";
 import type { DbDriver } from "./driver-select";
 
@@ -71,6 +72,17 @@ function createPgPool(databaseUrl: string): PgPool {
 }
 
 /**
+ * Neon pool with a bounded connect time and an 'error' listener: an idle
+ * client error (Neon suspends compute) with no listener is an uncaught
+ * exception. Logs a fixed message only, never the error or the URL.
+ */
+export function createNeonPool(connectionString: string): Pool {
+  const pool = new Pool({ connectionString, connectionTimeoutMillis: 10_000, idleTimeoutMillis: 10_000 });
+  pool.on("error", () => console.error("Neon connection pool error."));
+  return pool;
+}
+
+/**
  * Returns the process-wide DB handle, creating it on first use. Safe to
  * call repeatedly (e.g. from multiple route handlers) — the underlying
  * connection/instance is memoized on globalThis (see above).
@@ -90,8 +102,8 @@ export function getDb(): Db {
 
   if (driver === "neon") {
     neonConfig.webSocketConstructor = ws;
-    dbSlot.pool ??= new Pool({ connectionString: databaseUrl });
-    dbSlot.db = drizzleNeon({ client: dbSlot.pool, schema });
+    dbSlot.pool ??= createNeonPool(databaseUrl!);
+    dbSlot.db = redactTransactionErrors(drizzleNeon({ client: dbSlot.pool, schema }));
     handleDrivers.set(dbSlot.db, "neon");
     return dbSlot.db;
   }
@@ -101,7 +113,7 @@ export function getDb(): Db {
     // the right driver for any long-lived process (a container), and the only
     // one that works against a non-Neon server.
     dbSlot.pgPool ??= createPgPool(databaseUrl!);
-    dbSlot.db = drizzleNodePg({ client: dbSlot.pgPool, schema });
+    dbSlot.db = redactTransactionErrors(drizzleNodePg({ client: dbSlot.pgPool, schema }));
     handleDrivers.set(dbSlot.db, "pg");
     return dbSlot.db;
   }
@@ -116,7 +128,7 @@ export function getDb(): Db {
     ]);
   }
   const client = new PGlite(localPgliteDirectory());
-  dbSlot.db = drizzlePglite({ client, schema });
+  dbSlot.db = redactTransactionErrors(drizzlePglite({ client, schema }));
   handleDrivers.set(dbSlot.db, "pglite");
   return dbSlot.db;
 }

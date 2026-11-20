@@ -5,7 +5,9 @@ demo locally, deploying it to Vercel with Neon Postgres, the known gaps you
 should be honest about if you show this to anyone, and a demo-day checklist.
 
 Jeeves is a **fictional demo**: "Meridian Health" is not a real organization,
-all data is synthetic, and no LLM call ever touches real PHI. See the top of
+seeded and playground data is synthetic, and no LLM call touches real PHI.
+The separate real-request door is the exception: it stores submitter contact
+data (see "Personal data" in section 5). See the top of
 [`README.md`](../README.md) for the full disclaimer.
 
 Deploy itself is **not executed by any agent** in this repo — this document
@@ -99,18 +101,32 @@ npm run start        # next start (after build)
 2. **Connect a hosted PostgreSQL database.** Neon remains supported; the Vercel
    Supabase integration supplies `POSTGRES_URL`. Use the transaction pooler for
    serverless runtime traffic and a direct/session connection for migrations.
-3. **Set environment variables** in the Vercel project settings:
+3. **Set environment variables** in the Vercel project settings (every variable the code reads, with its demo/production behaviour, is in [`environment-reference.md`](./environment-reference.md)):
 
    | Variable | Required | Notes |
    |---|---|---|
    | `DATABASE_URL` or `POSTGRES_URL` | Yes | Explicit nonblank `DATABASE_URL` wins; otherwise the Vercel integration `POSTGRES_URL` is used consistently for runtime, pages and incident reads. Neon hosts use the Neon driver; other PostgreSQL hosts use `pg`. Vercel refuses local PGlite fallback. |
    | `DATABASE_MIGRATION_URL` | For Supabase migrations | Direct or session-pooler connection on port 5432. Runtime transaction-pooler URLs on port 6543 cannot run migrations. |
-   | `DATABASE_SSL_CA` | Optional | Project CA if required; recognized Supabase connections verify certificates and use a bounded pool. |
+   | `DATABASE_SSL_CA` | Optional | Optional CA (PEM). Applies to every PostgreSQL host reached through node-postgres, not to Neon, which uses its own driver and public certificates. When set, the connection uses TLS and verifies the server against this CA (for Amazon RDS, the RDS CA bundle). It cannot be combined with `sslmode=disable` or `no-verify`, or with `sslrootcert`, `sslcert` or `sslkey` in the URL. Supabase hosts additionally always verify and use a pool of one. |
    | `JEEVES_MODE` | **Yes: `demo`** | Must be exactly `demo` in Production, Preview and Development, or the deployment runs in production mode (see the note at the top of this page). Server-only; never `NEXT_PUBLIC_`. |
+   | `DATABASE_POOL_MAX` | Optional | Largest number of connections one app instance opens through node-postgres (its default is 10). Not used for Neon hosts (own driver) or Supabase hosts (always one connection). |
+   | `DATABASE_STATEMENT_TIMEOUT_MS`, `DATABASE_IDLE_IN_TRANSACTION_TIMEOUT_MS` | Optional | Server-side limits, in milliseconds, for one statement and for a transaction left idle (default `60000` each). node-postgres sends them as startup parameters. `0` turns one off and sends nothing: use that behind a pooler that refuses startup parameters it does not track (PgBouncer without `ignore_startup_parameters`), and set the limits on the database role instead. Not sent to Neon or Supabase hosts. |
+   | `DATABASE_MIGRATION_LOCK_TIMEOUT_MS` | Optional | How long `npm run db:migrate` waits for a lock before it fails and can be retried, in milliseconds (default `10000`; `0` turns it off). Migrations have no statement timeout. Not sent to Neon or Supabase hosts. |
    | `DATA_PROVIDER` | Optional | Defaults to DB when either runtime URL exists. `db` makes this explicit; `mock` deliberately shows the read-only preview dataset. |
    | `JEEVES_COOKIE_SECRET` | Yes for new deployments | Random server-only signing key for browser workspace continuity. Visitor entry is passwordless. Existing DEMO_PASSCODE can serve only as a deprecated signing fallback. |
+   | `OPERATOR_TOKEN` | Optional | At least 32 characters (for example `openssl rand -hex 32`). Opens the "Send a real request" door and unlocks the `/operator` queue where those requests are read, sent as `Authorization: Bearer <token>`. While it is unset or shorter than 32 characters the real-request door is closed (`POST /api/public-session` answers 404 and the intake form does not offer it), because nobody could read what a visitor sent. |
+   | `CRON_SECRET` | Optional | Bearer token for `GET /api/cron/monitor` (the 6-hourly Vercel cron in `vercel.json`). Unset, the cron endpoint returns 503; the manual `POST /api/monitor/run` admin action still works. |
+   | `NEXT_PUBLIC_SITE_URL` | Yes for a public deploy (build-time) | Absolute origin, for example `https://jeeves.example.com`, used by `/sitemap.xml`, `/robots.txt` and Open Graph URLs (`lib/marketing/site-config.ts`). Inlined when `next build` runs, so set it before the build, not only at runtime. Default when unset: `http://localhost:3000`, which publishes dead localhost URLs. |
+   | `NEXT_PUBLIC_CONTACT_URL` | Yes for a public deploy (build-time) | Target of the marketing call-to-action buttons, for example `mailto:you@example.com` or a booking link. Inlined at build. Default when unset: a `mailto:` address of the original author, so set your own. |
+   | `NEXT_PUBLIC_PRIVACY_CONTACT` | Optional (build-time) | Contact shown on the privacy and terms pages for data-protection requests. Inlined at build. Default when unset: the value of `NEXT_PUBLIC_CONTACT_URL`. |
+   | `NEXT_PUBLIC_PILOT_PRICE` | Optional (build-time) | Price text for the pilot page. Inlined at build. Default when unset: the page shows "Contact for pricing". |
    | `OPENAI_API_KEY` | Optional | Only set this if you want **live** LLM-drafted reviews during the demo. Omit it and the app runs entirely on the keyless mock adapter — safe default for a public URL. |
    | `OPENAI_MODEL` | Optional (only meaningful with `OPENAI_API_KEY`) | Model id for the real adapter, e.g. the value in `.env.example` (`gpt-5.1`). Unused when `OPENAI_API_KEY` is unset. |
+
+   The four `NEXT_PUBLIC_*` variables are build-time: Vercel reads them from the
+   project settings at build, and changing one needs a redeploy. The Podman image
+   is built by `deploy/podman/Containerfile`, which does not yet pass them through
+   as build arguments, so an image built from it carries the defaults above.
 
 4. **Migrate the selected database first.** There is no migrate or seed step that runs on
    Vercel itself — Vercel serves the app, it does not run one-off scripts.
@@ -132,6 +148,12 @@ npm run start        # next start (after build)
      the selected connection. `DATABASE_MIGRATION_URL` selects a separate
      operator connection; absent that, the runtime URL precedence applies.
      Supabase transaction-pooler connections on port 6543 are rejected for migrations.
+   - **checked** — after migrating it confirms that every migration in
+     `drizzle/meta/_journal.json` is recorded as applied, and fails naming any
+     that is not (drizzle silently skips a migration that is older than the
+     newest applied one). A database already migrated by a newer build is
+     reported and left alone, so an older build's migrate step does not fail
+     on a rollback.
 
    This is the command to use against a database that holds real data, and
    it is the only one on this page that is safe to point at production.
@@ -317,8 +339,20 @@ The cheap version, if a pilot happens:
    bill.
 
 Note that a Neon branch shares the parent's data at the moment of branching,
-including anything sensitive. In this demo everything is synthetic, so it is
-moot — but that stops being true the moment it is not a demo.
+including anything sensitive. Seeded and playground data is synthetic, but the
+real-request door is not: `initiatives.requester` and the intake version's
+`basics` (`requesterEmail`, `businessProblem` and other free text) for
+`public-` workspaces hold real names, e-mail addresses and whatever
+strangers typed, and a branch copies them. Delete or exclude the `public-`
+workspace rows from a staging branch, and do not reseed over a live database
+just because "it is all synthetic".
+
+**Personal data.** Who can read it: operators holding `OPERATOR_TOKEN`
+through `/operator` and `GET /api/public-intake`. `audit_events` is
+append-only, so the application cannot delete the audit rows that refer to
+those initiatives. There is no retention or deletion procedure for these
+rows yet; defining one (and whether audit rows may be purged) is an open
+product decision.
 
 ---
 
@@ -326,11 +360,18 @@ moot — but that stops being true the moment it is not a demo.
 
 Run through this the morning of a demo, in order:
 
-1. **Seed fresh.**
+1. **Do not reseed the hosted database.** Seed exactly once, when the
+   database is provisioned:
    ```bash
    JEEVES_MODE=demo DATABASE_URL="<Neon pooled connection string>" npm run db:seed
    ```
-   Confirms a clean, deterministic 12-initiative dataset.
+   Re-running it against a database that visitors have used deletes every
+   visitor workspace and the whole audit log. It refuses outright once evidence
+   exists, and when the database holds real inbound requests (public-
+   workspaces, including submitters' contact details) unless
+   `ALLOW_DISCARD_PUBLIC_REQUESTS=<count>` names how many to discard. If you
+   need a clean stage, use a disposable database (local PGlite, a Neon branch
+   or a second project) behind a preview deployment.
 
 2. **Verify `/audit` queries.** Visit `/audit` and run all four canned
    queries (`lib/data/dto.ts` → `CannedAuditQueryId`):
@@ -345,7 +386,7 @@ Run through this the morning of a demo, in order:
 
 3. **Run the champion loop once on the mock adapter.** With
    `OPENAI_API_KEY` unset, walk the champion storyline end-to-end
-   (intake → triage → 4 drafted reviews → sign-off → conditional approval
+   (intake → QC (Program Office) → triage → 8 drafted reviews → sign-off → conditional approval
    → effective controls) to confirm the live loop works without any
    external LLM dependency. This is also what CI/Playwright exercises.
 
@@ -357,5 +398,7 @@ Run through this the morning of a demo, in order:
    15-minute stakeholder talk track, screen-by-screen, including
    anticipated questions and answers — use it as the actual run-of-show.
 
-6. **Reset before the next audience** if you mutated anything live: re-seed
-   (step 1) to restore the deterministic baseline.
+6. **Starting over for the next audience.** Do not re-seed the live
+   database. Each visitor works in an isolated workspace: use **Exit demo** in
+   the demo-mode chip to start a new browser workspace, or point the next
+   audience at a disposable database seeded for the occasion.

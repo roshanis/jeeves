@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const state = vi.hoisted(() => ({ config: undefined as unknown, end: vi.fn(), migrated: vi.fn() }));
@@ -6,7 +7,9 @@ vi.mock("pg", () => ({ Pool: class {
   on() { return this; }
   end = state.end;
 } }));
-vi.mock("drizzle-orm/node-postgres", () => ({ drizzle: vi.fn(() => ({ mocked: true })) }));
+vi.mock("drizzle-orm/node-postgres", () => ({ drizzle: vi.fn(() => ({ mocked: true,
+  execute: async () => ({ rows: JSON.parse(readFileSync("./drizzle/meta/_journal.json", "utf8")).entries
+    .map((e: { when: number }) => ({ created_at: e.when })) }) })) }));
 vi.mock("drizzle-orm/node-postgres/migrator", () => ({ migrate: state.migrated }));
 
 import { runMigrations } from "./migrate";

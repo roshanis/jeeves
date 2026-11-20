@@ -46,8 +46,8 @@ describe("evidence-led review", () => {
     const row: ReviewQueueRow = { slug: "sample", title: "Sample", tier: "high", isSeeded: true, review: { cycleId: "cycle", revision: 4, domain: "privacy-hipaa", status: "drafted", reviewer: null, createdAt: "2026-09-19T12:00:00Z", signedAt: null, draftMd: "Sample draft", citations: [] } };
     renderWithProviders(<ReviewWorkbench rows={[row]} selection={{ slug: "sample", domain: "privacy-hipaa" }} />);
     await screen.findByRole("heading", { name: "retention-v2.pdf" });
-    expect((screen.getByRole("button", { name: "Sign" }) as HTMLButtonElement).disabled).toBe(true);
-    expect((screen.getByRole("button", { name: "Return" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByRole("button", { name: "Sign" }).getAttribute("aria-disabled")).toBe("true");
+    expect(screen.getByRole("button", { name: "Return" }).getAttribute("aria-disabled")).toBe("true");
     expect((screen.getByLabelText("Assessment text") as HTMLTextAreaElement).disabled).toBe(true);
     expect(screen.queryByRole("button", { name: "Re-run agent" })).toBeNull();
   });
@@ -225,8 +225,8 @@ describe("evidence-led review", () => {
     mocks.request.mockResolvedValue(newer);
     fireEvent.click(screen.getByRole("button", { name: "Refresh evidence" }));
     await screen.findByText(/A newer review cycle is available/);
-    expect((screen.getByRole("button", { name: "Sign" }) as HTMLButtonElement).disabled).toBe(true);
-    expect((screen.getByRole("button", { name: "Return" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByRole("button", { name: "Sign" }).getAttribute("aria-disabled")).toBe("true");
+    expect(screen.getByRole("button", { name: "Return" }).getAttribute("aria-disabled")).toBe("true");
     expect((screen.getByLabelText("Assessment text") as HTMLTextAreaElement).disabled).toBe(true);
     expect(screen.queryByRole("button", { name: "Re-run agent" })).toBeNull();
     expect(screen.queryByRole("heading", { name: "retention-v2.pdf" })).toBeNull();
@@ -287,7 +287,7 @@ describe("evidence-led review", () => {
     mocks.session.mockReturnValue({ session: { ...session, token: "different-session", personaKey: "james-liu" }, logout: vi.fn() });
     fireEvent.click(screen.getByRole("button", { name: "Refresh session" }));
     await screen.findByRole("heading", { name: "retention-v2.pdf" });
-    expect((screen.getByRole("button", { name: "Sign" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByRole("button", { name: "Sign" }).getAttribute("aria-disabled")).toBe("true");
     expect((screen.getByLabelText("Assessment text") as HTMLTextAreaElement).disabled).toBe(true);
   });
 });
@@ -384,8 +384,8 @@ describe("review snapshot integrity", () => {
    await waitFor(() => expect(screen.queryByRole("button",{name:"Record abstention"})).toBeNull());
    fireEvent.click(screen.getByRole("button",{name:"Load abstention"}));
    expect(screen.getByText("Conflict of interest")).toBeTruthy();
-   expect((screen.getByRole("button",{name:"Sign"}) as HTMLButtonElement).disabled).toBe(true);
-   expect((screen.getByRole("button",{name:"Return"}) as HTMLButtonElement).disabled).toBe(true);
+   expect(screen.getByRole("button", { name: "Sign" }).getAttribute("aria-disabled")).toBe("true");
+   expect(screen.getByRole("button",{name:"Return"}).getAttribute("aria-disabled")).toBe("true");
    expect(screen.queryByRole("button",{name:"Re-run agent"})).toBeNull();
    expect(screen.queryByRole("button",{name:"Accept evidence"})).toBeNull();
    expect((screen.getByLabelText("Assessment text") as HTMLTextAreaElement).value).toBe("Preserved draft");
@@ -405,6 +405,6 @@ it("retains the abstention reason without offering Resume after the approver clo
   expect(screen.getByText(/This review cycle is closed/)).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Resume review" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Abstain" })).toBeNull();
-  expect((screen.getByRole("button", { name: "Sign" }) as HTMLButtonElement).disabled).toBe(true);
+  expect(screen.getByRole("button", { name: "Sign" }).getAttribute("aria-disabled")).toBe("true");
   expect(mocks.mutate).not.toHaveBeenCalled();
 });

@@ -86,7 +86,7 @@ export async function GET(req: Request): Promise<Response> {
   // monitor's synthetic telemetry replay point (`nowTs`).
   const expiredExceptions = await expireDueExceptions(db, Date.now());
   return Response.json(
-    { ranAt: new Date(nowTs).toISOString(), nowTs, expiredExceptions: expiredExceptions.length, ...result },
+    { ranAt: new Date().toISOString(), evaluatedAt: new Date(nowTs).toISOString(), nowTs, expiredExceptions: expiredExceptions.length, ...result },
     { status: 200 },
   );
 }

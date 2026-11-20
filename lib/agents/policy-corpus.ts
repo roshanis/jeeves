@@ -27,9 +27,38 @@ export class PolicyCorpusPathError extends Error {
   }
 }
 
-/** Runtime application root; see adapter-shared.ts and Next asset tracing. */
-function repoRootDir(): string {
-  return process.cwd();
+/**
+ * Absolute corpus roots, in the same order as POLICY_CORPUS_ROOTS. Each is a
+ * LITERAL `path.join(process.cwd(), "<dir>", "<dir>")`, the form Next's file
+ * tracer understands (see adapter-shared.ts). Resolving a dynamic string
+ * against `process.cwd()` instead makes Turbopack trace the whole project into
+ * the deployable output (tests, scripts, planning notes). Keep these literal.
+ */
+function corpusRootDirs(): readonly string[] {
+  return [
+    path.join(process.cwd(), "docs", "policies"),
+    path.join(process.cwd(), "agents", "reviewer"),
+  ];
+}
+
+/*
+ * The three filesystem touch points below repeat the literal root per branch on
+ * purpose: Turbopack's tracer only understands `path.join(process.cwd(), "a",
+ * "b", dynamicRest)` written directly inside the fs call. A root chosen through
+ * a variable or a helper's return value is "dynamic" and traces the whole
+ * project into the deployable output. scripts/check-standalone-output.cjs
+ * guards the result. Keep these literal.
+ */
+function realpathInRoot(index: number, rest: string): string {
+  return index === 0
+    ? realpathSync(path.join(process.cwd(), "docs", "policies", rest))
+    : realpathSync(path.join(process.cwd(), "agents", "reviewer", rest));
+}
+
+function readInRoot(index: number, rest: string): string {
+  return index === 0
+    ? readFileSync(path.join(process.cwd(), "docs", "policies", rest), "utf-8")
+    : readFileSync(path.join(process.cwd(), "agents", "reviewer", rest), "utf-8");
 }
 
 /** Fail before a paid deep-review run if its packaged policy corpus is incomplete. */
@@ -63,10 +92,7 @@ const MAX_SEARCH_LIMIT = 40;
  * compare against.
  */
 function resolvedCorpusRoots(): readonly string[] {
-  const repoRoot = repoRootDir();
-  return POLICY_CORPUS_ROOTS.map((root) =>
-    realpathSync(path.resolve(repoRoot, root)),
-  );
+  return POLICY_CORPUS_ROOTS.map((_root, i) => realpathInRoot(i, ""));
 }
 
 /**
@@ -90,7 +116,7 @@ function resolvedCorpusRoots(): readonly string[] {
  *   non-.md path outside the corpus is still reported as a path error, and
  *   any .md-looking path outside the corpus never gets an extension pass.
  */
-function resolveCorpusPath(relPath: string): string {
+function resolveCorpusPath(relPath: string): { rootIndex: number; rest: string } {
   if (typeof relPath !== "string" || relPath.length === 0) {
     throw new PolicyCorpusPathError("refused: empty path");
   }
@@ -98,29 +124,49 @@ function resolveCorpusPath(relPath: string): string {
     throw new PolicyCorpusPathError("refused: path contains a null byte");
   }
 
-  const repoRoot = repoRootDir();
-  const candidate = path.resolve(repoRoot, relPath);
+  // Normalise against the repo root without touching the filesystem (handles
+  // `..` and absolute-path overrides exactly as path.resolve did), then pick
+  // the corpus root the path textually names and join the remainder onto that
+  // literal root. Anything naming no root is outside the corpus.
+  const normalized = path
+    .normalize(
+      path.isAbsolute(relPath) ? path.relative(process.cwd(), relPath) : relPath,
+    )
+    .split(path.sep)
+    .join("/");
+  const rootIndex = POLICY_CORPUS_ROOTS.findIndex(
+    (root) => normalized === root || normalized.startsWith(root + "/"),
+  );
+  if (rootIndex === -1) {
+    throw new PolicyCorpusPathError(
+      `refused: path outside the policy corpus: ${relPath}`,
+    );
+  }
+  const remainder = normalized.slice(POLICY_CORPUS_ROOTS[rootIndex].length + 1);
 
   const roots = resolvedCorpusRoots();
 
   // Resolve symlinks in the candidate itself when it exists, so a symlink
   // *inside* an allowed root that points *outside* it cannot be used to
   // escape the corpus. If the candidate doesn't exist yet, `realpathSync`
-  // throws — fall back to the un-realpath'd candidate, which will still be
+  // throws: fall back to the un-realpath'd candidate, which will still be
   // boundary-checked below and will fail existence at read time regardless.
   let resolvedCandidate: string;
   try {
-    resolvedCandidate = realpathSync(candidate);
+    resolvedCandidate = realpathInRoot(rootIndex, remainder);
   } catch {
-    resolvedCandidate = candidate;
+    resolvedCandidate =
+      rootIndex === 0
+        ? path.join(process.cwd(), "docs", "policies", remainder)
+        : path.join(process.cwd(), "agents", "reviewer", remainder);
   }
 
-  const inside = roots.some(
+  const matched = roots.findIndex(
     (root) =>
       resolvedCandidate === root ||
       resolvedCandidate.startsWith(root + path.sep),
   );
-  if (!inside) {
+  if (matched === -1) {
     throw new PolicyCorpusPathError(
       `refused: path outside the policy corpus: ${relPath}`,
     );
@@ -132,7 +178,7 @@ function resolveCorpusPath(relPath: string): string {
     );
   }
 
-  return resolvedCandidate;
+  return { rootIndex: matched, rest: path.relative(roots[matched], resolvedCandidate) };
 }
 
 /**
@@ -142,8 +188,8 @@ function resolveCorpusPath(relPath: string): string {
  * bytes. Content is capped at 64KB with a truncation marker appended.
  */
 export function readPolicyFileSafe(relPath: string): string {
-  const absPath = resolveCorpusPath(relPath);
-  const content = readFileSync(absPath, "utf-8");
+  const { rootIndex, rest } = resolveCorpusPath(relPath);
+  const content = readInRoot(rootIndex, rest);
   if (Buffer.byteLength(content, "utf-8") > MAX_READ_BYTES) {
     // Slice by byte-safe approximation: cap by UTF-16 code units, which is
     // a conservative (never-larger) proxy for UTF-8 byte length here since
@@ -170,15 +216,14 @@ function walkMarkdownFiles(absDir: string): string[] {
 
 /** Every readable corpus file, as repo-root-relative POSIX paths, sorted. */
 export function listPolicyCorpusFiles(): string[] {
-  const repoRoot = repoRootDir();
   const files: string[] = [];
-  for (const root of POLICY_CORPUS_ROOTS) {
-    const absRoot = path.resolve(repoRoot, root);
-    for (const absFile of walkMarkdownFiles(absRoot)) {
-      const relToRepo = path.relative(repoRoot, absFile).split(path.sep).join("/");
-      files.push(relToRepo);
+  const rootDirs = corpusRootDirs();
+  POLICY_CORPUS_ROOTS.forEach((root, i) => {
+    for (const absFile of walkMarkdownFiles(rootDirs[i])) {
+      const inRoot = path.relative(rootDirs[i], absFile).split(path.sep).join("/");
+      files.push(`${root}/${inRoot}`);
     }
-  }
+  });
   return files.sort();
 }
 

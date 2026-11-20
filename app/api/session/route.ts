@@ -4,6 +4,8 @@ import { z } from "zod";
 import { demoDoorClosed, demoDoorFallbacks } from "@/lib/config/demo-doors";
 import { checkReadOnlyMode, checkSessionAttempt, clientKeyFor, issueDemoSession, extractSessionToken, resolveSession } from "@/lib/services/route-guard";
 import { isPersonaKey, resolveActor } from "@/lib/services/actors";
+import { safeDriverCode } from "@/lib/db/driver-error";
+import { BodyReadError, PRE_SESSION_BODY_MAX_BYTES, readJsonBody } from "@/lib/http/read-json-body";
 import {
   resolveWorkspaceCookieSecret,
   signWorkspaceId,
@@ -58,21 +60,9 @@ const bodySchema = z.object({
   personaKey: z.string().min(1).max(100),
 });
 
-const SAFE_DRIVER_CODES = new Set([
-  "EROFS", "ECONNREFUSED", "ECONNRESET", "ETIMEDOUT", "ENOTFOUND",
-  "08000", "08003", "08006", "53300", "57P01",
-  "42P01", "42703", "28P01", "28000", "42501", "3D000",
-  "CERT_HAS_EXPIRED", "DEPTH_ZERO_SELF_SIGNED_CERT",
-  "UNABLE_TO_VERIFY_LEAF_SIGNATURE", "ERR_TLS_CERT_ALTNAME_INVALID",
-  "SELF_SIGNED_CERT_IN_CHAIN", "CERT_REJECTED",
-]);
-
 function storageUnavailable(error: unknown): Response {
   const requestId = crypto.randomUUID();
-  const outer = error && typeof error === "object" ? error as { code?: unknown; cause?: unknown } : {};
-  const inner = outer.cause && typeof outer.cause === "object" ? outer.cause as { code?: unknown } : {};
-  const rawCode = typeof outer.code === "string" ? outer.code : inner.code;
-  const causeCode = typeof rawCode === "string" && SAFE_DRIVER_CODES.has(rawCode) ? rawCode : "UNKNOWN";
+  const causeCode = safeDriverCode(error) ?? "UNKNOWN";
   console.error("Demo session storage unavailable", { requestId, causeCode });
   return Response.json(
     { error: "Demo session storage is temporarily unavailable. Please try again later.", code: "DEMO_STORAGE_UNAVAILABLE", requestId },
@@ -96,9 +86,10 @@ export async function POST(req: Request): Promise<Response> {
   // Parse and validate the public input before any database-backed guards.
   let json: unknown;
   try {
-    json = await req.json();
-  } catch {
-    return Response.json({ error: "invalid JSON body" }, { status: 400 });
+    json = await readJsonBody(req, PRE_SESSION_BODY_MAX_BYTES);
+  } catch (error) {
+    if (error instanceof BodyReadError) return Response.json({ error: error.message }, { status: error.status });
+    throw error;
   }
 
   const parsed = bodySchema.safeParse(json);

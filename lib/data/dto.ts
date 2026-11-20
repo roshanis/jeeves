@@ -14,7 +14,7 @@ export interface InitiativeSummary {
   /** True for shared seeded fixtures; false for workspace-owned live rows. */
   isSeeded?: boolean;
   title: string;
-  tier: Tier;
+  tier: Tier | null;
   state: LifecycleState;
   flags: OverlayFlags;
   requester: string;

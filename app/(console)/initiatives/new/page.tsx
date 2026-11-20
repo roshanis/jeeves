@@ -4,6 +4,7 @@
 // state); this page provides the static shell.
 import { IntakeModeToggle } from "@/components/jeeves/intake-mode-toggle";
 import { requireViewer } from "@/lib/services/require-viewer";
+import { configuredOperatorToken } from "@/lib/services/route-guard";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
@@ -26,7 +27,7 @@ export default async function NewInitiativePage() {
           triage (tier + required review domains) the moment you answer them.
         </p>
       </div>
-      <IntakeModeToggle />
+      <IntakeModeToggle realRequestsEnabled={configuredOperatorToken() !== null} />
     </div>
   );
 }

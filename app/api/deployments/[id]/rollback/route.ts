@@ -41,6 +41,7 @@ import {
   ConflictError,
 } from "@/lib/services/promotion-service";
 import { runMutationGuard } from "@/lib/services/route-guard";
+import { isRouteId, notFoundResponse } from "@/lib/http/route-id";
 
 const bodySchema = z.object({
   targetDeploymentVersionId: z.string().min(1).max(200),
@@ -51,21 +52,15 @@ export async function POST(
   req: Request,
   context: { params: Promise<{ id: string }> },
 ): Promise<Response> {
-  let json: unknown;
-  try {
-    json = await req.json();
-  } catch {
-    return Response.json({ error: "invalid JSON body" }, { status: 400 });
-  }
-
-  const body = json as { targetDeploymentVersionId?: unknown; reason?: unknown };
-  const bodyText: Record<string, string> = {
-    targetDeploymentVersionId:
-      typeof body?.targetDeploymentVersionId === "string" ? body.targetDeploymentVersionId : "",
-    reason: typeof body?.reason === "string" ? body.reason : "",
-  };
-
-  const guard = await runMutationGuard(req, bodyText, {
+  const guard = await runMutationGuard(req, (json) => {
+    const body = json as { targetDeploymentVersionId?: unknown; reason?: unknown };
+    const bodyText: Record<string, string> = {
+      targetDeploymentVersionId:
+        typeof body?.targetDeploymentVersionId === "string" ? body.targetDeploymentVersionId : "",
+      reason: typeof body?.reason === "string" ? body.reason : "",
+    };
+    return bodyText;
+  }, {
     inputLimits: [
       { field: "targetDeploymentVersionId", maxChars: 200 },
       { field: "reason", maxChars: 2000 },
@@ -76,6 +71,7 @@ export async function POST(
   if (!guard.ok) {
     return Response.json({ error: guard.failure.message }, { status: guard.failure.status });
   }
+  const json = guard.json;
 
   const parsed = bodySchema.safeParse(json);
   if (!parsed.success) {
@@ -83,6 +79,7 @@ export async function POST(
   }
 
   const { id } = await context.params;
+  if (!isRouteId(id)) return notFoundResponse();
   const db = getDb();
 
   try {

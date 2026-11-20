@@ -42,6 +42,12 @@ describe("/sign-in", () => {
     expect(html).not.toMatch(/<form|<input|<button/i);
   });
 
+  it("is a main landmark that the layout's skip link can focus", () => {
+    vi.stubEnv("JEEVES_MODE", undefined);
+    const html = renderToStaticMarkup(<SignInPage />);
+    expect(html).toMatch(/<main[^>]*\bid="main-content"[^>]*\btabindex="-1"/i);
+  });
+
   it("in demo forwards to the site root", () => {
     vi.stubEnv("JEEVES_MODE", "demo");
     expect(() => SignInPage()).toThrowError(expect.objectContaining({ url: "/" }));

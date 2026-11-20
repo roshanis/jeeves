@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Pool as PgPool } from "pg";
+import { sql } from "drizzle-orm";
 import { ProductionConfigError } from "../config/deployment-mode";
 import { closeDb, getDb, getDbDriverForHandle, localPgliteDirectory } from "./client";
 
@@ -142,5 +143,50 @@ describe("getDb deployment mode", () => {
     process.env.JEEVES_PGLITE_DIR = path.join(scratchDir(), "pglite");
     const db = getDb();
     expect(getDbDriverForHandle(db)).toBe("pglite");
+  });
+});
+
+describe("getDb Neon pool hardening", () => {
+  it("registers an error listener that does not throw or log the URL, and bounds connect time", async () => {
+    delete process.env.VERCEL;
+    process.env.DATABASE_URL = "postgres://u:secret-pw@ep-x.us-east-1.aws.neon.tech/db";
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      getDb();
+      const slot = (globalThis as Record<symbol, unknown>)[Symbol.for("jeeves.db.cachedDb")] as {
+        pool: { emit: (e: string, ...a: unknown[]) => boolean; options: { connectionTimeoutMillis?: number } };
+      };
+      expect(slot.pool.options.connectionTimeoutMillis).toBeGreaterThan(0);
+      expect(() => slot.pool.emit("error", new Error("terminating connection secret-pw"))).not.toThrow();
+      expect(JSON.stringify(log.mock.calls)).not.toContain("secret-pw");
+    } finally {
+      log.mockRestore();
+      await closeDb();
+    }
+  });
+});
+
+describe("getDb transaction error redaction", () => {
+  it("returns a handle whose transaction sanitises failed statements", async () => {
+    delete process.env.VERCEL;
+    delete process.env.DATABASE_URL;
+    delete process.env.POSTGRES_URL;
+    process.env.JEEVES_PGLITE_DIR = `memory://client-test-${Date.now()}`;
+    try {
+      const db = getDb();
+      const err = (await db
+        .transaction(async (tx) => {
+          await tx.execute(sql`select * from no_such_table_xyz where a = ${"marker-77aa"}`);
+        })
+        .then(
+          () => null,
+          (e: unknown) => e,
+        )) as Error | null;
+      expect(err).toBeInstanceOf(Error);
+      expect(err!.message).not.toContain("marker-77aa");
+      expect(err!.message).not.toContain("params");
+    } finally {
+      await closeDb();
+    }
   });
 });

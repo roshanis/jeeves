@@ -54,3 +54,27 @@ it.each(['submit response', 'refresh'])('retries the same packet after a lost %s
  expect(submitCalls).toHaveLength(2);
  expect(submitCalls.map(call=>call[2])).toEqual([{action:'submit',packetId:'packet',expectedRevision:1},{action:'submit',packetId:'packet',expectedRevision:1}]);
 });
+
+it('does not rebind a signed domain to a new document version on upload',async()=>{
+ mocks.session.mockReturnValue({session:{token:'token'},startDemo:vi.fn()});mocks.base64.mockResolvedValue('cGRm');
+ const docA={id:'A',fileName:'a.pdf',version:1,supersedesId:null,byteSize:1024,createdAt:'2026-01-01T00:00:00Z',sha256:'x'};
+ const entries=[{controlId:'H-01',documentId:'A',pageReference:'',note:''},{controlId:'S-01',documentId:'A',pageReference:'',note:''}];
+ const req=(id:string,domain:string,signed:boolean)=>({id,name:id,domain,description:'d',policySource:null,status:'accepted',entry:{controlId:id,documentId:'A',pageReference:'',note:''},assessment:null,signed});
+ const initial={...evidenceState,documents:[docA],draft:{id:'draft',revision:1,entries},requirements:[req('H-01','privacy-hipaa',true),req('S-01','security',false)]};
+ mocks.request.mockImplementation((_s,_t,body)=>{
+  if(body?.action==='upload')return Promise.resolve({...docA,id:'B',version:2,supersedesId:'A'});
+  if(body?.action==='save_draft')return Promise.resolve({id:'draft',revision:2,entries:body.entries});
+  return Promise.resolve(initial);
+ });
+ render(<EvidenceTab slug="demo"/>);
+ fireEvent.change(await screen.findByLabelText('Choose document'),{target:{files:[new File(['pdf'],'a2.pdf',{type:'application/pdf'})]}});
+ fireEvent.change(screen.getByLabelText('Document version'),{target:{value:'A'}});
+ fireEvent.click(screen.getByRole('checkbox'));
+ fireEvent.click(screen.getByRole('button',{name:'Upload document'}));
+ await screen.findByText(/Document saved privately/);
+ fireEvent.click(screen.getByRole('button',{name:'Save evidence draft'}));
+ await waitFor(()=>expect(mocks.request.mock.calls.some(c=>c[2]?.action==='save_draft')).toBe(true));
+ const saved=mocks.request.mock.calls.find(c=>c[2]?.action==='save_draft')![2].entries;
+ expect(saved.find((e:{controlId:string})=>e.controlId==='H-01').documentId).toBe('A');
+ expect(saved.find((e:{controlId:string})=>e.controlId==='S-01').documentId).toBe('B');
+});

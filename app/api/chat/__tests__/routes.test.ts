@@ -11,6 +11,10 @@ import { createTestDb, closeTestDb, type TestDb } from "@/lib/db/test-client";
 import { seedDatabase } from "@/scripts/seed";
 import * as agentsModule from "@/lib/agents";
 import { AgentInitializationError } from "@/lib/agents/initialization-error";
+import * as dataModule from "@/lib/data";
+import { getBudgetStoreForTests } from "@/lib/services/route-guard";
+import { createDraft } from "@/lib/services/initiative-service";
+import { CHAMPION_PREFILL_PAYLOAD } from "@/lib/intake/champion-prefill";
 
 let testDb: TestDb;
 
@@ -171,6 +175,147 @@ describe("POST /api/chat/auditor", () => {
     expect(json.queryUsed).toBe("overdue-controls");
   });
 
+  it("grounds on the initiative's own events when the question names the documented slug member-chat-copilot (api-initiatives-F16)", async () => {
+    const token = await issueSessionFor("angela-torres", "40.1.0.1");
+    const { POST } = await import("../auditor/route");
+    const res = await POST(
+      new Request("http://localhost/api/chat/auditor", {
+        method: "POST",
+        headers: bearer(token, "40.1.0.1"),
+        body: JSON.stringify({ question: "Show the audit history of member-chat-copilot" }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect((await res.json()).queryUsed).toBe("initiative-events:member-chat-copilot");
+  });
+
+  it("resolves a live slug with a hex suffix, and does not substitute the default query for an unknown slug (api-initiatives-F16)", async () => {
+    const draft = await createDraft(testDb, {
+      payload: CHAMPION_PREFILL_PAYLOAD,
+      requesterActor: { id: "priya-raman", role: "requester" },
+      requesterName: "Priya Raman",
+      workspaceId: null,
+    });
+    const { initiatives } = await import("@/lib/db/schema");
+    const slug = (await testDb.select().from(initiatives)).find((i) => i.id === draft.initiativeId)!.slug;
+    expect(slug).toMatch(/-[0-9a-f]{8}$/);
+    const token = await issueSessionFor("angela-torres", "40.1.0.2");
+    const { POST } = await import("../auditor/route");
+    const ask = async (question: string) =>
+      (await POST(
+        new Request("http://localhost/api/chat/auditor", {
+          method: "POST",
+          headers: bearer(token, "40.1.0.2"),
+          body: JSON.stringify({ question }),
+        }),
+      )).json();
+    expect((await ask(`Show the history of ${slug}`)).queryUsed).toBe(`initiative-events:${slug}`);
+    const unknown = await ask("Show the history of no-such-initiative-0123abcd");
+    expect(unknown.queryUsed).toMatch(/^initiative-not-found:/);
+    expect(unknown.rows).toEqual([]);
+  });
+
+  it("bounds the grounding sent to the agent and reserves budget from its size (api-initiatives-F7)", async () => {
+    const token = await issueSessionFor("angela-torres", "40.1.0.3");
+    const bigRows = Array.from({ length: 2000 }, (_, i) => ({ id: `r${i}`, detail: "x".repeat(1000) }));
+    const realProvider = dataModule.getProvider();
+    const providerSpy = vi
+      .spyOn(dataModule, "getProvider")
+      .mockReturnValue(Object.assign(Object.create(realProvider), { auditQuery: async () => bigRows }));
+    const auditorAnswer = vi.fn(async (input: { queryUsed: string }) => ({
+      ok: true as const,
+      value: { answerMd: "ok", citedEvents: [], queryUsed: input.queryUsed },
+    }));
+    const portSpy = vi.spyOn(agentsModule, "getAgentPort").mockReturnValue({ auditorAnswer } as never);
+    const day = new Date().toISOString().slice(0, 10);
+    try {
+      const before = await getBudgetStoreForTests().getUsed(day);
+      const { POST } = await import("../auditor/route");
+      const res = await POST(
+        new Request("http://localhost/api/chat/auditor", {
+          method: "POST",
+          headers: bearer(token, "40.1.0.3"),
+          body: JSON.stringify({ question: "Which initiatives touch PHI?" }),
+        }),
+      );
+      expect(res.status).toBe(200);
+      const sent = auditorAnswer.mock.calls[0]![0] as unknown as { groundingRows: { detail: string }[] };
+      expect(sent.groundingRows.length).toBeLessThanOrEqual(50);
+      expect(Math.max(...sent.groundingRows.map((r) => r.detail.length))).toBeLessThanOrEqual(500);
+      const reserved = (await getBudgetStoreForTests().getUsed(day)) - before;
+      expect(reserved).toBeGreaterThanOrEqual(Math.ceil(JSON.stringify(sent.groundingRows).length / 4));
+    } finally {
+      portSpy.mockRestore();
+      providerSpy.mockRestore();
+    }
+  });
+
+  it("does not report initiative-not-found for an ordinary hyphenated word with no keyword (api-initiatives-F7)", async () => {
+    const token = await issueSessionFor("angela-torres", "40.1.0.4");
+    const { POST } = await import("../auditor/route");
+    const res = await POST(
+      new Request("http://localhost/api/chat/auditor", {
+        method: "POST",
+        headers: bearer(token, "40.1.0.4"),
+        body: JSON.stringify({ question: "Is a re-review expected soon?" }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.queryUsed).toBe("member-facing-phi");
+    expect(json.rows.length).toBeGreaterThan(0);
+  });
+
+  it("still reports initiative-not-found for an unknown three-segment slug (api-initiatives-F7)", async () => {
+    const token = await issueSessionFor("angela-torres", "40.1.0.5");
+    const { POST } = await import("../auditor/route");
+    const res = await POST(
+      new Request("http://localhost/api/chat/auditor", {
+        method: "POST",
+        headers: bearer(token, "40.1.0.5"),
+        body: JSON.stringify({ question: "Show the history of no-such-initiative please" }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.queryUsed).toBe("initiative-not-found:no-such-initiative");
+    expect(json.rows).toEqual([]);
+  });
+
+  it("keeps the newest events when an initiative's history exceeds the grounding bound (api-initiatives-F7)", async () => {
+    const token = await issueSessionFor("angela-torres", "40.1.0.6");
+    const events = Array.from({ length: 60 }, (_, i) => ({ id: `e${i}`, detail: `event ${i}` }));
+    const realProvider = dataModule.getProvider();
+    const providerSpy = vi.spyOn(dataModule, "getProvider").mockReturnValue(
+      Object.assign(Object.create(realProvider), {
+        getInitiativeDetail: async () => ({ summary: { slug: "member-chat-copilot" }, events }),
+      }),
+    );
+    const auditorAnswer = vi.fn(async (input: { queryUsed: string }) => ({
+      ok: true as const,
+      value: { answerMd: "ok", citedEvents: [], queryUsed: input.queryUsed },
+    }));
+    const portSpy = vi.spyOn(agentsModule, "getAgentPort").mockReturnValue({ auditorAnswer } as never);
+    try {
+      const { POST } = await import("../auditor/route");
+      const res = await POST(
+        new Request("http://localhost/api/chat/auditor", {
+          method: "POST",
+          headers: bearer(token, "40.1.0.6"),
+          body: JSON.stringify({ question: "Show the audit history of member-chat-copilot" }),
+        }),
+      );
+      expect(res.status).toBe(200);
+      const sent = auditorAnswer.mock.calls[0]![0] as unknown as { groundingRows: { id: string }[] };
+      expect(sent.groundingRows).toHaveLength(50);
+      expect(sent.groundingRows.map((r) => r.id)).toContain("e59");
+      expect(sent.groundingRows.map((r) => r.id)).not.toContain("e0");
+    } finally {
+      portSpy.mockRestore();
+      providerSpy.mockRestore();
+    }
+  });
+
   it("400s a question longer than the input-size cap", async () => {
     const token = await issueSessionFor("priya-raman", "40.0.0.6");
     const { POST } = await import("../auditor/route");
@@ -279,6 +424,32 @@ describe("POST /api/chat/intake", () => {
     expect(json.gaps.some((g: { ruleId: string }) => g.ruleId === "BLK-05")).toBe(false);
     expect(json.gaps.some((g: { ruleId: string }) => g.ruleId === "BLK-01")).toBe(true);
     expect(json.done).toBe(false);
+  });
+
+  it("does not reserve budget for a refused (403) or schema-invalid (400) call (auth-F4)", async () => {
+    const day = new Date().toISOString().slice(0, 10);
+    const reviewer = await issueSessionFor("elena-vasquez", "41.1.0.1");
+    const requester = await issueSessionFor("priya-raman", "41.1.0.2");
+    const { POST } = await import("../intake/route");
+    const before = await getBudgetStoreForTests().getUsed(day);
+    const conversation = Array.from({ length: 10 }, () => ({ role: "user", content: "x".repeat(4000) }));
+    const forbidden = await POST(
+      new Request("http://localhost/api/chat/intake", {
+        method: "POST",
+        headers: bearer(reviewer, "41.1.0.1"),
+        body: JSON.stringify({ conversation, partialPayload: EMPTY_INTAKE_PAYLOAD }),
+      }),
+    );
+    expect(forbidden.status).toBe(403);
+    const invalid = await POST(
+      new Request("http://localhost/api/chat/intake", {
+        method: "POST",
+        headers: bearer(requester, "41.1.0.2"),
+        body: JSON.stringify({ conversation, partialPayload: "not-an-object" }),
+      }),
+    );
+    expect(invalid.status).toBe(400);
+    expect(await getBudgetStoreForTests().getUsed(day)).toBe(before);
   });
 
   it("400s a conversation entry longer than the per-message cap", async () => {

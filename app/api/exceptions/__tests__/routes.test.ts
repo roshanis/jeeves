@@ -9,6 +9,7 @@ import { createTestDb, closeTestDb, type TestDb } from "@/lib/db/test-client";
 import { seedDatabase } from "@/scripts/seed";
 import { controlDefinitions, deploymentVersions, effectiveControls, sessions } from "@/lib/db/schema";
 import { createDraft } from "@/lib/services/initiative-service";
+import * as exceptionService from "@/lib/services/exception-service";
 import { CHAMPION_PREFILL_PAYLOAD } from "@/lib/intake/champion-prefill";
 import { resolveWorkspaceCookieSecret, signWorkspaceId } from "@/lib/security/workspace-cookie";
 
@@ -165,6 +166,68 @@ describe("POST /api/exceptions (request)", () => {
   });
 });
 
+describe("duplicate-pending mapping on request and renew (api-initiatives-F13)", () => {
+  const unique = (): Error => Object.assign(new Error("x"), { code: "23505" });
+  const wrappedUnique = (): Error => Object.assign(new Error("x"), { cause: { code: "23505" } });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  async function callRequest(token: string, ip: string): Promise<Response> {
+    const { POST } = await import("../route");
+    return POST(
+      new Request("http://localhost/api/exceptions", {
+        method: "POST",
+        headers: bearer(token, ip),
+        body: JSON.stringify({ effectiveControlId: "ec-any", reason: "Vendor attestation renewal in progress." }),
+      }),
+    );
+  }
+
+  async function callRenew(token: string, ip: string): Promise<Response> {
+    const { POST } = await import("../[id]/renew/route");
+    return POST(
+      new Request("http://localhost/api/exceptions/exc-any/renew", {
+        method: "POST",
+        headers: bearer(token, ip),
+        body: JSON.stringify({ reason: "Still in progress." }),
+      }),
+      { params: Promise.resolve({ id: "exc-any" }) },
+    );
+  }
+
+  it.each([
+    ["a unique violation on the error", unique],
+    ["a unique violation on its cause", wrappedUnique],
+  ])("409s POST /api/exceptions on %s", async (_name, make) => {
+    const token = await issueSessionFor("marcus-webb", "40.0.9.1");
+    vi.spyOn(exceptionService, "requestException").mockRejectedValue(make());
+    const res = await callRequest(token, "40.0.9.1");
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toBe("an exception is already pending for this control");
+  });
+
+  it.each([
+    ["a unique violation on the error", unique],
+    ["a unique violation on its cause", wrappedUnique],
+  ])("409s POST /api/exceptions/[id]/renew on %s", async (_name, make) => {
+    const token = await issueSessionFor("marcus-webb", "40.0.9.2");
+    vi.spyOn(exceptionService, "renewException").mockRejectedValue(make());
+    const res = await callRenew(token, "40.0.9.2");
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toBe("an exception is already pending for this control");
+  });
+
+  it("rethrows an unexpected error from request and renew", async () => {
+    const token = await issueSessionFor("marcus-webb", "40.0.9.3");
+    vi.spyOn(exceptionService, "requestException").mockRejectedValue(new Error("boom"));
+    vi.spyOn(exceptionService, "renewException").mockRejectedValue(new Error("boom"));
+    await expect(callRequest(token, "40.0.9.3")).rejects.toThrow("boom");
+    await expect(callRenew(token, "40.0.9.3")).rejects.toThrow("boom");
+  });
+});
+
 describe("POST /api/exceptions/[id]/decide", () => {
   it("403s a non-decider (reviewer) and 200s an approver who is not the requester", async () => {
     const requesterToken = await issueSessionFor("marcus-webb", "40.0.2.1");
@@ -214,6 +277,31 @@ describe("POST /api/exceptions/[id]/decide", () => {
       { params: Promise.resolve({ id }) },
     );
     expect(res.status).toBe(403);
+  });
+});
+
+describe("POST /api/exceptions/[id]/decide as admin", () => {
+  it("403s an admin on approve and on reject, and the exception stays requested", async () => {
+    const requesterToken = await issueSessionFor("marcus-webb", "40.0.4.1");
+    const workspaceId = await sessionWorkspace(requesterToken);
+    const ecId = await anEffectiveControlId(workspaceId);
+    const { id } = await (await request(requesterToken, ecId, "40.0.4.1")).json();
+
+    const { POST: decidePost } = await import("../[id]/decide/route");
+    const adminToken = await issueSessionFor("ray-chen", "40.0.4.2", workspaceId);
+    for (const approve of [true, false]) {
+      const res = await decidePost(
+        new Request(`http://localhost/api/exceptions/${id}/decide`, {
+          method: "POST",
+          headers: bearer(adminToken, "40.0.4.2"),
+          body: JSON.stringify({ approve, reason: "admin decides" }),
+        }),
+        { params: Promise.resolve({ id }) },
+      );
+      expect(res.status).toBe(403);
+    }
+    const row = (await exceptionService.listExceptions(testDb)).find((e) => e.id === id);
+    expect(row?.status).toBe("requested");
   });
 });
 

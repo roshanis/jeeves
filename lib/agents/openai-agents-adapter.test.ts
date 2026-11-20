@@ -417,6 +417,19 @@ describe("openai-agents-adapter — PortFailure kinds", () => {
     }
   });
 
+  it("never returns provider or network error text in the PortFailure message", async () => {
+    const leaky = "Incorrect API key provided: sk-proj-...abcd for org-xyz at db.internal.example:5432";
+    for (const err of [providerErrorWithStatus(401, leaky), new Error(leaky)]) {
+      const result = await createOpenAiAgentsAdapterWithRunner(throwingRun(err)).draftReview(draftInput());
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        const message = "message" in result.error ? result.error.message : "";
+        expect(message).not.toMatch(/sk-|org-|db\.internal|abcd/);
+        expect(message).toMatch(/model provider/);
+      }
+    }
+  });
+
   it("maps a simulated 429 to PortFailure{kind:provider, retryable:true}", async () => {
     const port = createOpenAiAgentsAdapterWithRunner(
       throwingRun(providerErrorWithStatus(429, "Rate limit exceeded")),

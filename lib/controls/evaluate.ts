@@ -50,6 +50,9 @@ export interface ControlEvaluationResult {
  * run. Only observations at or before `nowTs` are considered, so a
  * caller can replay history deterministically.
  *
+ * `since` (optional, exclusive) drops earlier observations so a breach
+ * already recorded as an incident is not found again after a resume.
+ *
  * `nowTs` is an argument, never read from the wall clock, so results are
  * reproducible in tests and safe for idempotent re-runs.
  */
@@ -57,9 +60,10 @@ export function evaluateControl(
   control: EffectiveControl,
   observations: Observation[],
   nowTs: number,
+  since?: number,
 ): ControlEvaluationResult {
   const relevant = observations
-    .filter((o) => o.ts <= nowTs)
+    .filter((o) => o.ts <= nowTs && (since === undefined || o.ts > since))
     .slice()
     .sort((a, b) => a.ts - b.ts);
 

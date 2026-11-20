@@ -74,6 +74,19 @@ function isPlainHttpsUrl(value: string): boolean {
 }
 
 /**
+ * State of JEEVES_TRUSTED_PROXY_HOPS, parsed the way lib/services/route-guard.ts
+ * parses it: blank is unset, a non-negative safe integer or the keyword `none`
+ * (case-insensitive: no proxy in front, header ignored) is valid, anything
+ * else is malformed (route-guard then rate-limits every caller as one client).
+ */
+export function trustedProxyHopsState(env: Env = process.env): "unset" | "valid" | "malformed" {
+  const raw = env.JEEVES_TRUSTED_PROXY_HOPS?.trim();
+  if (!raw) return "unset";
+  if (raw.toLowerCase() === "none") return "valid";
+  return /^\d+$/.test(raw) && Number.isSafeInteger(Number(raw)) ? "valid" : "malformed";
+}
+
+/**
  * Validate the environment a production install needs, collecting all
  * problems into one ProductionConfigError.
  *
@@ -124,6 +137,16 @@ export function assertProductionConfig(env: Env = process.env): void {
 
   if (!env.JEEVES_TENANT_ID?.trim()) {
     problems.push("JEEVES_TENANT_ID is required: the identifier of the organisation this install serves");
+  }
+
+  const hops = trustedProxyHopsState(env);
+  if (hops === "unset") {
+    problems.push(
+      "JEEVES_TRUSTED_PROXY_HOPS is required: how many reverse proxies in front of the app append to X-Forwarded-For " +
+        "(none with no proxy in front, 0 only when the platform overwrites the header, 1 behind an AWS ALB); unset, rate limits key on a caller-supplied header",
+    );
+  } else if (hops === "malformed") {
+    problems.push("JEEVES_TRUSTED_PROXY_HOPS must be a non-negative integer or none (none with no proxy in front, 0 on Vercel, 1 behind an AWS ALB, 2 behind CloudFront and an ALB)");
   }
 
   if (problems.length > 0) throw new ProductionConfigError(problems);

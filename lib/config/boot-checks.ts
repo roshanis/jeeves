@@ -5,9 +5,10 @@
 // or database dependencies belongs behind its `NEXT_RUNTIME === "nodejs"`
 // guard in a dynamically imported module like this one.
 import type { InstallationDb } from "../db/installation";
+import { safeDriverCode } from "../db/driver-error";
 import { runtimeDatabaseUrl } from "../db/runtime-config";
 import { markBootFailed } from "./boot-state";
-import { assertProductionConfig, deploymentMode, ProductionConfigError } from "./deployment-mode";
+import { assertProductionConfig, deploymentMode, ProductionConfigError, trustedProxyHopsState } from "./deployment-mode";
 import { InstallationCheckError, verifyInstallation } from "./installation-check";
 
 export interface BootCheckDeps {
@@ -47,11 +48,16 @@ const defaultSleep = (ms: number): Promise<void> => new Promise((resolve) => set
  * Errors from the database layer can carry the connection string (a refused
  * connection that names its target, a malformed URL). The boot log is the one
  * place those errors surface, so the configured URL is cut out of the message.
+ * Drizzle wraps the driver error, so its message names only the query: the
+ * allow-listed driver code from the cause chain is appended (never the cause's
+ * own text, which can name host and user).
  */
 function describeError(err: unknown, env: Record<string, string | undefined>): string {
   const message = err instanceof Error ? err.message : "unknown error";
   const url = runtimeDatabaseUrl(env);
-  return url ? message.split(url).join("[database url]") : message;
+  const scrubbed = url ? message.split(url).join("[database url]") : message;
+  const code = safeDriverCode(err);
+  return code ? `${scrubbed} (${code})` : scrubbed;
 }
 
 /**
@@ -112,8 +118,22 @@ export async function runBootChecks(deps: BootCheckDeps = {}): Promise<void> {
       // An invalid configuration may name no database at all; never go on to open one.
       return;
     }
-  } else if (!runtimeDatabaseUrl(env) && env.DATA_PROVIDER !== "db") {
-    return;
+  } else {
+    // Production reports this in assertProductionConfig. In demo a malformed
+    // value would silently put every caller in one rate-limit bucket, so it
+    // fails the boot; unset is only a warning (Vercel overwrites the header).
+    const hops = trustedProxyHopsState(env);
+    if (hops === "malformed") {
+      fail("JEEVES_TRUSTED_PROXY_HOPS must be a non-negative integer or none (none with no proxy in front, 0 on Vercel, 1 behind an AWS ALB)");
+      return;
+    }
+    if (hops === "unset" && !env.VERCEL) {
+      log(
+        "[boot] JEEVES_TRUSTED_PROXY_HOPS is not set: rate limits key on the leftmost X-Forwarded-For entry, " +
+          "which a caller can forge unless the proxy in front overwrites it. Set it (none with no proxy in front, 1 behind an AWS ALB or an appending proxy).",
+      );
+    }
+    if (!runtimeDatabaseUrl(env) && env.DATA_PROVIDER !== "db") return;
   }
 
   const delays = mode === "demo" ? DEMO_CHECK_RETRY_DELAYS_MS : [];

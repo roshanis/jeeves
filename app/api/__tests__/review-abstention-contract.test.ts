@@ -13,7 +13,7 @@ import { ConflictError, IllegalTransitionError, NotFoundError, ValidationError }
 const context = { params: Promise.resolve({ cycleId: "cycle", domain: "privacy-hipaa" }) };
 const actor = { id: "marcus-webb", role: "reviewer" };
 const request = (body: unknown) => new Request("http://localhost/api/reviews/cycle/privacy-hipaa/abstain", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
-beforeEach(() => { vi.resetAllMocks(); mocks.guard.mockResolvedValue({ ok: true, actor, workspaceId: "workspace" }); mocks.abstain.mockResolvedValue({status:"abstained"}); mocks.resume.mockResolvedValue({status:"returned"}); });
+beforeEach(() => { vi.resetAllMocks(); mocks.guard.mockImplementation(async (req: Request, body?: unknown) => ({ ok: true, actor, workspaceId: "workspace", json: typeof body === "function" ? await req.json().catch(() => ({})) : undefined })); mocks.abstain.mockResolvedValue({status:"abstained"}); mocks.resume.mockResolvedValue({status:"returned"}); });
 describe("review abstention routes", () => {
   it.each([{}, {reason:""}, {reason:"  ",expectedRevision:0}, {reason:"Conflict"}, {reason:"x".repeat(2001),expectedRevision:0}, {reason:"Conflict",expectedRevision:-1}])("rejects missing reason/revision and invalid bodies", async (body) => {
     expect((await abstain(request(body), context)).status).toBe(400);

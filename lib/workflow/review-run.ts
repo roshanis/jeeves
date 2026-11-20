@@ -11,7 +11,7 @@ import { lockCurrentReviewCycle, ReviewIntegrityError, type ReviewTx } from "../
 import { loadReviewContext } from "./review-context";
 import type { DraftBudgetPolicy } from "./draft-execution-policy";
 
-export type SkipReason = "already signed" | "already running" | "superseded" | "reviewer abstained";
+export type SkipReason = "already signed" | "already running" | "superseded" | "reviewer abstained" | "not required";
 export interface DraftRunDomainOutcome { domain: Domain; status: "drafted" | "failed" | "skipped"; error?: PortFailure; reason?: SkipReason }
 export interface StartDraftRunResult { runId: string; cycleId: string; outcomes: DraftRunDomainOutcome[] }
 export type DraftRunDomainStatus = "pending" | "drafted" | "signed" | "returned" | "abstained" | "failed";
@@ -55,10 +55,11 @@ async function receipt(tx: ReviewTx, claim: Claim, options: StartDraftRunOptions
 async function claimDomain(db: Db, cycleId: string, domain: Domain, force: boolean, options: StartDraftRunOptions, deadline: number): Promise<Claim | DraftRunDomainOutcome> {
   return db.transaction(async (tx) => {
     const { initiative } = await lockCurrentReviewCycle(tx, cycleId, options.sessionWorkspaceId);
-    let [row] = await tx.select().from(reviewDecisions).where(and(eq(reviewDecisions.cycleId, cycleId), eq(reviewDecisions.domain, domain)));
+    const [row] = await tx.select().from(reviewDecisions).where(and(eq(reviewDecisions.cycleId, cycleId), eq(reviewDecisions.domain, domain)));
     if (!row) {
       if (force) throw new ReviewIntegrityError("not_found", "Review decision not found.");
-      [row] = await tx.insert(reviewDecisions).values({ id: `rd-${randomUUID()}`, cycleId, domain, status: "pending", createdAt: new Date(), citations: [] }).returning();
+      // Triage creates the rows for the domains it requires; the draft path never adds one.
+      return { domain, status: "skipped", reason: "not required" };
     }
     if (options.expectedRevision !== undefined && row.revision !== options.expectedRevision) throw new ReviewIntegrityError("conflict", "This draft changed. Refresh and review the current version.");
     if (row.status === "abstained") return { domain, status: "skipped", reason: "reviewer abstained" };

@@ -1,9 +1,8 @@
-import { existsSync, readFileSync } from "node:fs";
-import path from "node:path";
 import Link from "next/link";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { ShieldAlert } from "lucide-react";
+import { AGENT_DIRS, readAgentFile, type AgentDir } from "@/lib/agents/adapter-shared";
 import { GOVERNANCE_AGENTS, AGENT_GUARDRAIL } from "@/lib/agents/registry";
 import { DOMAIN_LABEL } from "@/components/jeeves/domain-labels";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -21,24 +20,23 @@ const SHARED_REVIEWER_INSTRUCTIONS_PATH = "agents/reviewer/instructions.md";
 
 /**
  * Reads an instruction file that lives under the repo `agents/` directory.
- * The `"agents"` path segment is a STATIC literal on purpose — per Next.js's
- * file-tracing guidance (`path.join(process.cwd(), 'subfolder', dynamicRest)`),
- * a statically-scoped subfolder lets the bundler trace and include the whole
- * `agents/` tree in this route's serverless function, instead of warning that
- * it cannot analyze a fully-dynamic path (and potentially shipping the route
- * without the files). `next.config.ts`'s `outputFileTracingIncludes` belt-and-
- * braces the same guarantee. Paths outside `agents/` (e.g. the completeness
- * agent's inline-prompt marker) are not files and return null.
+ * The path goes through `readAgentFile`, whose per-directory literal paths are
+ * what let Next's file tracer include exactly the `agents/` prompts in this
+ * route's output (see adapter-shared.ts); `next.config.ts`'s
+ * `outputFileTracingIncludes` belt-and-braces the same guarantee. Paths outside
+ * `agents/<known dir>/` (e.g. the completeness agent's inline-prompt marker)
+ * are not files and return null.
  */
 function readInstructionsFile(repoRelativePath: string): string | null {
-  const prefix = "agents/";
-  if (!repoRelativePath.startsWith(prefix)) return null;
-  const relativeToAgents = repoRelativePath.slice(prefix.length);
-  const absolutePath = path.join(process.cwd(), "agents", relativeToAgents);
-  if (!existsSync(absolutePath)) {
-    return null;
+  const [root, dir, ...rest] = repoRelativePath.split("/");
+  if (root !== "agents" || rest.length === 0) return null;
+  if (!(AGENT_DIRS as readonly string[]).includes(dir)) return null;
+  try {
+    return readAgentFile(dir as AgentDir, ...rest);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw err;
   }
-  return readFileSync(absolutePath, "utf-8");
 }
 
 export async function generateMetadata({

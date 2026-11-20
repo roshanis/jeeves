@@ -22,6 +22,11 @@ tsconfig.tsbuildinfo
 .env
 .env.*
 !.env.example
+# Patterns match from the context root only; deploy/podman/.env (created by
+# the compose quick start) needs the **/ forms.
+**/.env
+**/.env.*
+!**/.env.example
 
 # Local tooling noise
 *.log

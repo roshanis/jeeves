@@ -98,6 +98,15 @@ describe("build-context ignore files", () => {
     }
   });
 
+  it("excludes nested .env files too (deploy/podman/.env holds the stack secrets)", () => {
+    for (const file of [".dockerignore", ".containerignore"]) {
+      const p = patterns(file);
+      for (const required of ["**/.env", "**/.env.*", "!**/.env.example"]) {
+        expect(p, `${file} must contain ${required}`).toContain(required);
+      }
+    }
+  });
+
   it("does not exclude anything the Containerfile needs from the context", () => {
     const ignored = patterns(".dockerignore").filter((p) => !p.startsWith("!"));
     const needed = copyInstructions(read("deploy/podman/Containerfile"))

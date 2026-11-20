@@ -83,6 +83,7 @@ async function initiativeWithPromotableCheckpointInWorkspace(
     requesterName: "Priya Raman",
     workspaceId,
   });
+  await testDb.update(initiatives).set({ state: "deployed" }).where(eq(initiatives.id, draft.initiativeId));
   const awaitingId = `dep-awaiting-${randomUUID()}`;
   await testDb.insert(deploymentVersions).values({
     id: `dep-current-${randomUUID()}`,
@@ -137,6 +138,18 @@ describe("GET /api/deployments/promotions", () => {
     const json = (await res.json()) as Array<{ version: string; initiativeSlug: string }>;
     const entry = json.find((p) => p.version === "v2.1" && p.initiativeSlug === "pa-correspondence-model");
     expect(entry).toBeTruthy();
+  });
+});
+
+describe("GET /api/deployments/promotions isShared (ui-shell-F2)", () => {
+  it("marks seeded rows shared for a visitor with a session, and their own workspace rows not shared", async () => {
+    const { token, workspaceId } = await issueSessionWithWorkspace("angela-torres", "10.31.0.1");
+    const { awaitingId } = await initiativeWithPromotableCheckpointInWorkspace(workspaceId);
+    const { GET } = await import("../promotions/route");
+    const res = await GET(new Request("http://localhost/api/deployments/promotions", { headers: bearer(token, "10.31.0.1") }));
+    const json = (await res.json()) as Array<{ deploymentVersionId: string; version: string; initiativeSlug: string; isShared?: boolean }>;
+    expect(json.find((p) => p.initiativeSlug === "pa-correspondence-model" && p.version === "v2.1")!.isShared).toBe(true);
+    expect(json.find((p) => p.deploymentVersionId === awaitingId)!.isShared).toBe(false);
   });
 });
 

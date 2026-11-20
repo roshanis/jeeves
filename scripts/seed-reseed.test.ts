@@ -118,4 +118,43 @@ describe("scripts/seed.ts — reseed over live state", () => {
     }
     expect(await testDb.select().from(initiatives)).toHaveLength(12);
   });
+
+  describe("real inbound requests", () => {
+    const now = new Date("2026-07-01T00:00:00Z");
+
+    async function realRequest(): Promise<void> {
+      await testDb.insert(initiatives).values({
+        id: "real-1", slug: "real-1", title: "Real request", requester: "A. Requester", state: "draft",
+        createdAt: now, updatedAt: now, workspaceId: "public-ws_x",
+      });
+    }
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it("refuses to wipe initiatives in a public- workspace, naming the count, and leaves them", async () => {
+      await seedDatabase(testDb);
+      await realRequest();
+
+      await expect(seedDatabase(testDb)).rejects.toThrow(/1 real inbound request/);
+      const ids = (await testDb.select({ id: initiatives.id }).from(initiatives)).map((r) => r.id);
+      expect(ids).toContain("real-1");
+    });
+
+    it("refuses when the override names a different count", async () => {
+      await seedDatabase(testDb);
+      await realRequest();
+      vi.stubEnv("ALLOW_DISCARD_PUBLIC_REQUESTS", "5");
+      await expect(seedDatabase(testDb)).rejects.toThrow(/ALLOW_DISCARD_PUBLIC_REQUESTS=1/);
+    });
+
+    it("proceeds when the override names the exact count", async () => {
+      await seedDatabase(testDb);
+      await realRequest();
+      vi.stubEnv("ALLOW_DISCARD_PUBLIC_REQUESTS", "1");
+      await expect(seedDatabase(testDb)).resolves.toBeDefined();
+      expect(await testDb.select().from(initiatives)).toHaveLength(12);
+    });
+  });
 });

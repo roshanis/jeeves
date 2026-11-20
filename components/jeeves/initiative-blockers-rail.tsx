@@ -9,6 +9,7 @@ import type { ControlRow, InitiativeDetail } from "@/lib/data/dto";
 import type { LifecycleState } from "@/lib/domain/types";
 import { AlertOctagon, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { latestQcReturn } from "@/lib/data/qc-return";
 import { DOMAIN_LABEL } from "./domain-labels";
 
 interface Blocker {
@@ -33,7 +34,7 @@ interface Blocker {
 // state, not just the arrays.
 
 /** States that precede triage — no review row or control can exist yet. */
-const PRE_REVIEW_STATES: ReadonlySet<LifecycleState> = new Set([
+export const PRE_REVIEW_STATES: ReadonlySet<LifecycleState> = new Set([
   "intake_draft",
   "submitted",
   "in_qc",
@@ -77,6 +78,8 @@ export function summarizeBlockers(detail: InitiativeDetail): BlockerSummary {
 function noBlockersMessage(detail: InitiativeDetail): string {
   switch (detail.summary.state) {
     case "intake_draft": {
+      const returned = latestQcReturn(detail.events);
+      if (returned) return `Returned from QC by ${returned.actor}: \u201c${returned.reason}\u201d. Fix this and resubmit.`;
       const gaps = detail.intake?.missing.length ?? 0;
       const gapText =
         gaps > 0

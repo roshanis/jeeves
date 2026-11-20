@@ -2,8 +2,13 @@
 // 2026-08-02 — components/jeeves/review-workbench.tsx:142-186). Selected
 // chip's bg-primary fill previously swallowed the browser's default focus
 // outline entirely.
-import { describe, expect, it } from "vitest";
-import { screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }),
+  useSearchParams: () => new URLSearchParams(),
+}));
+import { fireEvent, screen } from "@testing-library/react";
 import { renderWithProviders } from "./helpers";
 import { ReviewWorkbench, type ReviewQueueRow } from "@/components/jeeves/review-workbench";
 import type { ReviewRow } from "@/lib/data/dto";
@@ -43,5 +48,33 @@ describe("ReviewWorkbench domain filter focus rings", () => {
     const legalButton = screen.getByRole("button", { name: /^Legal/ });
     expect(legalButton.className).toContain("focus-visible:ring-2");
     expect(legalButton.className).toContain("focus-visible:ring-offset-background");
+  });
+});
+
+describe("ReviewWorkbench focus management on select / change review", () => {
+  const rows = [
+    queueRow({ slug: "a", domain: "privacy-hipaa" }),
+    queueRow({ slug: "b", domain: "privacy-hipaa" }),
+  ];
+
+  it("moves focus to the review heading after choosing a row, and back to that row after 'Change review'", async () => {
+    renderWithProviders(<ReviewWorkbench rows={rows} />);
+
+    const rowButton = screen.getByRole("button", { name: /Open .* review for Initiative b/ });
+    rowButton.focus();
+    fireEvent.click(rowButton);
+    const heading = await screen.findByRole("heading", { level: 2, name: /review$/ });
+    expect(document.activeElement).toBe(heading);
+
+    fireEvent.click(screen.getByRole("button", { name: "Change review" }));
+    const back = screen.getByRole("button", { name: /Open .* review for Initiative b/ });
+    expect(document.activeElement).not.toBe(document.body);
+    expect(document.activeElement).toBe(back);
+    expect(back.getAttribute("aria-current")).toBe("true");
+  });
+
+  it("does not steal focus on first render with a preselected review", () => {
+    renderWithProviders(<ReviewWorkbench rows={rows} selection={{ slug: "a", domain: "privacy-hipaa" }} />);
+    expect(document.activeElement).toBe(document.body);
   });
 });

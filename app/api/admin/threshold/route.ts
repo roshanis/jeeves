@@ -34,29 +34,24 @@ const bodySchema = z.object({
   controlId: z.string().min(1).max(50),
   initiativeId: z.string().min(1).max(200).nullable().optional(),
   tier: z.enum(["low", "medium", "high", "critical"]).optional(),
-  value: z.number(),
+  value: z.number().min(0).max(1),
   reason: z.string().min(1).max(2000),
 });
 
 export async function POST(req: Request): Promise<Response> {
-  let json: unknown;
-  try {
-    json = await req.json();
-  } catch {
-    return Response.json({ error: "invalid JSON body" }, { status: 400 });
-  }
-
-  const bodyText: Record<string, string> = {
-    reason: typeof (json as { reason?: unknown })?.reason === "string" ? (json as { reason: string }).reason : "",
-  };
-
-  const guard = await runMutationGuard(req, bodyText, {
+  const guard = await runMutationGuard(req, (json) => {
+    const bodyText: Record<string, string> = {
+      reason: typeof (json as { reason?: unknown })?.reason === "string" ? (json as { reason: string }).reason : "",
+    };
+    return bodyText;
+  }, {
     inputLimits: [{ field: "reason", maxChars: 2000 }],
     inputTotalCap: 2000,
   });
   if (!guard.ok) {
     return Response.json({ error: guard.failure.message }, { status: guard.failure.status });
   }
+  const json = guard.json;
 
   const parsed = bodySchema.safeParse(json);
   if (!parsed.success) {

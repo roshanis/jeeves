@@ -24,13 +24,30 @@ function request(path: string, headers: Record<string, string> = {}): NextReques
 }
 const passedThrough = (response: Response) => response.headers.get("x-middleware-next") === "1";
 
+/**
+ * Next runs every proxy response through its adapter, which parses the Location
+ * header with `new URL(location)` (no base). A relative Location therefore
+ * throws ERR_INVALID_URL there and the visitor gets a 500 instead of the
+ * redirect. The proxy must hand Next an ABSOLUTE URL on the request's own
+ * origin; the adapter then puts a relative Location on the wire for a same-host
+ * redirect. scripts/smoke-production.ts checks the wire behaviour against a
+ * real server; this pins the contract the adapter needs.
+ */
+function redirectTarget(response: Response): URL {
+  const location = response.headers.get("location");
+  expect(location, "a redirect must carry a Location header").not.toBeNull();
+  return new URL(location!); // throws on a relative Location, exactly as Next's adapter does
+}
+
 describe("in production", () => {
   it("answers a signed-out console page with a 307 to /sign-in, not a 200", async () => {
     asProduction();
     for (const path of ["/inbox", "/portfolio", "/reviews", "/initiatives/new", "/agents/reviewer-privacy-hipaa"]) {
       const response = await proxy(request(path));
       expect(response.status, path).toBe(307);
-      expect(response.headers.get("location")).toBe("/sign-in");
+      const target = redirectTarget(response);
+      expect(target.origin, path).toBe("https://jeeves.example.com");
+      expect(target.pathname + target.search, path).toBe("/sign-in");
     }
   });
 
@@ -43,7 +60,9 @@ describe("in production", () => {
     asProduction();
     const response = await proxy(request("/"));
     expect(response.status).toBe(307);
-    expect(response.headers.get("location")).toBe("/inbox");
+    const target = redirectTarget(response);
+    expect(target.origin).toBe("https://jeeves.example.com");
+    expect(target.pathname + target.search).toBe("/inbox");
   });
 
   it("answers the marketing pages 404, not a 200 soft 404", async () => {

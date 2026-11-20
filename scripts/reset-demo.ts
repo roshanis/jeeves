@@ -29,6 +29,7 @@ import { assertDemoDatabase } from "../lib/demo/bootstrap";
 import { seedDatabase } from "./seed";
 import { agentRuntimeStatus } from "../lib/agents/registry";
 import { telemetryConnectorStatus } from "../lib/telemetry/connector";
+import { isMain } from "./is-main";
 
 function ok(label: string, value: string): void {
   console.log(`  ✓ ${label}: ${value}`);
@@ -103,7 +104,7 @@ export async function resetDemo(database?: Db): Promise<void> {
   console.log("\nReset complete. Run `npm run test:e2e` for a full golden-path smoke test before presenting.");
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isMain(import.meta.url, process.argv[1])) {
   if (process.env.NODE_ENV === "production" && process.env.ALLOW_SEED !== "1") {
     console.error(
       "Refusing to run scripts/reset-demo.ts: NODE_ENV=production and ALLOW_SEED is not set to \"1\". " +

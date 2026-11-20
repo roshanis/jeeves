@@ -51,7 +51,7 @@ import type * as schema from "../db/schema";
 import { auditEvents, controlExceptions, deploymentVersions, effectiveControls, initiatives } from "../db/schema";
 import type { Actor } from "../domain/types";
 import { ConflictError, NotFoundError, ValidationError, IllegalTransitionError } from "./initiative-service";
-import { workspaceMismatch, mutationWorkspaceMismatch } from "./workspace-guard";
+import { workspaceMismatch, mutationWorkspaceMismatch, viewerCannotMutate } from "./workspace-guard";
 
 type Tx = PgDatabase<PgQueryResultHKT, typeof schema>;
 
@@ -88,11 +88,11 @@ function nowTs(): number {
   return Date.now();
 }
 
-/** Only an approver or admin may decide/revoke an exception (SoD). */
-function requireDecider(actor: Actor): void {
-  if (actor.role !== "approver" && actor.role !== "admin") {
+/** Only an approver may approve/reject an exception; an admin may additionally revoke one as a safety action (SoD). */
+function requireDecider(actor: Actor, allowAdmin = false): void {
+  if (actor.role !== "approver" && !(allowAdmin && actor.role === "admin")) {
     throw new IllegalTransitionError(
-      `only an approver or admin may decide a control exception; role '${actor.role}' is not permitted`,
+      `only an approver${allowAdmin ? " or admin" : ""} may ${allowAdmin ? "revoke" : "decide"} a control exception; role '${actor.role}' is not permitted`,
       "in_review",
       "start_review",
       actor.role,
@@ -253,7 +253,13 @@ export async function requestException(
     throw new ValidationError("exception request requires a non-empty reason");
   }
   return db.transaction(async (tx) => {
-    const [ec] = await tx.select().from(effectiveControls).where(eq(effectiveControls.id, effectiveControlId));
+    // FOR UPDATE serializes concurrent requests on this control, so the
+    // active-exception check below cannot race into the unique index.
+    const [ec] = await tx
+      .select()
+      .from(effectiveControls)
+      .where(eq(effectiveControls.id, effectiveControlId))
+      .for("update");
     if (!ec) throw new NotFoundError("effectiveControl", effectiveControlId);
 
     const initiativeIdForCheck = await initiativeIdForEffectiveControl(tx, ec.deploymentId);
@@ -444,7 +450,7 @@ export async function revokeException(
   sessionWorkspaceId: string | null,
   reason: string,
 ): Promise<ExceptionResult> {
-  requireDecider(actor);
+  requireDecider(actor, true);
   if (!reason || reason.trim().length === 0) {
     throw new ValidationError("exception revoke requires a non-empty reason");
   }
@@ -522,6 +528,16 @@ export async function renewException(
     );
     if (exc.status !== "approved") {
       throw new ValidationError(`only an approved exception can be renewed; ${exceptionId} is '${exc.status}'`);
+    }
+    // Serialize renewals per control, then refuse a second pending request
+    // (the partial unique index would otherwise answer with a 500).
+    await tx.select().from(effectiveControls).where(eq(effectiveControls.id, exc.effectiveControlId)).for("update");
+    const pending = await tx
+      .select({ id: controlExceptions.id })
+      .from(controlExceptions)
+      .where(and(eq(controlExceptions.effectiveControlId, exc.effectiveControlId), eq(controlExceptions.status, "requested")));
+    if (pending.length > 0) {
+      throw new ValidationError(`control ${exc.controlId} already has a renewal pending (${pending[0]!.id})`);
     }
     const id = `exc-${randomUUID()}`;
     await tx.insert(controlExceptions).values({
@@ -617,6 +633,8 @@ export interface ExceptionRow {
   decisionReason: string | null;
   expiresAt: number | null;
   supersedesId: string | null;
+  /** True when this viewer cannot act on the row (the viewer has no workspace, or it differs from the row's); always false when `listExceptions` is called without `opts`. */
+  isShared: boolean;
 }
 
 export interface ListExceptionsOptions {
@@ -649,13 +667,13 @@ export async function listExceptions(
     ? await db.select().from(controlExceptions).where(eq(controlExceptions.status, status))
     : await db.select().from(controlExceptions);
 
+  const initiativeIds = Array.from(
+    new Set(rows.map((r) => r.initiativeId).filter((id): id is string => id !== null)),
+  );
+  const workspaceIds = await initiativeWorkspaceIds(db, initiativeIds);
   let visibleRows = rows;
   if (opts) {
     const viewerWorkspaceId = opts.viewerWorkspaceId ?? null;
-    const initiativeIds = Array.from(
-      new Set(rows.map((r) => r.initiativeId).filter((id): id is string => id !== null)),
-    );
-    const workspaceIds = await initiativeWorkspaceIds(db, initiativeIds);
     visibleRows = rows.filter((r) => {
       if (!r.initiativeId) return true;
       const resourceWorkspaceId = workspaceIds.get(r.initiativeId) ?? null;
@@ -680,5 +698,11 @@ export async function listExceptions(
       decisionReason: r.decisionReason,
       expiresAt: r.expiresAt,
       supersedesId: r.supersedesId,
+      isShared: opts
+        ? viewerCannotMutate(
+            r.initiativeId ? (workspaceIds.get(r.initiativeId) ?? null) : null,
+            opts.viewerWorkspaceId ?? null,
+          )
+        : false,
     }));
 }
