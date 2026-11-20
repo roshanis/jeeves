@@ -324,7 +324,7 @@ export const bootRefusalCases: BootRefusalCase[] = [
   {
     name: "plain http base URL",
     modify: (env) => ({ ...env, APP_BASE_URL: "http://jeeves.example.com" }),
-    expectText: "APP_BASE_URL must be an absolute https URL",
+    expectText: "APP_BASE_URL must be an https origin",
   },
 ];
 
