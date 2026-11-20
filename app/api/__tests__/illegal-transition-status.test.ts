@@ -48,6 +48,7 @@ const headers = (t: string, ip: string): HeadersInit => ({ authorization: `Beare
 const illegal = (kind: IllegalTransitionKind) => new IllegalTransitionError("x", "in_review", "approve", "approver", kind);
 
 const CASES: Array<[IllegalTransitionKind, number]> = [["role", 403], ["state", 409], ["reason", 400]];
+const CODES: Record<IllegalTransitionKind, string> = { role: "NOT_PERMITTED", state: "INVALID_STATE", reason: "REASON_REQUIRED" };
 
 describe("IllegalTransitionError status mapping", () => {
   it.each(CASES)("decide route: %s -> %i", async (kind, status) => {
@@ -58,7 +59,10 @@ describe("IllegalTransitionError status mapping", () => {
       { params: Promise.resolve({ id: "init-a" }) },
     );
     expect(res.status).toBe(status);
-    expect((await res.json()).error).toBeTruthy();
+    const body = (await res.json()) as { error?: string; code?: string };
+    expect(body.error).toBeTruthy();
+    // A client tells "not allowed", "already done" and "say why" apart by code, not by parsing the message.
+    expect(body.code).toBe(CODES[kind]);
   });
 
   it.each(CASES)("qc route: %s -> %i", async (kind, status) => {
