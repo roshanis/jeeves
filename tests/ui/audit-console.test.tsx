@@ -65,3 +65,18 @@ describe("AuditConsole", () => {
     expect(rows).toHaveLength(3);
   });
 });
+
+describe("AuditConsole by deployment mode", () => {
+  it("does not list the fictional-approver query in production", async () => {
+    const results = await loadResults();
+    const prod = renderWithProviders(<AuditConsole results={results} />, { mode: "production" });
+    expect(screen.queryByRole("button", { name: /Angela Torres/ })).toBeNull();
+    expect(prod.container.textContent).not.toMatch(/approved by Angela Torres|approver = Angela Torres/);
+    expect(screen.getAllByRole("button")).toHaveLength(3);
+  });
+
+  it("lists it in demo", async () => {
+    renderWithProviders(<AuditConsole results={await loadResults()} />, { mode: "demo" });
+    expect(screen.getByRole("button", { name: "Everything approved by Angela Torres" })).toBeTruthy();
+  });
+});

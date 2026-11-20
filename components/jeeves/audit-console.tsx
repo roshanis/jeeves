@@ -22,6 +22,8 @@ import { TierBadge } from "./tier-badge";
 import { formatUtcTimestamp } from "@/lib/format/timestamp";
 import { LIFECYCLE_LABEL, LifecycleBadge } from "./lifecycle-badge";
 import { EvidenceLink } from "./evidence-link";
+import { useDeploymentMode } from "@/lib/client/deployment-mode-context";
+import { isCannedAuditQueryAvailable } from "@/lib/data/canned-audit-queries";
 
 const QUERY_META: { id: CannedAuditQueryId; label: string; explanation: string }[] = [
   {
@@ -49,8 +51,11 @@ const QUERY_META: { id: CannedAuditQueryId; label: string; explanation: string }
 export function AuditConsole({
   results,
 }: {
-  results: Record<CannedAuditQueryId, AuditQueryRow[]>;
+  results: Partial<Record<CannedAuditQueryId, AuditQueryRow[]>>;
 }) {
+  const mode = useDeploymentMode();
+  // Mode decides what is offered, whatever result sets the page passed in.
+  const queries = QUERY_META.filter((q) => isCannedAuditQueryAvailable(q.id, mode));
   // Default to a query that actually has rows. The page already fetches all
   // four result sets server-side, so this costs nothing extra — but the
   // console used to render a bare "Run a canned query" prompt over data it
@@ -58,15 +63,15 @@ export function AuditConsole({
   // Falling through to the first query keeps an all-empty dataset showing a
   // real (if empty) result rather than a prompt.
   const defaultId =
-    QUERY_META.find((q) => (results[q.id]?.length ?? 0) > 0)?.id ?? QUERY_META[0]!.id;
+    queries.find((q) => (results[q.id]?.length ?? 0) > 0)?.id ?? queries[0]!.id;
   const [activeId, setActiveId] = React.useState<CannedAuditQueryId>(defaultId);
-  const active = QUERY_META.find((q) => q.id === activeId) ?? null;
+  const active = queries.find((q) => q.id === activeId) ?? null;
   const rows = results[activeId] ?? [];
 
   return (
     <div className="flex flex-col gap-4" data-slot="audit-console">
       <div className="flex flex-wrap gap-2">
-        {QUERY_META.map((query) => (
+        {queries.map((query) => (
           <Button
             key={query.id}
             variant={query.id === activeId ? "default" : "outline"}

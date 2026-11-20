@@ -13,6 +13,8 @@ import type { Domain, LifecycleState, OverlayFlags, Tier } from "@/lib/domain/ty
 import { currentControlRevisions } from "@/lib/controls/current-revisions";
 import { operationalDeployment, latestDeployment } from "@/lib/deployments/selection";
 import { reviewDecisionReadiness } from "@/lib/approval/review-readiness";
+import { isCannedAuditQueryAvailable } from "./canned-audit-queries";
+import { deploymentMode } from "@/lib/config/deployment-mode";
 import { overlayFromStoredIntake } from "@/lib/intake/stored-overlay";
 import { resolveThreshold } from "@/lib/controls/evaluate";
 import { actorMatches, displayNameFor } from "@/lib/services/actors";
@@ -738,6 +740,9 @@ export class DbDataProvider implements DataProvider {
       }
 
       case "approved-by-torres": {
+        // The query is hard-wired to a fictional persona, so a production
+        // install answers it as it answers any id it does not know.
+        if (!isCannedAuditQueryAvailable(id, deploymentMode())) throw new Error(`Unknown audit query: ${id}`);
         // Seed-spec §7.2: everything APPROVED by Angela Torres (any
         // approval type incl. fast-lane/conditional; rejections excluded).
         // Review finding 8: `decide()` writes the persona id ("angela-torres")

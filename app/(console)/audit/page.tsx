@@ -2,6 +2,7 @@ import { getAppProvider, getCurrentWorkspaceId } from "@/app/_lib/data-provider"
 import type { AuditQueryRow, CannedAuditQueryId } from "@/lib/data/dto";
 import { AuditConsole } from "@/components/jeeves/audit-console";
 import { AuditorChat } from "@/components/jeeves/auditor-chat";
+import { availableCannedAuditQueryIds } from "@/lib/data/available-audit-queries";
 import type { Metadata } from "next";
 
 
@@ -14,19 +15,11 @@ export const metadata: Metadata = {
 export default async function AuditPage() {
   const provider = getAppProvider();
   const viewerWorkspaceId = await getCurrentWorkspaceId();
-  const ids: CannedAuditQueryId[] = [
-    "member-facing-phi",
-    "approved-by-torres",
-    "overdue-controls",
-    "q01-control-changes",
-  ];
+  const ids = availableCannedAuditQueryIds();
   const entries = await Promise.all(
     ids.map(async (id) => [id, await provider.auditQuery(id, { viewerWorkspaceId })] as const),
   );
-  const results = Object.fromEntries(entries) as Record<
-    CannedAuditQueryId,
-    AuditQueryRow[]
-  >;
+  const results = Object.fromEntries(entries) as Partial<Record<CannedAuditQueryId, AuditQueryRow[]>>;
 
   return (
     <div className="flex flex-col gap-6">

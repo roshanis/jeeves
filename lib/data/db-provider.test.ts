@@ -1,5 +1,5 @@
 import { eq } from "drizzle-orm";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { createTestDb, closeTestDb, type TestDb } from "../db/test-client";
 import { seedDatabase } from "../../scripts/seed";
 import {
@@ -393,6 +393,22 @@ describe("lib/data/db-provider", () => {
    * decision row directly with the persona-id form and asserts it's both
    * matched and rendered with the human display name.
    */
+  describe("auditQuery — approved-by-torres by deployment mode", () => {
+    afterEach(() => vi.unstubAllEnvs());
+
+    it("answers as an unknown query in production, and still runs in demo", async () => {
+      vi.stubEnv("JEEVES_MODE", undefined);
+      await expect(provider.auditQuery("approved-by-torres")).rejects.toThrow(/unknown audit query/i);
+      vi.stubEnv("JEEVES_MODE", "demo");
+      expect((await provider.auditQuery("approved-by-torres")).length).toBeGreaterThan(0);
+    });
+
+    it("keeps the other canned queries available in production", async () => {
+      vi.stubEnv("JEEVES_MODE", undefined);
+      await expect(provider.auditQuery("overdue-controls")).resolves.toBeInstanceOf(Array);
+    });
+  });
+
   describe("auditQuery — approved-by-torres persona-id parity (review finding 8)", () => {
     it("matches a decision whose approver is stored as the persona id 'angela-torres' and renders 'Angela Torres'", async () => {
       const [mkt] = await db.select().from(initiatives).where(eq(initiatives.slug, "marketing-ab-tester"));
