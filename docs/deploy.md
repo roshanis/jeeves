@@ -420,6 +420,21 @@ Two probes, with different jobs:
 A production boot retries a database connection error for about 5 seconds
 before it gives up; a schema or installation-stamp mismatch stops it at once.
 
+### Shutdown
+
+On SIGTERM the server stops accepting connections and drains in-flight
+requests; it forces the exit 125 seconds after SIGTERM (`lib/config/shutdown.ts`),
+so one slow client cannot hold a stopping task indefinitely. The platform's
+stop timeout must be longer than that, or it sends SIGKILL first:
+
+- Podman compose: `stop_grace_period: 130s` (set in `deploy/podman/compose.yaml`).
+- Quadlet: `StopTimeout=130`, with `TimeoutStopSec=140` for systemd (both set in the unit).
+- ECS: `stopTimeout` 130 in the container definition on EC2-backed tasks.
+  Fargate caps `stopTimeout` at 120 seconds, so on Fargate the task is killed at
+  120 s and the 125-second drain deadline never fires; requests still open then
+  are cut off. Behind an ALB also keep the target group's deregistration delay
+  at or below the stop timeout.
+
 ### Not covered
 
 No automated backup verification. A backup nobody has restored from is a

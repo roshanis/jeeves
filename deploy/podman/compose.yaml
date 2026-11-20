@@ -88,6 +88,9 @@ services:
       timeout: 5s
       retries: 3
       start_period: 15s
+    # The app exits at most 125 s after SIGTERM (lib/config/shutdown.ts); wait
+    # longer than that before SIGKILL.
+    stop_grace_period: 130s
     restart: unless-stopped
 
   # One-shot: apply migrations. Deliberately NOT run by the app on boot —

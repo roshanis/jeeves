@@ -61,6 +61,9 @@ HealthStartPeriod=15s
 # Defence in depth — the app writes nothing to its own filesystem. Next needs
 # a writable /tmp for its cache, so that is mounted as tmpfs rather than
 # leaving the whole root writable.
+# The app exits at most 125 s after SIGTERM (lib/config/shutdown.ts); Podman
+# and systemd must wait longer than that before SIGKILL.
+StopTimeout=130
 ReadOnly=true
 Tmpfs=/tmp:rw,noexec,nosuid,size=64m
 NoNewPrivileges=true
@@ -69,6 +72,7 @@ DropCapability=ALL
 [Service]
 Restart=always
 TimeoutStartSec=90
+TimeoutStopSec=140
 
 [Install]
 WantedBy=default.target
