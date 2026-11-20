@@ -2,9 +2,10 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createTestDb, closeTestDb, type TestDb } from "../db/test-client";
 import { CHAMPION_PREFILL_PAYLOAD } from "../intake/champion-prefill";
 import { createMockAgentPort } from "../agents/mock-adapter";
+import { createOpenAiAgentsAdapterWithRunner } from "../agents/openai-agents-adapter";
 import type { AgentPort, DraftReviewInput, PortResult, DraftReviewOutput } from "../agents/ports";
-import { reviewDecisions } from "../db/schema";
-import { and, eq } from "drizzle-orm";
+import { controlDefinitions, reviewDecisions } from "../db/schema";
+import { and, eq, ne } from "drizzle-orm";
 import * as svc from "../services/initiative-service";
 import { getRunProgress, runSingleDomainDraft, startDraftRun } from "./review-run";
 
@@ -428,6 +429,39 @@ describe("lib/workflow/review-run", () => {
       expect(rows[0]!.draftMd).toBeTruthy();
     });
 
+    it("passes the supplied control ids to the port so an unsupplied one never reaches the stored draft (agents-F8)", async () => {
+      const { cycleId } = await setUpChampionInReview(db);
+      const where = and(eq(reviewDecisions.cycleId, cycleId), eq(reviewDecisions.domain, "clinical-safety"));
+      // The test DB runs only the migrations, which seed no control catalog. C-01 below
+      // (care-coverage=Y, which the champion is) is therefore the one control supplied
+      // for clinical-safety, and ZZ-99 is unsupplied (mocked runner, no network).
+      await db.insert(controlDefinitions).values({
+        id: "C-01", domain: "clinical-safety", name: "C-01", applicability: "care-coverage=Y",
+        owner: "Clinical", requiredEvidence: "signed protocol", cadence: "once", enforcementMode: "gate",
+      });
+      const port = createOpenAiAgentsAdapterWithRunner(async () => ({
+        finalOutput: {
+          assessmentMd: "- Gaps remain.",
+          citations: ["MP-C v1 §1"],
+          evidenceRequests: [
+            { controlId: "C-01", description: "supplied-control gap" },
+            { controlId: "ZZ-99", description: "invented-control gap" },
+          ],
+          recommendation: "return-with-gaps",
+          suggestedConditions: [{ controlId: "ZZ-99", text: "invented-control condition" }],
+          confidenceNotes: "None.",
+        },
+      }));
+      const result = await runSingleDomainDraft(db, cycleId, "clinical-safety", port);
+      expect(result.status).toBe("drafted");
+
+      const [row] = await db.select().from(reviewDecisions).where(where);
+      const stored = JSON.stringify([row!.draftMd, row!.missingEvidence, row!.evidenceRequests]);
+      expect(stored).toContain("supplied-control gap");
+      expect(stored).not.toContain("ZZ-99");
+      expect(stored).not.toContain("invented-control");
+    });
+
     it("re-runs an ALREADY-drafted domain (unlike startDraftRun, which skips it)", async () => {
       const { cycleId } = await setUpChampionInReview(db);
 
@@ -623,6 +657,14 @@ describe("lib/workflow/review-run", () => {
       const legal = progress.rows.find((r) => r.domain === "legal")!;
       expect(legal.status).toBe("drafted");
       expect(progress.complete).toBe(false); // not all 8 domains drafted yet
+    });
+
+    it("treats an abstained review as terminal when judging completion", async () => {
+      const { initiativeId, cycleId } = await setUpChampionInReview(db);
+      await startDraftRun(db, initiativeId, ["legal"]);
+      await db.update(reviewDecisions).set({ status: "abstained" }).where(and(eq(reviewDecisions.cycleId, cycleId), ne(reviewDecisions.domain, "legal")));
+
+      expect((await getRunProgress(db, cycleId)).complete).toBe(true);
     });
   });
 });

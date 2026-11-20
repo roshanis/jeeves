@@ -100,6 +100,26 @@ it.each([false, true])("preserves review provenance in Agents SDK deep mode=%s",
   expect(result.value.generationMetadata).not.toHaveProperty("servedModelId");
 });
 
+it.each([false, true])("drops evidence requests and conditions naming an unsupplied control id, deep mode=%s (agents-F8)", async (deep) => {
+  process.env.JEEVES_DEEP_REVIEW = deep ? "1" : "0";
+  const port = createOpenAiAgentsAdapterWithRunner(async () => ({
+    finalOutput: {
+      ...VALID_REVIEWER_OBJECT,
+      recommendation: "return-with-gaps",
+      evidenceRequests: [
+        { controlId: "H-01", description: "real gap" },
+        { controlId: "ZZ-99", description: "invented gap" },
+      ],
+      suggestedConditions: [{ controlId: "ZZ-99", text: "invented condition" }],
+    },
+  }));
+  const result = await port.draftReview({ ...draftInput(), controlIds: ["H-01"] });
+  expect(result.ok).toBe(true);
+  if (!result.ok) return;
+  expect(result.value.missingEvidence).toEqual(["real gap"]);
+  expect(JSON.stringify(result.value)).not.toMatch(/ZZ-99|invented/);
+});
+
 const VALID_AUDITOR_OBJECT = {
   answerMd: "Member Chat Copilot is member-facing and touches PHI.",
   citedEvents: ["2026-07-15T14:02:00Z"],

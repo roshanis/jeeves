@@ -41,7 +41,7 @@ export const PUBLIC_QUEUE_LIMIT = 200;
  *
  * Matched on the workspace prefix rather than a flag column — the prefix is
  * assigned at session-mint time and nothing else can produce it, so there is
- * no way for a passcode session to forge its way into this list.
+ * no way for a persona session to forge its way into this list.
  */
 export async function listPublicSubmissions(db: Db): Promise<PublicSubmissionRow[]> {
   const rows = await db

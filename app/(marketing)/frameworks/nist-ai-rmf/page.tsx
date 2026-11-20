@@ -7,7 +7,7 @@ import { CONTACT_URL } from "@/lib/marketing/site-config";
 const page = FRAMEWORK_PAGES.find((p) => p.slug === "nist-ai-rmf")!;
 
 export const metadata = {
-  title: `${page.title} — Jeeves`,
+  title: page.title,
   description: page.intro,
 };
 

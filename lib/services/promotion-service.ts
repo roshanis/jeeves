@@ -59,7 +59,7 @@
  * retired, matching `operationalDeployment`'s ordering.
  */
 import { randomUUID } from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import type { Db } from "../db/client";
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import type * as schema from "../db/schema";
@@ -359,15 +359,18 @@ export async function promoteCheckpoint(
     // The initiative row is locked FOR UPDATE so a concurrent admin pause or
     // resume cannot interleave with this promotion. Every path that changes
     // deployments takes the initiative row first and deployment rows second.
+    // Authorize on an unlocked read first, so a foreign caller never takes a lock on a shared row.
+    const [visibleInitiative] = await tx.select().from(initiatives).where(eq(initiatives.id, target.initiativeId));
+    if (!visibleInitiative || mutationWorkspaceMismatch(visibleInitiative.workspaceId, sessionWorkspaceId)) {
+      throw new NotFoundError("deploymentVersion", deploymentVersionId);
+    }
     const initiativeRows = await tx
       .select()
       .from(initiatives)
       .where(eq(initiatives.id, target.initiativeId))
       .for("update");
     const owningInitiative = initiativeRows[0];
-    if (!owningInitiative || mutationWorkspaceMismatch(owningInitiative.workspaceId, sessionWorkspaceId)) {
-      throw new NotFoundError("deploymentVersion", deploymentVersionId);
-    }
+    if (!owningInitiative) throw new NotFoundError("deploymentVersion", deploymentVersionId);
 
     requireInServiceLifecycle(owningInitiative, "promote a checkpoint");
     if (owningInitiative.state !== "deployed") {
@@ -500,6 +503,36 @@ export async function deploymentHistory(
     .from(deploymentVersions)
     .where(eq(deploymentVersions.initiativeId, initiativeId));
 
+  return toHistoryEntries(rows);
+}
+
+/**
+ * `deploymentHistory` for many initiatives in ONE query (promotions page).
+ * Initiatives without rows are absent from the map.
+ */
+export async function deploymentHistoryForInitiatives(
+  db: Db,
+  initiativeIds: string[],
+): Promise<Map<string, DeploymentHistoryEntry[]>> {
+  const out = new Map<string, DeploymentHistoryEntry[]>();
+  if (initiativeIds.length === 0) return out;
+  const rows = await db
+    .select()
+    .from(deploymentVersions)
+    .where(inArray(deploymentVersions.initiativeId, initiativeIds));
+  const grouped = new Map<string, (typeof rows)[number][]>();
+  for (const r of rows) {
+    const list = grouped.get(r.initiativeId) ?? [];
+    list.push(r);
+    grouped.set(r.initiativeId, list);
+  }
+  for (const [id, list] of grouped) out.set(id, toHistoryEntries(list));
+  return out;
+}
+
+function toHistoryEntries(
+  rows: (typeof deploymentVersions.$inferSelect)[],
+): DeploymentHistoryEntry[] {
   return rows
     .slice()
     .sort((a, b) => b.deployedAt.getTime() - a.deployedAt.getTime())
@@ -575,18 +608,20 @@ export async function rollbackDeployment(
   return db.transaction(async (tx) => {
     // Lock the initiative row first (same order as every other deployment
     // mutation) so a concurrent admin pause or resume cannot interleave.
+    // Workspace authorization (external-review finding #1): same NotFoundError
+    // shape as an unknown id on mismatch — never leaks that the initiative
+    // exists in a different workspace. Checked on an unlocked read first, so a
+    // foreign caller never takes a lock on a shared row.
+    const [visibleInitiative] = await tx.select().from(initiatives).where(eq(initiatives.id, initiativeId));
+    if (!visibleInitiative || mutationWorkspaceMismatch(visibleInitiative.workspaceId, sessionWorkspaceId)) {
+      throw new NotFoundError("initiative", initiativeId);
+    }
     const initiativeRows = await tx
       .select()
       .from(initiatives)
       .where(eq(initiatives.id, initiativeId))
       .for("update");
     if (!initiativeRows[0]) throw new NotFoundError("initiative", initiativeId);
-    // Workspace authorization (external-review finding #1): same NotFoundError
-    // shape as an unknown id on mismatch — never leaks that the initiative
-    // exists in a different workspace.
-    if (mutationWorkspaceMismatch(initiativeRows[0].workspaceId, sessionWorkspaceId)) {
-      throw new NotFoundError("initiative", initiativeId);
-    }
     requireInServiceLifecycle(initiativeRows[0], "roll back a deployment");
 
     const siblingRows = await tx

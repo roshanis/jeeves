@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { OverlayFlags } from "../domain/types";
+import { CONTROL_SEEDS } from "../demo/reference-data";
 import { applicabilityApplies } from "./applicability";
 
 const NO_FLAGS: OverlayFlags = {
@@ -60,5 +61,17 @@ describe("applicabilityApplies", () => {
 
   it("throws on an unrecognized atom", () => {
     expect(() => applicabilityApplies("bogus=Z", "low", NO_FLAGS)).toThrow(/unrecognized atom/);
+  });
+
+  it("throws on an unknown tier word instead of silently never applying", () => {
+    expect(() => applicabilityApplies("tier>=moderate", "critical", NO_FLAGS)).toThrow(
+      /unrecognized tier/,
+    );
+  });
+
+  it("parses every review-time seeded applicability string", () => {
+    for (const control of CONTROL_SEEDS.filter((c) => c.domain !== "runtime")) {
+      expect(() => applicabilityApplies(control.applicability, "low", NO_FLAGS)).not.toThrow();
+    }
   });
 });

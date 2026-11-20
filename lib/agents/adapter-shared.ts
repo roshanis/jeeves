@@ -57,6 +57,14 @@ export type AgentDir = (typeof AGENT_DIRS)[number];
  * guards the result. Keep these literal.
  */
 export function readAgentFile(dir: AgentDir, ...rest: string[]): string {
+  // Containment: plain relative segments only, ending in a .md file.
+  if (
+    rest.length === 0 ||
+    rest.some((seg) => seg === "" || seg === ".." || seg === "." || /[\\/\0]/.test(seg) || path.isAbsolute(seg)) ||
+    !rest[rest.length - 1].endsWith(".md")
+  ) {
+    throw new Error("refused: agent instruction paths must be relative .md files inside the agent directory");
+  }
   switch (dir) {
     case "reviewer":
       return readFileSync(path.join(process.cwd(), "agents", "reviewer", ...rest), "utf-8");
@@ -114,10 +122,10 @@ export function loadInstructions(): CachedInstructions {
  * ---------------------------------------------------------------------- */
 
 export function isAbortError(err: unknown): boolean {
-  return (
-    err instanceof Error &&
-    (err.name === "AbortError" || /aborted/i.test(err.message))
-  );
+  // Name only: a message match would turn a transient upstream "aborted"
+  // (dropped socket) into a non-retryable cancellation. The caller's own
+  // abort and the deadline are resolved in invoke.ts before this runs.
+  return err instanceof Error && err.name === "AbortError";
 }
 
 /**

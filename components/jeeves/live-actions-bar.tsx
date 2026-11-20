@@ -64,6 +64,7 @@ export function LiveActionsBar({ initiativeId, isSeeded, state, decisionReadines
   const [triaging, setTriaging] = React.useState(false);
   const [triageResult, setTriageResult] = React.useState<TriageResult | null>(null);
   const [decideOpen, setDecideOpen] = React.useState(false);
+  const [decidePending, setDecidePending] = React.useState(false);
   const [qcPending, setQcPending] = React.useState(false);
   const [returnOpen, setReturnOpen] = React.useState(false);
   const [returnPending, setReturnPending] = React.useState(false);
@@ -154,7 +155,7 @@ export function LiveActionsBar({ initiativeId, isSeeded, state, decisionReadines
           <div className="flex items-center gap-3">
             <DisableWithTooltip
               label="Open QC"
-              requiresRole="program"
+              requiresRole={["program", "admin"]}
               onAction={() => void handleStartQc()}
               pending={qcPending}
               pendingLabel="Opening QC…"
@@ -180,7 +181,7 @@ export function LiveActionsBar({ initiativeId, isSeeded, state, decisionReadines
             />
             <DisableWithTooltip
               label="Return to requester"
-              requiresRole="program"
+              requiresRole={["program", "admin"]}
               onAction={() => setReturnOpen(true)}
               pending={returnPending}
               pendingLabel="Returning…"
@@ -257,7 +258,7 @@ export function LiveActionsBar({ initiativeId, isSeeded, state, decisionReadines
         onConfirm={(reason) => void handleReturnFromQc(reason)}
       />
 
-      <Dialog open={decideOpen} onOpenChange={setDecideOpen}>
+      <Dialog open={decideOpen} onOpenChange={(open) => { if (open || !decidePending) setDecideOpen(open); }}>
         <DialogContent data-slot="decide-dialog" className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Record decision</DialogTitle>
@@ -273,6 +274,7 @@ export function LiveActionsBar({ initiativeId, isSeeded, state, decisionReadines
               readiness={decisionReadiness}
               reviews={reviews}
               onCancel={() => setDecideOpen(false)}
+              onPendingChange={setDecidePending}
               onDecided={() => {
                 setDecideOpen(false);
                 router.refresh();
@@ -305,6 +307,7 @@ function DecideForm({
   reviews,
   onCancel,
   onDecided,
+  onPendingChange,
 }: {
   initiativeId: string;
   reassessment: boolean;
@@ -312,6 +315,7 @@ function DecideForm({
   reviews?: Pick<ReviewRow, "cycleId" | "domain" | "revision">[];
   onCancel: () => void;
   onDecided: () => void;
+  onPendingChange?: (pending: boolean) => void;
 }) {
   const live = useLiveSessionOptional();
   const session = live?.session ?? null;
@@ -323,6 +327,7 @@ function DecideForm({
   const [citationsText, setCitationsText] = React.useState("");
   const [error, setError] = React.useState<string | null>(null);
   const [pending, setPending] = React.useState(false);
+  React.useEffect(() => { onPendingChange?.(pending); }, [pending, onPendingChange]);
 
   async function handleConfirm() {
     if (!session) return;
@@ -393,6 +398,8 @@ function DecideForm({
             <input
               type="text"
               placeholder="Condition text"
+              aria-label={`Condition ${index + 1} text`}
+              maxLength={1000}
               value={condition.text}
               data-slot="condition-text"
               onChange={(e) =>
@@ -405,6 +412,8 @@ function DecideForm({
             <input
               type="text"
               placeholder="Control id"
+              aria-label={`Condition ${index + 1} control id`}
+              maxLength={50}
               value={condition.controlId}
               data-slot="condition-control-id"
               onChange={(e) =>
@@ -418,6 +427,7 @@ function DecideForm({
               type="button"
               variant="ghost"
               size="sm"
+              aria-label={`Remove condition ${index + 1}`}
               onClick={() => setConditions((prev) => prev.filter((_, i) => i !== index))}
             >
               Remove
@@ -455,7 +465,7 @@ function DecideForm({
       ) : null}
 
       <DialogFooter>
-        <Button type="button" variant="outline" onClick={onCancel}>
+        <Button type="button" variant="outline" disabled={pending} onClick={onCancel}>
           Cancel
         </Button>
         <Button

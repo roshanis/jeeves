@@ -18,6 +18,7 @@
 import type { Domain, LifecycleState, Tier } from "@/lib/domain/types";
 import type { IntakePayload } from "@/lib/intake/types";
 import type { CompletenessGap } from "@/lib/intake/completeness";
+import { issueFieldLabel } from "@/lib/intake/field-labels";
 import { READ_ONLY_PREVIEW_MESSAGE } from "@/lib/data/provider-mode";
 
 /* -------------------------------------------------------------------------
@@ -28,13 +29,18 @@ export class ApiError extends Error {
   readonly status: number;
   readonly gaps?: unknown[];
   readonly code?: string;
+  /** First zod issue path of a 400 (e.g. "basics.title"), when the server sent one. */
+  readonly issuePath?: string;
+  readonly retryAfterSeconds?: number;
 
-  constructor(status: number, message: string, gaps?: unknown[], code?: string) {
+  constructor(status: number, message: string, gaps?: unknown[], code?: string, issuePath?: string, retryAfterSeconds?: number) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.gaps = gaps;
     this.code = code;
+    this.issuePath = issuePath;
+    this.retryAfterSeconds = retryAfterSeconds;
   }
 }
 
@@ -64,15 +70,19 @@ export function apiErrorToMessage(err: ApiError): string {
     case 401:
       return "Session expired or invalid — start the demo again.";
     case 429:
-      return "Rate limit or demo budget reached — try again shortly.";
+      if (/budget (exhausted|reached)/i.test(err.message)) return "The daily model budget is used up — please come back tomorrow.";
+      return err.retryAfterSeconds !== undefined
+        ? `Rate limit reached — try again in ${err.retryAfterSeconds} seconds.`
+        : "Rate limit reached — try again shortly.";
     case 403:
-      return "Not permitted for your current role.";
+      return err.message && !err.message.startsWith("request failed (") && !/restricted to roles|does not own initiative/.test(err.message) ? err.message : "Not permitted for your current role.";
     case 404:
       return "This record is no longer available. Refresh and review the latest information.";
     case 409:
       return "This record changed. Refresh and review the latest information before trying again.";
     case 400:
-      return err.message || "Invalid request.";
+      if (!err.message) return "Invalid request.";
+      return err.issuePath ? `${err.message} (${issueFieldLabel(err.issuePath)})` : err.message;
     default:
       return "Something went wrong — please try again.";
   }
@@ -86,7 +96,15 @@ export function apiErrorToMessage(err: ApiError): string {
 export interface SessionResult {
   token: string;
   workspaceId: string;
+  /** Local deadline: `Date.now() + expiresInMs` at receipt, so a skewed browser clock cannot drop a fresh session. */
   expiresAt: number;
+}
+
+type SessionWire = SessionResult & { expiresInMs?: number };
+
+function withLocalDeadline(wire: SessionWire): SessionResult {
+  const { expiresInMs, ...rest } = wire;
+  return typeof expiresInMs === "number" ? { ...rest, expiresAt: Date.now() + expiresInMs } : rest;
 }
 
 export interface CreateInitiativeResult {
@@ -357,11 +375,14 @@ export interface ConnectorHealth {
  * Core request helper
  * ---------------------------------------------------------------------- */
 
-async function parseErrorBody(res: Response): Promise<{ message: string; gaps?: unknown[]; code?: string }> {
+async function parseErrorBody(res: Response): Promise<{ message: string; gaps?: unknown[]; code?: string; issuePath?: string; retryAfterSeconds?: number }> {
   try {
-    const body = (await res.json()) as { error?: unknown; gaps?: unknown[]; code?: unknown };
+    const body = (await res.json()) as { error?: unknown; gaps?: unknown[]; code?: unknown; issues?: unknown; retryAfterSeconds?: unknown };
+    const path = Array.isArray(body?.issues) ? (body.issues[0] as { path?: unknown } | undefined)?.path : undefined;
+    const issuePath = Array.isArray(path) && path.length > 0 ? path.join(".") : undefined;
+    const retryAfterSeconds = typeof body?.retryAfterSeconds === "number" ? body.retryAfterSeconds : undefined;
     const message = typeof body?.error === "string" ? body.error : `request failed (${res.status})`;
-    return { message, gaps: Array.isArray(body?.gaps) ? body.gaps : undefined, code: typeof body?.code === "string" ? body.code : undefined };
+    return { message, gaps: Array.isArray(body?.gaps) ? body.gaps : undefined, code: typeof body?.code === "string" ? body.code : undefined, issuePath, retryAfterSeconds };
   } catch {
     return { message: `request failed (${res.status})` };
   }
@@ -386,8 +407,8 @@ async function request<T>(
   });
 
   if (!res.ok) {
-    const { message, gaps, code } = await parseErrorBody(res);
-    throw new ApiError(res.status, message, gaps, code);
+    const { message, gaps, code, issuePath, retryAfterSeconds } = await parseErrorBody(res);
+    throw new ApiError(res.status, message, gaps, code, issuePath, retryAfterSeconds);
   }
   return (await res.json()) as T;
 }
@@ -398,11 +419,11 @@ async function request<T>(
 
 /** Start a demo or switch personas within the current workspace. */
 export function postSession(personaKey: string, token?: string): Promise<SessionResult> {
-  return request<SessionResult>("/api/session", {
+  return request<SessionWire>("/api/session", {
     method: "POST",
     token,
     body: { personaKey },
-  });
+  }).then(withLocalDeadline);
 }
 
 /**
@@ -413,7 +434,7 @@ export function postSession(personaKey: string, token?: string): Promise<Session
  * except the three intake ones (create / edit draft / submit).
  */
 export function postPublicSession(): Promise<SessionResult> {
-  return request<SessionResult>("/api/public-session", { method: "POST" });
+  return request<SessionWire>("/api/public-session", { method: "POST" }).then(withLocalDeadline);
 }
 
 export interface PublicSubmissionRow {

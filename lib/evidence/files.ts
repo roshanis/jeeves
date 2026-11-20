@@ -6,8 +6,9 @@ export class EvidenceError extends Error {
 }
 const DOCX = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 /** Format validation only. No parser, execution, extraction or malware verdict. */
-export function validateDocument(fileName: string, mediaType: string, bytes: Buffer) {
-  if (!fileName || fileName.length > 180 || /[\x00-\x1f\x7f/\\]/.test(fileName) || fileName.startsWith('.')) throw new EvidenceError(400, 'Use a plain filename of at most 180 characters.');
+export function validateDocument(rawFileName: string, mediaType: string, bytes: Buffer) {
+  const fileName = rawFileName.toWellFormed().normalize('NFC');
+  if (!fileName || fileName.length > 180 || /[\p{Cc}\p{Cf}\u2028\u2029/\\]/u.test(fileName) || fileName.startsWith('.')) throw new EvidenceError(400, 'Use a plain filename of at most 180 characters.');
   if (bytes.length === 0 || bytes.length > MAX_FILE_BYTES) throw new EvidenceError(413, 'Files must be between 1 byte and 2 MiB.');
   const ext = fileName.toLowerCase().split('.').pop();
   if (ext === 'pdf' && mediaType === 'application/pdf') {

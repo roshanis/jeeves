@@ -27,11 +27,21 @@ import { getDb } from "@/lib/db/client";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
+// Bound the probe so a saturated pool answers 503 inside a typical 5 s probe
+// timeout instead of queueing behind page queries.
+const PROBE_TIMEOUT_MS = 2000;
+
 const NO_STORE = { "cache-control": "no-store, max-age=0" } as const;
 
 export async function GET(): Promise<Response> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    await getDb().execute(sql`select 1`);
+    await Promise.race([
+      getDb().execute(sql`select 1`),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("health probe timed out")), PROBE_TIMEOUT_MS);
+      }),
+    ]);
     return Response.json({ status: "ok", database: "ok" }, { status: 200, headers: NO_STORE });
   } catch (err) {
     // Server-side only. The response body stays opaque.
@@ -40,5 +50,7 @@ export async function GET(): Promise<Response> {
       { status: "degraded", database: "unreachable" },
       { status: 503, headers: NO_STORE },
     );
+  } finally {
+    clearTimeout(timer);
   }
 }

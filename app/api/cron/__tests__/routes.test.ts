@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { createTestDb, closeTestDb, type TestDb } from "@/lib/db/test-client";
 import { seedDatabase } from "@/scripts/seed";
-import { initiatives } from "@/lib/db/schema";
+import { auditEvents, initiatives } from "@/lib/db/schema";
 
 let testDb: TestDb;
 
@@ -85,5 +85,55 @@ describe("GET /api/cron/monitor", () => {
       }),
     );
     expect(res.status).toBe(400);
+  });
+
+  it("400s a nowTs outside the replay window and writes no audit rows", async () => {
+    const { GET } = await import("../monitor/route");
+    const before = (await testDb.select().from(auditEvents)).length;
+    for (const nowTs of ["9999-01-01T00:00:00Z", "1970-01-01T00:00:00Z"]) {
+      const res = await GET(
+        new Request(`http://localhost/api/cron/monitor?nowTs=${nowTs}`, {
+          method: "GET",
+          headers: { authorization: `Bearer ${CRON_SECRET}` },
+        }),
+      );
+      expect(res.status).toBe(400);
+    }
+    expect((await testDb.select().from(auditEvents)).length).toBe(before);
+  });
+
+  it("429s repeated wrong bearers from one client", async () => {
+    const { GET } = await import("../monitor/route");
+    const wrong = () => new Request("http://localhost/api/cron/monitor", {
+      method: "GET",
+      headers: { authorization: "Bearer wrong-secret", "x-forwarded-for": "30.0.0.1" },
+    });
+    const statuses: number[] = [];
+    for (let n = 0; n < 12; n++) statuses.push((await GET(wrong())).status);
+    expect(statuses[0]).toBe(401);
+    expect(statuses).toContain(429);
+  });
+
+  it("refuses the correct bearer from a client that has used up its failed attempts", async () => {
+    const { GET } = await import("../monitor/route");
+    const req = (secret: string, ip: string) => new Request("http://localhost/api/cron/monitor", {
+      method: "GET",
+      headers: { authorization: `Bearer ${secret}`, "x-forwarded-for": ip },
+    });
+    for (let n = 0; n < 12; n++) await GET(req("wrong-secret", "30.0.0.2"));
+    const locked = await GET(req(CRON_SECRET, "30.0.0.2"));
+    expect(locked.status).toBe(429);
+    expect(locked.headers.get("Retry-After")).toBeTruthy();
+    expect((await GET(req(CRON_SECRET, "30.0.0.3"))).status).toBe(200);
+  });
+
+  it("never spends a token for correct calls", async () => {
+    const { GET } = await import("../monitor/route");
+    const req = (secret: string) => new Request("http://localhost/api/cron/monitor", {
+      method: "GET",
+      headers: { authorization: `Bearer ${secret}`, "x-forwarded-for": "30.0.0.4" },
+    });
+    for (let n = 0; n < 11; n++) expect((await GET(req(CRON_SECRET))).status).toBe(200);
+    expect((await GET(req("wrong-secret"))).status).toBe(401);
   });
 });

@@ -69,7 +69,18 @@ export async function generateMetadata({
   params: Promise<{ slug: string }>;
 }): Promise<Metadata> {
   const { slug } = await params;
-  const detail = await getInitiativeDetailCoherent(slug).catch(() => null);
+  let detail;
+  try {
+    detail = await getInitiativeDetailCoherent(slug);
+  } catch (error) {
+    // A data failure is not "not found": log it, keep the title neutral. Log a
+    // code or name only; driver messages can carry host, port and user.
+    const code = error && typeof error === "object" && typeof (error as { code?: unknown }).code === "string"
+      ? (error as { code: string }).code
+      : error instanceof Error ? error.name : "UNKNOWN";
+    console.error("initiative metadata load failed", { causeCode: code });
+    return { title: "Initiative", description: "Initiative details could not be loaded." };
+  }
   if (!detail) {
     return { title: "Initiative not found", description: "No such initiative." };
   }
@@ -196,7 +207,7 @@ export default async function InitiativeDetailPage({
             <div className="flex flex-col gap-1">
               <span className="kicker">Latest deployment</span>
               <span className="font-mono text-sm font-medium tabular-nums text-foreground">
-                v{latestDeployment.version}{" "}
+                {latestDeployment.version}{" "}
                 <span className="font-sans font-normal text-muted-foreground">
                   · {DEPLOYMENT_STATUS_LABEL[latestDeployment.status]}
                 </span>

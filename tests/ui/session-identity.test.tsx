@@ -84,6 +84,16 @@ describe("live session identity", () => {
     expect(screen.getByText("marcus-webb|public")).toBeTruthy();
   });
 
+  it("keeps a fresh session when the browser clock runs ahead of the server", async () => {
+    // Server says: 1h of life. Its absolute timestamp is far behind this browser's clock.
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ token: "t", workspaceId: "ws", expiresAt: Date.now() - 2 * 3_600_000, expiresInMs: 3_600_000 })));
+    render(<Harness />);
+    fireEvent.change(screen.getByRole("combobox", { name: "Demo persona" }), { target: { value: "angela-torres" } });
+    await waitFor(() => expect(screen.getByText("angela-torres|angela-torres")).toBeTruthy());
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.getByText("angela-torres|angela-torres")).toBeTruthy();
+  });
+
   it("lets static previews browse personas without attempting passwordless entry", () => {
     render(<Harness liveModeAvailable={false} />);
     fireEvent.change(screen.getByRole("combobox", { name: "Demo persona" }), { target: { value: "marcus-webb" } });

@@ -8,7 +8,7 @@ import { eq } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
 import { initiatives, reviewCycles } from "@/lib/db/schema";
 import { startDraftRun, getRunProgress } from "@/lib/workflow/review-run";
-import { runMutationGuard } from "@/lib/services/route-guard";
+import { guardFailureResponse, runMutationGuard } from "@/lib/services/route-guard";
 import { isRouteId, notFoundResponse } from "@/lib/http/route-id";
 import { workspaceMismatch, mutationWorkspaceMismatch } from "@/lib/services/workspace-guard";
 import { resolveViewerWorkspaceId } from "@/lib/services/viewer-workspace";
@@ -39,7 +39,7 @@ export async function POST(
 ): Promise<Response> {
   const guard = await runMutationGuard(req, () => undefined, { bodyOptional: true });
   if (!guard.ok) {
-    return Response.json({ error: guard.failure.message }, { status: guard.failure.status });
+    return guardFailureResponse(guard.failure);
   }
   const parsed = bodySchema.safeParse(guard.json);
 
@@ -75,7 +75,7 @@ export async function POST(
       runTimeoutMs: limits.timeoutMs, attemptTimeoutMs: limits.attemptTimeoutMs,
     });
     if (result.outcomes.every((outcome) => outcome.error?.kind === "budget-exhausted")) {
-      return Response.json({ ...result, error: "Demo token reservation budget exhausted for today." }, { status: 429 });
+      return Response.json({ ...result, error: "Daily model budget reached." }, { status: 429 });
     }
     return Response.json(result, { status: 200 });
   } catch (error) {

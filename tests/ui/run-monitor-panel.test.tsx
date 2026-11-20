@@ -146,6 +146,7 @@ describe("RunMonitorPanel — live session", () => {
     });
 
     const summary = document.querySelector('[data-slot="monitor-result"]') as HTMLElement;
+    expect(summary.getAttribute("role")).toBe("status");
     expect(summary.textContent).toContain("Evaluated 6");
     expect(summary.textContent).toContain("breaches 0");
     expect(summary.textContent).toContain("incidents created 0");

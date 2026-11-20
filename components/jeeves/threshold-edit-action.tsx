@@ -13,6 +13,7 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
+  ApiError,
   apiErrorToMessage,
   isApiError,
   setThreshold,
@@ -39,7 +40,10 @@ export function ThresholdEditAction({
   const [error, setError] = React.useState<string | null>(null);
 
   async function handleConfirm(input: Omit<SetThresholdInput, "controlId">) {
-    if (!session) return;
+    if (!session) {
+      setError(apiErrorToMessage(new ApiError(401, "session expired")));
+      return;
+    }
     setPending(true);
     setError(null);
     try {

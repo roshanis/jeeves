@@ -8,7 +8,9 @@ import {
   effectiveControls,
   initiativeDecisions,
   initiatives,
+  intakeVersions,
   reviewCycles,
+  riskAssessments,
   reviewDecisions,
 } from "../db/schema";
 import { setEvalThreshold } from "../services/admin-service";
@@ -772,5 +774,190 @@ describe("lib/data/db-provider", () => {
       const fresh = new DbDataProvider(db, { snapshotHolder: () => ({}) });
       expect(await slugs(fresh)).toContain("snap-own-2");
     });
+  });
+
+  describe("read-model details (peer review, low)", () => {
+    it("shows the accountable approver's display name when the column holds an actor id", async () => {
+      await db.insert(initiatives).values({
+        id: "approver-id-form",
+        slug: "approver-id-form",
+        title: "Approver id form",
+        requester: "Priya Raman",
+        state: "intake_draft",
+        tier: null,
+        accountableApprover: "angela-torres",
+        createdAt: new Date("2026-07-10T00:00:00.000Z"),
+        updatedAt: new Date("2026-07-10T00:00:00.000Z"),
+        workspaceId: "ws-approver-id",
+      });
+      const row = (await provider.listInitiatives()).find((r) => r.slug === "approver-id-form");
+      expect(row?.accountableApprover).toBe("Angela Torres");
+    });
+
+    it("q01-control-changes reuses the loaded snapshot instead of querying audit_events again", async () => {
+      // Compare with a plain snapshot load instead of pinning a table count.
+      const countSelects = async (run: () => Promise<unknown>) => {
+        const spy = vi.spyOn(db, "select");
+        try {
+          await run();
+          return spy.mock.calls.length;
+        } finally {
+          spy.mockRestore();
+        }
+      };
+      const plainLoad = await countSelects(() => new DbDataProvider(db).controlCatalog());
+      const query = await countSelects(() => new DbDataProvider(db).auditQuery("q01-control-changes"));
+      expect(query).toBe(plainLoad);
+    });
+
+    it("scans the audit events once per initiative, not once per review", async () => {
+      const holder: { current?: Promise<{ auditEvents: unknown[] }> } = {};
+      const p = new DbDataProvider(db, { snapshotHolder: () => holder as never });
+      await p.getInitiativeDetail("member-chat-copilot");
+      const snap = await holder.current!;
+      const spy = vi.spyOn(snap.auditEvents, "filter");
+      try {
+        await p.getInitiativeDetail("member-chat-copilot");
+        expect(spy.mock.calls.length).toBeLessThanOrEqual(2);
+      } finally {
+        spy.mockRestore();
+      }
+    });
+  });
+});
+
+describe("lib/data/db-provider read-model edge cases (peer review, low)", () => {
+  let db: TestDb;
+  const t0 = new Date("2026-07-01T00:00:00.000Z");
+  const DAY = 24 * 60 * 60 * 1000;
+
+  beforeAll(async () => {
+    db = await createTestDb();
+    await db.insert(initiatives).values({
+      id: "edge-init",
+      slug: "edge-init",
+      title: "Edge case initiative",
+      requester: "Priya Raman",
+      state: "rejected",
+      tier: "high",
+      createdAt: t0,
+      updatedAt: t0,
+      workspaceId: null,
+    });
+    await db.insert(intakeVersions).values({
+      id: "edge-iv",
+      initiativeId: "edge-init",
+      version: 1,
+      fields: {},
+      createdAt: t0,
+    });
+    await db.insert(riskAssessments).values({
+      id: "edge-ra",
+      initiativeId: "edge-init",
+      version: 1,
+      intakeVersionId: "edge-iv",
+      tier: "high",
+      flags: {},
+      requiredDomains: ["security"],
+      createdAt: t0,
+    });
+    // Two closed cycles of 1.5 and 2.2 days: the median is 1.85 days.
+    await db.insert(reviewCycles).values([
+      { id: "edge-c1", initiativeId: "edge-init", kind: "initial", riskAssessmentId: "edge-ra", openedAt: t0, closedAt: new Date(t0.getTime() + 1.5 * DAY) },
+      { id: "edge-c2", initiativeId: "edge-init", kind: "reassessment", riskAssessmentId: "edge-ra", openedAt: t0, closedAt: new Date(t0.getTime() + 2.2 * DAY) },
+    ]);
+    // A returned review that stayed behind in a closed cycle.
+    await db.insert(reviewDecisions).values({
+      id: "edge-rd1",
+      cycleId: "edge-c1",
+      domain: "security",
+      status: "returned",
+      reviewer: "Sofia Grant",
+      createdAt: t0,
+    });
+  });
+
+  afterAll(async () => {
+    await closeTestDb(db);
+  });
+
+  it("rounds the median review cycle time to one decimal", async () => {
+    const m = await new DbDataProvider(db).outcomeMetrics();
+    expect(m.medianReviewCycleDays).toBe(1.9);
+  });
+
+  it("ignores returned reviews of closed cycles in overdueControls and the overdue-controls query", async () => {
+    const provider = new DbDataProvider(db);
+    expect((await provider.outcomeMetrics()).overdueControls).toBe(0);
+    expect(await provider.auditQuery("overdue-controls")).toEqual([]);
+  });
+});
+
+describe("lib/data/db-provider approver display names (peer review, low)", () => {
+  let db: TestDb;
+  const t0 = new Date("2026-07-01T00:00:00.000Z");
+
+  beforeAll(async () => {
+    db = await createTestDb();
+  });
+
+  afterAll(async () => {
+    await closeTestDb(db);
+  });
+
+  it("renders the approver's display name in decision rows and the member-facing-phi row", async () => {
+    await db.insert(initiatives).values({
+      id: "edge-phi",
+      slug: "edge-phi",
+      title: "Edge PHI initiative",
+      requester: "Priya Raman",
+      state: "approved",
+      tier: "high",
+      accountableApprover: "angela-torres", // persona id, as written by decide()
+      createdAt: t0,
+      updatedAt: t0,
+      workspaceId: null,
+    });
+    await db.insert(intakeVersions).values({
+      id: "edge-phi-iv",
+      initiativeId: "edge-phi",
+      version: 1,
+      fields: {},
+      createdAt: t0,
+    });
+    await db.insert(riskAssessments).values({
+      id: "edge-phi-ra",
+      initiativeId: "edge-phi",
+      version: 1,
+      intakeVersionId: "edge-phi-iv",
+      tier: "high",
+      flags: { phi: true, memberFacing: true },
+      requiredDomains: ["security"],
+      createdAt: t0,
+    });
+    await db.insert(reviewCycles).values({
+      id: "edge-phi-c",
+      initiativeId: "edge-phi",
+      kind: "initial",
+      riskAssessmentId: "edge-phi-ra",
+      openedAt: t0,
+      closedAt: t0,
+    });
+    await db.insert(initiativeDecisions).values({
+      id: "edge-phi-d",
+      initiativeId: "edge-phi",
+      cycleId: "edge-phi-c",
+      type: "approved",
+      approver: "angela-torres",
+      policyId: null,
+      citations: [],
+      conditions: [],
+      decidedAt: t0,
+    });
+    const provider = new DbDataProvider(db);
+    const detail = await provider.getInitiativeDetail("edge-phi");
+    expect(detail!.decisions[0]!.approver).toBe("Angela Torres");
+    const row = (await provider.auditQuery("member-facing-phi")).find((r) => r.slug === "edge-phi");
+    expect(row?.approver).toBe("Angela Torres");
   });
 });

@@ -1,8 +1,9 @@
 /** Public demo entry and persona switching. Every action still needs a
  * server-issued, workspace-bound session. No visitor password is required. */
 import { z } from "zod";
-import { checkReadOnlyMode, checkSessionAttempt, clientKeyFor, issueDemoSession, extractSessionToken, resolveSession } from "@/lib/services/route-guard";
+import { checkReadOnlyMode, checkSessionAttempt, clientKeyFor, guardFailureResponse, issueDemoSession, extractSessionToken, resolveSession, revokeSession, runMutationGuard } from "@/lib/services/route-guard";
 import { isPersonaKey, resolveActor } from "@/lib/services/actors";
+import { isSameOriginRequest } from "@/lib/security/same-origin";
 import { BodyReadError, PRE_SESSION_BODY_MAX_BYTES, readJsonBody } from "@/lib/http/read-json-body";
 import {
   resolveWorkspaceCookieSecret,
@@ -11,10 +12,14 @@ import {
 } from "@/lib/security/workspace-cookie";
 
 // Per-browser workspace cookie (M2.5 inc.2b). Read-scoping ONLY — it is not
-// an auth credential (mutations still require the Bearer token), so it opens
-// no CSRF surface. Set on first login and REUSED on later logins so every
-// persona acting in one browser shares the same demo workspace (the champion
-// loop spans requester -> reviewer -> approver logins).
+// an auth credential (mutations still require the Bearer token, which a
+// browser never attaches on its own), so a forged cross-site request cannot
+// mutate anything. The cookie is SameSite=Lax, so it IS sent on top-level
+// cross-site GET navigations: keep every GET that reads it side-effect free,
+// and keep SameSite/HttpOnly as they are. Set on first login and REUSED on
+// later logins so every persona acting in one browser shares the same demo
+// workspace (the champion loop spans requester -> reviewer -> approver
+// logins).
 //
 // Security-hardening pass (external-review finding #1 continuation): the
 // value is now SIGNED (lib/security/workspace-cookie.ts) — `issueDemoSession`
@@ -81,6 +86,11 @@ function storageUnavailable(error: unknown): Response {
 }
 
 export async function POST(req: Request): Promise<Response> {
+  // A cross-site form can POST here (req.json() ignores Content-Type) and replace the victim's workspace cookie.
+  if (!isSameOriginRequest(req)) return Response.json({ error: "cross-origin requests are not permitted" }, { status: 403 });
+  if (!req.headers.get("content-type")?.toLowerCase().startsWith("application/json")) {
+    return Response.json({ error: "content-type must be application/json" }, { status: 415 });
+  }
   const readOnlyFailure = checkReadOnlyMode();
   if (readOnlyFailure) {
     return Response.json({ error: readOnlyFailure.message }, { status: readOnlyFailure.status });
@@ -125,7 +135,8 @@ export async function POST(req: Request): Promise<Response> {
   let attempt;
   try {
     parent = token ? await resolveSession(token) : null;
-    attempt = await checkSessionAttempt(clientKeyFor(req), Boolean(parent?.actor && parent.workspaceId));
+    attempt = await checkSessionAttempt(clientKeyFor(req), Boolean(parent?.actor && parent.workspaceId && parent.actor.role !== "public"));
+    // A public parent is never a workspace donor (below), so it mints a fresh workspace and pays the anonymous rate.
   } catch (error) {
     return storageUnavailable(error);
   }
@@ -161,4 +172,14 @@ export async function POST(req: Request): Promise<Response> {
 
   const headers = { "Set-Cookie": workspaceCookieHeader(result.workspaceId, secret) };
   return Response.json(result, { status: 200, headers });
+}
+
+/** Exit: delete exactly the presented token's row. A persona session only (the guard refuses `public`), same session and rate limit as every mutation. */
+export async function DELETE(req: Request): Promise<Response> {
+  if (!isSameOriginRequest(req)) return Response.json({ error: "cross-origin requests are not permitted" }, { status: 403 });
+  const guard = await runMutationGuard(req, undefined);
+  if (!guard.ok) return guardFailureResponse(guard.failure);
+  const token = extractSessionToken(req);
+  if (token) await revokeSession(token);
+  return new Response(null, { status: 204 });
 }

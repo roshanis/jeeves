@@ -1,10 +1,12 @@
 import type { PoolConfig } from "pg";
+import { normalizeHost } from "./driver-select";
 
 function parsePostgresUrl(value: string): URL {
   try {
     const url = new URL(value);
     if (!["postgres:", "postgresql:"].includes(url.protocol) || !url.hostname) throw new Error();
     assertNoEndpointOverrides(url);
+    normalizeHost(url.hostname); // a malformed escape is an invalid URL, not a URIError later
     return url;
   } catch (error) {
     if (error instanceof Error && error.message.includes("must not override")) throw error;
@@ -13,7 +15,7 @@ function parsePostgresUrl(value: string): URL {
 }
 
 function isSupabase(url: URL): boolean {
-  const hostname = decodeURIComponent(url.hostname).toLowerCase().replace(/\.$/, "");
+  const hostname = normalizeHost(url.hostname);
   return hostname.endsWith(".supabase.co") || hostname.endsWith(".pooler.supabase.com");
 }
 

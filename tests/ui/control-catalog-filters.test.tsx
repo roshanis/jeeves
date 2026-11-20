@@ -96,4 +96,18 @@ describe("ControlCatalog filters", () => {
       expect(chip.className).toContain("focus-visible:ring-offset-background");
     }
   });
+
+  it("marks the active filter chip with aria-pressed", async () => {
+    const controls = await new MockDataProvider().controlCatalog();
+    const { container } = renderWithProviders(<ControlCatalog controls={controls} />);
+    const pressed = (slot: string) =>
+      Array.from(container.querySelectorAll(`[data-slot="${slot}"] button`))
+        .filter((b) => b.getAttribute("aria-pressed") === "true")
+        .map((b) => b.textContent?.trim());
+    expect(pressed("control-domain-filter")).toEqual(["All domains"]);
+    clickChip(container, "control-domain-filter", "Legal");
+    expect(pressed("control-domain-filter")).toEqual(["Legal"]);
+    clickChip(container, "control-status-filter", "All statuses");
+    expect(pressed("control-status-filter")).toEqual(["All statuses"]);
+  });
 });

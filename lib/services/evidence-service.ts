@@ -24,14 +24,18 @@ const packetDto=(p:PacketRow):EvidencePacket=>({...p,status:p.status as Evidence
 const documentDto=(d:typeof evidenceDocuments.$inferSelect | Omit<typeof evidenceDocuments.$inferSelect,'content'|'initiativeId'|'requestId'>):EvidenceDocument=>({id:d.id,fileName:d.fileName,mediaType:d.mediaType,byteSize:d.byteSize,sha256:d.sha256,scanStatus:'not_scanned',version:d.version,supersedesId:d.supersedesId,uploadedBy:d.uploadedBy,createdAt:d.createdAt.toISOString()});
 const sameEntry=(a:EvidenceEntry|undefined,b:EvidenceEntry|undefined)=>JSON.stringify(a??null)===JSON.stringify(b??null);
 async function initiativeFor(db:Reader, ref:string, viewer:EvidenceViewer, lock=false) {
-  const query=db.select().from(initiatives).where(or(eq(initiatives.id,ref),eq(initiatives.slug,ref))).limit(1);
-  const [row]=await (lock?query.for('update'):query);
+  const [row]=await db.select().from(initiatives).where(or(eq(initiatives.id,ref),eq(initiatives.slug,ref))).limit(1);
   if(!row || !viewer.workspaceId || row.workspaceId!==viewer.workspaceId) throw new EvidenceError(404,'Evidence workspace not found.');
-  return row;
+  if(!lock) return row;
+  // Authorized on the unlocked read above, so a foreign caller never locks a shared row.
+  // Lock that same row by id (not the ref again) and re-check its workspace under the lock.
+  const [locked]=await db.select().from(initiatives).where(eq(initiatives.id,row.id)).for('update');
+  if(!locked || locked.workspaceId!==viewer.workspaceId) throw new EvidenceError(404,'Evidence workspace not found.');
+  return locked;
 }
-function requireOwner(row:typeof initiatives.$inferSelect, viewer:EvidenceViewer) {
+function requireOwner(row:typeof initiatives.$inferSelect, viewer:EvidenceViewer, checkState=true) {
   if(viewer.actor.role!=='requester'||row.requester!==actorName(viewer.actor.id)) throw new EvidenceError(403,'Only the initiative requester may submit evidence.');
-  if(!editableStates.has(row.state)) throw new EvidenceError(409,'This initiative is closed to evidence edits.');
+  if(checkState&&!editableStates.has(row.state)) throw new EvidenceError(409,'This initiative is closed to evidence edits.');
 }
 async function cycleContext(db:Reader, initiativeId:string) {
   const [cycle]=await db.select().from(reviewCycles).where(eq(reviewCycles.initiativeId,initiativeId)).orderBy(desc(reviewCycles.openedAt),desc(reviewCycles.id)).limit(1);
@@ -80,13 +84,14 @@ export async function uploadEvidence(db:Db, ref:string, viewer:EvidenceViewer, i
   const bytes=Buffer.from(input.contentBase64,'base64');
   const validated=validateDocument(input.fileName,input.mediaType,bytes);
   return db.transaction(async tx=>{
-    const initiative=await initiativeFor(tx,ref,viewer,true);requireOwner(initiative,viewer);
+    const initiative=await initiativeFor(tx,ref,viewer,true);requireOwner(initiative,viewer,false);
     const docs=await tx.select(documentColumns).from(evidenceDocuments).where(eq(evidenceDocuments.initiativeId,initiative.id));
     const [existing]=await tx.select(documentColumns).from(evidenceDocuments).where(and(eq(evidenceDocuments.initiativeId,initiative.id),eq(evidenceDocuments.requestId,input.requestId)));
     if(existing) {
-      if(existing.sha256!==validated.sha256||existing.fileName!==input.fileName||existing.supersedesId!==(input.supersedesId??null)) throw new EvidenceError(409,'Upload retry differs from the original request.');
+      if(existing.sha256!==validated.sha256||existing.fileName!==validated.fileName||existing.supersedesId!==(input.supersedesId??null)) throw new EvidenceError(409,'Upload retry differs from the original request.');
       return documentDto(existing);
     }
+    requireOwner(initiative,viewer);
     if(docs.length>=40||docs.reduce((n,d)=>n+d.byteSize,0)+bytes.length>MAX_INITIATIVE_BYTES) throw new EvidenceError(413,'This initiative has reached its evidence storage limit (20 MiB or 40 versions).');
     const prior=input.supersedesId?docs.find(d=>d.id===input.supersedesId):null;
     if(input.supersedesId&&!prior) throw new EvidenceError(404,'Previous document not found.');

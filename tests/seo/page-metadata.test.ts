@@ -60,6 +60,20 @@ describe("site-wide head", () => {
     expect(/metadataBase/.test(src)).toBe(true);
   });
 
+  it("does not pin openGraph.url to the site root for every page", () => {
+    // A root-level og:url makes /frameworks/eu-ai-act claim the homepage as
+    // its canonical URL. Without it Next (resolve-opengraph.js) resolves
+    // og:url to null, so no page emits one and crawlers use the URL fetched.
+    const src = readFileSync(join(APP_DIR, "layout.tsx"), "utf8");
+    const start = src.indexOf("openGraph: {");
+    const end = src.indexOf("twitter: {");
+    // Guard the slice itself: a missing or reordered block must not pass vacuously.
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+    const og = src.slice(start, end);
+    expect(/\burl:/.test(og)).toBe(false);
+  });
+
   it("has a root not-found page, not just the console one", () => {
     // app/(console)/not-found.tsx only covers routes inside that group. A
     // typo'd marketing URL fell through to Next's unstyled default.

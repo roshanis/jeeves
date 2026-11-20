@@ -23,8 +23,10 @@ function evalAtom(atom: string, tier: Tier, flags: OverlayFlags): boolean {
   if (a === "PHI=Y") return flags.phi;
   const tierGte = a.match(/^tier>=(\w+)$/);
   if (tierGte) {
-    const threshold = tierGte[1] as Tier;
-    return TIER_ORDER[tier] >= TIER_ORDER[threshold];
+    if (!(tierGte[1] in TIER_ORDER)) {
+      throw new Error(`applicabilityApplies: unrecognized tier "${tierGte[1]}" in "${a}"`);
+    }
+    return TIER_ORDER[tier] >= TIER_ORDER[tierGte[1] as Tier];
   }
   throw new Error(`applicabilityApplies: unrecognized atom "${a}"`);
 }

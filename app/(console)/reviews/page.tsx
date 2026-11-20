@@ -5,10 +5,13 @@ import { ReviewWorkbenchRoute } from "./review-workbench-route";
 import { ReviewRequestQueue } from "@/components/jeeves/review-request-queue";
 import {
   deliveryTransportStatus,
-  undeliveredNotificationsForViewer,
+  recentUndeliveredNotifications,
   type ReviewNotificationRow,
 } from "@/lib/services/notification-service";
 import { getDb } from "@/lib/db/client";
+import { logUnexpectedError } from "@/lib/http/log-error";
+import { runtimeDatabaseUrl } from "@/lib/db/runtime-config";
+import { resolveDataProviderMode } from "@/lib/data/provider-mode";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
@@ -29,12 +32,18 @@ export default async function ReviewsPage() {
   // each ask names its initiative, so an unscoped queue would show every
   // playground visitor everyone else's titles.
   let requests: ReviewNotificationRow[] = [];
-  const dbMode = process.env.DATA_PROVIDER === "db" || !!process.env.DATABASE_URL;
+  let requestsTotal = 0;
+  let requestsLoadFailed = false;
+  const dbMode = resolveDataProviderMode(process.env.DATA_PROVIDER, !!runtimeDatabaseUrl()) === "db";
   if (dbMode) {
     try {
-      requests = await undeliveredNotificationsForViewer(getDb(), viewerWorkspaceId);
-    } catch {
+      const recent = await recentUndeliveredNotifications(getDb(), viewerWorkspaceId);
+      requests = recent.rows;
+      requestsTotal = recent.total;
+    } catch (err) {
+      logUnexpectedError("reviews: could not load review requests", err);
       requests = [];
+      requestsLoadFailed = true;
     }
   }
 
@@ -71,7 +80,12 @@ export default async function ReviewsPage() {
         </p>
       </div>
       <ReviewWorkbenchRoute rows={rows} />
-      <ReviewRequestQueue notifications={requests} transport={deliveryTransportStatus()} />
+      <ReviewRequestQueue
+        notifications={requests}
+        total={requestsTotal}
+        loadFailed={requestsLoadFailed}
+        transport={deliveryTransportStatus()}
+      />
     </div>
   );
 }

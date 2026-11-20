@@ -23,6 +23,7 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
+  ApiError,
   apiErrorToMessage,
   isApiError,
   pauseDeployment,
@@ -55,7 +56,11 @@ export function DeploymentActionButton({
   const [error, setError] = React.useState<string | null>(null);
 
   async function handleConfirm(reason: string) {
-    if (!session || !initiativeId) return;
+    if (!initiativeId) return;
+    if (!session) {
+      setError(apiErrorToMessage(new ApiError(401, "session expired")));
+      return;
+    }
     setPending(true);
     setError(null);
     try {

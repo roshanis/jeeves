@@ -17,9 +17,14 @@ import type { Domain } from "@/lib/domain/types";
 // implying a feed.
 export function ReviewRequestQueue({
   notifications,
+  total = notifications.length,
+  loadFailed = false,
   transport,
 }: {
   notifications: ReviewNotificationRow[];
+  /** All undelivered requests; `notifications` may be only the newest of them. */
+  total?: number;
+  loadFailed?: boolean;
   transport: TransportStatus;
 }) {
   return (
@@ -27,8 +32,8 @@ export function ReviewRequestQueue({
       <div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-2.5">
         <BellRing className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
         <span className="kicker">Review requests</span>
-        {notifications.length > 0 ? (
-          <span className="stat-value text-xs text-foreground">{notifications.length}</span>
+        {total > 0 ? (
+          <span className="stat-value text-xs text-foreground">{total}</span>
         ) : null}
         {/* Status word, not a reassurance: these have not been delivered. */}
         <span
@@ -44,7 +49,17 @@ export function ReviewRequestQueue({
         <p className="text-xs text-muted-foreground">{transport.detail}</p>
       </div>
 
-      {notifications.length === 0 ? (
+      {!loadFailed && total > notifications.length ? (
+        <p className="border-b border-border px-4 py-2 text-xs text-muted-foreground">
+          Showing the newest {notifications.length} of {total} requests.
+        </p>
+      ) : null}
+
+      {loadFailed ? (
+        <p role="status" className="px-4 py-4 text-sm text-muted-foreground">
+          Review requests could not be loaded. Refresh to try again.
+        </p>
+      ) : notifications.length === 0 ? (
         <p className="px-4 py-4 text-sm text-muted-foreground">
           No review requests recorded yet. Triaging an initiative opens one per
           required domain and records the ask here.

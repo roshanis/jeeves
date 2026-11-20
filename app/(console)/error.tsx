@@ -22,9 +22,13 @@ import { Button, buttonVariants } from "@/components/ui/button";
 export default function ConsoleError({
   error,
   reset,
+  retry,
 }: {
   error: Error & { digest?: string };
   reset: () => void;
+  // Next 16 passes retry(), which re-fetches the segment; reset() only
+  // re-renders from the cached payload, so a server-thrown error re-throws.
+  retry?: () => void;
 }) {
   React.useEffect(() => {
     // Surface it in the browser console for anyone debugging a demo, without
@@ -47,9 +51,9 @@ export default function ConsoleError({
           This screen didn&apos;t load
         </h1>
         <p className="text-sm text-muted-foreground">
-          The error has been logged. Nothing you were looking at was changed —
-          this console only writes when you explicitly act, and this failure
-          happened while reading.
+          The error has been logged. This console only writes when you
+          explicitly act, but if you had just made a change, check the audit
+          log before repeating it.
         </p>
         {error.digest ? (
           <p className="mt-1 font-mono text-xs text-muted-foreground">
@@ -59,7 +63,7 @@ export default function ConsoleError({
       </div>
 
       <div className="flex flex-wrap items-center justify-center gap-2">
-        <Button size="sm" onClick={reset}>
+        <Button size="sm" onClick={() => (retry ?? reset)()}>
           Try again
         </Button>
         <Link

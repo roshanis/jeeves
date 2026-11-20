@@ -38,9 +38,14 @@ function getServerSnapshot(): boolean {
   return false;
 }
 
+/** True while the console theme is dark (shared with the Toaster). */
+export function useIsDark(): boolean {
+  return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+}
+
 /** Light/dark toggle for the console top bar (tokens live in globals.css). */
 export function ThemeToggle() {
-  const dark = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+  const dark = useIsDark();
 
   const next = dark ? "light" : "dark";
   return (

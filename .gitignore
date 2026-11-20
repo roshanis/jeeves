@@ -10,9 +10,8 @@ test-results/
 .pglite/
 
 # env & secrets
-.env
-.env.local
-.env.*.local
+.env*
+!.env.example
 
 # session artifacts
 SESSION_CONTEXT.md

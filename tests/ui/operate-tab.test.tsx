@@ -1,8 +1,18 @@
-import { describe, expect, it, beforeAll } from "vitest";
-import { screen } from "@testing-library/react";
-import { EvalsTab } from "@/components/jeeves/operate-tab";
+import { describe, expect, it, beforeAll, beforeEach, afterEach, vi } from "vitest";
+import { act, screen } from "@testing-library/react";
+import {
+  LiveSessionProvider,
+  resetLiveSessionForTests,
+  useLiveSession,
+} from "@/lib/client/session-context";
+import { EvalsTab, seriesYDomain } from "@/components/jeeves/operate-tab";
+import { OFFLINE_COMPARISON_SLUG, OFFLINE_COMPARISON_VERSIONS } from "@/components/jeeves/eval-comparison";
 import { MockDataProvider } from "@/lib/data/mock-provider";
 import { installResizeObserverStub, renderWithProviders } from "./helpers";
+
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ refresh: () => {}, push: () => {} }),
+}));
 
 beforeAll(() => {
   installResizeObserverStub();
@@ -52,6 +62,17 @@ describe("EvalsTab — breach initiative (#4 member-chat-copilot)", () => {
   });
 });
 
+describe("EvalsTab — offline promotion comparison (#5)", () => {
+  it("titles the panel with the pair the Promotions pointer names", async () => {
+    const detail = await new MockDataProvider().getInitiativeDetail(OFFLINE_COMPARISON_SLUG);
+    expect(detail).not.toBeNull();
+    renderWithProviders(<EvalsTab slug={detail!.summary.slug} telemetry={detail!.telemetry} />);
+    const { current, candidate } = OFFLINE_COMPARISON_VERSIONS;
+    expect(screen.getByText(`Offline eval — ${current} vs ${candidate}`)).toBeDefined();
+    expect(screen.getByText(new RegExp(`${candidate.replace(".", "\\.")} checkpoint cannot be promoted`))).toBeDefined();
+  });
+});
+
 describe("EvalsTab — breach marker (review P3)", () => {
   it("marks the eval panel Threshold exceeded when #4's series crosses Q-01", async () => {
     const detail = await new MockDataProvider().getInitiativeDetail("member-chat-copilot");
@@ -69,5 +90,53 @@ describe("EvalsTab — breach marker (review P3)", () => {
       <EvalsTab slug={detail!.summary.slug} telemetry={detail!.telemetry} />,
     );
     expect(container.querySelector('[data-slot="breach-marker"]')).toBeNull();
+  });
+});
+
+describe("EvalsTab — Run monitor action (ui-shell-F11)", () => {
+  let login: ((personaKey: string) => Promise<unknown>) | null = null;
+  function LoginCapture() {
+    login = useLiveSession().login;
+    return null;
+  }
+  beforeEach(() => resetLiveSessionForTests());
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    resetLiveSessionForTests();
+  });
+
+  it("is enabled in a live session, not a permanently disabled button", async () => {
+    const detail = await new MockDataProvider().getInitiativeDetail("member-chat-copilot");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({ token: "tok", workspaceId: "ws-1", expiresAt: Date.now() + 60_000 }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      ),
+    );
+    renderWithProviders(
+      <LiveSessionProvider>
+        <LoginCapture />
+        <EvalsTab slug={detail!.summary.slug} telemetry={detail!.telemetry} />
+      </LiveSessionProvider>,
+    );
+    await act(async () => {
+      await login!("ray-chen");
+    });
+    const button = document.querySelector('[data-slot="run-monitor"]') as HTMLButtonElement;
+    expect(button).not.toBeNull();
+    expect(button.getAttribute("aria-disabled")).not.toBe("true");
+  });
+});
+
+describe("seriesYDomain — threshold line stays visible (ui-shell-F13)", () => {
+  it("raises the axis top to the threshold when the series sits well below it", () => {
+    const [, top] = seriesYDomain("eval_hallucination", 0.08);
+    expect((top as (max: number) => number)(0.0494)).toBeGreaterThanOrEqual(0.08);
+  });
+  it("keeps the fixed GPU scale", () => {
+    expect(seriesYDomain("gpu_util_pct", 90)).toEqual([0, 100]);
   });
 });

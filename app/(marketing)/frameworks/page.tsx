@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { FRAMEWORK_PAGES } from "@/lib/marketing/framework-mappings";
 
 export const metadata = {
-  title: "Framework crosswalks — Jeeves",
+  title: "Framework crosswalks",
   description:
     "How the Jeeves demo control catalog maps to the NIST AI RMF and the EU AI Act.",
 };
@@ -31,7 +31,7 @@ export default function FrameworksIndexPage() {
               </CardHeader>
               <CardContent>
                 <p className="text-sm text-muted-foreground">
-                  {page.intro.split(". ")[0]}.
+                  {page.summary}
                 </p>
                 <Link
                   href={`/frameworks/${page.slug}`}

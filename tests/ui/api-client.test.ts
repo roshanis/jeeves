@@ -256,24 +256,82 @@ describe("error mapping", () => {
     );
   });
 
-  it("maps 429 (rate limit or budget) to the retry message", async () => {
+  it("maps 429 (rate limit) to the retry message", async () => {
     fetchMock.mockResolvedValueOnce(
       jsonResponse(429, { error: "rate limit exceeded", retryAfterSeconds: 30 }),
     );
     const err = await startDraftRun("tok", "init-1", ["legal"]).catch((e) => e);
     expect(err.status).toBe(429);
     expect(apiErrorToMessage(err)).toBe(
-      "Rate limit or demo budget reached — try again shortly.",
+      "Rate limit reached — try again in 30 seconds.",
     );
   });
 
-  it("maps 403 to the role message", async () => {
+  it("names the first invalid field for a 400 with zod issues", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(400, { error: "invalid intake payload", issues: [{ path: ["basics", "title"], message: "too long" }] }),
+    );
+    const err = await createInitiative("tok", CHAMPION_PREFILL_PAYLOAD).catch((e) => e);
+    expect(apiErrorToMessage(err)).toBe("invalid intake payload (Title)");
+  });
+
+  it("labels an evidence attachment issue path and falls back to the raw path for an unknown field", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(400, { error: "invalid intake payload", issues: [{ path: ["evidenceAttachments", 0, "fileName"], message: "too long" }] }));
+    const attachment = await createInitiative("tok", CHAMPION_PREFILL_PAYLOAD).catch((e) => e);
+    expect(apiErrorToMessage(attachment)).toBe("invalid intake payload (Evidence attachment 1: file name)");
+    fetchMock.mockResolvedValueOnce(jsonResponse(400, { error: "invalid intake payload", issues: [{ path: ["mystery", "field"], message: "x" }] }));
+    const unknown = await createInitiative("tok", CHAMPION_PREFILL_PAYLOAD).catch((e) => e);
+    expect(apiErrorToMessage(unknown)).toBe("invalid intake payload (mystery.field)");
+  });
+
+  it("names the list and the 1-based position for an issue on one entry of a list", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(400, { error: "invalid intake payload", issues: [{ path: ["data", "dataSources", 0], message: "too long" }] }));
+    const source = await createInitiative("tok", CHAMPION_PREFILL_PAYLOAD).catch((e) => e);
+    expect(apiErrorToMessage(source)).toBe("invalid intake payload (Data sources, item 1)");
+    fetchMock.mockResolvedValueOnce(jsonResponse(400, { error: "invalid intake payload", issues: [{ path: ["evidenceAttachments", 2], message: "expected object" }] }));
+    const attachment = await createInitiative("tok", CHAMPION_PREFILL_PAYLOAD).catch((e) => e);
+    expect(apiErrorToMessage(attachment)).toBe("invalid intake payload (Evidence attached at intake, item 3)");
+  });
+
+  it("tells a spent daily budget apart from the per-minute rate limit", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(429, { error: "demo token budget exhausted for today" }));
+    const budget = await startDraftRun("tok", "init-1", ["legal"]).catch((e) => e);
+    expect(apiErrorToMessage(budget)).toBe("The daily model budget is used up — please come back tomorrow.");
+    for (const error of ["daily model budget reached", "Daily model budget reached.", "Demo token reservation budget exhausted for today."]) {
+      fetchMock.mockResolvedValueOnce(jsonResponse(429, { error }));
+      const reached = await startDraftRun("tok", "init-1", ["legal"]).catch((e) => e);
+      expect(apiErrorToMessage(reached)).toBe("The daily model budget is used up — please come back tomorrow.");
+      expect(apiErrorToMessage(reached)).not.toMatch(/demo/i);
+    }
+    fetchMock.mockResolvedValueOnce(jsonResponse(429, { error: "rate limit exceeded", retryAfterSeconds: 30 }));
+    const rate = await startDraftRun("tok", "init-1", ["legal"]).catch((e) => e);
+    expect(apiErrorToMessage(rate)).toBe("Rate limit reached — try again in 30 seconds.");
+  });
+
+  it("passes the server's message through for a 403 that is not about the role", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(403, { error: "this draft belongs to another requester" }));
+    const err = await createInitiative("tok", CHAMPION_PREFILL_PAYLOAD).catch((e) => e);
+    expect(apiErrorToMessage(err)).toBe("this draft belongs to another requester");
+  });
+
+  it("shows the generic permission sentence for a 403 written for developers", async () => {
+    for (const error of [
+      "action 'submit' from state 'in_qc' is restricted to roles [program]; role 'requester' is not permitted",
+      "requester 'priya-raman' does not own initiative 'some-slug'",
+    ]) {
+      fetchMock.mockResolvedValueOnce(jsonResponse(403, { error }));
+      const err = await submitIntake("tok", "init-1").catch((e) => e);
+      expect(apiErrorToMessage(err)).toBe("Not permitted for your current role.");
+    }
+  });
+
+  it("passes a 403 server message through", async () => {
     fetchMock.mockResolvedValueOnce(
       jsonResponse(403, { error: "only requesters may create an intake draft" }),
     );
     const err = await createInitiative("tok", CHAMPION_PREFILL_PAYLOAD).catch((e) => e);
     expect(err.status).toBe(403);
-    expect(apiErrorToMessage(err)).toBe("Not permitted for your current role.");
+    expect(apiErrorToMessage(err)).toBe("only requesters may create an intake draft");
   });
 
   it("surfaces the server's own message (and gaps) for 400", async () => {
@@ -314,7 +372,7 @@ describe("error mapping", () => {
     const err = await intakeChat("tok", { conversation: [], partialPayload: {} }).catch((e) => e);
     expect(isApiError(err)).toBe(true);
     expect(err.status).toBe(403);
-    expect(apiErrorToMessage(err)).toBe("Not permitted for your current role.");
+    expect(apiErrorToMessage(err)).toBe("only the requester persona may use the intake chat");
   });
 
   it("promoteCheckpoint maps 400 (missing/empty attestation field) to a typed ApiError", async () => {
@@ -340,12 +398,20 @@ describe("error mapping", () => {
     }).catch((e) => e);
     expect(isApiError(err)).toBe(true);
     expect(err.status).toBe(403);
-    expect(apiErrorToMessage(err)).toBe("Not permitted for your current role.");
+    expect(apiErrorToMessage(err)).toBe("only approvers may promote a checkpoint");
   });
 
   it("isApiError rejects non-ApiError values", () => {
     expect(isApiError(new Error("plain"))).toBe(false);
     expect(isApiError(null)).toBe(false);
     expect(isApiError(new ApiError(401, "x"))).toBe(true);
+  });
+});
+
+describe("403 without a server message", () => {
+  it("falls back to the role message", async () => {
+    fetchMock.mockResolvedValueOnce(new Response("nope", { status: 403 }));
+    const err = await submitIntake("tok", "init-1").catch((e) => e);
+    expect(apiErrorToMessage(err)).toBe("Not permitted for your current role.");
   });
 });

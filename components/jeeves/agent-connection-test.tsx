@@ -58,6 +58,7 @@ export function AgentConnectionTest() {
 
       {result ? (
         <div
+          role="status"
           className="flex items-start gap-2 rounded-md border bg-muted/30 px-3 py-2 text-xs"
           data-slot="test-connection-result"
         >
@@ -73,7 +74,7 @@ export function AgentConnectionTest() {
       ) : null}
 
       {error ? (
-        <p className="text-xs text-destructive" data-slot="test-connection-error">
+        <p role="alert" className="text-xs text-destructive" data-slot="test-connection-error">
           {error}
         </p>
       ) : null}

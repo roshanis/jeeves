@@ -14,6 +14,10 @@ describe("read-model provider selection", () => {
     ["", true, "db"],
     ["unknown", false, "mock"],
     ["unknown", true, "db"],
+    [" Mock ", true, "mock"],
+    ["MOCK", true, "mock"],
+    ["DB", false, "db"],
+    [" db", false, "db"],
   ] as const)("mode %s with URL present=%s selects %s", (mode, hasUrl, expected) => {
     expect(resolveDataProviderMode(mode, hasUrl)).toBe(expected);
   });

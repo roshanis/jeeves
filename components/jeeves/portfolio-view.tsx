@@ -34,15 +34,15 @@ export function PortfolioView({ initiatives }: { initiatives: InitiativeSummary[
     <div className="flex flex-col gap-3">
       <div>
         <p className="kicker mb-1.5">Saved views</p>
-        <div className="flex flex-wrap items-center gap-1.5" role="tablist" aria-label="Saved views">
+        <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Saved views">
           {VIEWS.map((v) => {
             const count = initiatives.filter(v.test).length;
             const isActive = v.id === view;
             return (
               <button
                 key={v.id}
-                role="tab"
-                aria-selected={isActive}
+                type="button"
+                aria-pressed={isActive}
                 onClick={() => setView(v.id)}
                 className={`touch-min rounded-md px-3 py-1.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background ${
                   isActive

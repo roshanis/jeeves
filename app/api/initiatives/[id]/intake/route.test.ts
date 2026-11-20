@@ -13,7 +13,8 @@ const state = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => state.db }));
-vi.mock("@/lib/services/route-guard", () => ({
+vi.mock("@/lib/services/route-guard", async (importOriginal) => ({
+  guardFailureResponse: (await importOriginal<typeof import("@/lib/services/route-guard")>()).guardFailureResponse,
   extractSessionToken: () => "test-token",
   resolveSession: async () => ({ actor: state.actor, workspaceId: state.workspaceId }),
   runMutationGuard: async () => state.actor
@@ -146,6 +147,17 @@ describe("GET/PUT /api/initiatives/[id]/intake", () => {
       context(initiativeId),
     );
     expect(response.status).toBe(409);
+  });
+
+  it("labels a 409 on a submitted draft with a stable code", async () => {
+    const { submitIntake } = await import("@/lib/services/initiative-service");
+    await submitIntake(state.db!, initiativeId, state.actor!, state.workspaceId);
+    const response = await PUT(
+      putRequest({ payload: CHAMPION_PREFILL_PAYLOAD, expectedVersion: 1 }),
+      context(initiativeId),
+    );
+    expect(response.status).toBe(409);
+    expect(((await response.json()) as { code?: string }).code).toBe("INTAKE_NOT_EDITABLE");
   });
 
   it("rejects a body larger than 64KB", async () => {

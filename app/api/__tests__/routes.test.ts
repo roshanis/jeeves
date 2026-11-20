@@ -296,6 +296,35 @@ describe("POST /api/initiatives — auth + role-from-session", () => {
       );
     }
     expect(last!.status).toBe(429);
+    expect(Number(last!.headers.get("retry-after"))).toBeGreaterThan(0);
+    const body = (await last!.json()) as { error: string; retryAfterSeconds?: number };
+    expect(body.retryAfterSeconds).toBe(Number(last!.headers.get("retry-after")));
+  });
+
+  it("the intake draft update and the intake submit routes also return Retry-After on a 429", async () => {
+    const token = await issueSessionFor("priya-raman");
+    const intake = await import("../initiatives/[id]/intake/route");
+    const submit = await import("../initiatives/[id]/submit/route");
+    const id = "11111111-1111-4111-8111-111111111111";
+    const burst = async (call: (i: number) => Promise<Response>): Promise<Response> => {
+      let last: Response | null = null;
+      for (let i = 0; i < 25; i++) last = await call(i);
+      return last!;
+    };
+    const put = await burst(() => intake.PUT(
+      new Request(`http://localhost/api/initiatives/${id}/intake`, { method: "PUT", headers: bearer(token, "6.6.6.6"), body: "{}" }),
+      { params: Promise.resolve({ id }) },
+    ));
+    const post = await burst(() => submit.POST(
+      new Request(`http://localhost/api/initiatives/${id}/submit`, { method: "POST", headers: bearer(token, "7.7.7.7") }),
+      { params: Promise.resolve({ id }) },
+    ));
+    for (const res of [put, post]) {
+      expect(res.status).toBe(429);
+      expect(Number(res.headers.get("retry-after"))).toBeGreaterThan(0);
+      const body = (await res.json()) as { retryAfterSeconds?: number };
+      expect(body.retryAfterSeconds).toBe(Number(res.headers.get("retry-after")));
+    }
   });
 });
 
@@ -549,24 +578,27 @@ describe("deep-review budget multiplier on draft-run", () => {
         body: JSON.stringify({ payload: CHAMPION_PAYLOAD, requestId: `routes-helper-${ip.replaceAll(".", "-")}` }),
       }),
     );
+    expect(createRes.status).toBe(200);
     const { initiativeId } = await createRes.json();
     const { POST: submitPost } = await import("../initiatives/[id]/submit/route");
-    await submitPost(
+    const submitRes = await submitPost(
       new Request(`http://localhost/api/initiatives/${initiativeId}/submit`, {
         method: "POST",
         headers: bearer(token, ip),
       }),
       { params: Promise.resolve({ id: initiativeId }) },
     );
+    expect(submitRes.status).toBe(200);
     const programToken = await passQcOverHttp(initiativeId, workspaceCookie, ip);
     const { POST: triagePost } = await import("../initiatives/[id]/triage/route");
-    await triagePost(
+    const triageRes = await triagePost(
       new Request(`http://localhost/api/initiatives/${initiativeId}/triage`, {
         method: "POST",
         headers: bearer(programToken, ip),
       }),
       { params: Promise.resolve({ id: initiativeId }) },
     );
+    expect(triageRes.status).toBe(200);
     return { id: initiativeId, token };
   }
 
@@ -597,7 +629,7 @@ describe("deep-review budget multiplier on draft-run", () => {
     vi.stubEnv("JEEVES_DEEP_REVIEW", "0");
     await leaveHeadroom(STANDARD_RESERVE);
     const { id, token } = await triagedInitiative("11.5.0.1");
-    expect(await draftRun(id, token, "11.5.0.1")).not.toBe(429);
+    expect(await draftRun(id, token, "11.5.0.1")).toBe(200);
   });
 
   it("returns a safe 503 for missing agent assets while keeping unknown IDs private", async () => {

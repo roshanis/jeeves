@@ -25,12 +25,19 @@ Podman-specific.
 ```bash
 cd deploy/podman
 cp env.example .env          # then edit: set POSTGRES_PASSWORD and JEEVES_COOKIE_SECRET
-podman compose up -d --build
-podman compose run --rm migrate      # create the schema
+podman compose --profile tools build   # the app and the migrate/seed image
+podman compose run --rm migrate      # create the schema, before the app takes traffic
 podman compose run --rm seed         # load the synthetic demo data
+podman compose up -d
 ```
 
 Then open `http://localhost:3000`.
+
+Open it as `localhost` (or over HTTPS). The app marks its workspace cookie
+`Secure` because the image runs with `NODE_ENV=production`, and browsers drop a
+`Secure` cookie over plain HTTP from any other address, such as
+`http://192.168.1.20:3000`. The pages then show only the seeded rows and a
+visitor's own initiatives are missing.
 
 `OPERATOR_TOKEN` in `.env` (32+ characters, `openssl rand -hex 32`) is optional.
 It opens the "Send a real request" door and the `/operator` queue that reads
@@ -48,7 +55,7 @@ the Quadlet units in §3 — they are the Podman-native path.
 
 | Service | Image | Notes |
 |---|---|---|
-| `db` | `postgres:16-alpine` | **Not** published to the host. Data in the `jeeves-pgdata` volume. |
+| `db` | `postgres:16-alpine` | **Not** published to the host. Data in the `jeeves-pgdata` volume (`podman_jeeves-pgdata` on the host). |
 | `app` | built from `Containerfile` (`runner`) | The only published port. Non-root, read-only rootfs. |
 | `migrate` / `seed` | built from `Containerfile` (`migrator`) | One-shot jobs, `tools` profile. |
 
@@ -96,6 +103,12 @@ anything you care about.
 Quadlet is Podman's native systemd integration: you write `.container` files
 and systemd generates the units.
 
+Health probes: `podman build` produces an OCI-format image by default, and
+that format ignores the Containerfile's `HEALTHCHECK` (Podman warns about it).
+The probes that count here are the ones in `compose.yaml` and the Quadlet
+`.container` files. Only add `--format docker` to the build commands below if
+you want the image to carry its own probe for a bare `podman run`.
+
 ```bash
 # Build both images first — Quadlet does not build.
 podman build -f deploy/podman/Containerfile -t localhost/jeeves:latest .
@@ -106,6 +119,12 @@ mkdir -p ~/.config/containers/systemd
 cp deploy/podman/quadlet/* ~/.config/containers/systemd/
 cp deploy/podman/env.example ~/.config/containers/systemd/jeeves.env
 chmod 600 ~/.config/containers/systemd/jeeves.env    # it holds the database password and the cookie key
+# env.example has no DATABASE_URL (compose builds it inline; Quadlet cannot), so add
+# this line to jeeves.env while you edit it, with the same password as POSTGRES_PASSWORD:
+#   DATABASE_URL=postgres://jeeves:PASSWORD@jeeves-db:5432/jeeves
+# Without it the app falls back to a local PGlite store, which the read-only root
+# filesystem refuses: the app runs without a database, its data pages fail and
+# the health check reports unhealthy.
 $EDITOR ~/.config/containers/systemd/jeeves.env
 
 systemctl --user daemon-reload
@@ -176,30 +195,45 @@ errors carry the host and port.
 
 ### Backups
 
-The Postgres data lives in a named volume:
+The Postgres data lives in a named volume. Compose prefixes the volume with
+the project name, which defaults to the directory name, so from
+`deploy/podman` it is `podman_jeeves-pgdata` (check with `podman volume ls`).
+The Quadlet path names it `jeeves-db`.
 
 ```bash
-podman volume export jeeves-pgdata --output jeeves-pgdata.tar    # back up
-podman volume import jeeves-pgdata jeeves-pgdata.tar             # restore
+podman volume export podman_jeeves-pgdata --output jeeves-pgdata.tar    # back up
+podman volume import podman_jeeves-pgdata jeeves-pgdata.tar             # restore
 ```
 
 Stop the stack first — exporting a volume under a running Postgres captures a
 torn snapshot. For a consistent online backup use `pg_dump` instead:
 
 ```bash
-podman compose exec db pg_dump -U jeeves jeeves > jeeves-$(date +%F).sql
+podman compose exec -T db pg_dump -U jeeves jeeves > jeeves-$(date +%F).sql
 ```
 
-The same caveat as `deploy.md` §4 applies: nobody has restored from one of
-these. A backup you have not restored from is a hypothesis.
+Restore into a fresh database rather than over the running one, and run the
+post-restore checks: see `deploy.md` §4. The same caveat applies: nobody has
+restored from one of these. A backup you have not restored from is a hypothesis.
+
+### Stopping during a draft run
+
+Draft runs execute inside the HTTP request. One run may take up to 60 s, or
+120 s with deep review (`JEEVES_DEEP_REVIEW=1`). Podman sends SIGKILL 10 s
+after the stop signal by default, which cuts a live run off. Give the app
+longer than one run: `podman compose stop -t 130 app` (and `up -d -t 130`
+when an upgrade replaces the container) for compose, and for Quadlet a drop-in
+`~/.config/containers/systemd/jeeves-app.container.d/stop.conf` containing
+`[Container]` and `StopTimeout=130`. The server stops as soon as its open
+requests finish, so the longer limit costs nothing when nothing is running.
 
 ### Upgrading
 
 ```bash
 git pull
-podman compose build
-podman compose run --rm migrate     # only if drizzle/ changed
-podman compose up -d
+podman compose --profile tools build   # rebuilds the migrator, so migrate sees the new drizzle/
+podman compose run --rm migrate        # only if drizzle/ changed
+podman compose up -d -t 130            # lets a running draft finish
 ```
 
 **Upgrading an older `.env`.** The compose stack now requires a non-empty

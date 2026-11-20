@@ -176,7 +176,7 @@ function flatCostSeries(slug: string, low: number, high: number): ObservationSee
  * AuditEvents so no state is orphaned (seed-spec §5).
  * ---------------------------------------------------------------------- */
 
-type SeedDb = Pick<Db, "select" | "insert" | "update" | "delete" | "execute">;
+export type SeedDb = Pick<Db, "select" | "insert" | "update" | "delete" | "execute">;
 
 interface SeedContext {
   db: SeedDb;
@@ -278,8 +278,19 @@ async function insertRiskAssessment(
  * Main seed function
  * ---------------------------------------------------------------------- */
 
-export async function seedDatabase(db: Db): Promise<RowCounts> {
-  return db.transaction((tx) => seedInTransaction(tx));
+export async function seedDatabase(
+  db: Db,
+  /** Runs in the seed's own transaction after the seed, so a failure rolls the seed back too. */
+  afterSeed?: (tx: SeedDb) => Promise<void>,
+): Promise<RowCounts> {
+  return db.transaction(async (tx) => {
+    // Fail fast rather than stall live requests (or deadlock with them) while
+    // the wipe waits on locks they hold.
+    await tx.execute(`SET LOCAL lock_timeout = '10s';`);
+    const counts = await seedInTransaction(tx);
+    if (afterSeed) await afterSeed(tx);
+    return counts;
+  });
 }
 
 async function seedInTransaction(db: SeedDb): Promise<RowCounts> {
@@ -522,8 +533,8 @@ async function seedInTransaction(db: SeedDb): Promise<RowCounts> {
     await insertAudit(ctx, {
       initiativeId: initId,
       ts: dateAt(-37),
-      actor: ACTORS.angelaTorres.name,
-      actorRole: "approver",
+      actor: "system",
+      actorRole: "system",
       action: "fast_lane_approve",
       detail: "Fast-lane approved under standing authority FL-2026-01 (FL-3.1); named accountable approver Angela Torres.",
       before: "triaged",
@@ -826,6 +837,15 @@ async function seedInTransaction(db: SeedDb): Promise<RowCounts> {
         citations: [],
         signedAt: dateAt(-51),
         createdAt: dateAt(-55),
+      });
+      await insertAudit(ctx, {
+        initiativeId: initId,
+        ts: dateAt(-51),
+        actor: reviewerNameForDomain(d),
+        actorRole: "reviewer",
+        action: "review_signed",
+        detail: `Signed ${d} review for Member Services Chat Copilot.`,
+        metadata: { domain: d },
       });
     }
     await insertAudit(ctx, {
@@ -1788,6 +1808,16 @@ async function seedInTransaction(db: SeedDb): Promise<RowCounts> {
       conditions: [],
       decidedAt: dateAt(-425),
     });
+    await insertAudit(ctx, {
+      initiativeId: initId,
+      ts: dateAt(-425),
+      actor: ACTORS.angelaTorres.name,
+      actorRole: "approver",
+      action: "approve",
+      detail: "Approved Fraud, Waste & Abuse Anomaly Detector for deployment.",
+      before: "in_review",
+      after: "approved",
+    });
 
     const depId = nextId("dep");
     await db.insert(deploymentVersions).values({
@@ -2116,6 +2146,16 @@ async function seedInTransaction(db: SeedDb): Promise<RowCounts> {
       citations: [],
       conditions: [],
       decidedAt: dateAt(-141),
+    });
+    await insertAudit(ctx, {
+      initiativeId: initId,
+      ts: dateAt(-141),
+      actor: ACTORS.angelaTorres.name,
+      actorRole: "approver",
+      action: "approve",
+      detail: "Approved Call Center QA Auto-Scorer for deployment.",
+      before: "in_review",
+      after: "approved",
     });
 
     const depId = nextId("dep");

@@ -34,9 +34,9 @@ const NEXT_ACTION: Record<LifecycleState, string> = {
   in_qc: "Pass QC or return",
   triaged: "Start reviews",
   in_review: "Complete reviews",
-  conditionally_approved: "Meet conditions",
-  approved: "Generate controls",
-  fast_lane_approved: "Monitor",
+  conditionally_approved: "Meet conditions, then promote",
+  approved: "Promote / deploy",
+  fast_lane_approved: "Promote / deploy",
   deployed: "Monitor",
   paused: "Reassess",
   re_review: "Reassess",
@@ -75,8 +75,9 @@ function OwnerCell({ name }: { name: string }) {
   return (
     <span className="inline-flex items-center" title={name}>
       <Avatar size="sm">
-        <AvatarFallback>{initials(name)}</AvatarFallback>
+        <AvatarFallback aria-hidden>{initials(name)}</AvatarFallback>
       </Avatar>
+      <span className="sr-only">{name}</span>
     </span>
   );
 }
@@ -190,8 +191,13 @@ export function InitiativeTable({
     // 21-32% clipping (design review problem #3). Container queries hide
     // columns based on the space this table actually has, so the fix holds
     // regardless of what else is on the page.
+    //
+    // `relative` makes this scroller the containing block of the cells'
+    // screen-reader text (sr-only is position: absolute). Without it that text
+    // is positioned against the page, escapes the scroller's clipping in a
+    // column scrolled out of view, and widened the page on a phone.
     <div
-      className="panel card-quiet scroll-thin scroll-x-pane @container overflow-x-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      className="panel card-quiet scroll-thin scroll-x-pane @container relative overflow-x-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       data-slot="initiative-table"
       tabIndex={0}
       role="region"

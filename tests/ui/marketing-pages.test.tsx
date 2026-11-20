@@ -67,6 +67,26 @@ describe("framework disclaimer contrast", () => {
   });
 });
 
+describe("MarketingLayout footer", () => {
+  it("reserves room for the fixed cookie notice only while the notice is showing", async () => {
+    const { CookieNoticeClearance, resetCookieNoticeForTests } = await import("@/components/jeeves/cookie-notice");
+    window.localStorage.setItem("jeeves_cookie_notice_ack", "1");
+    resetCookieNoticeForTests();
+    const { container } = render(<MarketingLayout><p>x</p></MarketingLayout>);
+    const footer = () => container.querySelector("footer")!;
+    // Acknowledged (the server render and the first client render): no spacer.
+    expect(footer().querySelector("[data-slot='cookie-notice-clearance']")).toBeNull();
+    expect(footer().className).not.toMatch(/(^| )pb-24/);
+    cleanup();
+    window.localStorage.clear();
+    resetCookieNoticeForTests();
+    const shown = render(<CookieNoticeClearance />);
+    expect(shown.container.querySelector("[data-slot='cookie-notice-clearance']")).not.toBeNull();
+    window.localStorage.setItem("jeeves_cookie_notice_ack", "1");
+    resetCookieNoticeForTests();
+  });
+});
+
 describe("MarketingLayout", () => {
   it("shows the exact demo banner string (moved here from LandingPage)", () => {
     const { getByText } = render(

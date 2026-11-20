@@ -91,4 +91,139 @@ describe("PublicIntakeQueue (operator)", () => {
     expect(window.sessionStorage.getItem("jeeves_operator_token")).toBeNull();
     expect(screen.queryByText("Appointment Reminder Summarizer")).toBeNull();
   });
+
+  it("renders a submitter email with mailto parameters as plain text, not a link", async () => {
+    const evil = "x@y.example?bcc=evil%40example.com&body=hi";
+    mocks.listPublicSubmissions.mockResolvedValue([{ ...ROW, requesterEmail: evil }]);
+    renderWithProviders(<PublicIntakeQueue />);
+    unlockWith("the-operator-token");
+
+    await waitFor(() => expect(screen.getByText("Appointment Reminder Summarizer")).toBeDefined());
+    expect(screen.getByText(evil)).toBeDefined();
+    expect(document.querySelector('a[href^="mailto:"]')).toBeNull();
+  });
+
+  it("keeps a plus-addressed email as a mailto link", async () => {
+    mocks.listPublicSubmissions.mockResolvedValue([{ ...ROW, requesterEmail: "a+b@example.test" }]);
+    renderWithProviders(<PublicIntakeQueue />);
+    unlockWith("the-operator-token");
+    await waitFor(() => expect(screen.getByRole("link", { name: /a\+b@example\.test/ })).toBeDefined());
+  });
+
+  it("keeps the token after a server error and clears it after a 401", async () => {
+    window.sessionStorage.setItem("jeeves_operator_token", "the-operator-token");
+    mocks.listPublicSubmissions.mockRejectedValueOnce(new ApiError(429, "slow down"));
+    renderWithProviders(<PublicIntakeQueue />);
+    await waitFor(() => expect(screen.getByRole("alert")).toBeDefined());
+    mocks.listPublicSubmissions.mockRejectedValueOnce(new ApiError(500, "boom"));
+    unlockWith("the-operator-token");
+    await waitFor(() => expect(mocks.listPublicSubmissions).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getByRole("button", { name: /open queue/i })).toBeDefined());
+    expect(window.sessionStorage.getItem("jeeves_operator_token")).toBe("the-operator-token");
+
+    mocks.listPublicSubmissions.mockRejectedValue(new ApiError(401, "no"));
+    unlockWith("the-operator-token");
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toMatch(/not accepted/i));
+    expect(window.sessionStorage.getItem("jeeves_operator_token")).toBeNull();
+  });
+
+  it("on resume, a 500 keeps the token and shows the error", async () => {
+    window.sessionStorage.setItem("jeeves_operator_token", "remembered");
+    mocks.listPublicSubmissions.mockRejectedValue(new ApiError(500, "boom"));
+    renderWithProviders(<PublicIntakeQueue />);
+    await waitFor(() => expect(screen.getByRole("alert")).toBeDefined());
+    expect(window.sessionStorage.getItem("jeeves_operator_token")).toBe("remembered");
+  });
+
+  it("on resume, a 401 forgets the token", async () => {
+    window.sessionStorage.setItem("jeeves_operator_token", "stale");
+    mocks.listPublicSubmissions.mockRejectedValue(new ApiError(401, "no"));
+    renderWithProviders(<PublicIntakeQueue />);
+    await waitFor(() => expect(window.sessionStorage.getItem("jeeves_operator_token")).toBeNull());
+  });
+
+  it("lets the operator read a long request in full, hover the title, and refresh", async () => {
+    const long = "Members miss appointments. ".repeat(80);
+    mocks.listPublicSubmissions.mockResolvedValue([{ ...ROW, businessProblem: long }]);
+    renderWithProviders(<PublicIntakeQueue />);
+    unlockWith("the-operator-token");
+    await screen.findByText("Appointment Reminder Summarizer");
+    expect(screen.getByText("Appointment Reminder Summarizer").getAttribute("title")).toBe(
+      "Appointment Reminder Summarizer",
+    );
+    const problem = document.querySelector('[data-slot="request-problem"]')!;
+    expect(problem.className).toContain("line-clamp-3");
+    fireEvent.click(screen.getByRole("button", { name: /show full request/i }));
+    expect(problem.className).not.toContain("line-clamp-3");
+    expect(problem.textContent).toBe(long);
+
+    mocks.listPublicSubmissions.mockClear();
+    mocks.listPublicSubmissions.mockResolvedValueOnce([
+      ROW,
+      { ...ROW, initiativeId: "init-2", title: "Prior Auth Triage Helper" },
+    ]);
+    fireEvent.click(screen.getByRole("button", { name: /refresh/i }));
+    await waitFor(() => expect(mocks.listPublicSubmissions).toHaveBeenCalledWith("the-operator-token"));
+    expect(await screen.findByText("Prior Auth Triage Helper")).toBeDefined();
+  });
+
+  it("keeps the rows and token on screen when a refresh fails with a 5xx", async () => {
+    renderWithProviders(<PublicIntakeQueue />);
+    unlockWith("the-operator-token");
+    await screen.findByText("Appointment Reminder Summarizer");
+
+    mocks.listPublicSubmissions.mockRejectedValueOnce(new ApiError(500, "boom"));
+    fireEvent.click(screen.getByRole("button", { name: /refresh/i }));
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toMatch(/refresh failed/i);
+    expect(screen.getByText("Appointment Reminder Summarizer")).toBeDefined();
+    expect(document.querySelector('[data-slot="operator-token-input"]')).toBeNull();
+    expect(window.sessionStorage.getItem("jeeves_operator_token")).toBe("the-operator-token");
+  });
+
+  it("drops to the token form when a refresh is rejected with a 401", async () => {
+    renderWithProviders(<PublicIntakeQueue />);
+    unlockWith("the-operator-token");
+    await screen.findByText("Appointment Reminder Summarizer");
+
+    mocks.listPublicSubmissions.mockRejectedValueOnce(new ApiError(401, "no"));
+    fireEvent.click(screen.getByRole("button", { name: /refresh/i }));
+    await waitFor(() => expect(document.querySelector('[data-slot="operator-token-input"]')).not.toBeNull());
+    expect(window.sessionStorage.getItem("jeeves_operator_token")).toBeNull();
+  });
+
+  it("sends no second request while a refresh is pending", async () => {
+    renderWithProviders(<PublicIntakeQueue />);
+    unlockWith("the-operator-token");
+    await screen.findByText("Appointment Reminder Summarizer");
+
+    let resolve!: (rows: unknown[]) => void;
+    mocks.listPublicSubmissions.mockClear();
+    mocks.listPublicSubmissions.mockReturnValueOnce(new Promise((r) => { resolve = r; }));
+    const button = screen.getByRole("button", { name: /refresh/i }) as HTMLButtonElement;
+    fireEvent.click(button);
+    expect(button.disabled).toBe(true);
+    expect(button.getAttribute("aria-busy")).toBe("true");
+    fireEvent.click(button);
+    expect(mocks.listPublicSubmissions).toHaveBeenCalledTimes(1);
+    resolve([ROW]);
+    await waitFor(() => expect(button.disabled).toBe(false));
+  });
+
+  it("ignores a refresh that resolves after Lock", async () => {
+    renderWithProviders(<PublicIntakeQueue />);
+    unlockWith("the-operator-token");
+    await waitFor(() => expect(screen.getByText("Appointment Reminder Summarizer")).toBeDefined());
+
+    let resolve!: (rows: unknown[]) => void;
+    mocks.listPublicSubmissions.mockReturnValueOnce(new Promise((r) => { resolve = r; }));
+    fireEvent.click(screen.getByRole("button", { name: /refresh/i }));
+    fireEvent.click(screen.getByRole("button", { name: /lock/i }));
+    resolve([ROW]);
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(screen.queryByText("Appointment Reminder Summarizer")).toBeNull();
+    expect(document.querySelector('[data-slot="operator-token-input"]')).not.toBeNull();
+    expect(window.sessionStorage.getItem("jeeves_operator_token")).toBeNull();
+  });
 });

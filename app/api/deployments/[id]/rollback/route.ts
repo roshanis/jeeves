@@ -40,7 +40,7 @@ import {
   ValidationError,
   ConflictError,
 } from "@/lib/services/promotion-service";
-import { runMutationGuard } from "@/lib/services/route-guard";
+import { guardFailureResponse, runMutationGuard } from "@/lib/services/route-guard";
 import { isRouteId, notFoundResponse } from "@/lib/http/route-id";
 
 const bodySchema = z.object({
@@ -69,7 +69,7 @@ export async function POST(
     requiresBudget: false,
   });
   if (!guard.ok) {
-    return Response.json({ error: guard.failure.message }, { status: guard.failure.status });
+    return guardFailureResponse(guard.failure);
   }
   const json = guard.json;
 

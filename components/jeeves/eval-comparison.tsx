@@ -21,6 +21,25 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { SyntheticDataLabel } from "@/components/jeeves/synthetic-data-label";
 import { cn } from "@/lib/utils";
 
+/** The offline version comparison panel on the Evals tab (operate-tab.tsx) is a
+ * fixed synthetic fixture for one seeded initiative and one version pair. The
+ * Promotions pointer names that pair, so it is offered only to the card that
+ * proposes exactly that pair. */
+export const OFFLINE_COMPARISON_SLUG = "pa-correspondence-model";
+export const OFFLINE_COMPARISON_VERSIONS = { current: "v2.0", candidate: "v2.1" } as const;
+
+export function hasOfflineComparisonFor(
+  slug: string,
+  currentVersion: string | null,
+  candidateVersion: string,
+): boolean {
+  return (
+    slug === OFFLINE_COMPARISON_SLUG &&
+    currentVersion === OFFLINE_COMPARISON_VERSIONS.current &&
+    candidateVersion === OFFLINE_COMPARISON_VERSIONS.candidate
+  );
+}
+
 export interface EvalSeriesLike {
   kind: string;
   points: { ts: string; value: number }[];
@@ -57,6 +76,7 @@ export function EvalComparison({
   candidateVersion,
   currentVersion,
   evalSeries,
+  hasOfflineComparison = false,
 }: {
   /** The checkpoint proposed for promotion, e.g. "v2.1". */
   candidateVersion: string;
@@ -68,6 +88,9 @@ export function EvalComparison({
    * series, not a per-version one (see file-level honesty note).
    */
   evalSeries: EvalSeriesLike | null;
+  /** True only for the card proposing the pair the Evals-tab panel compares
+   * (see hasOfflineComparisonFor). */
+  hasOfflineComparison?: boolean;
 }) {
   if (!evalSeries || evalSeries.points.length === 0) {
     return (
@@ -123,6 +146,9 @@ export function EvalComparison({
             per-checkpoint series — the candidate checkpoint has not yet run
             its own separate eval telemetry) against the runtime threshold
             this deployment is gated on.
+            {hasOfflineComparison
+              ? ` A separate, labelled offline ${OFFLINE_COMPARISON_VERSIONS.current} vs ${OFFLINE_COMPARISON_VERSIONS.candidate} comparison is on the initiative's Evals tab.`
+              : null}
           </p>
           <div className="flex flex-wrap items-center gap-3">
             <span className="stat-value text-2xl" data-slot="eval-comparison-latest">

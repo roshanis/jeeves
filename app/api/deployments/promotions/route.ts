@@ -31,7 +31,7 @@ export async function GET(req: Request): Promise<Response> {
   const viewerWorkspaceId = await resolveViewerWorkspaceId(req);
   const [list, workspaceByInitiative] = await Promise.all([
     listPromotions(db),
-    initiativeWorkspaceMap(db),
+    initiativeWorkspaceMap(db, viewerWorkspaceId),
   ]);
   const visible = list.filter((p) =>
     isInitiativeVisible(workspaceByInitiative, p.initiativeId, viewerWorkspaceId),

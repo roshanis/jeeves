@@ -1,7 +1,7 @@
 import { runtimeDatabaseUrl } from "@/lib/db/runtime-config";
 /** Viewer-scoped server reads over the shared provider factory. */
 import { cache } from "react";
-import { cookies, headers } from "next/headers";
+import { cookies } from "next/headers";
 import type { DataProvider } from "@/lib/data/provider";
 import type { InitiativeDetail, InitiativeSummary } from "@/lib/data/dto";
 import { getProvider } from "@/lib/data";
@@ -84,20 +84,22 @@ const loadInitiativeDetailCoherent = cache(async (
     return getAppProvider().getInitiativeDetail(slug, { viewerWorkspaceId });
   }
 
-  const requestHeaders = await headers();
-  const host = requestHeaders.get("host");
-  if (!host) {
-    return getAppProvider().getInitiativeDetail(slug, { viewerWorkspaceId });
-  }
-  const proto = requestHeaders.get("x-forwarded-proto") ?? "http";
+  // Fixed loopback origin: the Host and X-Forwarded-Proto of the incoming
+  // request are caller-controlled and must never choose where this hop goes.
+  const cookieStore = await cookies();
+  const rawWorkspace = cookieStore.get(WORKSPACE_COOKIE)?.value ?? "";
+  // Assumes the server answers plain HTTP on 127.0.0.1:PORT (true for next
+  // start, next dev and the container). Under HTTPS or a non-loopback bind,
+  // use a real database URL instead of PGlite.
   const res = await fetch(
-    `${proto}://${host}/initiatives/${encodeURIComponent(slug)}/detail-data`,
+    `http://127.0.0.1:${process.env.PORT || 3000}/initiatives/${encodeURIComponent(slug)}/detail-data`,
     {
       cache: "no-store",
-      // Forward the workspace cookie so the detail-data route handler scopes
-      // to the same viewer (fetch does not carry the incoming cookies by
-      // default). Read-scoping only — no credential is forwarded.
-      headers: { cookie: requestHeaders.get("cookie") ?? "" },
+      signal: AbortSignal.timeout(5000),
+      // Forward only the signed workspace cookie (read-scoping hint) so the
+      // detail-data route scopes to the same viewer. The session cookie and
+      // any other cookie are deliberately not forwarded.
+      headers: { cookie: rawWorkspace ? `${WORKSPACE_COOKIE}=${rawWorkspace}` : "" },
     },
   );
   if (res.status === 404) {

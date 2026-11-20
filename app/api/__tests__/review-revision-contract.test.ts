@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ sign: vi.fn(), returnReview: vi.fn(), guard: vi.fn(), db: {} }));
 vi.mock("@/lib/db/client", () => ({ getDb: () => mocks.db }));
-vi.mock("@/lib/services/route-guard", () => ({ runMutationGuard: mocks.guard }));
+vi.mock("@/lib/services/route-guard", async (importOriginal) => ({ guardFailureResponse: (await importOriginal<typeof import("@/lib/services/route-guard")>()).guardFailureResponse, runMutationGuard: mocks.guard }));
 vi.mock("@/lib/services/initiative-service", () => ({
   signReview: mocks.sign,
   returnReview: mocks.returnReview,

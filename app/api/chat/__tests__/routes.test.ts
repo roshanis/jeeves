@@ -100,6 +100,120 @@ describe("agent initialization failures", () => {
   });
 });
 
+describe("chat routes abort and citation handling", () => {
+  it("passes the request abort signal to the intake agent call (agents-F6)", async () => {
+    const token = await issueSessionFor("priya-raman", "42.0.0.1");
+    const { POST } = await import("../intake/route");
+    let seen: AbortSignal | undefined;
+    const spy = vi.spyOn(agentsModule, "getAgentPort").mockReturnValue({
+      intakeInterview: async (_i: unknown, options?: { signal?: AbortSignal }) => {
+        seen = options?.signal;
+        return { ok: false, error: { kind: "cancelled" } };
+      },
+    } as unknown as ReturnType<typeof agentsModule.getAgentPort>);
+    try {
+      const controller = new AbortController();
+      const req = new Request("http://localhost/api/chat/intake", {
+        method: "POST", headers: bearer(token, "42.0.0.1"), signal: controller.signal,
+        body: JSON.stringify({ conversation: [], partialPayload: EMPTY_INTAKE_PAYLOAD }),
+      });
+      const res = await POST(req);
+      expect(seen).toBe(req.signal);
+      expect(res.status).toBe(499);
+    } finally { spy.mockRestore(); }
+  });
+
+  it("passes the request abort signal to the auditor agent call (agents-F6)", async () => {
+    const token = await issueSessionFor("priya-raman", "42.0.0.2");
+    const { POST } = await import("../auditor/route");
+    let seen: AbortSignal | undefined;
+    const spy = vi.spyOn(agentsModule, "getAgentPort").mockReturnValue({
+      auditorAnswer: async (_i: unknown, options?: { signal?: AbortSignal }) => {
+        seen = options?.signal;
+        return { ok: false, error: { kind: "cancelled" } };
+      },
+    } as unknown as ReturnType<typeof agentsModule.getAgentPort>);
+    try {
+      const controller = new AbortController();
+      const req = new Request("http://localhost/api/chat/auditor", {
+        method: "POST", headers: bearer(token, "42.0.0.2"), signal: controller.signal,
+        body: JSON.stringify({ question: "Which initiatives are member-facing and touch PHI?" }),
+      });
+      const res = await POST(req);
+      expect(seen).toBe(req.signal);
+      expect(res.status).toBe(499);
+    } finally { spy.mockRestore(); }
+  });
+
+  it("drops model-supplied citedEvents that are not in the grounding rows and caps the list (api-initiatives-F29)", async () => {
+    const token = await issueSessionFor("priya-raman", "42.0.0.3");
+    const { POST } = await import("../auditor/route");
+    let grounded: readonly Record<string, unknown>[] = [];
+    const spy = vi.spyOn(agentsModule, "getAgentPort").mockImplementation(() => ({
+      auditorAnswer: async (input: { groundingRows: readonly Record<string, unknown>[]; queryUsed: string }) => {
+        grounded = input.groundingRows;
+        const real = grounded.map((r) => r["eventTs"]).find((v): v is string => typeof v === "string");
+        return { ok: true, value: {
+          answerMd: "answer", queryUsed: input.queryUsed,
+          citedEvents: [...(real ? [real] : []), "2099-01-01T00:00:00.000Z", "row-0", "invented-decision-id"],
+        } };
+      },
+    }) as unknown as ReturnType<typeof agentsModule.getAgentPort>);
+    try {
+      const res = await POST(new Request("http://localhost/api/chat/auditor", {
+        method: "POST", headers: bearer(token, "42.0.0.3"),
+        body: JSON.stringify({ question: "Which initiatives are member-facing and touch PHI?" }),
+      }));
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json.citedEvents).not.toContain("2099-01-01T00:00:00.000Z");
+      expect(json.citedEvents).not.toContain("invented-decision-id");
+      expect(json.citedEvents).toContain("row-0");
+      expect(json.citedEvents.length).toBeLessThanOrEqual(grounded.length + 1);
+    } finally { spy.mockRestore(); }
+  });
+
+  it("keeps a genuine citation spelled as the same instant, once and in the row's own spelling (api-initiatives-F29)", async () => {
+    const token = await issueSessionFor("priya-raman", "42.0.0.4");
+    const { POST } = await import("../auditor/route");
+    let real = "";
+    let respelled = "";
+    let offset = "";
+    const spy = vi.spyOn(agentsModule, "getAgentPort").mockImplementation(() => ({
+      auditorAnswer: async (input: { groundingRows: readonly Record<string, unknown>[]; queryUsed: string }) => {
+        real = input.groundingRows.map((r) => r["eventTs"]).find((v): v is string => typeof v === "string") ?? "";
+        respelled = new Date(real).toISOString().replace(".000Z", "Z");
+        offset = respelled.replace("Z", "+00:00");
+        return { ok: true, value: {
+          answerMd: "answer", queryUsed: input.queryUsed,
+          citedEvents: [
+            respelled, offset, real, "2099-01-01T00:00:00Z",
+            // Date.parse reads a bare date, a year and a number as dates.
+            real.slice(0, 10), real.slice(0, 4), "42",
+            ...Array.from({ length: 80 }, (_, i) => `row-${i}`),
+          ],
+        } };
+      },
+    }) as unknown as ReturnType<typeof agentsModule.getAgentPort>);
+    try {
+      const res = await POST(new Request("http://localhost/api/chat/auditor", {
+        method: "POST", headers: bearer(token, "42.0.0.4"),
+        body: JSON.stringify({ question: "Which decisions were approved by Torres?" }),
+      }));
+      const json = (await res.json()) as { citedEvents: string[] };
+      expect(real).not.toBe("");
+      expect(respelled).not.toBe(real);
+      // The three spellings of one instant come back as one citation: the row's own.
+      expect(json.citedEvents.filter((c) => c === real)).toHaveLength(1);
+      expect(json.citedEvents).not.toContain(respelled);
+      expect(json.citedEvents).not.toContain(offset);
+      expect(json.citedEvents).not.toContain("2099-01-01T00:00:00Z");
+      expect(json.citedEvents.every((c) => c === real || /^row-\d+$/.test(c))).toBe(true);
+      expect(json.citedEvents.length).toBeLessThanOrEqual(50);
+    } finally { spy.mockRestore(); }
+  });
+});
+
 describe("POST /api/chat/auditor", () => {
   it("401s an unauthenticated request", async () => {
     const { POST } = await import("../auditor/route");

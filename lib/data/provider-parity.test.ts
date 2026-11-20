@@ -102,3 +102,25 @@ describe("mock provider honours the lifecycle invariants the DB enforces", () =>
     expect(offenders).toEqual([]);
   });
 });
+
+describe("mock audit queries agree with the DB provider on rejections", () => {
+  it("approved-by-torres lists no rejected initiative (the DB provider excludes rejections)", async () => {
+    const rows = await provider.auditQuery("approved-by-torres");
+    expect(rows.filter((r) => r.state === "rejected" || r.detail.startsWith("rejected"))).toEqual([]);
+    expect(rows.length).toBeGreaterThan(0);
+  });
+
+  it("approved-by-torres returns exactly the slugs lib/data/db-provider.test.ts pins for the DB provider", async () => {
+    const slugs = (await provider.auditQuery("approved-by-torres")).map((r) => r.slug).sort();
+    expect(slugs).toEqual([
+      "callcenter-qa-scorer",
+      "claims-ocr-coder",
+      "fwa-anomaly-detector",
+      "hr-resume-screener",
+      "marketing-ab-tester",
+      "member-chat-copilot",
+      "nurse-triage-summarizer",
+      "pa-correspondence-model",
+    ]);
+  });
+});

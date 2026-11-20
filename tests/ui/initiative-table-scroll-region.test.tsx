@@ -7,6 +7,7 @@ import { screen } from "@testing-library/react";
 import { renderWithProviders } from "./helpers";
 import { InitiativeTable } from "@/components/jeeves/initiative-table";
 import type { InitiativeSummary } from "@/lib/data/dto";
+import { positionedInside } from "./containing-block";
 
 const FLAGS = {
   phi: false,
@@ -48,5 +49,19 @@ describe("InitiativeTable scroll region", () => {
   it("falls back to a generic accessible name when no caption is supplied", () => {
     renderWithProviders(<InitiativeTable initiatives={[summary("b")]} />);
     expect(screen.getByRole("region")).not.toBeNull();
+  });
+
+  it("keeps its screen-reader text inside the scroll region, so a phone page does not widen", () => {
+    // In review since 2024, so the Age cell carries "(overdue)" for screen
+    // readers, and the Owner cell carries the full name.
+    renderWithProviders(<InitiativeTable initiatives={[summary("c")]} caption="Aged" />);
+
+    const region = screen.getByRole("region", { name: "Aged" });
+    expect(region.textContent).toContain("(overdue)");
+    const hidden = Array.from(region.querySelectorAll(".sr-only"));
+    expect(hidden.length).toBeGreaterThanOrEqual(3); // caption, owner name, age bucket
+    for (const el of hidden) {
+      expect(positionedInside(el, region), `"${el.textContent}" is positioned outside the region`).toBe(true);
+    }
   });
 });

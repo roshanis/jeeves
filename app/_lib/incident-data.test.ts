@@ -87,6 +87,20 @@ describe("loadIncidentsForViewer", () => {
     expect(result).toEqual({ status: "unavailable", reason: "load_failed", incidents: null });
   });
 
+  it("logs a failed DB read with the driver code but never the connection string or message", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const failure = Object.assign(new Error("connect failed postgres://user:secret@db.example.test/x"), { code: "ECONNREFUSED" });
+    const brokenDb = { select: () => { throw failure; } };
+
+    const result = await loadIncidentsForViewer(null, { providerMode: "db", db: brokenDb as never });
+
+    expect(result).toEqual({ status: "unavailable", reason: "load_failed", incidents: null });
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(spy.mock.calls[0])).toContain("ECONNREFUSED");
+    expect(JSON.stringify(spy.mock.calls[0])).not.toContain("secret");
+    spy.mockRestore();
+  });
+
   it("returns a successful empty list when the query succeeds with no visible incidents", async () => {
     const result = await loadIncidentsForViewer(null, { providerMode: "db", db });
 
@@ -101,5 +115,20 @@ describe("loadIncidentsForViewer", () => {
       "incident-owned",
     ]);
     expect(foreign).toEqual({ status: "success", incidents: [] });
+  });
+
+  it("reads incidents with one workspace-scoped query instead of two unscoped table loads", async () => {
+    let selects = 0;
+    const counting = new Proxy(db, {
+      get(target, key, receiver) {
+        if (key === "select") return (...args: unknown[]) => { selects += 1; return (target as never as { select: (...a: unknown[]) => unknown }).select(...args); };
+        return Reflect.get(target, key, receiver);
+      },
+    });
+
+    const result = await loadIncidentsForViewer("ws-owner", { providerMode: "db", db: counting as never });
+
+    expect(result.status === "success" ? result.incidents.map((row) => row.id) : result).toEqual(["incident-owned"]);
+    expect(selects).toBe(1);
   });
 });

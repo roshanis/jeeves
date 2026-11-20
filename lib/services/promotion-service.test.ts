@@ -11,6 +11,7 @@ import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { createTestDb, closeTestDb, type TestDb } from "../db/test-client";
+import { recordLocks } from "../db/test-lock-recorder";
 import { seedDatabase } from "../../scripts/seed";
 import { auditEvents, deploymentVersions, initiatives } from "../db/schema";
 import { createDraft } from "./initiative-service";
@@ -19,6 +20,7 @@ import {
   listPromotions,
   promoteCheckpoint,
   deploymentHistory,
+  deploymentHistoryForInitiatives,
   rollbackDeployment,
   ForbiddenError,
   ValidationError,
@@ -168,6 +170,29 @@ describe("lib/services/promotion-service", () => {
       await expect(
         promoteCheckpoint(db, v21Id, APPROVER, "ws-A", FULL_ATTESTATION, "owner promotion"),
       ).resolves.toMatchObject({ promotedDeploymentVersionId: v21Id });
+    });
+
+    it("takes no FOR UPDATE on a shared initiative row for a caller from another workspace, and locks for the owner", async () => {
+      const initiativeId = await paCorrespondenceModelId(db); // seeded, workspace null
+      const v21Id = await v21DeploymentId(db, initiativeId);
+      const foreign = recordLocks(db);
+      try {
+        await expect(
+          promoteCheckpoint(db, v21Id, APPROVER, "ws-visitor", FULL_ATTESTATION, "foreign lock check"),
+        ).rejects.toThrow(NotFoundError);
+      } finally {
+        foreign.spy.mockRestore();
+      }
+      expect(foreign.events).toContain("from:initiatives");
+      expect(foreign.events).not.toContain("lock:initiatives");
+
+      const owner = recordLocks(db);
+      try {
+        await promoteCheckpoint(db, v21Id, APPROVER, null, FULL_ATTESTATION, "owner lock check");
+      } finally {
+        owner.spy.mockRestore();
+      }
+      expect(owner.events).toContain("lock:initiatives");
     });
 
     it("keeps null-workspace checkpoints available to internal null-workspace calls", async () => {
@@ -486,6 +511,24 @@ describe("lib/services/promotion-service", () => {
     });
   });
 
+  describe("deploymentHistoryForInitiatives", () => {
+    it("matches deploymentHistory per id using a single select", async () => {
+      const paId = await paCorrespondenceModelId(db);
+      const [other] = await db.select().from(initiatives).where(eq(initiatives.slug, "provider-dedup-agent"));
+      const ids = [paId, other!.id];
+      const expected = [await deploymentHistory(db, paId), await deploymentHistory(db, other!.id)];
+
+      const spy = vi.spyOn(db, "select");
+      const batch = await deploymentHistoryForInitiatives(db, ids);
+      expect(spy).toHaveBeenCalledTimes(1);
+      spy.mockRestore();
+
+      expect(batch.get(paId)).toEqual(expected[0]);
+      expect(batch.get(other!.id) ?? []).toEqual(expected[1]);
+      expect(await deploymentHistoryForInitiatives(db, [])).toEqual(new Map());
+    });
+  });
+
   describe("rollbackDeployment", () => {
     /**
      * pa-correspondence-model is now seeded with a genuine prior retired
@@ -798,6 +841,28 @@ describe("lib/services/promotion-service", () => {
       });
       return { initiativeId: draft.initiativeId, currentId, priorId };
     }
+
+    it("takes no FOR UPDATE on the initiative row for a mismatched workspace, and locks for the owner", async () => {
+      const { initiativeId, priorId } = await initiativeWithDeploymentsInWorkspace("ws-A");
+      const foreign = recordLocks(db);
+      try {
+        await expect(
+          rollbackDeployment(db, initiativeId, APPROVER, "ws-B", priorId, "foreign lock check"),
+        ).rejects.toThrow(NotFoundError);
+      } finally {
+        foreign.spy.mockRestore();
+      }
+      expect(foreign.events).toContain("from:initiatives");
+      expect(foreign.events).not.toContain("lock:initiatives");
+
+      const owner = recordLocks(db);
+      try {
+        await rollbackDeployment(db, initiativeId, APPROVER, "ws-A", priorId, "owner lock check");
+      } finally {
+        owner.spy.mockRestore();
+      }
+      expect(owner.events).toContain("lock:initiatives");
+    });
 
     it("a mismatched workspace session gets NotFoundError (same shape as unknown id)", async () => {
       const { initiativeId, priorId } = await initiativeWithDeploymentsInWorkspace("ws-A");

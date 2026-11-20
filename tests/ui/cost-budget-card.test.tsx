@@ -43,4 +43,24 @@ describe("CostBudgetCard", () => {
     expect(label).toContain("$120");
     expect(label).toMatch(/portfolio daily cost/i);
   });
+
+  it("names the observation's UTC day in the chart summary regardless of the viewer's timezone", () => {
+    const prev = process.env.TZ;
+    process.env.TZ = "America/Los_Angeles";
+    try {
+      const { container } = renderWithProviders(
+        <CostBudgetCard
+          points={[
+            { ts: "2026-07-01T00:00:00.000Z", totalUsd: 100 },
+            { ts: "2026-07-15T00:00:00.000Z", totalUsd: 120 },
+          ]}
+        />,
+      );
+      const label = container.querySelector('[role="img"]')?.getAttribute("aria-label") ?? "";
+      expect(label).toContain("on Jul 15.");
+    } finally {
+      if (prev === undefined) delete process.env.TZ;
+      else process.env.TZ = prev;
+    }
+  });
 });

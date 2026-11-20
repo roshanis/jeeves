@@ -25,7 +25,7 @@ import {
   startQc,
 } from "@/lib/services/initiative-service";
 import { IllegalTransitionError } from "@/lib/lifecycle/transitions";
-import { runMutationGuard } from "@/lib/services/route-guard";
+import { guardFailureResponse, runMutationGuard } from "@/lib/services/route-guard";
 import { isRouteId, notFoundResponse } from "@/lib/http/route-id";
 
 export async function POST(
@@ -34,7 +34,7 @@ export async function POST(
 ): Promise<Response> {
   const guard = await runMutationGuard(req, undefined);
   if (!guard.ok) {
-    return Response.json({ error: guard.failure.message }, { status: guard.failure.status });
+    return guardFailureResponse(guard.failure);
   }
 
   const { id } = await context.params;

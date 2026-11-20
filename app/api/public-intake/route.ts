@@ -13,6 +13,7 @@
  *
  * 200:   PublicSubmissionRow[]
  * 401:   missing or wrong operator token (persona sessions included)
+ * 403:   read-only preview (answered before the token is looked at)
  * 404:   no operator token configured — the queue is off, not merely locked
  * 429:   too many failed attempts from this client
  */
@@ -20,9 +21,11 @@ import { getDb } from "@/lib/db/client";
 import { listPublicSubmissions } from "@/lib/services/public-intake-service";
 import {
   checkOperatorAttempt,
+  checkReadOnlyMode,
   clientKeyFor,
   configuredOperatorToken,
   isOperatorAuthorized,
+  operatorAttemptStatus,
 } from "@/lib/services/route-guard";
 
 const NO_STORE = { "Cache-Control": "no-store" };
@@ -31,6 +34,24 @@ export async function GET(req: Request): Promise<Response> {
   const expected = configuredOperatorToken();
   if (!expected) {
     return Response.json({ error: "not found" }, { status: 404, headers: NO_STORE });
+  }
+
+  // The read-only preview holds no real requests and may have no database
+  // for the limiter or the list to read, so it answers every caller first,
+  // as the cron door does. Comparing here without the limiter would make the
+  // preview an unthrottled oracle for a token a production deployment may share.
+  const readOnlyFailure = checkReadOnlyMode();
+  if (readOnlyFailure) {
+    return Response.json({ error: readOnlyFailure.message }, { status: readOnlyFailure.status, headers: NO_STORE });
+  }
+
+  // A locked-out client is refused before the compare, right or wrong.
+  const status = await operatorAttemptStatus(clientKeyFor(req));
+  if (!status.allowed) {
+    return Response.json(
+      { error: "too many attempts — try again later" },
+      { status: 429, headers: { ...NO_STORE, "Retry-After": String(status.retryAfterSeconds) } },
+    );
   }
 
   if (!isOperatorAuthorized(req.headers.get("authorization"), expected)) {

@@ -4,13 +4,13 @@ The initiative Evidence tab supports PDF/DOCX uploads, a reusable document libra
 
 ## Operating boundary
 
-Upload fictional Meridian Health documents only. Documents are **not malware scanned**. Format checks are not malware protection. There is no inline rendering, OCR, text extraction or LLM processing. Downloads are authenticated attachment responses with no-store and nosniff headers. Real company/health documents require production identity and document access controls, a configured malware scanner with fail-closed quarantine, and retention/erasure policy before this feature can serve them.
+Upload fictional Meridian Health documents only. Documents are **not malware scanned**. Format checks are not malware protection. There is no inline rendering, OCR or text extraction, and document contents are never sent to an LLM. Requester notes, page references and file names are included in AI review drafts. Downloads are authenticated attachment responses with no-store and nosniff headers. Real company/health documents require production identity and document access controls, a configured malware scanner with fail-closed quarantine, and retention/erasure policy before this feature can serve them.
 
 For this small demo, private PostgreSQL BYTEA storage keeps document bytes and audit records under the existing database transaction and backup boundary. No public file URL or external storage account is introduced. Files are capped at 2 MiB, initiatives at 20 MiB or 40 immutable versions, and cycles at 100 packets. Larger deployments should use private object storage behind the same authorization boundary. Live Neon upload/download has not been verified by the local PGlite tests.
 
 ## Workflow
 
-1. Create an initiative in a passcode-gated workspace. Shared seeded initiatives do not accept uploads.
+1. Create an initiative in your own demo workspace (Start demo; you start as the requester, no passcode). Shared seeded initiatives do not accept uploads.
 2. Upload a document. It is saved privately, not submitted or accepted. Select "New version of" to preserve lineage when revising a document.
 3. Complete intake and triage to establish the checklist. Link uploaded documents to requirements, add page references/notes and save a draft or submit.
 4. The assigned domain reviewer downloads the original and records acceptance or requested changes with a reason. Admin cannot assess evidence. All authenticated personas in the same initiative workspace may view the shared dossier; only the owning requester can edit it.
@@ -29,6 +29,8 @@ Arize evaluations and W&B training provenance appear as **Not connected** source
 
 ## Deployment
 
+Jeeves has no production mode yet: every install with a database offers passwordless demo entry, so any visitor can upload. Keep to fictional documents.
+
 Apply migration `0011_evidence_submission.sql` using the existing `npm run db:migrate` path against the intended database before enabling this release. Do not use `db:seed` to migrate an existing database. The migration is additive and introduces immutable document/assessment records and immutable submitted packets. If application rollback is necessary, deploy the previous application version and retain the new tables and history; do not drop evidence tables.
 
 Existing seed/reset commands do not erase evidence history. Their destructive reset will fail safely on a database containing evidence, so use a fresh disposable database for a clean demo. File retention and purge require a separately authorized maintenance procedure.
@@ -37,4 +39,4 @@ Tests cover the real migrations in isolated PGlite, service and HTTP authorizati
 
 A rolling deployment before migration does not break legacy domain signatures: a schema-presence check retains the prior no-evidence behavior only while the evidence table is absent. Evidence requests fail closed until migration. After the table exists, all evidence checks apply and database errors cannot bypass them.
 
-The release also updates Next.js and its matching ESLint package to 16.3.5 and refreshes compatible transitive dependencies. The production dependency audit is clean; the development tree still reports moderate advisories in Vitest/Drizzle tooling with no compatible resolution obtained in this release. No forced downgrade or major toolchain change was made.
+The production dependency audit was clean when this release shipped; the development tree still reported moderate advisories in Vitest/Drizzle tooling with no compatible resolution. No forced downgrade or major toolchain change was made. Check `package.json` for current versions.
