@@ -82,3 +82,14 @@ describe("next.config runs the check", () => {
     await expect(import("../../next.config")).rejects.toThrow(/NEXT_PUBLIC_PRIVACY_CONTACT/);
   });
 });
+
+describe("the browser-test build is built like the public demo", () => {
+  it("gives the Playwright server and its build a contact URL and a privacy mailto", () => {
+    // The golden path asserts the demo's contact copy ("Contact for pricing"),
+    // which only renders when NEXT_PUBLIC_CONTACT_URL is set at build time.
+    const config = readFileSync(path.join(ROOT, "playwright.config.ts"), "utf8");
+    const env = config.slice(config.indexOf("webServer:"));
+    expect(contactLink(/NEXT_PUBLIC_CONTACT_URL:\s*"([^"]*)"/.exec(env)?.[1])).not.toBeNull();
+    expect(privacyMailto(/NEXT_PUBLIC_PRIVACY_CONTACT:\s*"([^"]*)"/.exec(env)?.[1])).not.toBeNull();
+  });
+});
