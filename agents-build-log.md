@@ -1843,3 +1843,22 @@ Hard rules: no violations found.
 ### Recommendations / Next steps:
 - Codex: a new browser storage key needs a line on the privacy page and an entry in the storage-key test in tests/ui/site-essentials.test.tsx.
 - Owner: bump LEGAL_LAST_UPDATED when you have read the new bullet; the operator queue's own sessionStorage token (`jeeves_operator_token`) is not listed, since only the operator holds it.
+
+## [AGENT: Claude] [2026-11-20T15:50Z]
+### Action: implementer: the sessions and doors lane of the 2026-11-20 decisions wave (human "go", 2026-11-20 accepted the peer review's recommendations L34, L33, L6, L7, L26, L27, L28, L20, L21, L39)
+### Files changed: lib/services/route-guard.ts, lib/security/workspace-cookie.ts, app/api/session/route.ts, app/api/cron/monitor/route.ts, app/api/chat/intake/route.ts, app/api/initiatives/[id]/evidence/[documentId]/route.ts, lib/services/public-intake-service.ts, lib/services/evidence-service.ts, lib/evidence/files.ts, lib/intake/completeness.ts, components/jeeves/intake-chat.tsx, components/jeeves/public-intake-queue.tsx, lib/client/api.ts, scripts/reset-demo.ts, docs (ARCHITECTURE, deploy, environment-reference, evidence-submission, intake-spec), tests/lib/provider-read-scope.test.ts (new) and their tests.
+### Diff summary:
+- Mutations take the bearer token only; the jeeves_session cookie is read on page reads only, and sign-in will add it back with an Origin check and a __Host- name (auth-F10, L34).
+- The signed workspace cookie is v1.<issued>.<id>.<mac>: old-format, future-dated and over-Max-Age values are refused, so every visitor starts one fresh workspace; comments call it a bearer capability for one playground workspace (auth-F18, L33).
+- A valid workspace cookie moves POST /api/session to the persona-switch bucket instead of the anonymous five-entry bucket (auth-F15, L6).
+- CRON_SECRET under 32 characters counts as unset (503); the compare reuses isOperatorAuthorized (api-ops-F13, auth-F27, L7).
+- The operator queue lists only submitted requests, dated by first submission (ui-public-F0, L26).
+- Evidence downloads have a 60-burst read limiter in every mode and an evidence_downloaded audit event in production only (evidence-F3, L27).
+- A DOCX with embedded objects, charts, OLE or macros is refused with a message saying why and to export to PDF (evidence-F12, L28).
+- ADV-05 is no longer scored, so the sample meter reaches 100% (ui-intake-F26, L20).
+- The intake chat route reports the adapter and the chat labels the scripted mock (ui-intake-F28, L21).
+- A source test fails on any DataProvider read in app/, components/ or lib/ called without its scope; the parameter is still optional (db-F25, L39).
+### Verified: tests first, each new test seen failing before its fix. Typecheck and eslint clean on changed files; full unit suite 280 files, 3,408 tests, all passed.
+### Recommendations / Next steps:
+- Owner: check the live CRON_SECRET is at least 32 characters before this reaches main. Add to the .env.example CRON_SECRET comment: "at least 32 characters; shorter counts as unset".
+- Codex: make the provider scope parameter required as the first change after the two lines merge; tests/lib/provider-read-scope.test.ts then becomes redundant.
