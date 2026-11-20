@@ -143,6 +143,18 @@ describe('versioned evidence workflow',()=>{
     await expect(db.update(evidenceDocuments).set({fileName:'overwritten.pdf'}).where(eq(evidenceDocuments.id,first.id))).rejects.toMatchObject({cause:{message:expect.stringMatching(/immutable/i)}});
     await expect(db.update(evidencePackets).set({entries:[]}).where(eq(evidencePackets.id,submitted.id))).rejects.toMatchObject({cause:{message:expect.stringMatching(/immutable/i)}});
   });
+  it('records an evidence_downloaded audit event in production mode only',async()=>{
+    const file=await upload();
+    const downloads=async()=>(await db.select().from(auditEvents)).filter(e=>e.action==='evidence_downloaded');
+    vi.stubEnv('JEEVES_MODE','demo');
+    await downloadEvidence(db,'i',file.id,owner);
+    expect(await downloads()).toHaveLength(0);
+    vi.stubEnv('JEEVES_MODE','production');
+    await downloadEvidence(db,'i',file.id,reviewer);
+    const [event]=await downloads();
+    expect(event).toMatchObject({initiativeId:'i',actor:'marcus-webb',actorRole:'reviewer',metadata:{documentId:file.id,sha256:file.sha256,version:1}});
+    vi.unstubAllEnvs();
+  });
   it('denies foreign workspaces, other requesters, admin acceptance, and shared seed writes',async()=>{
     const file=await upload();
     await expect(getEvidence(db,'i',{...owner,workspaceId:'foreign'})).rejects.toMatchObject({status:404});

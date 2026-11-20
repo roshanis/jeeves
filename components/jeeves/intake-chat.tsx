@@ -74,6 +74,8 @@ export function IntakeChat({ payload, payloadRevision, onPayloadChange, onReview
     done: boolean;
   } | null>(null);
   const [pending, setPending] = React.useState(false);
+  // Known only once a reply has come back; the route reports what answered.
+  const [adapter, setAdapter] = React.useState<"openai" | "mock" | null>(null);
 
   // Completeness belongs to the answers evaluated by the server. A manual edit
   // invalidates that assessment while preserving the mounted conversation.
@@ -112,6 +114,7 @@ export function IntakeChat({ payload, payloadRevision, onPayloadChange, onReview
         toast.info("Your answers changed while the assistant was replying. Send another message to continue from your latest edits.");
         return;
       }
+      setAdapter(result.adapter ?? null);
       setConversation((prev) => [...prev, { role: "assistant", content: result.reply }]);
       setPartialPayload(result.updatedPayload as unknown as Record<string, unknown>);
       setAssessment({
@@ -180,11 +183,17 @@ export function IntakeChat({ payload, payloadRevision, onPayloadChange, onReview
           <CardTitle className="text-sm">Chat with the intake assistant</CardTitle>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
+          {adapter === "mock" ? (
+            <p className="rounded-md border border-border bg-muted px-2.5 py-1.5 text-xs text-muted-foreground" data-slot="intake-chat-scripted">
+              <span className="font-medium text-foreground">Scripted demo assistant:</span> answers are canned, not interpreted.
+              Use the form to enter your answers.
+            </p>
+          ) : null}
           <div className="flex flex-col gap-3" role="log" aria-live="polite" data-slot="intake-chat-transcript">
             {conversation.length === 0 ? (
               <p className="text-sm text-muted-foreground">
-                Describe the initiative you want to submit — the assistant
-                will ask follow-up questions until the intake is complete.
+                Describe the initiative you want to submit. The assistant replies
+                with questions about the parts of the intake still missing.
               </p>
             ) : (
               conversation.map((turn, i) => (

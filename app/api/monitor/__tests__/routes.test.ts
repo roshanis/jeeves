@@ -20,7 +20,7 @@ const COOKIE_SECRET = "test-only-workspace-cookie-secret";
 
 beforeEach(async () => {
   process.env.JEEVES_COOKIE_SECRET = COOKIE_SECRET;
-  process.env.CRON_SECRET = "test-only-cron-secret";
+  process.env.CRON_SECRET = "test-only-cron-secret-0123456789abcdef";
   testDb = await createTestDb();
   await seedDatabase(testDb);
 });
@@ -184,7 +184,7 @@ describe("GET /api/monitor/incidents — public read-only", () => {
 
   it("reflects a breach recorded by a prior monitor run", async () => {
     const { GET: runCron } = await import("../../cron/monitor/route");
-    await runCron(new Request("http://localhost/api/cron/monitor", { headers: { authorization: "Bearer test-only-cron-secret" } }));
+    await runCron(new Request("http://localhost/api/cron/monitor", { headers: { authorization: "Bearer test-only-cron-secret-0123456789abcdef" } }));
 
     const { GET } = await import("../incidents/route");
     // Bare request, no cookie/auth → resolves to the public (null) viewer.

@@ -353,7 +353,7 @@ test.describe("live demo loop: create → QC → triage → draft run → sign �
       .locator('[data-slot="intake-form"]')
       .locator('[data-slot="completeness-meter"]');
     await expect(meter).not.toContainText("RFT-02");
-    await expect(meter).toContainText("No evidence pre-attached");
+    await expect(meter).not.toContainText("No evidence pre-attached");
     await expect(meter).toContainText("Submission is not blocked");
 
     // Submit: create -> submit -> redirect to the new initiative's page

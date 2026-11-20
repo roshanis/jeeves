@@ -513,6 +513,8 @@ describe("POST /api/chat/intake", () => {
     expect(res.status).toBe(200);
     const json = await res.json();
     expect(json.reply).toContain("Does it access PHI?");
+    // Reports which adapter answered; with no OPENAI_API_KEY that is the scripted mock.
+    expect(json.adapter).toBe("mock");
     expect(json.done).toBe(false);
     expect(json.gaps.some((g: { ruleId: string }) => g.ruleId === "BLK-05")).toBe(true);
   });

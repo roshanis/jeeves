@@ -11,9 +11,8 @@
  *   status and the server's `{ error }` message (plus `gaps` when present).
  *   Use `isApiError` to narrow and `apiErrorToMessage` for stable UX copy.
  * - Session-token transport is `Authorization: Bearer <token>` on every
- *   mutating call (route-guard.ts `extractSessionToken` also accepts a
- *   `jeeves_session` cookie, but the header avoids cookie-encoding and
- *   SameSite edge cases entirely).
+ *   mutating call (route-guard.ts `extractBearerToken`; mutations do not
+ *   accept the `jeeves_session` cookie, which would open a CSRF surface).
  */
 import type { Domain, LifecycleState, Tier } from "@/lib/domain/types";
 import type { IntakePayload } from "@/lib/intake/types";
@@ -459,7 +458,7 @@ export interface PublicSubmissionRow {
   requesterEmail: string | null;
   businessProblem: string | null;
   state: string;
-  submittedAt: string | null;
+  submittedAt: string;
   createdAt: string;
 }
 
@@ -778,12 +777,13 @@ export function askAuditor(
 export function intakeChat(
   token: string,
   input: { conversation: { role: "user" | "assistant"; content: string }[]; partialPayload: unknown },
-): Promise<{ reply: string; updatedPayload: IntakePayload; gaps: CompletenessGap[]; done: boolean }> {
+): Promise<{ reply: string; updatedPayload: IntakePayload; gaps: CompletenessGap[]; done: boolean; adapter?: "openai" | "mock" }> {
   return request<{
     reply: string;
     updatedPayload: IntakePayload;
     gaps: CompletenessGap[];
     done: boolean;
+    adapter?: "openai" | "mock";
   }>("/api/chat/intake", { method: "POST", token, body: input });
 }
 

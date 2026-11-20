@@ -214,6 +214,15 @@ export function configuredOperatorToken(): string | null {
   return token.length >= OPERATOR_TOKEN_MIN_LENGTH ? token : null;
 }
 
+/** Same floor for the scheduled-monitoring secret (GET /api/cron/monitor). */
+export const CRON_SECRET_MIN_LENGTH = 32;
+
+/** The configured cron secret, or null when the route is switched off (unset or too short). */
+export function configuredCronSecret(): string | null {
+  const secret = process.env.CRON_SECRET?.trim() ?? "";
+  return secret.length >= CRON_SECRET_MIN_LENGTH ? secret : null;
+}
+
 /**
  * Constant-time check of `Authorization: Bearer <token>` against the
  * configured operator token. Both sides are hashed first so the comparison
@@ -255,6 +264,24 @@ export async function operatorAttemptStatus(
   clientKey: string,
 ): Promise<{ allowed: boolean; retryAfterSeconds: number }> {
   return operatorAttemptLimiter.peek(bucketKey("operator", clientKey));
+}
+
+/**
+ * Evidence downloads each stream up to 2 MiB out of Postgres, so they get a
+ * read bucket of their own (60 in a burst, then one a second) in every mode.
+ * Generous for a person opening documents, tight for a download loop.
+ */
+const evidenceReadLimiter = new DbTokenBucketRateLimiter(
+  { capacity: 60, refillPerSecond: 1 },
+  getDb,
+  () => Date.now(),
+);
+
+export async function checkEvidenceRead(
+  clientKey: string,
+): Promise<{ allowed: boolean; retryAfterSeconds: number }> {
+  await maybePruneStaleState();
+  return evidenceReadLimiter.checkAndConsume(bucketKey("evidence-read", clientKey));
 }
 
 export type GuardFailureKind = "unauthorized" | "rate_limited" | "invalid_input" | "budget_exhausted" | "read_only" | "payload_too_large" | "unavailable";
@@ -429,13 +456,26 @@ export async function resolveSessionActor(token: string | null): Promise<Actor |
  * Token extraction (cookie or bearer)
  * ---------------------------------------------------------------------- */
 
-export function extractSessionToken(req: Request): string | null {
+/**
+ * Bearer token only. Mutations use this: a cookie is attached by the browser
+ * to cross-site requests, so accepting one here would open a CSRF surface.
+ * TODO(sign-in): when sign-in lands and sets a session cookie, accept it here
+ * again, but only with an Origin check and a `__Host-` cookie name.
+ */
+export function extractBearerToken(req: Request): string | null {
   const auth = req.headers.get("authorization");
   if (auth && /^bearer /i.test(auth)) {
     const bearer = auth.slice("Bearer ".length).trim();
     // U+0000 cannot be stored in Postgres text: such a token is signed out, not a 500.
     return bearer.includes("\u0000") ? null : bearer;
   }
+  return null;
+}
+
+/** Bearer token, else the session cookie. Reads only (GETs carry no CSRF risk); see extractBearerToken. */
+export function extractSessionToken(req: Request): string | null {
+  const auth = req.headers.get("authorization");
+  if (auth && /^bearer /i.test(auth)) return extractBearerToken(req);
   const cookieHeader = req.headers.get("cookie");
   if (cookieHeader) {
     const match = cookieHeader
@@ -587,7 +627,7 @@ export async function runMutationGuard(
   const readOnlyFailure = checkBootFailure() ?? checkReadOnlyMode();
   if (readOnlyFailure) return { ok: false, failure: readOnlyFailure };
 
-  const token = extractSessionToken(req);
+  const token = extractBearerToken(req);
   const { actor, workspaceId } = await resolveSession(token);
   if (!actor || !workspaceId) {
     return { ok: false, failure: { kind: "unauthorized", status: 401, message: "invalid or missing session" } };

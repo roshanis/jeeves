@@ -92,7 +92,7 @@ describe("IntakeForm — champion prefill (intake-spec §4/§5)", () => {
     expect(preview?.textContent).toContain("8 required domains");
   });
 
-  it("answers the retention question while keeping the missing-evidence advisory truthful", () => {
+  it("answers the retention question and does not list an advisory the form cannot satisfy", () => {
     renderForm();
     loadChampion();
 
@@ -100,7 +100,9 @@ describe("IntakeForm — champion prefill (intake-spec §4/§5)", () => {
     expect(meter?.textContent).not.toContain(
       "PHI data retention intent is required for PHI-touching initiatives — please specify how long this data will be retained.",
     );
-    expect(meter?.textContent).toContain("No evidence pre-attached");
+    // The form has no control that attaches evidence, so it is not scored.
+    expect(meter?.textContent).not.toContain("No evidence pre-attached");
+    expect(meter?.textContent).toContain("100%");
     // All 11 BLOCKING rules pass -> submission itself is allowed.
     expect(meter?.textContent).toContain("Submission is not blocked");
   });

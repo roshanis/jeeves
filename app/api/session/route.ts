@@ -8,16 +8,18 @@ import { safeDriverCode } from "@/lib/db/driver-error";
 import { isSameOriginRequest } from "@/lib/security/same-origin";
 import { BodyReadError, PRE_SESSION_BODY_MAX_BYTES, readJsonBody } from "@/lib/http/read-json-body";
 import {
+  WORKSPACE_COOKIE_MAX_AGE_SECONDS,
   resolveWorkspaceCookieSecret,
   signWorkspaceId,
   verifyWorkspaceCookie,
 } from "@/lib/security/workspace-cookie";
 import { databaseNotReady } from "@/lib/http/database-gate";
 
-// Per-browser workspace cookie (M2.5 inc.2b). Read-scoping ONLY — it is not
-// an auth credential (mutations still require the Bearer token, which a
-// browser never attaches on its own), so a forged cross-site request cannot
-// mutate anything. The cookie is SameSite=Lax, so it IS sent on top-level
+// Per-browser workspace cookie (M2.5 inc.2b). A bearer capability for one
+// playground workspace, valid for its Max-Age (see workspace-cookie.ts): it
+// lets its holder enter that workspace, but mutations still require the
+// Bearer token, which a browser never attaches on its own, so a forged
+// cross-site request cannot mutate anything. The cookie is SameSite=Lax, so it IS sent on top-level
 // cross-site GET navigations: keep every GET that reads it side-effect free,
 // and keep SameSite/HttpOnly as they are. Set on first login and REUSED on
 // later logins so every persona acting in one browser shares the same demo
@@ -36,7 +38,7 @@ import { databaseNotReady } from "@/lib/http/database-gate";
 // the Next runtime AND when unit tests invoke POST() directly with no request
 // scope.
 const WORKSPACE_COOKIE = "jeeves_workspace";
-const WORKSPACE_COOKIE_MAX_AGE = 60 * 60 * 24 * 7; // 7 days
+const WORKSPACE_COOKIE_MAX_AGE = WORKSPACE_COOKIE_MAX_AGE_SECONDS;
 
 function readWorkspaceCookie(req: Request): string | null {
   const cookieHeader = req.headers.get("cookie");
@@ -132,12 +134,19 @@ export async function POST(req: Request): Promise<Response> {
     return Response.json({ error: "session expired or invalid" }, { status: 401 });
   }
 
+  // A valid signed workspace cookie marks a returning visitor re-entering their
+  // own workspace. They are charged to the looser persona-switch bucket, not
+  // the anonymous entry bucket, so a team behind one office address does not
+  // lock each other out. A missing, forged or expired cookie still counts as
+  // an anonymous entry.
+  const cookieWorkspaceId = verifyWorkspaceCookie(readWorkspaceCookie(req), secret);
+
   // These guards use persistent session and rate-limit state.
   let parent;
   let attempt;
   try {
     parent = token ? await resolveSession(token) : null;
-    attempt = await checkSessionAttempt(clientKeyFor(req), Boolean(parent?.actor && parent.workspaceId && parent.actor.role !== "public"));
+    attempt = await checkSessionAttempt(clientKeyFor(req), Boolean(cookieWorkspaceId) || Boolean(parent?.actor && parent.workspaceId && parent.actor.role !== "public"));
     // A public parent is never a workspace donor (below), so it mints a fresh workspace and pays the anonymous rate.
   } catch (error) {
     return storageUnavailable(error);
@@ -160,7 +169,7 @@ export async function POST(req: Request): Promise<Response> {
   // approve their own real request and every sample they made afterwards
   // would appear in the operator's queue.
   const donor = parent?.actor?.role === "public" ? null : parent?.workspaceId;
-  const existingWorkspaceId = donor ?? verifyWorkspaceCookie(readWorkspaceCookie(req), secret);
+  const existingWorkspaceId = donor ?? cookieWorkspaceId;
 
   let result;
   try {

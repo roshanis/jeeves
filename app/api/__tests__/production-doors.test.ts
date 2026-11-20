@@ -37,7 +37,7 @@ const getDbSpy = vi.fn(() => testDb);
 vi.mock("@/lib/db/client", () => ({ getDb: () => getDbSpy() }));
 
 const OPERATOR_TOKEN = "operator-token-for-the-doors-test-0123456789";
-const CRON_SECRET = "cron-secret-for-the-doors-test";
+const CRON_SECRET = "cron-secret-for-the-doors-test-0123456789";
 const COOKIE_SECRET = "cookie-secret-for-the-doors-test";
 
 const METHODS = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"] as const;

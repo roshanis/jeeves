@@ -20,7 +20,7 @@
  *    telemetry would omit the default and pass real time.
  *
  * 200: { ranAt, nowTs, ...RunMonitorResult }
- * 401: missing/invalid bearer.  503: CRON_SECRET not configured.
+ * 401: missing/invalid bearer.  503: CRON_SECRET unset or shorter than 32 characters.
  * 403: read-only preview (answered before the bearer is looked at).
  * 429: too many failed attempts from this client.
  * 400: nowTs not a valid ISO-8601 timestamp, or outside [base date, now + 1 day].
@@ -28,7 +28,6 @@
  *      runs its scheduled work as jobs, not through this synthetic-telemetry
  *      replay, so there is no cron secret to configure and no 503 to leak.
  */
-import { createHash, timingSafeEqual } from "node:crypto";
 import { demoDoorClosed, demoDoorFallbacks } from "@/lib/config/demo-doors";
 import { getDb } from "@/lib/db/client";
 import {
@@ -37,7 +36,7 @@ import {
 } from "@/lib/services/monitor-service";
 import { expireDueExceptions } from "@/lib/services/exception-service";
 import { SYSTEM_ACTOR } from "@/lib/services/actors";
-import { checkOperatorAttempt, checkReadOnlyMode, clientKeyFor, operatorAttemptStatus } from "@/lib/services/route-guard";
+import { checkOperatorAttempt, checkReadOnlyMode, clientKeyFor, configuredCronSecret, isOperatorAuthorized, operatorAttemptStatus } from "@/lib/services/route-guard";
 import { databaseNotReady } from "@/lib/http/database-gate";
 
 // Kept in sync with app/api/monitor/run/route.ts#DEFAULT_MONITOR_NOW_TS (a
@@ -46,19 +45,16 @@ const BASE_DATE_MS = Date.parse("2026-07-01T00:00:00Z");
 const MAX_FUTURE_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_MONITOR_NOW_TS = BASE_DATE_MS + 14 * 24 * 60 * 60 * 1000;
 
-/** Constant-time bearer check against CRON_SECRET. Returns false if the secret is unset (caller maps to 503). */
+/**
+ * Bearer check against CRON_SECRET, using the operator token's hashed
+ * constant-time compare. A secret under 32 characters counts as unset (the
+ * caller maps that to 503): a guessable secret would let anyone run the
+ * unscoped monitor.
+ */
 function authorizeCron(req: Request): { ok: true } | { ok: false; status: 401 | 503 } {
-  const secret = process.env.CRON_SECRET;
-  if (!secret || secret.length === 0) return { ok: false, status: 503 };
-
-  const auth = req.headers.get("authorization") ?? "";
-  const provided = auth.startsWith("Bearer ") ? auth.slice("Bearer ".length) : "";
-  // Hash both sides so the compare runs over equal-length buffers and the
-  // secret's length is not observable.
-  const a = createHash("sha256").update(provided).digest();
-  const b = createHash("sha256").update(secret).digest();
-  const match = timingSafeEqual(a, b);
-  return match ? { ok: true } : { ok: false, status: 401 };
+  const secret = configuredCronSecret();
+  if (!secret) return { ok: false, status: 503 };
+  return isOperatorAuthorized(req.headers.get("authorization"), secret) ? { ok: true } : { ok: false, status: 401 };
 }
 
 export const { POST, PUT, PATCH, DELETE, OPTIONS } = demoDoorFallbacks("GET");
@@ -70,7 +66,7 @@ export async function GET(req: Request): Promise<Response> {
   const unavailable = databaseNotReady();
   if (unavailable) return unavailable;
 
-  if (process.env.CRON_SECRET) {
+  if (configuredCronSecret()) {
     // The read-only preview has nothing to run and may have no database for
     // the limiter to read, so it answers first. The mode is no secret: every
     // mutation route gives anyone the same answer.
@@ -100,7 +96,7 @@ export async function GET(req: Request): Promise<Response> {
       }
     }
     const message =
-      auth.status === 503 ? "scheduled monitoring not configured (CRON_SECRET unset)" : "unauthorized";
+      auth.status === 503 ? "scheduled monitoring not configured (CRON_SECRET unset or shorter than 32 characters)" : "unauthorized";
     return Response.json({ error: message }, { status: auth.status });
   }
 

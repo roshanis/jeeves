@@ -486,9 +486,10 @@ export async function resolveSession(token: string | null): Promise<ResolvedSess
 The actor's **role always comes from `resolveActor(session.personaKey)`** —
 a server-side persona directory (`lib/services/actors.ts`) keyed by the
 `personaKey` stored server-side at session issuance — never from anything a
-client submits in a request body. `extractSessionToken()` reads a bearer
-`Authorization` header or the `jeeves_session` cookie; either way the token
-is opaque and the role lookup path is identical.
+client submits in a request body. Mutations read the token with
+`extractBearerToken()` (the `Authorization: Bearer` header only); page reads
+use `extractSessionToken()`, which also accepts the `jeeves_session` cookie.
+Either way the token is opaque and the role lookup path is identical.
 
 ### 6.2 Mutation guard pipeline
 
@@ -572,9 +573,10 @@ switches within one browser:
   re-set/refreshed (httpOnly, `sameSite: lax`, 7-day max-age, `secure` in
   production). If absent, a fresh workspace id is derived from the new
   session token and the cookie is set for the first time.
-- **Mutations stay bearer-token-only.** `extractSessionToken()` reads
-  `Authorization: Bearer` or the (separate) `jeeves_session` cookie for
-  auth; the `jeeves_workspace` cookie is never consulted by
+- **Mutations stay bearer-token-only.** `extractBearerToken()` reads
+  only `Authorization: Bearer`; the `jeeves_session` cookie is refused on
+  mutations until sign-in adds it back with an Origin check and a `__Host-`
+  name; the `jeeves_workspace` cookie is never consulted by
   `runMutationGuard` for authorization — it is only read, on the GET/read
   side, by `app/_lib/data-provider.ts#getCurrentWorkspaceId()` to decide
   which rows a page renders. Because a read-scoping cookie cannot authorize

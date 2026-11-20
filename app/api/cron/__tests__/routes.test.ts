@@ -16,7 +16,8 @@ vi.mock("@/lib/db/client", () => ({
   getDb: () => testDb,
 }));
 
-const CRON_SECRET = "cron-secret-for-tests";
+const CRON_SECRET = "cron-secret-for-tests-0123456789";
+
 
 beforeEach(async () => {
   testDb = await createTestDb();
@@ -41,6 +42,15 @@ describe("GET /api/cron/monitor", () => {
     const { GET } = await import("../monitor/route");
     const res = await GET(cronReq(CRON_SECRET));
     expect(res.status).toBe(503);
+  });
+
+  it("treats a CRON_SECRET shorter than 32 characters as unset (503), even with the matching bearer", async () => {
+    const { GET } = await import("../monitor/route");
+    process.env.CRON_SECRET = "x".repeat(31);
+    expect((await GET(cronReq("x".repeat(31)))).status).toBe(503);
+    process.env.CRON_SECRET = "x".repeat(32);
+    expect((await GET(cronReq("x".repeat(32)))).status).toBe(200);
+    expect((await GET(cronReq("y".repeat(32)))).status).toBe(401);
   });
 
   it("401s a missing or wrong bearer", async () => {

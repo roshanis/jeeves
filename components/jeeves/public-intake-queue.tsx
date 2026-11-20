@@ -274,7 +274,7 @@ export function PublicIntakeQueue() {
                   {row.title}
                 </p>
                 <span className="text-xs text-muted-foreground">
-                  {row.createdAt.slice(0, 10)}
+                  {row.submittedAt.slice(0, 10)}
                 </span>
               </div>
               {row.businessProblem ? <RequestProblem text={row.businessProblem} /> : null}

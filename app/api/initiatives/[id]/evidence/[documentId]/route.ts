@@ -4,6 +4,7 @@ import { downloadEvidence } from '@/lib/services/evidence-service';
 import { evidenceResponseError, privateHeaders } from '@/lib/evidence/http';
 import { isRouteId } from '@/lib/http/route-id';
 import { EvidenceError } from '@/lib/evidence/files';
+import { checkEvidenceRead, clientKeyFor } from '@/lib/services/route-guard';
 import { databaseNotReady } from "@/lib/http/database-gate";
 export const runtime='nodejs';
 export async function GET(req:Request,context:{params:Promise<{id:string;documentId:string}>}):Promise<Response> {
@@ -14,6 +15,8 @@ export async function GET(req:Request,context:{params:Promise<{id:string;documen
   if(!gate.ok)return gate.response;
   const viewer=gate.viewer;
   if(!viewer.actor)throw new EvidenceError(401,'Start the demo to download evidence.');
+  const limit=await checkEvidenceRead(clientKeyFor(req));
+  if(!limit.allowed)throw new EvidenceError(429,'Too many downloads. Try again shortly.',limit.retryAfterSeconds);
   const {id,documentId}=await context.params;
   if(!isRouteId(id)||!isRouteId(documentId))throw new EvidenceError(404,'Evidence not found.');
   const {document,bytes}=await downloadEvidence(getDb(),id,documentId,{actor:viewer.actor,workspaceId:viewer.workspaceId});

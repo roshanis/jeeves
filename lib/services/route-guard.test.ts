@@ -8,6 +8,7 @@ import { DbTokenBucketRateLimiter } from "../security/db-rate-limit";
 import {
   clientKeyFor,
   checkSessionAttempt,
+  checkEvidenceRead,
   extractSessionToken,
   getBudgetStoreForTests,
   issueDemoSession,
@@ -128,6 +129,16 @@ describe("lib/services/route-guard", () => {
     expect(result).toMatchObject({ ok: false, failure: { status: 401 } });
     expect(check).not.toHaveBeenCalled();
     expect(await testDb.select().from(runBudget)).toHaveLength(0);
+  });
+
+  it("refuses a mutation authenticated only by a jeeves_session cookie", async () => {
+    const issued = (await issueDemoSession("ray-chen"))!;
+    const req = new Request("http://localhost/api/x", {
+      method: "POST",
+      headers: { cookie: `jeeves_session=${issued.token}`, origin: "https://evil.example" },
+    });
+    expect(await runMutationGuard(req, undefined)).toMatchObject({ ok: false, failure: { status: 401 } });
+    expect(await runMutationGuard(reqWithBearer(issued.token), undefined)).toMatchObject({ ok: true });
   });
 
   describe("extractSessionToken", () => {
@@ -471,6 +482,14 @@ describe("client addresses in rate-limit buckets", () => {
     expect(first.allowed).toBe(true);
     expect((await checkSessionAttempt("10.0.0.2")).allowed).toBe(false);
     expect((await checkSessionAttempt("10.0.0.3")).allowed).toBe(true);
+  });
+
+  it("limits evidence reads per client: 60 allowed in a burst, then refused, other clients unaffected", async () => {
+    for (let i = 0; i < 60; i++) expect((await checkEvidenceRead("10.0.0.20")).allowed).toBe(true);
+    const refused = await checkEvidenceRead("10.0.0.20");
+    expect(refused.allowed).toBe(false);
+    expect(refused.retryAfterSeconds).toBeGreaterThan(0);
+    expect((await checkEvidenceRead("10.0.0.21")).allowed).toBe(true);
   });
 
   it("prunes stale clear-text buckets left by earlier versions, and expired sessions, but not fresh rows", async () => {

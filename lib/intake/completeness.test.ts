@@ -558,38 +558,15 @@ describe("evaluateCompleteness — ADV rules never block submission", () => {
     expect(result.canSubmit).toBe(true);
   });
 
-  it("ADV-05 fires when evidence-eligible (vendorHosted=true) and evidenceAttachments is empty", () => {
+  it("ADV-05 is not scored: intake cannot attach evidence, so it never appears as missing", () => {
     const payload = completePayload();
     payload.overlay.vendorHosted = true;
     payload.modelVendor.hosting = "Vendor-hosted";
     payload.modelVendor.vendorName = "Acme AI";
     payload.evidenceAttachments = [];
     const result = evaluateCompleteness(payload);
-    expect(result.gaps.some((g) => g.ruleId === "ADV-05")).toBe(true);
-    expect(result.canSubmit).toBe(true);
-  });
-
-  it("ADV-05 does not fire when no evidence-eligible control applies (no PHI/vendor/care-coverage, low tier)", () => {
-    const payload = completePayload();
-    payload.overlay.touchesPHI = false;
-    payload.overlay.vendorHosted = false;
-    payload.overlay.careCoverageInfluence = false;
-    payload.overlay.memberFacing = false;
-    payload.modelVendor.hosting = "Self-hosted (Meridian infra)";
-    payload.data.retentionIntent = null;
-    payload.evidenceAttachments = [];
-    const result = evaluateCompleteness(payload, "low");
     expect(result.gaps.some((g) => g.ruleId === "ADV-05")).toBe(false);
-  });
-
-  it("ADV-05 does not fire when evidence is attached", () => {
-    const payload = completePayload();
-    payload.overlay.vendorHosted = true;
-    payload.modelVendor.hosting = "Vendor-hosted";
-    payload.modelVendor.vendorName = "Acme AI";
-    payload.evidenceAttachments = [{ controlId: "P-01", fileName: "vra.pdf", uploadedAt: "2026-07-01T00:00:00Z" }];
-    const result = evaluateCompleteness(payload);
-    expect(result.gaps.some((g) => g.ruleId === "ADV-05")).toBe(false);
+    expect(result.completenessPct).toBe(100);
   });
 
   it("ADV-06 fires when modelType is null, non-blocking", () => {
@@ -635,18 +612,16 @@ describe("evaluateCompleteness — worked example (intake-spec §5), champion pr
     expect(result.canSubmit).toBe(true);
   });
 
-  it("post-triage: ADV-05 fires (no evidence attached, vendor/PHI/care-coverage all evidence-eligible)", () => {
+  it("post-triage: no advisory gap (ADV-05 is not scored)", () => {
     const tier = deriveTier(overlayFlagsFromPayload(CHAMPION_PREFILL_PAYLOAD));
     const result = evaluateCompleteness(CHAMPION_PREFILL_PAYLOAD, tier);
-    const advGaps = result.gaps.filter((g) => g.level === "ADVISORY").map((g) => g.ruleId);
-    expect(advGaps).toEqual(["ADV-05"]);
+    expect(result.gaps.filter((g) => g.level === "ADVISORY")).toEqual([]);
   });
 
-  it("exactly two total gaps post-triage: RFT-02 and ADV-05", () => {
+  it("exactly one total gap post-triage: RFT-02", () => {
     const tier = deriveTier(overlayFlagsFromPayload(CHAMPION_PREFILL_PAYLOAD));
     const result = evaluateCompleteness(CHAMPION_PREFILL_PAYLOAD, tier);
-    const ruleIds = result.gaps.map((g) => g.ruleId).sort();
-    expect(ruleIds).toEqual(["ADV-05", "RFT-02"]);
+    expect(result.gaps.map((g) => g.ruleId)).toEqual(["RFT-02"]);
   });
 });
 
